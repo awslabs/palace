@@ -662,3 +662,42 @@ TEST_CASE("Quasi-Newton updates a stale preconditioner below PreconditionerLagTo
     CHECK(std::stoi(m[2].str()) < 40);
   }
 }
+
+// A problem of a single dof: on more processes, the others have no unknowns, and take part
+// in the solve all the same.
+TEST_CASE("Quasi-Newton on processes without unknowns", "[nleps][Serial][Parallel]")
+{
+  constexpr double k0 = 4.0, tol = 1.0e-10;
+  const DiagonalLorentzProblem p(std::vector<double>{k0});
+  REQUIRE(p.LocalSize() == (Mpi::Root(Mpi::World()) ? 1 : 0));
+  const auto roots = p.Roots(k0);
+  const auto ls =
+      *std::ranges::max_element(roots, [](auto a, auto b) { return a.imag() < b.imag(); });
+  ComplexVector x0(p.LocalSize());
+  x0 = 1.0;
+  std::vector<std::complex<double>> theta = {1.01 * ls};
+  std::vector<ComplexVector> vecs = {x0};
+  QuasiNewtonSolver qn(Mpi::World(),
+                       std::make_unique<SeedEigenpairs>(std::move(theta), std::move(vecs)),
+                       1, 0, true);
+  qn.SetTol(tol);
+  qn.SetMaxIter(100);
+  qn.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
+  qn.SetExtraSystemMatrix([&p](std::complex<double> l) { return p.A2(l); });
+  qn.SetPreconditionerUpdate([&p](std::complex<double> a0, std::complex<double>,
+                                  std::complex<double> a2, std::complex<double> a3)
+                             { return p.Preconditioner(a0, a2, a3); });
+  qn.SetNumModes(1, 1);
+  qn.SetPreconditionerLag(1, 0.0);
+  qn.SetMaxRestart(0);
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-12);
+  gmres->SetMaxIter(100);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
+  qn.SetLinearSolver(ksp);
+  qn.SetShiftInvert(std::complex<double>(0.0, 1.5));
+  REQUIRE(qn.Solve() == 1);
+  CAPTURE(ls, qn.GetEigenvalue(0));
+  CHECK(std::abs(qn.GetEigenvalue(0) - ls) <= 1.0e-8 * std::abs(ls));
+  CHECK(qn.GetError(0, EigenvalueSolver::ErrorType::BACKWARD) <= tol);
+}
