@@ -611,6 +611,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="da325c815dc513f0bc9fc32c17757e82144eaeee5ad734d8b537e816e630c856",
                 when="@4.10.0",
             ),
+            # https://github.com/mfem/mfem/pull/5780: without GPU support in hypre,
+            # HypreParVector wraps the host data of hypre as MemoryType::HOST, so that the
+            # debug device does not protect its pages (narrow to @4.10.0 once merged
+            # upstream and Lookahead flags it)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "48f86fa81ed110995e8bf6eda738650673077b2c/extern/patch/mfem/"
+                "mfem_pr5780.diff",
+                sha256="07c7214581cb5c11a4999e7bc473a67a16ae6a400c7220e1b2d743600fdee6f4",
+                when="@4.10:",
+            ),
         ],
     )
 

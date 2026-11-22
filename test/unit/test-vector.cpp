@@ -10,6 +10,7 @@
 #include <complex>
 #include <limits>
 #include <span>
+#include <type_traits>
 #include <vector>
 
 #include "linalg/vector.hpp"
@@ -316,6 +317,40 @@ TEST_CASE("StaticVectorElementAccess", "[Vector][Serial]")
   CHECK_THAT(vec[0], WithinRel(1.0));
   CHECK_THAT(vec[1], WithinRel(2.0));
   CHECK_THAT(vec[2], WithinRel(3.0));
+}
+
+TEST_CASE("StaticVectorCopy", "[Vector][Serial]")
+{
+  // Copies between StaticVectors stay in the stack buffer.
+  static_assert(std::is_copy_constructible_v<StaticVector<3>>);
+  static_assert(std::is_copy_assignable_v<StaticVector<3>>);
+  static_assert(std::is_move_assignable_v<StaticVector<3>>);
+  static_assert(std::is_assignable_v<StaticVector<3>, double>);
+  static_assert(std::is_assignable_v<StaticVector<3>, const double *>);
+
+  auto InOwnBuffer = [](const auto &v)
+  {
+    const auto *begin = reinterpret_cast<const char *>(&v);
+    const auto *data = reinterpret_cast<const char *>(v.GetData());
+    return data >= begin && data < begin + sizeof(v);
+  };
+
+  StaticVector<3> vec;
+  vec[0] = 1.0;
+  vec[1] = 2.0;
+  vec[2] = 3.0;
+
+  StaticVector<3> copy(vec);
+  CHECK(InOwnBuffer(copy));
+  CHECK_THAT(copy[2], WithinRel(3.0));
+
+  StaticVector<3> assigned;
+  assigned = vec;
+  CHECK(InOwnBuffer(assigned));
+  CHECK_THAT(assigned[1], WithinRel(2.0));
+
+  copy[0] = -1.0;
+  CHECK_THAT(vec[0], WithinRel(1.0));
 }
 
 TEST_CASE("StaticVectorInterface", "[Vector][Serial]")

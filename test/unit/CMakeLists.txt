@@ -72,6 +72,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-sensitivity.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-shapederivative.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-smoother.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-solver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strattonchu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-strumpack.cpp
@@ -83,6 +84,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfacerationalimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceterms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-tablecsv.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-timeaverage.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-vector.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportimpedance.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-waveportoperator.cpp

@@ -30,6 +30,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/aaa.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -1632,15 +1633,17 @@ void RomOperator::SolvePROM(double omega)
 
   for (Eigen::Index k = 0; const auto &[excitation_idx, data] : excitations)
   {
-    // Wave-port excitation RHS2(ω) = −2iω Σ_p s_full,p over the ports excited by this
-    // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
+    // Wave-port excitation RHS2(ω) = −2iω sqrt(2) Σ_p s_full,p over the ports excited by
+    // this excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
     // pairings Vᵀs_full,p at this frequency.
     Eigen::VectorXcd b = (1i * omega) * RHS1r.col(k);
     for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
     {
       if (port_data.excitation == excitation_idx)
       {
-        b += std::complex<double>(0.0, -2.0 * omega) * sV_wp_full.at(port_idx);
+        b += std::complex<double>(0.0, -2.0 * omega *
+                                           electromagnetics::UnitPowerAmplitude(true)) *
+             sV_wp_full.at(port_idx);
       }
     }
     // Floquet port excitation Σ_p s_p conj(v_p) over the (0,0) modes of the ports excited
@@ -3342,7 +3345,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       for (std::size_t p = 0; p < n_ports; p++)
       {
         Eigen::VectorXcd cvec = Eigen::VectorXcd::Zero(nr);
-        double y_ref = unit_ohm_inv;  // wave-port modal (unit-power) reference
+        double y_ref = unit_ohm_inv;  // wave-port modal (unit-overlap) reference
         std::complex<double> h_scale = 1.0;
         if (coupled_ports[p].is_wave)
         {
