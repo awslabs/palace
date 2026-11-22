@@ -39,6 +39,9 @@ public:
   // Return the local error indicator.
   const auto &Local() const { return local; }
 
+  // Return the number of samples, the same on all processes (zero if none was added).
+  int NumSamples() const { return n; }
+
   // Return the global error indicator.
   auto Norml2(MPI_Comm comm) const { return linalg::Norml2(comm, local); }
 
