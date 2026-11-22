@@ -740,7 +740,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1266](https://github.com/awslabs/palace/pull/1266).
   - *Palace* runs with more MPI processes than the mesh has elements; the ARPACK eigenvalue
     solver still needs unknowns on every process.
-    [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
+    [PR 1276](https://github.com/awslabs/palace/pull/1276).
 
 #### Documentation
 
