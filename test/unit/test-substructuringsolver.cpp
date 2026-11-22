@@ -833,14 +833,8 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
   pcg.Mult(f, u_full);
   Vector t(pfes.GetTrueVSize());
   Kpure->Mult(u_full, t);
-  double local = 0.0;
-  for (int i = 0; i < pfes.GetTrueVSize(); i++)
-  {
-    local += u_full(i) * t(i);
-  }
-  double e_mono = 0.0;
-  MPI_Allreduce(&local, &e_mono, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-  e_mono *= 0.5;
+  // On the device the solution and its product are read there (not as host entries).
+  const double e_mono = 0.5 * mfem::InnerProduct(Mpi::World(), u_full, t);
 
   CHECK(e_sub > 0.0);
   CHECK(std::abs(e_sub - e_mono) <= 1.0e-10 * std::abs(e_mono));
@@ -2017,14 +2011,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mfem::Vector u_full, t(pfes.GetTrueVSize());
   xgf.GetTrueDofs(u_full);
   K->Mult(u_full, t);
-  double local = 0.0;
-  for (int i = 0; i < pfes.GetTrueVSize(); i++)
-  {
-    local += u_full(i) * t(i);
-  }
-  double e_mono = 0.0;
-  MPI_Allreduce(&local, &e_mono, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
-  e_mono *= 0.5;
+  // On the device the solution and its product are read there (not as host entries).
+  const double e_mono = 0.5 * mfem::InnerProduct(Mpi::World(), u_full, t);
 
   CHECK(e_sub > 1.0e-8);
   CHECK(std::abs(e_sub - e_mono) <= 1.0e-10 * std::abs(e_mono));
