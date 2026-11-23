@@ -1387,9 +1387,9 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
         std::complex<double>(nu[k] * nu[k], 0.0), K.get(), C.get(), M.get(), A2_dc.get());
     auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 0.0 + 0.0i,
                                                                nu[k] * nu[k] + 0.0i, dc);
-    // Safe to repurpose the shared solver: every SolveHDM call resets the operators and
-    // the initial guess. Each anchor solve starts from zero, not from the response of the
-    // previous port (or the contents of u before the first solve).
+    // The solver of the HDM solves, repurposed for the anchor solves. Each starts from
+    // zero, not from the response of the previous port (or the contents of u before the
+    // first solve).
     ksp->SetOperators(*A, *P);
     ksp->SetInitialGuess(false);
     for (const auto &[port_idx, port_data] : space_op.GetLumpedPortOp())
@@ -1398,18 +1398,21 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
       {
         continue;
       }
-      if (!space_op.GetLumpedPortExcitationVector(port_idx, rhs))
-      {
-        continue;
-      }
+      MFEM_VERIFY(space_op.GetLumpedPortExcitationVector(port_idx, rhs),
+                  "Lumped port " << port_idx << " has no drive for its anchor solve!");
       ksp->Mult(rhs, u);
-      // Keep only the real part: the anchor is the response of a real symmetric positive
-      // definite system to a real drive, a real field configuration.
+      // Keep only the real part, a real field configuration: the drive is real, and so is
+      // the system, except with a material loss tangent, whose complex mass matrix gives
+      // the response an imaginary part of O(tan δ) and changes its real part by O(tan²δ).
       u.Imag() = 0.0;
       UpdatePROM(u, (k == 0) ? fmt::format("anchor_{:d}", port_idx)
                              : fmt::format("anchor_{:d}_nu{:d}", port_idx, k));
     }
   }
+
+  // The solver still refers to the operators of the last anchor solves, which no longer
+  // exist: release the HDM operators too, so that the next HDM solve sets its operators.
+  ReleaseHDMOperators();
 }
 
 Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,

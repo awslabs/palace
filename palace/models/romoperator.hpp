@@ -428,10 +428,6 @@ protected:
   // the port rows, one elsewhere), as applied by CalculateNormalizedPROMMatrices.
   Eigen::VectorXd GetSynthesisPortScaling() const;
 
-  // Number of lumped ports flagged for a quasistatic anchor solve (synthesis_anchor).
-  // Used for basis storage reservation alongside NumSynthesisPortModes.
-  std::size_t NumSynthesisAnchorPorts() const;
-
   // Helper function that normalizes PROM matrices so that they correspond to proper
   // admittance matrices on the ports. Also does unit conversion to physical (input) units.
   // Define so that 1.0 on port i corresponds to full (un-normalized solution), so you can
@@ -685,6 +681,9 @@ public:
   // screened response x(ν_k) of every anchored port as its own basis vector
   // ("anchor_<idx>_nu<k>", k = 1, 2, ...).
   void AddLumpedPortAnchorModesForSynthesis(const std::vector<double> &nu);
+
+  // Number of lumped ports with an anchor solve ("SynthesisAnchor").
+  std::size_t NumSynthesisAnchorPorts() const;
   void AddLumpedPortAnchorModesForSynthesis(double nu)
   {
     AddLumpedPortAnchorModesForSynthesis(std::vector<double>{nu});

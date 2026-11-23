@@ -346,9 +346,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       const double omega_ref = 0.5 * (omega_sample.front() + omega_sample.back());
       prom_op.AddWavePortModesForSynthesis(omega_ref);
     }
-    const auto &lumped_port_op = space_op.GetLumpedPortOp();
-    if (std::any_of(lumped_port_op.begin(), lumped_port_op.end(),
-                    [](const auto &port) { return port.second.synthesis_anchor; }))
+    if (prom_op.NumSynthesisAnchorPorts() > 0)
     {
       // Screening frequencies in ascending order, where 0 selects one tenth of the lowest
       // sweep sample (sample_f is sorted ascending on input).
