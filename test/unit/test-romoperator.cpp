@@ -32,6 +32,7 @@
 #include "models/postoperatorcsv.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/surfacepostoperator.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
@@ -2852,12 +2853,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const long n = static_cast<long>(V.size());
   REQUIRE(n == 5);
 
-  RomOperator::InterfaceEnergyForms forms;
-  forms.B = post_op.GetInterfaceElectricFieldEnergyMatrices(V);
-  forms.energy = [&post_op](const ComplexVector &u, double omega)
-  { return post_op.GetInterfaceElectricFieldEnergies(u, omega); };
-  REQUIRE(forms.B.size() == 4);
-  rom_op.PrintPROMMatrices(iodata.units, temp_dir, &forms);
+  const auto forms = post_op.GetInterfaceElectricFieldEnergyMatrices(V);
+  REQUIRE(forms.size() == 4);
+  rom_op.PrintPROMMatrices(iodata.units, temp_dir, forms);
   Mpi::Barrier(comm);
 
   auto read_matrix = [](const fs::path &p, std::vector<std::string> &labels)
@@ -2909,12 +2907,17 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   M->Mult(u, Mu);
   const double energy_elec = 0.25 * linalg::Dot(comm, Mu, u).real();
   REQUIRE(energy_elec > 0.0);
-  // The materials are constant, so that the interface energies do not depend on the
-  // frequency.
-  const auto energy = post_op.GetInterfaceElectricFieldEnergies(u, 1.0);
+  // The interface energies of the prolonged field, which do not depend on the frequency
+  // for constant materials.
+  SurfacePostOperator surf_post_op(iodata, space_op.GetMaterialOp(),
+                                   space_op.GetH1Space().Get(),
+                                   space_op.GetNDSpace().Get());
+  GridFunction E(space_op.GetNDSpace(), true);
+  E.Real().SetFromTrueDofs(u.Real());
+  E.Imag().SetFromTrueDofs(u.Imag());
 
   int num_nonzero = 0;
-  for (const auto &[idx, B] : forms.B)
+  for (const auto &[idx, B] : forms)
   {
     CAPTURE(idx);
     std::vector<std::string> labels;
@@ -2927,7 +2930,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
     const double p_matrix =
         (y.adjoint() * C_i * y)(0).real() / (y.adjoint() * C * y)(0).real();
-    const double p_direct = energy.at(idx) / energy_elec;
+    const double p_direct =
+        surf_post_op.GetInterfaceElectricFieldEnergy(idx, E, 1.0) / energy_elec;
     CAPTURE(p_matrix, p_direct);
     CHECK(p_matrix == Catch::Approx(p_direct).epsilon(1.0e-10));
     num_nonzero += (p_direct > 0.0);

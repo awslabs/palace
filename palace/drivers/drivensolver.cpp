@@ -561,14 +561,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   {
     // Project the interface dielectric energy forms of any interface dielectric
     // postprocessing boundaries (config["Boundaries"]["Postprocessing"]["Dielectric"]) onto
-    // the basis, for the interface capacitance matrices rom-interface-<index>-C.csv
-    // (checked on the synthesized eigenvectors against the interface energy
-    // postprocessing).
-    RomOperator::InterfaceEnergyForms interface_forms;
-    interface_forms.B = post_op.GetInterfaceElectricFieldEnergyMatrices(prom_op.GetBasis());
-    interface_forms.energy = [&post_op](const ComplexVector &u, double omega)
-    { return post_op.GetInterfaceElectricFieldEnergies(u, omega); };
-    prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output, &interface_forms);
+    // the basis, for the interface capacitance matrices rom-interface-<index>-C.csv.
+    prom_op.PrintPROMMatrices(
+        iodata.units, iodata.problem.output,
+        post_op.GetInterfaceElectricFieldEnergyMatrices(prom_op.GetBasis()));
   }
 
   // Exact wave-port modes computed by the HDM samples (and any synthesis samples) have

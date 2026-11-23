@@ -2507,22 +2507,6 @@ PostOperator<solver_t>::GetInterfaceElectricFieldEnergyMatrices(
 }
 
 template <ProblemType solver_t>
-std::map<int, double>
-PostOperator<solver_t>::GetInterfaceElectricFieldEnergies(const ComplexVector &u,
-                                                          double omega)
-  requires(solver_t == ProblemType::DRIVEN)
-{
-  E->Real().SetFromTrueDofs(u.Real());
-  E->Imag().SetFromTrueDofs(u.Imag());
-  std::map<int, double> energy;
-  for (const auto &[idx, data] : surf_post_op.eps_surfs)
-  {
-    energy.emplace(idx, surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, omega));
-  }
-  return energy;
-}
-
-template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
                                                     const ComplexVector *e,
                                                     std::complex<double> omega,

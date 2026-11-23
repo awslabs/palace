@@ -153,9 +153,8 @@ of the driven solver as well as the following additional files:
     term. Like ``\widehat{\bm{C}}``, the matrix of an `"MS"` interface next to a
     frequency-dependent substrate uses the high-frequency permittivity ``\varepsilon_\infty``
     of the substrate, where `surface-Q.csv` uses ``|\varepsilon(i\omega)|`` at the frequency of
-    the field. *Palace* checks the matrices on the synthesized eigenvectors against the
-    interface energy of their fields, and prints the largest participation and the largest
-    deviation for each interface.
+    the field. *Palace* prints the largest participation of the synthesized eigenvectors in
+    each interface.
 
 There are several constraints and considerations for using this feature:
 

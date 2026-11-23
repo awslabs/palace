@@ -510,14 +510,10 @@ public:
   // boundaries projected onto a basis of real fields given by their true dofs: the n × n
   // matrices B_kl = U(v_k, v_l) of
   // SurfacePostOperator::GetInterfaceElectricFieldEnergyMatrices, keyed by interface index
-  // (empty without interface dielectric postprocessing), and the time-averaged interface
-  // energies of a complex field given by the true dofs of its peak phasor at the
-  // frequency ω. Both overwrite the electric field grid function. Collective.
+  // (empty without interface dielectric postprocessing). Overwrites the electric field
+  // grid function. Collective.
   std::map<int, Eigen::MatrixXd>
   GetInterfaceElectricFieldEnergyMatrices(const std::vector<Vector> &basis)
-    requires(solver_t == ProblemType::DRIVEN);
-  std::map<int, double> GetInterfaceElectricFieldEnergies(const ComplexVector &u,
-                                                          double omega)
     requires(solver_t == ProblemType::DRIVEN);
 
   std::optional<double> MeasureAndPrintAll(int step, const ComplexVector &e,

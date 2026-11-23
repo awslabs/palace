@@ -84,10 +84,6 @@ constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_FLOOR = 1.0e-10;
 // Chebyshev nodes of the fits of the frequency-dependent PML terms, and of the independent
 // grid to check them.
 constexpr int PML_FIT_SAMPLES = 30, PML_CHECK_SAMPLES = 20;
-// Tolerance on the surface participation computed from an exported interface capacitance
-// matrix against the interface energy evaluated on the prolonged field (they agree up to
-// roundoff, as the matrix is the exact projection of the same quadrature).
-constexpr double INTERFACE_ENERGY_CHECK_TOL = 1.0e-10;
 // Index of `target` in `labels`, or -1 when absent. Used to address rows of the
 // synthesized matrices by their node label.
 inline long LabelIndex(const std::vector<std::string> &labels, const std::string &target)
@@ -3506,8 +3502,9 @@ void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &pos
   out.WriteFullTableTrunc();
 }
 
-void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir,
-                                    const InterfaceEnergyForms *interface_forms) const
+void RomOperator::PrintPROMMatrices(
+    const Units &units, const fs::path &post_dir,
+    const std::map<int, Eigen::MatrixXd> &interface_forms) const
 {
   BlockTimer bt0(Timer::POSTPRO);
   Mpi::Print(" Printing PROM Matrices to disk.\n");
@@ -3541,17 +3538,15 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   // matrix C = u_F D Mr D: for the synthesized coordinates y of a real field, ½ yᵀ C_Γ y is
   // its interface energy just as ½ yᵀ C y is its electric energy (¼ yᴴ C_Γ y and ¼ yᴴ C y,
   // the time averages, for a peak phasor y), so yᴴ C_Γ y / yᴴ C y is its surface
-  // participation ratio. Auxiliary states have zero rows and columns. The forms are checked
-  // on the synthesized eigenvectors against the direct evaluation of the interface energy
-  // of their prolongation (collective).
+  // participation ratio. Auxiliary states have zero rows and columns.
   std::map<int, Eigen::MatrixXd> interface_C;
-  if (interface_forms && !interface_forms->B.empty())
+  if (!interface_forms.empty())
   {
     const long n = static_cast<long>(V.size());
     const long na = matrices.C->rows();
     const Eigen::VectorXd d = GetSynthesisPortScaling();
     const double unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
-    for (const auto &[idx, B] : interface_forms->B)
+    for (const auto &[idx, B] : interface_forms)
     {
       MFEM_VERIFY(B.rows() == n && B.cols() == n,
                   "Interface energy form " << idx << " does not match the PROM basis!");
@@ -3560,81 +3555,23 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       const Eigen::MatrixXd C_b = (2.0 * unit_farad) * d.asDiagonal() * B * d.asDiagonal();
       Eigen::MatrixXd C_i = Eigen::MatrixXd::Zero(na, na);
       C_i.topLeftCorner(n, n) = 0.5 * (C_b + C_b.transpose());
-      interface_C.emplace(idx, std::move(C_i));
-    }
 
-    // Check the time-averaged interface energy U(u) = ½ zᴴ B z of the peak phasor u = V z,
-    // the prolongation of the reduced-basis coordinates z = D y of each synthesized
-    // eigenvector, against its direct evaluation at the eigenfrequency, in units of its
-    // surface participation p = U(u) / (¼ zᴴ Mr z), and report the largest participation
-    // found among them.
-    std::map<int, double> max_dev, max_p;
-    if (interface_forms->energy)
-    {
-      const double weight = electromagnetics::TimeAverageWeight(true);
-      const double freq_to_omega_nd =
-          2.0 * std::numbers::pi *
-          units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
-      ComplexVector u(K->Width());
-      u.UseDevice(true);
+      // The largest participation of the synthesized eigenvectors in the interface, from
+      // the exported matrices (rom-C-re.csv for the electric energy).
+      double max_p = 0.0;
       for (const auto &est : eigs)
       {
-        const Eigen::VectorXcd z =
-            d.cast<std::complex<double>>().cwiseProduct(est.eigvec.head(n));
-        const double omega = freq_to_omega_nd * est.freq_re_GHz;
-        if (z.norm() == 0.0 || !(omega > 0.0))
+        const auto &y = est.eigvec;
+        const double energy = (y.adjoint() * matrices.C->real() * y)(0).real();
+        if (energy > 0.0)
         {
-          continue;  // Pure auxiliary-state root, or no positive frequency
-        }
-        u = 0.0;
-        for (long j = 0; j < n; j++)
-        {
-          linalg::AXPY(z(j).real(), V[j], u.Real());
-          linalg::AXPY(z(j).imag(), V[j], u.Imag());
-        }
-        const auto energy = interface_forms->energy(u, omega);
-        const double energy_elec = weight * 0.5 * (z.adjoint() * Mr.real() * z)(0).real();
-        if (!(energy_elec > 0.0))
-        {
-          continue;
-        }
-        for (const auto &[idx, B] : interface_forms->B)
-        {
-          const double U_matrix = weight * (z.adjoint() * B * z)(0).real();
-          const double U_direct = energy.at(idx);
-          max_dev[idx] =
-              std::max(max_dev[idx], std::abs(U_matrix - U_direct) / energy_elec);
-          max_p[idx] = std::max(max_p[idx], U_direct / energy_elec);
+          max_p = std::max(max_p, (y.adjoint() * C_i * y)(0).real() / energy);
         }
       }
-    }
-    for (const auto &[idx, B] : interface_forms->B)
-    {
-      if (max_dev.contains(idx))
-      {
-        Mpi::Print(
-            " Interface dielectric {:d}: rom-interface-{:d}-C.csv, max. participation "
-            "{:.3e} over {:d} synthesized eigenvectors (max. deviation from the "
-            "interface energy {:.3e})\n",
-            idx, idx, max_p[idx], eigs.size(), max_dev[idx]);
-        if (max_dev[idx] > INTERFACE_ENERGY_CHECK_TOL)
-        {
-          Mpi::Warning(
-              "The participation of the synthesized eigenvectors in interface "
-              "dielectric {:d} from its exported matrix deviates by {:.3e} from "
-              "their interface energy!{}\n",
-              idx, max_dev[idx],
-              space_op.GetMaterialOp().HasFrequencyDependentPermittivity()
-                  ? "\nThe matrix of an MS interface next to a frequency-dependent "
-                    "substrate uses the high-frequency permittivity of the "
-                    "substrate."
-                  : "");
-        }
-      }
-      else
-      {
-        Mpi::Print(" Interface dielectric {:d}: rom-interface-{:d}-C.csv\n", idx, idx);
-      }
+      Mpi::Print(" Interface dielectric {:d}: rom-interface-{:d}-C.csv, max. participation "
+                 "{:.3e} over {:d} synthesized eigenvectors\n",
+                 idx, idx, max_p, eigs.size());
+      interface_C.emplace(idx, std::move(C_i));
     }
   }
 
