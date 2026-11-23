@@ -2861,6 +2861,23 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
     CHECK(nd <= 1.0e-10 * nf);
   }
 
+  // On the mesh of the region, a source without DOFs in it is of the environment, whose
+  // modes the model must hold (a model without them reads as complete).
+  {
+    mfem::Mesh serial(RegionMeshPath(model_path).c_str());
+    std::vector<std::unique_ptr<Mesh>> region;
+    region.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    SubstructuringSolver on_region(iodata_on, region);
+    on_region.CondenseEnvironment();
+    Vector zero(on_region.GetCurlCurlOperator().GetNDSpace().GetTrueVSize());
+    zero.UseDevice(true);
+    zero = 0.0;
+    CHECK_THROWS_WITH(SheetEnergies(on_region, {7}, {zero}),
+                      Catch::Matchers::ContainsSubstring(
+                          "Excitation 7 has no DOFs in the mesh of the region"));
+  }
+
   // A model cut in the kinetic parts of its source modes (its last section) is incomplete.
   const std::string cut_path = (temp_dir / "substruct_london_cut.bin").string();
   if (Mpi::Root(Mpi::World()))

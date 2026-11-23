@@ -156,6 +156,19 @@ bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
 {
   col.assign(ids.size(), -1);
   need.assign(ids.size(), 0);
+  // On the mesh of the region, whether each source has DOFs in it: one without them is of
+  // the environment, whose modes the model must hold.
+  std::vector<double> reach(region_only ? ids.size() : 0, 0.0);
+  for (std::size_t j = 0; j < reach.size(); j++)
+  {
+    reach[j] = std::max(src[j].HasA() ? src[j].a->Normlinf() : 0.0,
+                        src[j].HasJ() ? src[j].J->Normlinf() : 0.0);
+  }
+  if (!reach.empty())
+  {
+    MPI_Allreduce(MPI_IN_PLACE, reach.data(), static_cast<int>(reach.size()), MPI_DOUBLE,
+                  MPI_MAX, parent_fes.GetComm());
+  }
   bool ok = true;
   for (std::size_t j = 0; j < ids.size(); j++)
   {
@@ -171,10 +184,15 @@ bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
     if ((region_only || model_sources.contains(ids[j])) && col[j] >= 0)
     {
       // The model holds the environment and its sources, also those without a generator
-      // here (left out of the mesh of the region, or taken from the model).
+      // here (left out of the mesh of the region).
       need[j] = 1;
       continue;
     }
+    MFEM_VERIFY(!region_only || reach[j] > 0.0,
+                (ids[j] > 0 ? "Excitation " : "The aperture of surface current ")
+                    << std::abs(ids[j])
+                    << " has no DOFs in the mesh of the region and is not in the saved "
+                       "substructuring model: run on the full mesh!");
     if (fp[0] == 0.0)
     {
       col[j] = -1;
