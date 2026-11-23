@@ -1280,6 +1280,44 @@ TEST_CASE_METHOD(
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Magnetostatic substructuring rejects a 2D mesh",
+                 "[substructure][Serial][Parallel]")
+{
+  // The interface of a magnetostatic model is matched by Nédélec signatures, in 3D: a 2D
+  // run stops before it condenses the environment.
+  const auto mesh_path = temp_dir / "square.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial =
+        mfem::Mesh::MakeCartesian2D(4, 2, mfem::Element::QUADRILATERAL, false, 1.0, 0.5);
+    mfem::Vector c;
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      serial.GetElementCenter(e, c);
+      serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+    }
+    serial.SetAttributes();
+    serial.Save(mesh_path.string());
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = {
+      {"Problem",
+       {{"Type", "Magnetostatic"}, {"Output", (temp_dir / "postpro_2d").string()}}},
+      {"Model", {{"Mesh", mesh_path.string()}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1, 2}}, {"Permeability", 1.0}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {2, 3, 4}}}},
+        {"SurfaceCurrent",
+         {{{"Index", 1}, {"Attributes", {1}}, {"Direction", {1.0, 0.0, 0.0}}}}}}},
+      {"Solver", {{"Order", 1}, {"Substructuring", {{"Region", {{"Attributes", {1}}}}}}}}};
+  IoData iodata(config, false);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  CHECK_THROWS_WITH(palace::Run(iodata, comm, 1),
+                    Catch::Matchers::ContainsSubstring("requires a 3D mesh"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver saved model of another problem or order",
                  "[substructure][Serial][Parallel]")
 {
