@@ -118,7 +118,7 @@ struct DrivenSubstructureModel
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
   // The adaptive sampling of a rational model: whether it met its tolerance tol (false
   // until it ends), the error estimate of its last sample, and the least eigenvalue of
-  // Im S_E / ‖S_E‖ between its samples (0 if passive).
+  // Im S_E / ‖S_E‖ between its samples below that at the samples (0 if passive).
   bool converged = true;
   double error = 0.0, tol = 0.0, passivity = 0.0;
 

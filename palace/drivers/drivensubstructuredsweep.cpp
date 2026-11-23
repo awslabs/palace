@@ -582,9 +582,23 @@ void DrivenSubstructuredSweep::SampleEnvironment()
              model.omega.size(), errors.back(), tol, memory, memory_size);
   const bool converged = (memory >= memory_size);
   const double error = errors.back();
-  // Passivity between the samples (Im S_E positive semidefinite), tested by Cholesky
-  // factorizations: a violation beyond the tolerance adds a sample where it is largest.
-  double passivity = 0.0;  // the least eigenvalue of the violations, relative (0: none)
+  // Passivity between the samples, tested by Cholesky factorizations: the least eigenvalue
+  // of Im S_E at a midpoint is to be no lower than at the samples beside it, which is zero
+  // for a passive environment and can be negative for one that is not, as with a
+  // second-order absorbing boundary. A violation beyond the tolerance adds a sample where
+  // it is largest.
+  double passivity = 0.0;               // the least violation, relative (0: none)
+  std::map<double, double> at_samples;  // the least eigenvalue at a sample, at most 0
+  auto sample_passivity = [&](double omega)
+  {
+    auto [it, added] = at_samples.try_emplace(omega, 0.0);
+    if (added)
+    {
+      const auto x = fit.Evaluate(omega);
+      it->second = std::min(0.0, DrivenSubstructureModel::Passivity(x.data(), nG));
+    }
+    return it->second;
+  };
   while (true)
   {
     double at = 0.0;
@@ -599,7 +613,8 @@ void DrivenSubstructuredSweep::SampleEnvironment()
         const auto x = fit.Evaluate(mid);
         if (!DrivenSubstructureModel::Passive(x.data(), nG, tol))
         {
-          const double p = DrivenSubstructureModel::Passivity(x.data(), nG);
+          const double p = DrivenSubstructureModel::Passivity(x.data(), nG) -
+                           std::min(sample_passivity(z[j]), sample_passivity(z[j + 1]));
           if (p < passivity)
           {
             passivity = p;
@@ -615,21 +630,21 @@ void DrivenSubstructuredSweep::SampleEnvironment()
       break;
     }
     errors.push_back(sample(at));
-    Mpi::Print(" Passivity sample: ω = {:.6e} GHz (least eigenvalue of Im S_E / ‖S_E‖ = "
-               "{:.3e}), error = {:.3e}\n",
+    Mpi::Print(" Passivity sample: ω = {:.6e} GHz (least eigenvalue of Im S_E / ‖S_E‖ "
+               "{:.3e} below its samples'), error = {:.3e}\n",
                at * unit_GHz, passivity, errors.back());
   }
   if (passivity < -tol)
   {
     Mpi::Warning("The rational environment model is not passive between its samples "
-                 "(least eigenvalue of Im S_E / ‖S_E‖ = {:.3e}): raise "
+                 "(least eigenvalue of Im S_E / ‖S_E‖ {:.3e} below the samples'): raise "
                  "\"AdaptiveMaxSamples\"!\n",
                  passivity);
   }
   else
   {
     Mpi::Print(" Passive between the samples: least eigenvalue of Im S_E / ‖S_E‖ above "
-               "-{:.3e}\n",
+               "the samples' less {:.3e}\n",
                tol);
   }
   utils::PrettyPrint(model.omega, unit_GHz, " Sampled frequencies (GHz):");

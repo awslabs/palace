@@ -4826,6 +4826,36 @@ TEST_CASE_METHOD(
   }
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring tests its rational model against its samples",
+                 "[substructure][Serial][Parallel][Long]")
+{
+  // A second-order absorbing boundary makes Im S_E indefinite at the samples themselves:
+  // the rational model is passive between them if no less so than at them, so that the
+  // sampling stops at its tolerance, without passivity samples or a warning.
+  const auto dir = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
+                   "substructuring_driven";
+  std::ifstream fi(dir / "driven_offline_absorbing.json");
+  json config = json::parse(fi);
+  config["Model"]["Mesh"] = (dir / config["Model"]["Mesh"].get<std::string>()).string();
+  config["Problem"]["Output"] = (temp_dir / "absorbing").string();
+  config["Boundaries"]["Absorbing"]["Order"] = 2;
+  config["Solver"]["Driven"]["FreqStep"] = 250.0;
+  config["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-8;
+  config["Solver"]["Substructuring"]["SaveModel"] = false;
+  IoData iodata(config, false);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  BlockTimer::Reset();
+  const auto out = CaptureStdout([&]() { palace::Run(iodata, comm, 1); });
+  if (Mpi::Root(comm))
+  {
+    CHECK(out.find("Passive between the samples") != std::string::npos);
+    CHECK(out.find("Passivity sample") == std::string::npos);
+    CHECK(out.find("not passive") == std::string::npos);
+  }
+}
+
 TEST_CASE_METHOD(
     palace::test::SharedTempDir,
     "Driven substructuring gives no voltage of the environment's wave port online",

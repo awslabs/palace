@@ -210,8 +210,9 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
     if (!sampled && model.passivity < -model.tol)
     {
       Mpi::Warning("The saved rational substructuring model is not passive between its "
-                   "samples (least eigenvalue of Im S_E / ‖S_E‖ = {:.3e}): rerun the "
-                   "offline sweep with a larger \"AdaptiveMaxSamples\"!\n",
+                   "samples (least eigenvalue of Im S_E / ‖S_E‖ {:.3e} below the "
+                   "samples'): rerun the offline sweep with a larger "
+                   "\"AdaptiveMaxSamples\"!\n",
                    model.passivity);
     }
   }
