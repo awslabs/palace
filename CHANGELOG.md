@@ -34,7 +34,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the fraction of the field energy of each mode in the PML regions is written to
     `eig.csv`, which identifies the spurious modes of the layer. The multigrid
     preconditioner is complemented by a sparse direct solve of the PML regions
-    (`Solver.Linear.PMLSubdomainSolver`); with SuperLU_DIST, the accuracy of its
+    (`Solver.Linear.PMLSubdomainSolver`), factored in complex arithmetic, and its smoothers
+    do not update the unknowns of strongly stretched PML elements
+    (`Solver.Linear.PMLSmootherThreshold`); with SuperLU_DIST, the accuracy of the
     factorization is checked, and an inaccurate factorization is repeated with tiny pivot
     replacement and iterative refinement. SchemaVer 6-1-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).

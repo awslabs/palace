@@ -2830,7 +2830,7 @@
         },
         {
           "const": "Direct",
-          "description": "Use a sparse direct solver on the PML subdomain: the solver specified by `\"Type\"` if it is a sparse direct solver, otherwise the default sparse direct solver. The factorization is exact (without the low-rank compression of `\"STRUMPACKCompressionType\"`, and in double precision for `\"STRUMPACK-MP\"`), in complex arithmetic."
+          "description": "Use a sparse direct solver on the PML subdomain: the solver specified by `\"Type\"` if it is a sparse direct solver, otherwise the default sparse direct solver. The factorization is exact (without the low-rank compression of `\"STRUMPACKCompressionType\"`, and in double precision for `\"STRUMPACK-MP\"`), in complex arithmetic with SuperLU_DIST, STRUMPACK, and MUMPS (and as the equivalent real-valued system of twice the size with cuDSS)."
         }
       ]
     },
