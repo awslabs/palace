@@ -949,41 +949,44 @@ json Canonical(json config)
   return Doubles(std::move(config));
 }
 
+// Add the attributes of the lists in a node of the configuration whose key ends in
+// "Attributes".
+void CollectAttributes(const json &node, std::vector<int> &attrs)
+{
+  if (!node.is_structured())
+  {
+    return;
+  }
+  for (const auto &[key, value] : node.items())
+  {
+    if (key.ends_with("Attributes") && value.is_array())
+    {
+      for (const auto &a : value)
+      {
+        if (a.is_number_integer())
+        {
+          attrs.push_back(a.get<int>());
+        }
+      }
+    }
+    else
+    {
+      CollectAttributes(value, attrs);
+    }
+  }
+}
+
 // The boundary attributes the configuration names, but in postprocessing, sorted.
 std::vector<int> NamedBoundaryAttributes(const json &config)
 {
   std::vector<int> named;
-  auto collect = [&named](const json &node, auto &&self) -> void
-  {
-    if (!node.is_structured())
-    {
-      return;
-    }
-    for (const auto &[key, value] : node.items())
-    {
-      if (key.ends_with("Attributes") && value.is_array())
-      {
-        for (const auto &a : value)
-        {
-          if (a.is_number_integer())
-          {
-            named.push_back(a.get<int>());
-          }
-        }
-      }
-      else
-      {
-        self(value, self);
-      }
-    }
-  };
   if (const auto it = config.find("Boundaries"); it != config.end() && it->is_object())
   {
     for (const auto &[key, value] : it->items())
     {
       if (key != "Postprocessing")
       {
-        collect(value, collect);
+        CollectAttributes(value, named);
       }
     }
   }
