@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "driver.hpp"
 #include "fem/bilinearform.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
@@ -41,6 +42,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/outputdir.hpp"
 
 using json = nlohmann::json;
 
@@ -1255,6 +1257,44 @@ TEST_CASE_METHOD(
   REQUIRE_NOTHROW(C_on = capacitance("Online", write_mesh(true), {3, 4}));
   C_on -= C_off;
   CHECK(C_on.MaxMaxNorm() <= 1.0e-10 * C_off.MaxMaxNorm());
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Magnetostatic substructuring rejects a 2D mesh",
+                 "[substructure][Serial][Parallel]")
+{
+  // The interface of a magnetostatic model is matched by Nédélec signatures, in 3D: a 2D
+  // run stops before it condenses the environment.
+  const auto mesh_path = temp_dir / "square.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial =
+        mfem::Mesh::MakeCartesian2D(4, 2, mfem::Element::QUADRILATERAL, false, 1.0, 0.5);
+    mfem::Vector c;
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      serial.GetElementCenter(e, c);
+      serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+    }
+    serial.SetAttributes();
+    serial.Save(mesh_path.string());
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = {
+      {"Problem",
+       {{"Type", "Magnetostatic"}, {"Output", (temp_dir / "postpro_2d").string()}}},
+      {"Model", {{"Mesh", mesh_path.string()}}},
+      {"Domains", {{"Materials", {{{"Attributes", {1, 2}}, {"Permeability", 1.0}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {2, 3, 4}}}},
+        {"SurfaceCurrent",
+         {{{"Index", 1}, {"Attributes", {1}}, {"Direction", {1.0, 0.0, 0.0}}}}}}},
+      {"Solver", {{"Order", 1}, {"Substructuring", {{"Region", {{"Attributes", {1}}}}}}}}};
+  IoData iodata(config, false);
+  MPI_Comm comm = Mpi::World();
+  MakeOutputFolder(iodata, comm);
+  CHECK_THROWS_WITH(palace::Run(iodata, comm, 1),
+                    Catch::Matchers::ContainsSubstring("requires a 3D mesh"));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
