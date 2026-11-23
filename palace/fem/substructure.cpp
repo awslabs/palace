@@ -754,18 +754,6 @@ namespace
 
 using json = nlohmann::json;
 
-// Add an element of volume (or area) v and center c to the moments of AttributeMoments.
-void AddMoments(std::array<double, 6> &m, double v, const mfem::Vector &c)
-{
-  m[0] += 1.0;
-  m[1] += v;
-  m[2] += v * c.Norml2();
-  for (int d = 0; d < c.Size() && d < 3; d++)
-  {
-    m[3 + d] += v * c(d);
-  }
-}
-
 // The moments of each of n attributes, summed over the processes.
 void SumMoments(std::vector<std::array<double, 6>> &m, MPI_Comm comm)
 {
@@ -1032,6 +1020,17 @@ json SectionOn(const json &config, const char *section, std::vector<int> attrs,
 }
 
 }  // namespace
+
+void AddMoments(std::array<double, 6> &m, double v, const mfem::Vector &c)
+{
+  m[0] += 1.0;
+  m[1] += v;
+  m[2] += v * c.Norml2();
+  for (int d = 0; d < c.Size() && d < 3; d++)
+  {
+    m[3 + d] += v * c(d);
+  }
+}
 
 std::vector<std::array<double, 6>> AttributeMoments(mfem::ParMesh &mesh,
                                                     const std::vector<int> &attributes,
@@ -1313,6 +1312,12 @@ bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b
                   double tol)
 {
   return a[0] == b[0] && MomentsAgree(a, b, tol, {1, 2, 3, 4, 5});
+}
+
+bool RefinedMomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
+                         double tol)
+{
+  return MomentsAgree(a, b, tol, {1, 3, 4, 5});
 }
 
 std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespace,

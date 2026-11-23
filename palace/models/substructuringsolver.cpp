@@ -254,6 +254,24 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
               "The substructuring \"Region\" holds every domain attribute of the mesh: the "
               "environment is empty!");
   CheckSubstructuringAttributes(parent, sub.region_attributes, env_attributes);
+  // A cracked boundary across the interface doubles its DOFs there, which are matched to a
+  // saved model by their positions (see MatchSignatureBasis): its copies must be apart.
+  if (iodata.model.crack_displ_factor == 0.0 &&
+      (sub.Online() || !substructuring::SaveModelPath(iodata).empty()))
+  {
+    const auto region_bdr = BoundaryAttributesNextTo(parent, sub.region_attributes),
+               env_bdr = BoundaryAttributesNextTo(parent, env_attributes);
+    for (int a : iodata.boundaries.cracked_attributes)
+    {
+      MFEM_VERIFY(!std::ranges::binary_search(region_bdr, a) ||
+                      !std::ranges::binary_search(env_bdr, a),
+                  "Cracked boundary attribute "
+                      << a
+                      << " crosses the substructuring interface, whose DOFs a saved model "
+                         "matches by their positions: its copies there need a positive "
+                         "\"CrackDisplacementFactor\"!");
+    }
+  }
   if (magnetostatic)
   {
     SetUpBrokenSpace();
@@ -425,17 +443,14 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     CheckSheets();
     if (!saved.sheet_sides.empty())
     {
-      bool same = std::abs(gamma_sheet_sides[0] - saved.sheet_sides[0]) < 0.5;
-      for (int j = 1; j < 4; j++)
-      {
-        same = same && std::abs(gamma_sheet_sides[j] - saved.sheet_sides[j]) <=
-                           kFingerprintTol * std::max(1.0, saved.sheet_sides[0]);
-      }
-      MFEM_VERIFY(same, "The sheet faces on the interface are not on the same sides as in "
-                        "the saved substructuring model: a face belongs to the side of its "
-                        "neighbor with the lower attribute, and the attributes next to the "
-                        "interface changed. Keep them, or rerun offline (without "
-                        "\"ModelFile\")!");
+      std::array<double, 6> sides;
+      std::ranges::copy(saved.sheet_sides, sides.begin());
+      MFEM_VERIFY(RefinedMomentsMatch(gamma_sheet_sides, sides, kFingerprintTol),
+                  "The sheet faces on the interface are not on the same sides as in "
+                  "the saved substructuring model: a face belongs to the side of its "
+                  "neighbor with the lower attribute, and the attributes next to the "
+                  "interface changed. Keep them, or rerun offline (without "
+                  "\"ModelFile\")!");
     }
     mag_eps = model_eps;
     if (!(mag_eps > 0.0))

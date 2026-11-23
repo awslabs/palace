@@ -352,8 +352,7 @@ void SubstructuringSolver::Impl::CheckSheets()
   mfem::IsoparametricTransformation T1, T2;
   gamma_sheet_faces.clear();
   gamma_sheet_sides = {};
-  constexpr double k[3][3] = {{1.3, 2.9, 0.7}, {2.3, 0.5, 3.1}, {0.9, 1.7, 2.6}};
-  mfem::Array<int> vertices;
+  mfem::Vector x(3), c(3);
   for (int be = 0; be < parent.GetNBE(); be++)
   {
     const int attr = parent.GetBdrAttribute(be);
@@ -377,27 +376,26 @@ void SubstructuringSolver::Impl::CheckSheets()
       gamma_sheet_faces.push_back(be);
       if ((FET.Elem1->Attribute < FET.Elem2->Attribute) ? region1 : region2)
       {
-        std::array<double, 3> c = {0.0, 0.0, 0.0};
-        parent.GetBdrElementVertices(be, vertices);
-        for (int v : vertices)
+        // The area and centroid of the face, whose moments a refinement of it keeps.
+        mfem::ElementTransformation &T = *parent.GetBdrElementTransformation(be);
+        double area = 0.0;
+        c = 0.0;
+        for (const auto &ip : mfem::IntRules.Get(T.GetGeometryType(), 2 * T.Order() + 2))
         {
-          for (int d = 0; d < 3; d++)
-          {
-            c[d] += parent.GetVertex(v)[d] / vertices.Size();
-          }
+          T.SetIntPoint(&ip);
+          T.Transform(ip, x);
+          area += ip.weight * T.Weight();
+          c.Add(ip.weight * T.Weight(), x);
         }
-        gamma_sheet_sides[0] += 1.0;
-        for (int j = 0; j < 3; j++)
-        {
-          gamma_sheet_sides[j + 1] +=
-              std::cos(k[j][0] * c[0] + k[j][1] * c[1] + k[j][2] * c[2]);
-        }
+        c /= area;
+        AddMoments(gamma_sheet_sides, area, c);
       }
     }
     count[0]++;
   }
   Mpi::GlobalSum(3, count.data(), parent.GetComm());
-  Mpi::GlobalSum(4, gamma_sheet_sides.data(), parent.GetComm());
+  Mpi::GlobalSum(static_cast<int>(gamma_sheet_sides.size()), gamma_sheet_sides.data(),
+                 parent.GetComm());
   has_sheets = (count[0] > 0) || broken;
   MFEM_VERIFY(count[1] == 0, "Substructuring does not support a \"TwoSided\" "
                              "superconductor film between the region and the environment!");

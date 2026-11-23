@@ -298,8 +298,8 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   h.S_pos = S->pos;
   h.environment = *environment;
   values(kEpsTag, 1, &h.regularization);
-  h.sheet_sides.resize(4);
-  if (!values(kSheetSidesTag, 4, h.sheet_sides.data()))
+  h.sheet_sides.resize(6);
+  if (!values(kSheetSidesTag, 6, h.sheet_sides.data()))
   {
     h.sheet_sides.clear();
   }

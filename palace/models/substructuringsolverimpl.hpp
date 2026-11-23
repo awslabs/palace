@@ -563,12 +563,13 @@ struct SubstructuringSolver::Impl
   // with the lower domain attribute (see Mesh::GetCeedBdrAttributesByNeighbor), so exactly
   // one side; on Gamma, either side, which the mesh of the region keeps the environment
   // neighbors to tell (see WriteRegionMesh), and which an online run checks against the
-  // model, since it assembles only the region's: the number of the faces on Gamma that the
-  // region holds, and the sums over them of cos(k_j . c) for three fixed k_j, c the center
-  // of the face. Checks the two-sided films against the interface. Collective.
+  // model, since it assembles only the region's: the moments of AttributeMoments of the
+  // faces on Gamma that the region holds, of which the area and the first moments are kept
+  // by a refinement of the region. Checks the two-sided films against the interface.
+  // Collective.
   bool has_sheets = false, has_london = false;
   std::vector<int> gamma_sheet_faces;
-  std::array<double, 4> gamma_sheet_sides = {};
+  std::array<double, 6> gamma_sheet_sides = {};
   void CheckSheets();
 
   // Sheet and London masses of the region, for the flux-loop sources and energies.
@@ -703,7 +704,7 @@ struct SubstructuringSolver::Impl
   // signatures nG x width and Model.Lc of the offline run), SENV [S_E nG x nG], ENVF
   // [environment fingerprint, 5 doubles], in
   // magnetostatics MEPS [the regularization eps] and SIDS [the sides of the sheet faces on
-  // Gamma, 4 doubles], ENVR [the EnvironmentRecord], ELPS [the flux loops of the
+  // Gamma, 6 doubles], ENVR [the EnvironmentRecord], ELPS [the flux loops of the
   // environment, which the mesh of the region leaves out], and as they are computed SKEN
   // [S^K nG x nG] (magnetostatics), SKIN [S^Kin nG x nG] (with London sheets in the
   // environment), MODE [K][ids][fingerprints 2K][G nG x K][Cmode KxK] (electrostatics),

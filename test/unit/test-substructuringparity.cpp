@@ -877,6 +877,62 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(E_off > 0.0);
   CHECK(std::abs(E_on - E_off) <= 1.0e-9 * E_off);
   CHECK(std::abs(E_region - E_off) <= 1.0e-9 * E_off);
+  // Refined in the region next to the sheet on Gamma, nonconformingly as by the adaptation
+  // of an online run, its faces split and keep their side.
+  mfem::Mesh refined = MakeParitySerial(8, opt);
+  refined.EnsureNCMesh(true);
+  mfem::Array<int> marked;
+  mfem::Vector c;
+  for (int e = 0; e < refined.GetNE(); e++)
+  {
+    refined.GetElementCenter(e, c);
+    if ((region_below ? (c(0) > 0.37 && c(0) < 0.5) : (c(0) > 0.5 && c(0) < 0.63)) &&
+        c(1) > 0.37 && c(1) < 0.63)
+    {
+      marked.Append(e);
+    }
+  }
+  refined.GeneralRefinement(marked, 1, 0);
+  const double E_refined = energy(make_config("Online"), std::move(refined));
+  CAPTURE(E_refined);
+  CHECK(std::abs(E_refined - E_off) <= 1.0e-2 * E_off);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Substructuring tells apart the copies of a crack across the interface",
+                 "[substructure][Serial][Parallel]")
+{
+  // A cracked boundary across the interface (the patch y = 1/4, of zero charge) doubles its
+  // interface DOFs, which a saved model matches by their positions: displaced as by
+  // default, the copies are told apart and an online run gives the capacitance of the
+  // offline one, and not displaced, the run is rejected.
+  const std::string mesh_path = (temp_dir / "cracked.mesh").string();
+  if (Mpi::Root(Mpi::World()))
+  {
+    MakeParitySerial(8, {}).Save(mesh_path);
+  }
+  Mpi::Barrier(Mpi::World());
+  const std::string model_path = (temp_dir / "cracked" / "environment.model").string();
+  auto capacitance = [&](const std::string &mode, double displacement)
+  {
+    json config = ElectrostaticConfig(1);
+    config["Model"] = {{"Mesh", mesh_path}, {"CrackDisplacementFactor", displacement}};
+    config["Boundaries"]["ZeroCharge"] = {{"Attributes", {kSheet}}};
+    test::SetModelRun(config, mode, model_path);
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, 2});
+  };
+  CHECK_THROWS_WITH(
+      capacitance("Offline", 0.0),
+      Catch::Matchers::ContainsSubstring("crosses the substructuring interface"));
+  const mfem::DenseMatrix C_off = capacitance("Offline", 1.0e-12);
+  mfem::DenseMatrix C_on = capacitance("Online", 1.0e-12);
+  C_on -= C_off;
+  CHECK(C_on.MaxMaxNorm() <= 1.0e-10 * C_off.MaxMaxNorm());
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

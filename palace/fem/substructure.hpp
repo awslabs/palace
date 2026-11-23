@@ -207,6 +207,14 @@ std::vector<std::array<double, 6>> AttributeMoments(mfem::ParMesh &mesh,
                                                     const std::vector<int> &attributes,
                                                     const std::vector<char> &mark = {});
 
+// Add an element of volume (or area) v and center c to moments of AttributeMoments.
+void AddMoments(std::array<double, 6> &m, double v, const mfem::Vector &c);
+
+// Whether two moments of AttributeMoments agree within the relative tolerance in what a
+// refinement of their elements keeps: their volumes and first moments.
+bool RefinedMomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
+                         double tol);
+
 // The boundary attributes of the boundary elements next to an element with one of the given
 // domain attributes (on either side, for an interior boundary), sorted. Collective.
 std::vector<int> BoundaryAttributesNextTo(mfem::ParMesh &mesh,
