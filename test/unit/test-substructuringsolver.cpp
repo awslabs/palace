@@ -4716,10 +4716,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring writes the probes it interpolates in the region",
                  "[substructure][Serial][Parallel][Long]")
 {
-  // Two probes on Γ and one in the region. Online on the full mesh, all three are written,
-  // those on Γ with the field of the region, on its side of Γ, where the normal E jumps
-  // (the permittivities of the sides differ): the values of a regular sweep with the probes
-  // on Γ moved into the region by 1e-9.
+  // Two probes on Γ, one in the region and one in the environment. Online on the full mesh,
+  // the first three are written, those on Γ with the field of the region, on its side of Γ,
+  // where the normal E jumps (the permittivities of the sides differ): the values of a
+  // regular sweep with the probes on Γ moved into the region by 1e-9. The exact offline
+  // sweep, of the whole device, writes those off Γ as a regular sweep.
   auto probes = [](double shift)
   {
     return [shift](json &config)
@@ -4727,7 +4728,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       config["Domains"]["Postprocessing"]["Probe"] = {
           {{"Index", 1}, {"Center", {0.5 - shift, -3.1, 4.7}}},
           {{"Index", 2}, {"Center", {0.5 - shift, 0.3, 0.2}}},
-          {{"Index", 3}, {"Center", {-6.0, 0.0, -3.0}}}};
+          {{"Index", 3}, {"Center", {-6.0, 0.0, -3.0}}},
+          {{"Index", 4}, {"Center", {5.0, 0.0, -3.0}}}};
     };
   };
   RunDrivenSheetSquare(temp_dir, "Offline", probes(0.0));
@@ -4742,9 +4744,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   for (const std::string csv : {"probe-E.csv", "probe-B.csv"})
   {
     CAPTURE(csv);
-    const auto online = ReadCsv(temp_dir / "postpro_Online" / csv);
     const auto regular = ReadCsv(temp_dir / "postpro_Regular" / csv);
-    REQUIRE(online.second.size() == regular.second.size());
     double scale = 0.0;
     for (const auto &row : regular.second)
     {
@@ -4753,21 +4753,34 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         scale = std::max(scale, std::abs(row[c]));
       }
     }
-    std::set<std::string> written;
-    for (std::size_t c = 1; c < online.first.size(); c++)
+    // The probes a sweep writes, against the regular ones off Γ, or all.
+    auto check = [&](const std::string &dir, bool on_gamma)
     {
-      const auto &name = online.first[c];
-      CAPTURE(name);
-      written.insert(name.substr(name.find('[') + 1, 1));
-      const auto it = std::ranges::find(regular.first, name);
-      REQUIRE(it != regular.first.end());
-      const auto k = static_cast<std::size_t>(it - regular.first.begin());
-      for (std::size_t r = 0; r < online.second.size(); r++)
+      const auto run = ReadCsv(temp_dir / dir / csv);
+      REQUIRE(run.second.size() == regular.second.size());
+      std::set<std::string> written;
+      for (std::size_t c = 1; c < run.first.size(); c++)
       {
-        CHECK(std::abs(online.second[r][c] - regular.second[r][k]) <= 1.0e-8 * scale);
+        const auto &name = run.first[c];
+        CAPTURE(dir, name);
+        const auto probe = name.substr(name.find('[') + 1, 1);
+        written.insert(probe);
+        if (!on_gamma && (probe == "1" || probe == "2"))
+        {
+          continue;
+        }
+        const auto it = std::ranges::find(regular.first, name);
+        REQUIRE(it != regular.first.end());
+        const auto k = static_cast<std::size_t>(it - regular.first.begin());
+        for (std::size_t r = 0; r < run.second.size(); r++)
+        {
+          CHECK(std::abs(run.second[r][c] - regular.second[r][k]) <= 1.0e-8 * scale);
+        }
       }
-    }
-    CHECK(written == std::set<std::string>{"1", "2", "3"});
+      return written;
+    };
+    CHECK(check("postpro_Online", true) == std::set<std::string>{"1", "2", "3"});
+    CHECK(check("postpro_Offline", false) == std::set<std::string>{"1", "2", "3", "4"});
   }
 }
 #endif
