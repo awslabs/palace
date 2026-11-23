@@ -707,10 +707,10 @@ TEST_CASE("Quasi-Newton on processes without unknowns", "[nleps][Serial][Paralle
   CHECK(qn.GetError(0, EigenvalueSolver::ErrorType::BACKWARD) <= tol);
 }
 
-// PARPACK requires as many unknowns on every process as basis vectors, and checks it on
-// each process alone. With all the dofs on the first process, the others have none: the
-// solver raises the error on every process.
-TEST_CASE("ARPACK requires enough unknowns on every process", "[nleps][Serial][Parallel]")
+// PARPACK requires unknowns on every process, and checks it on each process alone. With all
+// the dofs on the first process, the others have none: the solver raises the error on
+// every process.
+TEST_CASE("ARPACK requires unknowns on every process", "[nleps][Serial][Parallel]")
 {
 #if !defined(PALACE_WITH_ARPACK)
   SKIP("Requires the ARPACK eigensolver");
@@ -744,8 +744,8 @@ TEST_CASE("ARPACK requires enough unknowns on every process", "[nleps][Serial][P
   }
   else
   {
-    CHECK_THROWS_WITH(eigen.Solve(),
-                      Catch::Matchers::ContainsSubstring("unknowns on every process"));
+    CHECK_THROWS_WITH(eigen.Solve(), Catch::Matchers::ContainsSubstring(
+                                         "with processes without unknowns"));
   }
 #endif
 }

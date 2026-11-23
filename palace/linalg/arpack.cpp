@@ -312,14 +312,13 @@ int ArpackEigenvalueSolver::SolveInternal(int n, std::complex<double> *r,
       break;
   }
 
-  // PARPACK checks that the number of basis vectors does not exceed the local size of the
-  // problem on each process alone, so a process with too few unknowns, or none, would fail
-  // while the others wait for it.
-  int n_min = n;
-  Mpi::GlobalMin(1, &n_min, comm);
-  MFEM_VERIFY(n_min >= ncv, "ARPACK eigenvalue solver requires at least "
-                                << ncv << " unknowns on every process (" << n_min
-                                << " on one)!");
+  // PARPACK requires unknowns on every process, and checks it on each process alone, so a
+  // process without unknowns would fail while the others wait for it.
+  int num_empty = (n == 0);
+  Mpi::GlobalSum(1, &num_empty, comm);
+  MFEM_VERIFY(num_empty == 0,
+              "ARPACK eigenvalue solver cannot solve with processes without unknowns ("
+                  << num_empty << " of " << Mpi::Size(comm) << ")!");
 
   // Allocate work arrays.
   a_int lworkl = 3 * ncv * ncv + 5 * ncv;
