@@ -807,6 +807,28 @@ the part of a [Floquet wave vector](#Floquet-periodic-boundary-conditions) tange
 boundary exceeds ``\sqrt{2}k``, for which *Palace* prints a warning. The first-order
 condition is passive.
 
+In the two-dimensional eigenvalue problem of a wave port or a boundary mode simulation, the
+absorbing boundary conditions apply on the edges of the cross-section, which are
+boundaries of the 3D model parallel to the direction of propagation, for the field
+``\bm{E} = (\bm{E}_t + E_n\hat{\bm{n}})e^{-ik_n x_n}``. On an edge with the unit tangent
+``\bm{\tau}`` in the plane of the cross-section, the component of the curl of the field
+normal to the boundary is ``(\partial_\tau E_n + ik_n E_\tau)e^{-ik_n x_n}``, and the
+second-order term of the weak form of the 3D problem, the integral over the boundary of
+``\beta`` times the product of these components of the curls of the field and of the test
+function, becomes
+
+```math
+\beta\int_{\partial\Omega}(\partial_\tau E_n + ik_n E_\tau)(\partial_\tau v_n - ik_n v_\tau)\,dl
+```
+
+per unit length, for the test function ``\bm{v} = (\bm{v}_t + v_n\hat{\bm{n}})e^{ik_n x_n}``.
+Its ``k_n^2`` term adds to the matrix of the eigenvalue ``k_n^2``, which then depends on
+frequency. The propagation constant is part of the tangential wavenumber on the edges, so
+the second-order condition is not passive on the edges where the effective index
+``\text{Re}\{k_n\}/k_0`` of a mode exceeds ``\sqrt{2}`` times the refractive index of the
+material: for example, on edges in vacuum, for the quasi-TEM mode of a coplanar waveguide on
+a substrate with a relative permittivity above 3.
+
 Additionally, while metals with finite conductivity can be modeled using an impedance
 boundary condition with constant impedance ``Z_s``, a more accurate model taking into
 account the frequency dependence of the skin depth is

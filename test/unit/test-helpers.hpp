@@ -5,6 +5,7 @@
 #define PALACE_TEST_HELPERS_HPP
 
 #include <array>
+#include <complex>
 #include <cstdlib>
 #include <functional>
 #include <optional>
@@ -67,6 +68,22 @@ std::string CaptureStdout(const std::function<void()> &f);
 // Deterministic pseudo-random orthonormal frames (e1, e2, normal) of planes oblique to
 // every coordinate axis.
 std::vector<std::array<mfem::Vector, 3>> ObliqueFrames(int num_frames);
+
+// Propagation constant of a mode of the 2D cross-section 0 < x < W, 0 < y < H of a guide in
+// vacuum between PEC plates at y = 0 and y = H, with absorbing boundaries of the given
+// order at x = 0 and x = W, at the free-space wavenumber k. The fields E = ∇ × (x̂ ψ) with
+// ψ = cos(κ(x - W/2)) cos(mπy/H) e^{-ikₙz} and κ² = k² - kₙ² - (mπ/H)² have Eₓ = 0 and, for
+// m > 0, an out-of-plane component Eₙ which varies along the absorbing boundaries. On
+// these, the field has the tangential wavenumber q, with q² = kₙ² + (mπ/H)² = k² - κ², and
+// satisfies the absorbing boundary condition for ∂ₓψ = ∓iγψ at x = W and x = 0: the
+// first-order condition for γ = k, and the second-order one, whose term acts on the normal
+// component -iωμHₓ = q²ψ of the curl of E, for γ = k - q²/(2k) (the normal wavenumber of
+// the condition, see docs/src/reference.md). So κ tan(κW/2) = iγ. For m > 0, the fields E =
+// ∇ × ∇ × (x̂ φ) with φ = cos(κ(x - W/2)) sin(mπy/H) e^{-ikₙz} have Hₓ = 0, so that the
+// second-order term vanishes on them, and satisfy both conditions for γ = k: they are the
+// modes of the first-order condition.
+std::complex<double> ExactAbsorbingParallelPlateKn(double W, double H, double k, int m,
+                                                   int abc_order);
 
 // Restores the global assembly and integration-order settings on destruction. With a
 // SolverData argument, first installs its integration orders, as the drivers do.

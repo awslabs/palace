@@ -7,6 +7,7 @@
 #include <complex>
 #include <memory>
 #include <tuple>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
@@ -34,7 +35,11 @@ enum class CoefficientType
   // Scale of the frequency-dependent boundary mass term index of SurfaceTerms.
   SURFACE_TERM,
   // Nonlinear system coefficient g(iω) = s²χ(s) of the frequency-dependent material index.
-  FREQUENCY_DEPENDENT_PERMITTIVITY
+  FREQUENCY_DEPENDENT_PERMITTIVITY,
+  // Scale β(ω) of the second-order absorbing boundary term index of SurfaceTerms, for its
+  // terms which are not in B, and σ β(ω) for those which are (see ModeOperatorModel).
+  SECOND_ORDER_FARFIELD,
+  SECOND_ORDER_FARFIELD_SHIFT
 };
 
 // One complete, BC-eliminated component of the mode eigenproblem matrix A. Exact assembly
@@ -57,12 +62,30 @@ struct OperatorComponent
 
 // Frequency-parametric mode eigenproblem matrix. The complete fixed components are the
 // single source of truth for both exact sparse assembly and wave-port projection.
+//
+// The eigenproblem (A₀(ω) + kₙ² B(ω)) e = 0 is solved for the shifted matrix A(ω, σ) =
+// A₀(ω) - σ B(ω), the sum of the components scaled by their coefficients. Without
+// second-order absorbing boundaries, B = [Btt, 0; Btn, 0] does not depend on frequency.
+// On the edges of the cross-section, the boundary curl-curl term β (n·∇×E, n·∇×F) of the
+// second-order absorbing boundary condition of the 3D solve, for E = (Eₜ + ẑEₙ) e^{-ikₙz}
+// and F = (Fₜ + ẑFₙ) e^{ikₙz}, has the surface curl n·∇×E = ∂_τEₙ + ikₙE_τ along the
+// tangent τ = ẑ × n of the edge (and n·∇×F = ∂_τFₙ - ikₙF_τ). With ẽₙ = ikₙEₙ, and the
+// equation of the out-of-plane component scaled by -ikₙ as for the domain terms, it adds
+//   β (kₙ² [M, 0; Gᵀ, 0] - [0, G; 0, D])
+// with the boundary forms M = (E_τ, F_τ), G = (∂_τẽₙ, F_τ), and D = (∂_τẽₙ, ∂_τFₙ), with
+// the coefficient μ⁻¹c₀. So it adds the component -[0, G; 0, D], with coefficient β(ω), and
+// the component -[M, 0; Gᵀ, 0], with coefficient σ β(ω) in A and -β(ω) in B (see
+// EvaluateBCoefficient), like the domain terms of Btt, Atn, Ann and Btn.
 class ModeOperatorModel
 {
 private:
   const MaterialOperator &mat_op;
   const SurfaceTerms &surface_terms;
   std::vector<OperatorComponent> components;
+
+  // The lower-left (H1 x ND) blocks -Gᵀ of the components -[M, 0; Gᵀ, 0] of second-order
+  // absorbing boundaries, without elimination of essential DOFs, and their term index.
+  std::vector<std::pair<int, std::unique_ptr<mfem::HypreParMatrix>>> farfield_lower_blocks;
 
 public:
   ModeOperatorModel(const FiniteElementSpace &nd_fespace,
@@ -76,6 +99,22 @@ public:
   std::complex<double> EvaluateCoefficient(const OperatorComponent &component,
                                            std::complex<double> omega, double sigma) const;
   std::unique_ptr<ComplexOperator> Assemble(std::complex<double> omega, double sigma) const;
+
+  // Coefficient of the component in B(ω) = B₀ + Σ bᵢ(ω) Cᵢ, with the frequency-independent
+  // B₀ = [Btt, 0; Btn, 0] (zero for the components which are not in B), whether B depends
+  // on frequency, and the assembled B(ω) (MPI collective on the FE space communicator).
+  std::complex<double> EvaluateBCoefficient(const OperatorComponent &component,
+                                            std::complex<double> omega) const;
+  bool HasFrequencyDependentB() const;
+  std::unique_ptr<ComplexOperator> AssembleB(const mfem::HypreParMatrix &B0,
+                                             std::complex<double> omega) const;
+
+  // Add the lower-left (H1 x ND) block of A(ω, σ) from second-order absorbing boundaries,
+  // σ β(ω) (-Gᵀ), without elimination of essential DOFs, to the real and imaginary parts of
+  // a matrix (MPI collective on the FE space communicator).
+  void AddSecondOrderFarfieldLowerBlock(std::complex<double> omega, double sigma,
+                                        std::unique_ptr<mfem::HypreParMatrix> &real,
+                                        std::unique_ptr<mfem::HypreParMatrix> &imag) const;
 };
 
 ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,

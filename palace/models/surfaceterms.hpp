@@ -53,12 +53,13 @@ enum class ProblemType : char;
 // through the scale r_k(ω) of its material (FarfieldBoundaryOperator::GetDispersiveScale).
 // Its first-order term is one of the frequency-dependent boundary mass terms, and its
 // second-order terms are added with those of the other absorbing boundaries
-// (AddExtraSystemBdrCoefficients). The real and imaginary parts of their scales have no
-// sign where r_k is not real (a lossy material, or a Drude medium below its plasma
-// frequency), so the real preconditioner of the 3D solve and both preconditioners of a 2D
-// mode solve take the magnitudes of these terms, and the coarse level of the complex
-// preconditioner of the 3D solve, where a real-valued coarse solve flips the sign of the
-// second-order curl-curl term, the magnitude of that term
+// (AddExtraSystemBdrCoefficients), and in a 2D mode solve are second-order absorbing
+// boundary terms of their own (the SecondOrderFarfieldTerm methods). The real and imaginary
+// parts of their scales have no sign where r_k is not real (a lossy material, or a Drude
+// medium below its plasma frequency), so the real preconditioner of the 3D solve and both
+// preconditioners of a 2D mode solve take the magnitudes of these terms, and the coarse
+// level of the complex preconditioner of the 3D solve, where a real-valued coarse solve
+// flips the sign of the second-order curl-curl term, the magnitude of that term
 // (AddFlippedPreconditionerBdrCoefficients); otherwise, the complex preconditioner of the
 // 3D solve has the terms of the system.
 //
@@ -207,6 +208,24 @@ public:
                                                    double coeff = 1.0) const;
   std::complex<double> GetExtraSystemBdrMassTermScale(int i,
                                                       std::complex<double> omega) const;
+
+  // The second-order absorbing boundary terms of a 2D mode solve one at a time, for
+  // the index 0 <= i < GetNumSecondOrderFarfieldTerms() (none without second-order
+  // absorbing boundaries): one for the absorbing boundaries next to no
+  // frequency-dependent material, then one for those next to each frequency-dependent
+  // material k (in the order of FarfieldBoundaryOperator::GetDispersiveMaterial). A
+  // term is the curl-curl coefficient of the absorbing boundary condition, μ⁻¹c₀,
+  // times coeff (see the CurlCurlBdrCoefficients methods of FarfieldBoundaryOperator),
+  // scaled by β(ω) = 1/(2iω), or 1/(2iω r_k(ω)) next to material k
+  // (FarfieldBoundaryOperator::GetDispersiveScale), at the (possibly complex)
+  // frequency ω: the coefficient β μ⁻¹c₀ of the boundary curl-curl term of the 3D
+  // solve (AddExtraSystemBdrCoefficients), without Floquet terms. A term can have no
+  // boundary elements on the mesh.
+  int GetNumSecondOrderFarfieldTerms() const;
+  void AddSecondOrderFarfieldTermCoefficients(int i, MaterialPropertyCoefficient &fb,
+                                              double coeff = 1.0) const;
+  std::complex<double> GetSecondOrderFarfieldTermScale(int i,
+                                                       std::complex<double> omega) const;
 
   // The label of term i in output files and log lines (surfsigma_<group>,
   // rationalz_<boundary>, and farfield_permittivity_<k>), and the name of its boundary in

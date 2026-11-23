@@ -19,6 +19,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - `"BoundaryMode"` simulations and wave port mode solves apply the second-order absorbing
+    boundary condition (`"Absorbing"` with `"Order": 2`) on the edges of the cross-section,
+    instead of only its first-order term. Wave ports with edges on such a boundary warn that
+    the port boundary condition lacks this term along them.
+    [PR 1298](https://github.com/awslabs/palace/pull/1298).
   - Fixed the boundary-mode `Sn` output for materials whose out-of-plane permeability
     differs from the in-plane one: the in-plane magnetic field of the mode was computed with
     the out-of-plane inverse permeability, so that `Sn` did not integrate to the mode power.

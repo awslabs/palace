@@ -163,6 +163,11 @@ public:
   std::complex<double> GetDispersiveScale(std::size_t k, std::complex<double> omega) const;
   void AddDispersiveDampingBdrCoefficients(std::size_t k, double coeff,
                                            MaterialPropertyCoefficient &fb) const;
+  // Add coeff times the curl-curl coefficient μ⁻¹c₀ of the second-order absorbing BC, with
+  // neither the scale a of the complex overloads nor the Floquet terms, on the absorbing
+  // boundaries next to no frequency-dependent material, or next to frequency-dependent
+  // material k, to df. No-op when order < 2.
+  void AddCurlCurlBdrCoefficients(double coeff, MaterialPropertyCoefficient &df) const;
   void AddDispersiveCurlCurlBdrCoefficients(std::size_t k, double coeff,
                                             MaterialPropertyCoefficient &df) const;
   // Full second-order form of material k, with a unit material scale. The curl-curl

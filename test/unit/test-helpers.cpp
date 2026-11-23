@@ -3,11 +3,13 @@
 
 #include "test-helpers.hpp"
 
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <limits>
 #include <map>
+#include <numbers>
 #include <random>
 #include <stdexcept>
 #include <unistd.h>
@@ -126,6 +128,32 @@ std::vector<std::array<mfem::Vector, 3>> ObliqueFrames(int num_frames)
     frames.push_back({e1, e2, n});
   }
   return frames;
+}
+
+std::complex<double> ExactAbsorbingParallelPlateKn(double W, double H, double k, int m,
+                                                   int abc_order)
+{
+  auto F = [&](std::complex<double> kappa)
+  {
+    const std::complex<double> gamma =
+        (abc_order > 1) ? 0.5 * k + 0.5 * kappa * kappa / k : std::complex<double>(k);
+    return kappa * std::sin(0.5 * kappa * W) -
+           std::complex<double>(0.0, 1.0) * gamma * std::cos(0.5 * kappa * W);
+  };
+  // Secant iteration from near the mode with PEC sides (κ = π/W).
+  std::complex<double> kappa0(0.9 * std::numbers::pi / W, 0.1 / W),
+      kappa1(std::numbers::pi / W, 0.0);
+  std::complex<double> F0 = F(kappa0), F1 = F(kappa1);
+  for (int it = 0; it < 100 && std::abs(kappa1 - kappa0) > 1.0e-15 * std::abs(kappa1); it++)
+  {
+    const std::complex<double> kappa2 = kappa1 - F1 * (kappa1 - kappa0) / (F1 - F0);
+    kappa0 = kappa1;
+    F0 = F1;
+    kappa1 = kappa2;
+    F1 = F(kappa1);
+  }
+  const double ky = m * std::numbers::pi / H;
+  return std::sqrt(k * k - kappa1 * kappa1 - ky * ky);
 }
 
 }  // namespace palace::test

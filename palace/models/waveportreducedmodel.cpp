@@ -365,27 +365,38 @@ bool WavePortReducedModel::TrySolve(double omega, double sigma)
     return false;
   }
 
-  Eigen::MatrixXcd Ar = Eigen::MatrixXcd::Zero(n, n);
-  std::vector<std::complex<double>> coefficients;
+  // Reduced A(ω, σ) and B(ω), from the projections of B₀ and of the components, with
+  // their coefficients in A and in B (see mode_assembly::ModeOperatorModel).
+  Eigen::MatrixXcd Ar = Eigen::MatrixXcd::Zero(n, n), Br = B_projection;
+  std::vector<std::complex<double>> coefficients, b_coefficients;
   coefficients.reserve(components.size());
+  b_coefficients.reserve(components.size());
   for (const auto &component : components)
   {
     const auto coeff = mode_op_model.EvaluateCoefficient(*component.source, omega, sigma);
+    const auto b_coeff = mode_op_model.EvaluateBCoefficient(*component.source, omega);
     coefficients.push_back(coeff);
+    b_coefficients.push_back(b_coeff);
     Ar.noalias() += coeff * component.projection;
+    if (b_coeff != 0.0)
+    {
+      Br.noalias() += b_coeff * component.projection;
+    }
   }
-  return SolveFromGram(sigma, Ar, coefficients);
+  return SolveFromGram(sigma, Ar, Br, coefficients, b_coefficients);
 }
 
 std::optional<double> WavePortReducedModel::EvaluateGramResidual(
     const Eigen::VectorXcd &y, std::complex<double> lambda,
-    const std::vector<std::complex<double>> &coefficients)
+    const std::vector<std::complex<double>> &coefficients,
+    const std::vector<std::complex<double>> &b_coefficients)
 {
   const long n = static_cast<long>(basis.size());
   const long n_families = 1 + static_cast<long>(components.size());
   const long dim = n * n_families;
   MFEM_VERIFY(y.size() == n && coefficients.size() == components.size() &&
-                  action_gram.rows() == dim && action_gram.cols() == dim,
+                  b_coefficients.size() == components.size() && action_gram.rows() == dim &&
+                  action_gram.cols() == dim,
               "Invalid affine Gram residual dimensions!");
 
   Eigen::VectorXcd cb = Eigen::VectorXcd::Zero(dim);
@@ -394,6 +405,7 @@ std::optional<double> WavePortReducedModel::EvaluateGramResidual(
   for (long q = 0; q < static_cast<long>(coefficients.size()); q++)
   {
     ca.segment((q + 1) * n, n) = coefficients[q] * y;
+    cb.segment((q + 1) * n, n) = b_coefficients[q] * y;
   }
   const Eigen::VectorXcd cr = cb - lambda * ca;
 
@@ -428,10 +440,12 @@ std::optional<double> WavePortReducedModel::EvaluateGramResidual(
 
 double WavePortReducedModel::EvaluateDirectResidual(
     const Eigen::VectorXcd &y, std::complex<double> lambda,
-    const std::vector<std::complex<double>> &coefficients) const
+    const std::vector<std::complex<double>> &coefficients,
+    const std::vector<std::complex<double>> &b_coefficients) const
 {
   const int n = static_cast<int>(basis.size());
-  MFEM_VERIFY(y.size() == n && coefficients.size() == components.size(),
+  MFEM_VERIFY(y.size() == n && coefficients.size() == components.size() &&
+                  b_coefficients.size() == components.size(),
               "Invalid affine direct residual dimensions!");
   ComplexVector ax(nd_size + h1_size), bx(nd_size + h1_size), residual(nd_size + h1_size);
   ax.UseDevice(true);
@@ -448,6 +462,10 @@ double WavePortReducedModel::EvaluateDirectResidual(
     for (int j = 0; j < n; j++)
     {
       ax.Add(coefficients[q] * y(j), components[q].actions[j]);
+      if (b_coefficients[q] != 0.0)
+      {
+        bx.Add(b_coefficients[q] * y(j), components[q].actions[j]);
+      }
     }
   }
   residual = bx;
@@ -459,15 +477,15 @@ double WavePortReducedModel::EvaluateDirectResidual(
 }
 
 bool WavePortReducedModel::SolveFromGram(
-    double sigma, const Eigen::MatrixXcd &Ar,
-    const std::vector<std::complex<double>> &coefficients)
+    double sigma, const Eigen::MatrixXcd &Ar, const Eigen::MatrixXcd &Br,
+    const std::vector<std::complex<double>> &coefficients,
+    const std::vector<std::complex<double>> &b_coefficients)
 {
   int n = static_cast<int>(basis.size());
-  MFEM_VERIFY(Ar.rows() == n && Ar.cols() == n && B_projection.rows() == n &&
-                  B_projection.cols() == n,
+  MFEM_VERIFY(Ar.rows() == n && Ar.cols() == n && Br.rows() == n && Br.cols() == n,
               "Invalid reduced affine mode-operator dimensions!");
 
-  Eigen::MatrixXcd Bq = B_projection, Aq = Ar;
+  Eigen::MatrixXcd Bq = Br, Aq = Ar;
   Eigen::VectorXcd alpha(n), beta(n);
   Eigen::MatrixXcd vl_dummy(1, 1), vr(n, n);
   int ldvl = 1, ldvr = n, lwork = std::max(4 * n, 1), info = 0;
@@ -551,7 +569,7 @@ bool WavePortReducedModel::SolveFromGram(
     }
     y /= ynorm;
 
-    const auto gram_eta = EvaluateGramResidual(y, lambda, coefficients);
+    const auto gram_eta = EvaluateGramResidual(y, lambda, coefficients, b_coefficients);
     double eta = gram_eta.value_or(std::numeric_limits<double>::infinity());
     const bool near_acceptance_threshold =
         eta >= 0.25 * tolerance && eta <= 4.0 * tolerance;
@@ -561,7 +579,8 @@ bool WavePortReducedModel::SolveFromGram(
                                unchecked_acceptance_candidate || near_acceptance_threshold;
     if (verify_direct)
     {
-      const double direct_eta = EvaluateDirectResidual(y, lambda, coefficients);
+      const double direct_eta =
+          EvaluateDirectResidual(y, lambda, coefficients, b_coefficients);
       if (gram_eta && std::isfinite(direct_eta))
       {
         // Normalize by the acceptance scale: relative error against a residual already at

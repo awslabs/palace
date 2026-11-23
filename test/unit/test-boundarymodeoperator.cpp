@@ -666,6 +666,92 @@ SolveParallelPlateMode(double t, double d, double freq_ghz, double n_target,
           ksp->NumTotalMultIterations()};
 }
 
+// The two modes nearest to the shift target kₙ = omega n_target of the cross-section of
+// test::ExactAbsorbingParallelPlateKn for W = 1 m and H = 0.5 m, at 0.5 GHz (the free-space
+// wavenumber k = omega, in 1/m), with a mesh of n x n / 2 quadrilaterals of the given
+// order, solved through the 2D BoundaryModeOperator path of the BoundaryMode driver with a
+// sparse direct or p-multigrid (mg_max_levels > 1) preconditioner: their propagation
+// constants, and the numbers of linear solves and iterations. MakeCartesian2D boundary
+// attributes: bottom = 1, right = 2, top = 3, left = 4.
+constexpr double absorbing_parallel_plate_freq_ghz = 0.5;
+struct AbsorbingParallelPlateModes
+{
+  std::vector<std::complex<double>> kn;
+  int num_solves, num_iterations;
+};
+AbsorbingParallelPlateModes SolveAbsorbingParallelPlateModes(int abc_order, double n_target,
+                                                             int order, int n,
+                                                             int mg_max_levels,
+                                                             bool pc_mat_real)
+{
+  constexpr double W = 1.0, H = 0.5, freq_ghz = absorbing_parallel_plate_freq_ghz,
+                   tol = 1.0e-10;
+  constexpr int num_modes = 2;
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(Units(1.0, 1.0));
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+  iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.boundaries.pec.attributes = {1, 3};
+  iodata.boundaries.farfield.attributes = {2, 4};
+  iodata.boundaries.farfield.order = abc_order;
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.freq = freq_ghz;
+  iodata.solver.boundary_mode.n = num_modes;
+  iodata.solver.boundary_mode.tol = tol;
+  iodata.solver.linear.tol = tol;
+  iodata.solver.linear.max_it = 200;
+  iodata.solver.linear.mg_max_levels = mg_max_levels;
+  iodata.solver.linear.pc_mat_real = pc_mat_real;
+
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(n, n / 2, mfem::Element::QUADRILATERAL, false, W, H));
+  iodata.NondimensionalizeInputs(serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
+  iodata.CheckConfiguration();
+
+  MaterialOperator mat_op(iodata, *mesh.back());
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+  const int nd_size = mode_op.GetNDTrueVSize();
+  mfem::Array<int> dbc_tdof_list;
+  dbc_tdof_list.Append(mode_op.GetNDDbcTDofLists().back());
+  for (auto tdof : mode_op.GetH1DbcTDofLists().back())
+  {
+    dbc_tdof_list.Append(nd_size + tdof);
+  }
+  ModeEigenSolver mode_solver(mode_op, dbc_tdof_list, num_modes, 16, tol,
+                              EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
+                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0);
+  const double omega =
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  const double kn_target = omega * n_target;
+  auto result = mode_solver.Solve(omega, -kn_target * kn_target);
+  REQUIRE(result.num_converged >= num_modes);
+  AbsorbingParallelPlateModes modes;
+  for (int i = 0; i < num_modes; i++)
+  {
+    modes.kn.push_back(mode_solver.GetPropagationConstant(i));
+  }
+  const auto *ksp = mode_solver.GetLinearSolver();
+  REQUIRE(ksp);
+  modes.num_solves = ksp->NumTotalMult();
+  modes.num_iterations = ksp->NumTotalMultIterations();
+  return modes;
+}
+
+// Whether a propagation constant is within the relative tolerance of the expected one.
+bool HasMode(const std::vector<std::complex<double>> &kn, std::complex<double> kn_expected,
+             double rtol)
+{
+  return std::ranges::any_of(
+      kn,
+      [&](auto k) { return std::abs(k - kn_expected) <= rtol * std::abs(kn_expected); });
+}
+
 }  // namespace
 
 TEST_CASE("ModeEigenSolver PEC", "[boundarymodeoperator][Serial]")
@@ -946,6 +1032,36 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
   CHECK_THAT(cond_reduced.kn[0].imag(), WithinAbs(cond_result.kn[0].imag(), 1.0e-8));
 }
 
+TEST_CASE("ModeEigenSolver reduced solve with second-order absorbing boundaries",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The second-order absorbing boundary terms make B depend on frequency, and the reduced
+  // model projects its frequency-independent part and the components of the terms
+  // separately, as for A. The first reduced solve after training falls back to the exact
+  // solve, whose mode enriches the basis, so that the second one is accepted, with the mode
+  // of the exact solve.
+  auto configure_farfield = [](IoData &iodata)
+  {
+    iodata.boundaries.pec.attributes = {1, 3};
+    iodata.boundaries.farfield.attributes = {2, 4};
+    iodata.boundaries.farfield.order = 2;
+  };
+  auto exact = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure_farfield);
+  auto reduced =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure_farfield, true, 2);
+  REQUIRE(exact.num_converged >= 1);
+  REQUIRE(reduced.final_kn.size() == 1);
+  CAPTURE(exact.kn[0], reduced.final_kn[0], reduced.reduced_stats.exact_solves,
+          reduced.reduced_stats.fallbacks, reduced.reduced_stats.worst_residual,
+          reduced.reduced_tol);
+  CHECK(exact.kn[0].imag() < -1.0e-6 * exact.kn[0].real());
+  CHECK(reduced.reduced_stats.fallbacks == 1);
+  CHECK(reduced.reduced_stats.reduced_solves == 1);
+  CHECK(reduced.final_reduced_backward_errors[0] <= reduced.reduced_tol);
+  CHECK_THAT(reduced.final_kn[0].real(), WithinRel(exact.kn[0].real(), 1.0e-6));
+  CHECK_THAT(reduced.final_kn[0].imag(), WithinRel(exact.kn[0].imag(), 1.0e-4));
+}
+
 TEST_CASE("ModeEigenSolver p-multigrid preconditioning", "[boundarymodeoperator][Serial]")
 {
   // The H1 block of the multigrid preconditioner is negative definite (the diffusion term
@@ -1169,6 +1285,68 @@ TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
   CHECK_THAT(pair_n.imag(), WithinRel(-expected, 1.0e-12));
 }
 
+TEST_CASE("ModeEigenSolver absorbing boundaries of first and second order",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // For m = 0 and m = 1, the modes Eₓ = 0 of test::ExactAbsorbingParallelPlateKn.
+  // For m = 0, Eₙ = 0, and for m = 1, Eₙ varies along the absorbing boundaries, so
+  // that the boundary terms of the second-order condition couple it to the in-plane
+  // field. For m = 1, the mode Hₓ = 0 of the second-order condition is that of the
+  // first-order condition. The two conditions give modes 1e-2 apart, and the
+  // discretization error of these modes is less than 1e-7.
+  const int abc_order = GENERATE(1, 2);
+  const double omega = 2.0 * std::numbers::pi *
+                       Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(
+                           absorbing_parallel_plate_freq_ghz);
+  for (int m : {0, 1})
+  {
+    // The target is the real part of the exact mode.
+    const auto kn_exact =
+        test::ExactAbsorbingParallelPlateKn(1.0, 0.5, omega, m, abc_order);
+    const auto kn_other =
+        test::ExactAbsorbingParallelPlateKn(1.0, 0.5, omega, m, 3 - abc_order);
+    const auto modes = SolveAbsorbingParallelPlateModes(abc_order, kn_exact.real() / omega,
+                                                        3, 16, 1, false);
+    CAPTURE(abc_order, m, omega, modes.kn, kn_exact, kn_other);
+    CHECK(HasMode(modes.kn, kn_exact, 1.0e-6));
+    CHECK(std::abs(kn_other - kn_exact) > 1.0e-2 * std::abs(kn_exact));
+    if (m > 0 && abc_order > 1)
+    {
+      CHECK(HasMode(modes.kn, kn_other, 1.0e-6));
+    }
+  }
+}
+
+TEST_CASE("ModeEigenSolver multigrid preconditioners of second-order absorbing boundaries",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The p-multigrid preconditioners of the in-plane (ND) and out-of-plane (H1) blocks, and
+  // their coupling, have the terms of the second-order absorbing boundaries of the system
+  // matrix (or their magnitudes, for the real-valued preconditioner), for the modes of the
+  // previous test with m = 1 on a coarser mesh, compared to the solution with the sparse
+  // direct preconditioner (here 70 to 80 iterations per solve, and 60 to 70 with
+  // first-order absorbing boundaries). The modes agree to 1e-6, as in the p-multigrid test
+  // above: the eigenvalue solve gives the lossier mode only to about 1e-8 here, depending
+  // on the partition and the platform.
+  const double omega = 2.0 * std::numbers::pi *
+                       Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(
+                           absorbing_parallel_plate_freq_ghz);
+  const double n_target =
+      test::ExactAbsorbingParallelPlateKn(1.0, 0.5, omega, 1, 2).real() / omega;
+  const auto ref = SolveAbsorbingParallelPlateModes(2, n_target, 2, 8, 1, false);
+  for (bool pc_mat_real : {false, true})
+  {
+    const auto modes = SolveAbsorbingParallelPlateModes(2, n_target, 2, 8, 2, pc_mat_real);
+    CAPTURE(pc_mat_real, modes.kn, ref.kn, modes.num_solves, modes.num_iterations);
+    REQUIRE(modes.num_solves > 0);
+    CHECK(modes.num_iterations <= 100 * modes.num_solves);
+    for (const auto &kn : ref.kn)
+    {
+      CHECK(HasMode(modes.kn, kn, 1.0e-6));
+    }
+  }
+}
+
 TEST_CASE("ModeOperatorModel impedance damping with an anisotropic absorbing boundary",
           "[boundarymodeoperator][Serial][Parallel]")
 {
@@ -1288,7 +1466,9 @@ TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
 {
   // Absorbing edges at x = 0 and x = W neighbor the substrate and vacuum. A lossless
   // Lorentz substrate at real ω is the constant material ε(ω), whose absorbing condition
-  // uses √(ε(ω)/μ), so the two assemble the same mode operator.
+  // uses √(ε(ω)/μ) (and, for the second-order condition, the light speed of ε(ω)), so the
+  // two assemble the same mode operator A, and the same B.
+  const int order = GENERATE(1, 2);
   const double eps_inf = 4.0, w0 = 3.0, delta = 0.7;
   const double omega = 2.0;
   const double eps = eps_inf + delta * w0 * w0 / (w0 * w0 - omega * omega);
@@ -1299,7 +1479,7 @@ TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
       const double rate = electromagnetics::c0_ / iodata.model.L0;  // Rates in rad/s
       iodata.problem.type = ProblemType::DRIVEN;
       iodata.boundaries.farfield.attributes = {2, 4};
-      iodata.boundaries.farfield.order = 1;
+      iodata.boundaries.farfield.order = order;
       auto &substrate = iodata.domains.materials[0];
       if (dispersive)
       {
@@ -1317,6 +1497,7 @@ TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
                    .EvaluateFrequencyDependentPermittivity(0, {0.0, omega})
                    .real(),
                WithinRel(eps, 1.0e-12));
+  CHECK(dispersive.GetModel().HasFrequencyDependentB() == (order > 1));
   const double sigma = -2.0e-1;
   const auto A = dispersive.GetModel().Assemble(omega, sigma);
   const auto B = constant.GetModel().Assemble(omega, sigma);
@@ -1330,6 +1511,30 @@ TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
   const double norm = linalg::Norml2(Mpi::World(), z);
   z -= y;
   CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
+
+  // The frequency-dependent part of B, the sum of the components scaled by their
+  // coefficients in B.
+  auto ApplyB = [&](const RectangleModeModel &rect, ComplexVector &bx)
+  {
+    ComplexVector t(bx.Size());
+    t.UseDevice(true);
+    bx = 0.0;
+    for (const auto &component : rect.GetModel().GetComponents())
+    {
+      const auto coeff = rect.GetModel().EvaluateBCoefficient(component, omega);
+      if (coeff != 0.0)
+      {
+        component.op->Mult(x, t);
+        bx.Add(coeff, t);
+      }
+    }
+  };
+  ApplyB(dispersive, y);
+  ApplyB(constant, z);
+  const double norm_b = linalg::Norml2(Mpi::World(), z);
+  CHECK((norm_b > 0.0) == (order > 1));
+  z -= y;
+  CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm_b);
 }
 
 TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",
@@ -1338,9 +1543,15 @@ TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",
   // Each component, and so the assembled matrix, must decouple the essential DOFs from the
   // rest of the system, with a unit diagonal from the constant component. This includes
   // the ND/H1 coupling blocks, which appear in a component without their transposed
-  // counterpart (Atn in the constant and -Btn in the shift component).
-  RectangleModeModel rect([](IoData &iodata)
-                          { iodata.boundaries.pec.attributes = {1, 4}; });
+  // counterpart (Atn in the constant and -Btn in the shift component, and those of the
+  // second-order absorbing boundary, on the side x = W, which ends on a PEC side).
+  RectangleModeModel rect(
+      [](IoData &iodata)
+      {
+        iodata.boundaries.pec.attributes = {1, 4};
+        iodata.boundaries.farfield.attributes = {2};
+        iodata.boundaries.farfield.order = 2;
+      });
   MPI_Comm comm = Mpi::World();
   const auto &dbc_tdof_list = rect.GetDbcTDofList();
   int num_dbc = dbc_tdof_list.Size();
@@ -1447,6 +1658,59 @@ TEST_CASE("ModeOperatorModel boundary components on processes without the bounda
     CHECK(pair_n.imag() == 0.0);
   }
   CHECK(indices == std::vector<int>{0, 1});
+}
+
+TEST_CASE("ModeOperatorModel second-order absorbing boundary components",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The second-order absorbing boundary on the side x = W, which only the last process has
+  // elements on, adds the components -[0, G; 0, D] and -[M, 0; Gᵀ, 0], with coefficients β
+  // and σβ in A, and -β in B for the latter, where β = 1/(2iω). With the coefficient
+  // μ⁻¹c₀ = 1/2 along the substrate (y < H/4) and 1 above, a unit field ŷ, tangential to
+  // the side, gives -(H/8 + 3H/4) for M, and a constant out-of-plane field gives zero (no
+  // tangential derivative along the side).
+  using RMM = RectangleModeModel;
+  RMM rect(
+      [](IoData &iodata)
+      {
+        iodata.boundaries.farfield.attributes = {2};
+        iodata.boundaries.farfield.order = 2;
+      });
+  const std::complex<double> omega = 1.0e-2,
+                             beta = 0.5 / (std::complex<double>(0.0, 1.0) * omega);
+  constexpr double sigma = -2.0e-4;
+  CHECK(rect.GetModel().HasFrequencyDependentB());
+  int num_components = 0;
+  for (const auto &component : rect.GetModel().GetComponents())
+  {
+    const bool shift =
+        (component.type == mode_assembly::CoefficientType::SECOND_ORDER_FARFIELD_SHIFT);
+    if (!shift && component.type != mode_assembly::CoefficientType::SECOND_ORDER_FARFIELD)
+    {
+      CHECK(rect.GetModel().EvaluateBCoefficient(component, omega) == 0.0);
+      continue;
+    }
+    CAPTURE(shift);
+    num_components++;
+    CHECK(component.index == 0);
+    CHECK(rect.GetModel().EvaluateCoefficient(component, omega, sigma) ==
+          (shift ? sigma * beta : beta));
+    CHECK(rect.GetModel().EvaluateBCoefficient(component, omega) == (shift ? -beta : 0.0));
+    const auto pair_t = rect.Pairing(component, 1.0, 0.0);
+    const auto pair_n = rect.Pairing(component, 0.0, 1.0);
+    if (shift)
+    {
+      CHECK_THAT(pair_t.real(), WithinRel(-(0.5 * 0.25 + 0.75) * RMM::H, 1.0e-12));
+    }
+    else
+    {
+      CHECK_THAT(pair_t.real(), WithinAbs(0.0, 1.0e-12));
+    }
+    CHECK(pair_t.imag() == 0.0);
+    CHECK_THAT(pair_n.real(), WithinAbs(0.0, 1.0e-12));
+    CHECK(pair_n.imag() == 0.0);
+  }
+  CHECK(num_components == 2);
 }
 
 TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Parallel]")
