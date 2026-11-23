@@ -1385,12 +1385,17 @@ block without it they are not read and are named in one warning, `keys ignored`)
 switch the run prints one line `DEVELOPER OPTIONS: <the parked options in use>` and
 `palace.json` records the same list as `SurfaceResponse.Developer`; every other default is
 unchanged, so a developer run that also states `"CorrectionMode": "Both"` is the run of
-the historical default.
+the historical default. Without the switch the parked columns are not written (their
+values are still computed): in `surface-Q-corrected.csv` the `E_elec` postprocessed
+fixed-flux and `E_elec` corrected (self-consistent) totals and, per interface, the
+postprocessed fixed-flux and corrected `E` / `p` / `Q`; the `corrected` (self-consistent)
+matrices of `terminal-C-corrected.csv`, `terminal-Cinv-corrected.csv` and
+`terminal-Cm-corrected.csv`; and `SurfaceResponse.TerminalCapacitance.SelfConsistent` in
+`palace.json`. Every other column keeps its header, order and value.
 
 `SolveTol` (a key of the self-consistent solve, a developer option; not read without it)
 controls only the optional self-consistent
-corrected-field solve. The raw
-thin-metal field and AMR estimator retain `Solver.Linear.Tol` and `EstimatorTol`,
+corrected-field solve. The raw thin-metal field and AMR estimator retain `Solver.Linear.Tol` and `EstimatorTol`,
 respectively. The default `1.0e-6` is normally well below the accuracy of the local
 fabrication response model; it can be tightened independently when needed.
 
@@ -2440,12 +2445,16 @@ fabrication-process library to a complex Maxwell field:
 
 The standard `surface-Q.csv`, saved fields, error indicator, and AMR sequence remain the
 raw thin-metal result. `surface-Q-corrected.csv` is an additional long-form table
-containing raw, fixed-trace, fixed-flux, and, when available, self-consistent
-normalization energies, interface energies, participations, and quality factors for each
-frequency and excitation, eigenmode, or boundary mode. The same `CorrectionMode`
-semantics apply as for electrostatics, with the same default `PostprocessOnly` and the same
-developer switch. `PostprocessOnly` avoids corrected KSP, PROM, and eigenmode solves; `SelfConsistent` skips raw-field fixed-trace/fixed-flux evaluation;
-`Both` computes all correction families available to the problem type. Boundary mode has
+containing raw and fixed-trace (`corrected`) normalization energies, interface energies,
+participations, and quality factors for each frequency and excitation, eigenmode, or
+boundary mode; with the developer switch it also holds the fixed-flux and, when
+available, self-consistent columns (the parked values: 8 of its columns, and the 3
+self-consistent columns of `surface-response-confidence.csv`, 6 for eigenmode). The
+values are computed in both cases; only the columns are left out. The same
+`CorrectionMode` semantics apply as for electrostatics, with the same default
+`PostprocessOnly` and the same developer switch. `PostprocessOnly` avoids corrected KSP,
+PROM, and eigenmode solves; `SelfConsistent` skips raw-field fixed-trace/fixed-flux
+evaluation; `Both` computes all correction families available to the problem type. Boundary mode has
 no self-consistent corrected eigensolver: it accepts `PostprocessOnly` and `Both`, where
 `Both` means all available boundary-mode correction paths, and rejects
 `SelfConsistent`.

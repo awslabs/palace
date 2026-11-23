@@ -4,6 +4,7 @@
 #include "fixtures.hpp"
 #include "surfaceresponse-fixtures.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -335,18 +336,57 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
   }
   CHECK(std::isnan(C_sc(0, 1)) == !accepted);
 
-  // PostprocessOnly: the fixed-trace matrix is the same (the same raw fields and form), the
-  // self-consistent column is NaN (no corrected solve).
+  // PostprocessOnly without the developer switch (the v1 default path): the fixed-trace
+  // matrix is the same (the same raw fields and form); the parked self-consistent
+  // ("corrected") columns and the fixed-flux / self-consistent energies are not written.
   const Table postprocess_C = LoadCsv(postprocess_dir / "terminal-C-corrected.csv");
   const auto postprocess_ft = CorrectedMatrix(postprocess_C, "C", "fixed-trace", "(F)");
-  const auto postprocess_sc = CorrectedMatrix(postprocess_C, "C", "corrected", "(F)");
   for (int i = 0; i < 2; i++)
   {
     for (int j = 0; j < 2; j++)
     {
       CHECK(postprocess_ft(i, j) == C_ft(i, j));
-      CHECK(std::isnan(postprocess_sc(i, j)));
     }
+  }
+  auto Headers = [](const Table &table)
+  {
+    std::vector<std::string> headers;
+    for (auto it = table.cbegin(); it != table.cend(); ++it)
+    {
+      headers.push_back(it->header_text);
+    }
+    return headers;
+  };
+  CHECK(Headers(postprocess_C) == std::vector<std::string>{"i", "C fixed-trace[i][1] (F)",
+                                                           "C fixed-trace[i][2] (F)"});
+  for (const char *file : {"terminal-Cm-corrected.csv", "terminal-Cinv-corrected.csv"})
+  {
+    INFO(file);
+    CHECK(Headers(LoadCsv(postprocess_dir / file)).size() == 3);
+    CHECK(Headers(LoadCsv(both_dir / file)).size() == 5);
+  }
+  {
+    // surface-Q-corrected.csv: with the switch every column of main; without it the same
+    // columns in the same order less the parked ones (E_elec fixed-flux and corrected; per
+    // interface the fixed-flux and corrected E / p / Q).
+    auto parked = [](const std::string &header)
+    {
+      return header.find("fixed-flux") != std::string::npos ||
+             header.rfind("E_elec corrected", 0) == 0 ||
+             header.rfind("E_surf corrected[", 0) == 0 ||
+             header.rfind("p_surf corrected[", 0) == 0 ||
+             header.rfind("Q_surf corrected[", 0) == 0;
+    };
+    const auto with_switch = Headers(energies);
+    std::vector<std::string> kept;
+    std::copy_if(with_switch.begin(), with_switch.end(), std::back_inserter(kept),
+                 [&](const std::string &header) { return !parked(header); });
+    const auto interfaces =
+        std::count_if(with_switch.begin(), with_switch.end(), [](const std::string &header)
+                      { return header.rfind("E_surf raw[", 0) == 0; });
+    REQUIRE(interfaces > 0);
+    CHECK(kept.size() + 2 + 6 * static_cast<std::size_t>(interfaces) == with_switch.size());
+    CHECK(Headers(LoadCsv(postprocess_dir / "surface-Q-corrected.csv")) == kept);
   }
 
   // The palace.json record.
@@ -372,10 +412,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
   REQUIRE(postprocess_metadata_input);
   const auto postprocess_metadata = json::parse(postprocess_metadata_input);
   CHECK_FALSE(postprocess_metadata.at("SurfaceResponse").contains("Developer"));
-  CHECK(postprocess_metadata.at("SurfaceResponse")
-            .at("TerminalCapacitance")
-            .at("SelfConsistent")
-            .is_null());
+  CHECK_FALSE(postprocess_metadata.at("SurfaceResponse")
+                  .at("TerminalCapacitance")
+                  .contains("SelfConsistent"));
 
   // Unconverged corrected solves (fail closed): the energies report the corrected energy as
   // unavailable, the self-consistent matrix is NaN and the palace.json variant null, while

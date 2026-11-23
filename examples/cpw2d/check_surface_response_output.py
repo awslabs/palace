@@ -187,12 +187,12 @@ def check(corrected_output, baseline_output, tolerance):
 
         norm_raw = group[0]["E_norm raw (J)"]
         norm_corrected = group[0]["E_norm corrected (J)"]
+        # The fixed-flux columns are parked (the v1 cut): written only with the developer switch.
         fixed_flux_fields = (
             "E_norm corrected fixed-flux (J)",
             "E_surf corrected fixed-flux (J)",
             "p_surf corrected fixed-flux",
             "Q_surf corrected fixed-flux",
-            "trace closure spread",
         )
         fixed_flux_columns = [
             field in group[0] for field in fixed_flux_fields
@@ -202,6 +202,7 @@ def check(corrected_output, baseline_output, tolerance):
                 f"Incomplete fixed-flux output in row group {row_index}"
             )
         has_fixed_flux = all(fixed_flux_columns)
+        has_closure_spread = "trace closure spread" in group[0]
         norm_fixed_flux = (
             group[0]["E_norm corrected fixed-flux (J)"]
             if has_fixed_flux
@@ -311,7 +312,6 @@ def check(corrected_output, baseline_output, tolerance):
                 quality_fixed_flux = corrected[
                     "Q_surf corrected fixed-flux"
                 ]
-                closure_spread = corrected["trace closure spread"]
                 check_nonnegative(
                     energy_fixed_flux,
                     "E_surf corrected fixed-flux",
@@ -347,6 +347,8 @@ def check(corrected_output, baseline_output, tolerance):
                         f"Invalid zero-participation fixed-flux quality factor in "
                         f"row {row_index}, interface {interface}"
                     )
+            if has_closure_spread:
+                closure_spread = corrected["trace closure spread"]
                 if (
                     not math.isfinite(closure_spread)
                     or closure_spread < 0.0

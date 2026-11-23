@@ -34449,6 +34449,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // each flagged coverage cell.
   coverage_run_record.conductor_consistency_share = conductor_consistency_per_excitation;
   diagnostics_directory = request->diagnostics_directory;
+  developer_columns = request->developer;
   conductor_consistency_records_in_directory =
       request->conductor_consistency_records ==
       config::ElectrostaticSolverData::ResponseCorrectionData::
@@ -36197,6 +36198,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       !conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
   diagnostics_directory = request->diagnostics_directory;
+  developer_columns = request->developer;
   conductor_consistency_records_in_directory =
       request->conductor_consistency_records ==
       config::ElectrostaticSolverData::ResponseCorrectionData::
