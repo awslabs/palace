@@ -3627,7 +3627,7 @@
             },
             "Developer": {
               "type": "boolean",
-              "description": "The developer switch of the correction. The default correction is post-processing only, with the fabrication-process `Library`; the options set aside from it (parked) are refused by name unless this key is true: `CorrectionMode` `SelfConsistent` / `Both`, `SolveTol`, `TranslationalDomainCorrection`. With it, the run prints one line `DEVELOPER OPTIONS: <the parked options in use>` and `palace.json` records the same list as `SurfaceResponse.Developer`.",
+              "description": "The developer switch of the correction. The default correction is post-processing only, with the fabrication-process `Library`; the options set aside from it (parked) are refused by name unless this key is true: `CorrectionMode` `SelfConsistent` / `Both`, `SolveTol`, `TranslationalDomainCorrection`. With it, the run prints one line `DEVELOPER OPTIONS: <the parked options in use>`, `palace.json` records the same list as `SurfaceResponse.Developer`, and the parked fixed-flux and self-consistent columns of the corrected tables are written (without it their values are computed but not written).",
               "default": false
             },
             "CorrectionMode": {

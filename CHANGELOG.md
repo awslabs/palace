@@ -401,7 +401,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (refused by name without it): `"CorrectionMode"` `"SelfConsistent"` / `"Both"`,
     `"SolveTol"` and `"TranslationalDomainCorrection"`. With the switch the run prints one
     line `DEVELOPER OPTIONS: ...` and `palace.json` records the list as
-    `SurfaceResponse.Developer`. Nothing is removed. SchemaVer 4-6-0
+    `SurfaceResponse.Developer`. Without the switch the parked columns are not written
+    (their values are still computed): the fixed-flux and self-consistent columns of
+    `surface-Q-corrected.csv` (Maxwell 8 of 33; electrostatic 6 per interface and 2
+    totals), the `corrected` matrices of `terminal-*-corrected.csv`, the self-consistent
+    columns of `surface-response-confidence.csv` and
+    `SurfaceResponse.TerminalCapacitance.SelfConsistent`. Nothing is removed.
+    SchemaVer 4-6-0
 
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous

@@ -4930,6 +4930,7 @@ struct LoopFitLeadFixture
                           {"TargetInterfaces", {4}},
                           {"UnmatchedPolicy", "Warn"},
                           {"CorrectionMode", "PostprocessOnly"},
+                          {"Developer", true},  // the tests read the fixed-flux columns
                           {"PatchEnergy", true}}}};
     return config;
   }
@@ -5986,7 +5987,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                        {{"Library", edge_library_path.string()},
                         {"TargetInterfaces", {4}},
                         {"UnmatchedPolicy", "Warn"},
-                        {"CorrectionMode", "PostprocessOnly"}}}};
+                        {"CorrectionMode", "PostprocessOnly"},
+                        {"Developer", true}}}};  // the fixed-flux columns are read
   auto Run = [&](bool extra_interface, const char *stem)
   {
     json run = config;
