@@ -19,6 +19,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the S-parameters of Floquet ports in `port-floquet-S.csv` for the excitation of a
+    wave port with a nonzero `"Offset"`, which lacked the de-embedding factor
+    exp(i kₙ d) of the excited wave port: their phase was off by kₙ d, and for a lossy wave
+    port their magnitude too.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Fixed the abort "Incident Floquet mode is evanescent or not found!" when measuring the
     S-parameters of a Floquet port which is not excited and whose specular (0,0) order is
     below cutoff, for example in total internal reflection. Such a port only terminates the

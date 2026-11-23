@@ -2117,9 +2117,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
             ? fem_op->GetLumpedPortOp().GetPort(drive_port_idx).GetExcitationWeight()
             : std::complex<double>{1.0, 0.0};
     // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
-    // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
-    // Applied independently on the source and observation sides, so cross-type S
-    // (lumped↔wave) gets the correct single-sided phase.
+    // wave port with a non-zero offset; 1 otherwise (lumped and Floquet ports have no
+    // offset). Applied independently on the source and observation sides, so cross-type S
+    // (lumped↔wave, Floquet↔wave) gets the correct single-sided phase.
     const std::complex<double> src_deembed =
         (drive_port_type == PortType::WavePort)
             ? std::exp(1i * fem_op->GetWavePortOp().GetPort(drive_port_idx).kn0 *
@@ -2161,12 +2161,14 @@ void PostOperator<solver_t>::MeasureSParameter() const
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
 
-    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts).
+    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts). Floquet
+    // observation has no d_offset — only the source-side factor applies.
     for (auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
     {
       for (auto &[key, S] : S_map)
       {
         S /= drive_weight;
+        S *= src_deembed;
         auto [m, n, is_te] = key;
         auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
                                                              : (is_te ? "TE" : "TM");

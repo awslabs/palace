@@ -537,6 +537,52 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool line
   };
 }
 
+// Reciprocity of the coupling between a wave port and the specular order of a Floquet port,
+// compared as complex values: S[w][f] of port-S.csv, with the Floquet port excited, and
+// S[Pf(0;0)..][w] of port-floquet-S.csv, with the wave port excited, are equal for a
+// reciprocal structure at normal incidence. Both carry the de-embedding factor of the wave
+// port once, on the observation side for the one and on the source side for the other. The
+// magnitude and power checks of TestFloquetSParams can't see a missing factor: for a
+// lossless wave port, it is a phase.
+palace::test::CustomCheck TestFloquetWaveReciprocity(std::string wave_id,
+                                                     std::string floquet_id, double atol)
+{
+  return [wave_id = std::move(wave_id), floquet_id = std::move(floquet_id),
+          atol](palace::Table &actual, palace::Table &, const std::filesystem::path &path)
+  {
+    palace::TableWithCSVFile wave_ports((path.parent_path() / "port-S.csv").string(), true);
+    auto amplitude = [](palace::Table &table, const std::string &id, std::size_t row)
+    {
+      const palace::Column *magnitude = nullptr, *phase = nullptr;
+      for (const auto &column : table)
+      {
+        if (column.header_text == "|" + id + "| (dB)")
+        {
+          magnitude = &column;
+        }
+        else if (column.header_text == "arg(" + id + ") (deg.)")
+        {
+          phase = &column;
+        }
+      }
+      REQUIRE(magnitude != nullptr);
+      REQUIRE(phase != nullptr);
+      return std::polar(std::pow(10.0, magnitude->data[row] / 20.0),
+                        phase->data[row] * std::numbers::pi / 180.0);
+    };
+    REQUIRE(actual.n_rows() > 0);
+    REQUIRE(wave_ports.table.n_rows() == actual.n_rows());
+    for (std::size_t row = 0; row < actual.n_rows(); row++)
+    {
+      const auto s_wave = amplitude(wave_ports.table, wave_id, row);
+      const auto s_floquet = amplitude(actual, floquet_id, row);
+      INFO("row " << row + 1 << ": " << wave_id << " = " << s_wave << ", " << floquet_id
+                  << " = " << s_floquet);
+      CHECK(std::abs(s_wave - s_floquet) <= atol);
+    }
+  };
+}
+
 // Reference-free check of error-indicators.csv, for a case whose indicator has no unique
 // reference value. Each row of Norm, Minimum, Maximum, and Mean is finite and satisfies
 // 0 <= Minimum <= Mean <= Maximum <= Norm <= upper: the indicator of an element is at most
@@ -2758,6 +2804,8 @@ TEST_CASE("floquet_lumped", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// The wave port has an offset, so that the couplings between the ports carry its
+// de-embedding factor, which both must include once (TestFloquetWaveReciprocity).
 TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2765,7 +2813,15 @@ TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.paraview_fields = false;
-  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
+  opts.custom_checks["port-floquet-S.csv"] =
+      [floquet = TestFloquetSParams(opts.rtol, opts.atol),
+       reciprocity = TestFloquetWaveReciprocity("S[2][1]", "S[P1(0;0)TE][2]", 1.0e-6)](
+          palace::Table &actual, palace::Table &reference,
+          const std::filesystem::path &actual_path)
+  {
+    floquet(actual, reference, actual_path);
+    reciprocity(actual, reference, actual_path);
+  };
   palace::test::RunRegressionCase("floquet_wave", "floquet_wave.json", "floquet_wave",
                                   opts);
 }

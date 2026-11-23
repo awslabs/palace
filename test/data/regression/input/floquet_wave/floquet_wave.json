@@ -59,7 +59,7 @@
         "Attributes": [6],
         "Excitation": 2,
         "Mode": 1,
-        "Offset": 0.0
+        "Offset": 1.0  // cm, de-embeds S[2][2] and both couplings to the Floquet port
       }
     ]
   },
