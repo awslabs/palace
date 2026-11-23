@@ -1536,6 +1536,43 @@ SpaceOperator::GetExtraSystemPMLMatrix(std::complex<double> omega,
                              diag_policy);
 }
 
+std::unique_ptr<ComplexOperator>
+SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit qs,
+                                    Operator::DiagonalPolicy diag_policy)
+{
+  // ω → 0 limit of A2(ω) for the screened quasistatic anchor solves, assembled as for the
+  // complex-ω overload; see the quasistatic AddExtraSystemBdrCoefficients overload.
+  PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
+  MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
+      dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
+      fbi(mat_op.MaxCeedBdrAttribute()), frbr(mat_op.MaxCeedBdrAttribute()),
+      frbi(mat_op.MaxCeedBdrAttribute()), fpbr(mat_op.MaxCeedBdrAttribute()),
+      fpbi(mat_op.MaxCeedBdrAttribute());
+  AddExtraSystemBdrCoefficients(qs, dfbr, dfbi, fbr, fbi, frbr, frbi, &fpbr, &fpbi);
+  int empty[2] = {AreExactlyZero(dfbr, fbr, frbr, fpbr),
+                  AreExactlyZero(dfbi, fbi, frbi, fpbi)};
+  Mpi::GlobalMin(2, empty, GetComm());
+  if (empty[0] && empty[1])
+  {
+    return {};
+  }
+  constexpr bool skip_zeros = false;
+  std::unique_ptr<Operator> ar, ai;
+  if (!empty[0])
+  {
+    ar = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbr, &fbr, nullptr, &frbr,
+                          &fpbr, skip_zeros);
+  }
+  if (!empty[1])
+  {
+    ai = AssembleOperator(GetNDSpace(), nullptr, nullptr, &dfbi, &fbi, nullptr, &frbi,
+                          &fpbi, skip_zeros);
+  }
+  auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
+  A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  return A;
+}
+
 template <OperatorType OperType>
 std::unique_ptr<OperType>
 SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
@@ -2184,9 +2221,14 @@ void SpaceOperator::AssemblePreconditioner(
   // and |a_k| to the flipped -a_k). The other levels keep a_k, as the system matrix does.
   MaterialPropertyCoefficient dfbr_flip_add(mat_op.MaxCeedBdrAttribute()),
       dfbi_flip_add(mat_op.MaxCeedBdrAttribute());
-  if (pc_coarse_real)
+  if constexpr (!std::is_same_v<A3Type, QuasistaticLimit>)
   {
-    surface_terms.AddFlippedPreconditionerBdrCoefficients(a3, dfbr_flip_add, dfbi_flip_add);
+    // The quasistatic limit has no second-order absorbing terms.
+    if (pc_coarse_real)
+    {
+      surface_terms.AddFlippedPreconditionerBdrCoefficients(a3, dfbr_flip_add,
+                                                            dfbi_flip_add);
+    }
   }
   if (mat_op.HasFloquetFrequencyScaling())
   {
@@ -2220,9 +2262,17 @@ void SpaceOperator::AssemblePreconditioner(
   std::vector<PMLIntegrator> pml_re, pml_im, aux_pml_re, aux_pml_im;
   AppendPMLPencil(pml_re, &pml_im, &aux_pml_re, &aux_pml_im, mat_op, PMLFilter::STATIC, 0.0,
                   {a0, a1, ShiftedMassCoefficient(a2, pc_mat_shifted), a2});
-  AppendPMLPencil(pml_re, &pml_im, &aux_pml_re, &aux_pml_im, mat_op,
-                  PMLFilter::FREQUENCY_DEPENDENT, a3,
-                  ExtraSystemPMLPencil(a3, pc_mat_shifted));
+  if constexpr (std::is_same_v<A3Type, QuasistaticLimit>)
+  {
+    // The quasistatic limit has no PML stretch (see IoData::CheckConfiguration).
+    MFEM_VERIFY(!mat_op.HasPML(), "The quasistatic limit does not support PML regions!");
+  }
+  else
+  {
+    AppendPMLPencil(pml_re, &pml_im, &aux_pml_re, &aux_pml_im, mat_op,
+                    PMLFilter::FREQUENCY_DEPENDENT, a3,
+                    ExtraSystemPMLPencil(a3, pc_mat_shifted));
+  }
 
   // A real-valued coarse solve factors the sum Ar + Ai of the real and imaginary parts of
   // the coarse-level operator of a multigrid hierarchy (see ComplexCoarseSolve), which is a
@@ -2239,9 +2289,12 @@ void SpaceOperator::AssemblePreconditioner(
     auto &[coarse_re, coarse_im] = coarse_pml.emplace();
     AppendPMLPencil(coarse_re, &coarse_im, nullptr, nullptr, mat_op, PMLFilter::STATIC, 0.0,
                     {a0, a1, ShiftedMassCoefficient(a2, pc_mat_shifted), a2}, true);
-    AppendPMLPencil(coarse_re, &coarse_im, nullptr, nullptr, mat_op,
-                    PMLFilter::FREQUENCY_DEPENDENT, a3,
-                    ExtraSystemPMLPencil(a3, pc_mat_shifted), true);
+    if constexpr (!std::is_same_v<A3Type, QuasistaticLimit>)
+    {
+      AppendPMLPencil(coarse_re, &coarse_im, nullptr, nullptr, mat_op,
+                      PMLFilter::FREQUENCY_DEPENDENT, a3,
+                      ExtraSystemPMLPencil(a3, pc_mat_shifted), true);
+    }
   }
 
   int empty[2] = {
@@ -2323,8 +2376,16 @@ void SpaceOperator::AssemblePreconditioner(
   std::vector<PMLIntegrator> pml, aux_pml;
   AppendPMLPencil(pml, nullptr, &aux_pml, nullptr, mat_op, PMLFilter::STATIC, 0.0,
                   {a0.real(), 0.0, a2_pc, a2_pc});
-  AppendPMLPencil(pml, nullptr, &aux_pml, nullptr, mat_op, PMLFilter::FREQUENCY_DEPENDENT,
-                  a3, ExtraSystemPMLPencil(a3, pc_mat_shifted, pc_mat_shifted));
+  if constexpr (std::is_same_v<A3Type, QuasistaticLimit>)
+  {
+    // The quasistatic limit has no PML stretch (see IoData::CheckConfiguration).
+    MFEM_VERIFY(!mat_op.HasPML(), "The quasistatic limit does not support PML regions!");
+  }
+  else
+  {
+    AppendPMLPencil(pml, nullptr, &aux_pml, nullptr, mat_op, PMLFilter::FREQUENCY_DEPENDENT,
+                    a3, ExtraSystemPMLPencil(a3, pc_mat_shifted, pc_mat_shifted));
+  }
 
   int empty = (dfr.empty() && fr.empty() && dfbr.empty() && fbr.empty() && frbr.empty() &&
                pml.empty());
@@ -2578,13 +2639,16 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
     if (pml_block)
     {
       // The PML regions are the subdomain of the subdomain correction of the multigrid
-      // preconditioner (see PMLSubdomainSolver).
-      SelectPMLTrueDofs(a3);
-      B->SetSubdomain(std::vector<int>(pml_subdomain_tdofs), std::move(pml_block));
-      if (!pml_smoother_masks.empty())
+      // preconditioner (see PMLSubdomainSolver), which the quasistatic limit does not have.
+      if constexpr (!std::is_same_v<A3Type, QuasistaticLimit>)
       {
-        B->SetSmootherMasks(std::vector<std::vector<int>>(pml_smoother_masks),
-                            std::vector<std::vector<int>>(pml_aux_smoother_masks));
+        SelectPMLTrueDofs(a3);
+        B->SetSubdomain(std::vector<int>(pml_subdomain_tdofs), std::move(pml_block));
+        if (!pml_smoother_masks.empty())
+        {
+          B->SetSmootherMasks(std::vector<std::vector<int>>(pml_smoother_masks),
+                              std::vector<std::vector<int>>(pml_aux_smoother_masks));
+        }
       }
     }
   }
@@ -2821,6 +2885,40 @@ bool SpaceOperator::HasExtraSystemBdrTerms() const
   const auto &farfield_op = surface_terms.GetFarfieldOp();
   return (farfield_op.GetOrder() > 1 && farfield_op.GetAttrList().Size() > 0) ||
          surface_terms.GetNumExtraSystemBdrMassTerms() > 0 || wave_port_op.Size() > 0;
+}
+
+void SpaceOperator::AddExtraSystemBdrCoefficients(
+    QuasistaticLimit, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
+    MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
+    MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
+    MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi)
+{
+  // The ω → 0 limit of the frequency-dependent boundary terms, defining the static system
+  // stiffness K + A2(0) of the quasistatic (inductive-limit) anchor solves. As for the
+  // damping matrix (whose iω·C term also vanishes), a boundary term contributes only if it
+  // stays finite and nonzero at DC:
+  //  - Surface boundary terms: only an inductive rational surface impedance (Zs ~ s·L),
+  //    which carries DC current, keeps a Robin term; the second-order farfield pole at
+  //    ω = 0, which has no static limit (circuit synthesis realizes this pole by auxiliary
+  //    states, not in L⁻¹), is left out, so the farfield boundary takes the same natural
+  //    condition at DC as the first-order absorbing boundary (see
+  //    SurfaceTerms::AddStaticExtraSystemBdrMassCoefficients).
+  //  - Wave ports: the stamped i·Re(k_n(ω))·M_p vanishes (k_n ∝ ω for a TEM or quasi-TEM
+  //    mode, Re(k_n) = 0 below cutoff), as does the modal correction W ∝ ω. No
+  //    contribution, and no port mode is solved at ω = 0.
+  //  - Floquet ports and Floquet wave vectors are not supported with circuit synthesis, and
+  //    the Floquet terms of second-order farfield boundaries (frb, fpb) are omitted with
+  //    the farfield term.
+  surface_terms.AddStaticExtraSystemBdrMassCoefficients(fbr);
+}
+
+void SpaceOperator::AddRealPreconditionerExtraSystemBdrCoefficients(
+    QuasistaticLimit, MaterialPropertyCoefficient &dfb, MaterialPropertyCoefficient &fb,
+    MaterialPropertyCoefficient &frb)
+{
+  // The static terms of the system (see the quasistatic AddExtraSystemBdrCoefficients) are
+  // real.
+  surface_terms.AddStaticExtraSystemBdrMassCoefficients(fb);
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,
@@ -3250,5 +3348,10 @@ template std::unique_ptr<ComplexOperator>
                                                                  std::complex<double>,
                                                                  std::complex<double>,
                                                                  std::complex<double>);
+template std::unique_ptr<ComplexOperator>
+    SpaceOperator::GetPreconditionerMatrix<ComplexOperator, std::complex<double>,
+                                           SpaceOperator::QuasistaticLimit>(
+        std::complex<double>, std::complex<double>, std::complex<double>,
+        SpaceOperator::QuasistaticLimit);
 
 }  // namespace palace

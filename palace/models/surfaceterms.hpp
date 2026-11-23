@@ -44,7 +44,8 @@ enum class ProblemType : char;
 // it has a damping term, each Add* method to which it contributes a term, and if a term
 // depends on frequency, the list of frequency-dependent terms (sigma_terms and the
 // ExtraSystemBdrMassTerm methods, from which the summed ExtraSystemBdrMass methods and
-// their preconditioner forms are built). Outside this class, SpaceOperator names each
+// their preconditioner forms are built) and, if the term has a nonzero static limit,
+// AddStaticExtraSystemBdrMassCoefficients. Outside this class, SpaceOperator names each
 // type for its 3D boundary checks (CheckBoundaryProperties), and
 // config::BoundaryData::GetCrossSectionEdgeAttributes for the boundary edges of 2D
 // cross-sections.
@@ -160,6 +161,17 @@ public:
       MaterialPropertyCoefficient &fbi, MaterialPropertyCoefficient &frbr,
       MaterialPropertyCoefficient &frbi, MaterialPropertyCoefficient *fpbr,
       MaterialPropertyCoefficient *fpbi);
+
+  // Add the static limits (ω → 0) of the frequency-dependent boundary mass terms to the
+  // boundary coefficient of a vector field (the tangential trace), for the static system
+  // stiffness K + A2(0) of the quasistatic anchor solves of circuit synthesis. Only a
+  // rational impedance boundary whose Robin coefficient has a nonzero static limit
+  // contributes (SurfaceRationalImpedanceOperator::GetStaticRobinCoefficient, for example
+  // an inductive sheet, Zs ~ s·L): the scales of finite conductivity boundaries and of the
+  // absorbing boundaries next to a frequency-dependent material vanish as ω → 0, and the
+  // second-order absorbing terms, whose pole at ω = 0 has no static limit, are left out.
+  // No term is evaluated at ω = 0.
+  void AddStaticExtraSystemBdrMassCoefficients(MaterialPropertyCoefficient &fb) const;
 
   // The frequency-dependent terms of a real-valued preconditioner of the 3D solve at ω,
   // in one coefficient each: the boundary curl-curl (dfb), boundary mass (fb), and rotated
