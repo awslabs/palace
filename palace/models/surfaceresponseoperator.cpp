@@ -4587,6 +4587,39 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
   return library;
 }
 
+// The v1 default path (CUT-PLAN step 5d): the coupons of the metal laws other than the
+// perfect conductor and the impedance (Ls) sheet (conductivity and rational-impedance
+// models) are parked. A library that carries one is refused by name without the developer
+// switch.
+void VerifyLibraryMetalLaws(
+    const ProcessLibrary &library,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request)
+{
+  if (request.developer)
+  {
+    return;
+  }
+  const auto parked = [](const MetalBoundaryLaw &law)
+  {
+    return law.type == MetalBoundaryConditionType::CONDUCTIVITY ||
+           law.type == MetalBoundaryConditionType::RATIONAL_IMPEDANCE;
+  };
+  for (const auto &model : library.models)
+  {
+    const bool parked_model =
+        parked(model.boundary_condition) ||
+        std::any_of(model.spatial_edges.begin(), model.spatial_edges.end(),
+                    [&](const auto &edge) { return parked(edge.boundary_condition); });
+    MFEM_VERIFY(!parked_model,
+                "Fabrication-process response model \""
+                    << model.name << "\" of the library \"" << request.library
+                    << "\" is a conductivity or rational-impedance coupon, a parked "
+                       "developer option (the correction serves perfect conductors and "
+                       "impedance (Ls) sheets); set \"Developer\": true in the "
+                       "response-correction block to use it!");
+  }
+}
+
 void ValidateLibraryInterfaceLayers(
     const ProcessLibrary &library,
     const std::map<int, config::InterfaceDielectricData> &dielectrics,
@@ -8021,6 +8054,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   const auto library = ReadProcessLibrary(
       request.library, iodata.units, iodata.InputsNondimensionalized(),
       requirements != nullptr, requirements != nullptr, request.magnetic_leaves);
+  VerifyLibraryMetalLaws(library, request);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -16093,6 +16127,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   const auto library = ReadProcessLibrary(
       request.library, iodata.units, iodata.InputsNondimensionalized(),
       requirements != nullptr, requirements != nullptr, request.magnetic_leaves);
+  VerifyLibraryMetalLaws(library, request);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);

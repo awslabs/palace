@@ -418,8 +418,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     library's magnetic (kinetic) leaves are read only with the switch (by default with
     it; without it the run is that of `"Magnetic": false`, byte-identical to a library
     without leaves); `"Magnetic": true`, `"AllowElectricOnlyFallback": true` and
-    `"ConductorConsistency": {"ControlStateAnchorSetbackOverR"}` need it.
-    Nothing is removed. SchemaVer 4-6-0
+    `"ConductorConsistency": {"ControlStateAnchorSetbackOverR"}` need it. So do the
+    two-dimensional boundary-mode correction, a library with conductivity or
+    rational-impedance coupons (refused when it is read), `"Crack": true` on a
+    `Conductivity` or `RationalImpedance` boundary of a correction run, and
+    `"ConductorConsistency": {"ControlFlipProbePiece"}`. Nothing is removed.
+    SchemaVer 4-6-0
 
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous

@@ -1197,6 +1197,19 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-m
                                                           conductivity_boundary_mode_op);
   CHECK(preflight_conductivity_response.GetPatchCount() ==
         conductivity_boundary_mode_response.GetPatchCount());
+  {
+    // A conductivity coupon is a parked developer option (CUT-PLAN step 5d): without the
+    // switch the automatic builder refuses the library by name. (The configuration's own
+    // refusal of the boundary-mode correction is bypassed to reach the builder's.)
+    IoData no_switch(preflight_conductivity_config, false);
+    no_switch.boundaries.cracked_attributes.insert(9);
+    no_switch.boundaries.cracked_attributes.insert(10);
+    no_switch.solver.surface_response_correction->developer = false;
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(no_switch, conductivity_boundary_mode_op),
+        Catch::Matchers::ContainsSubstring(
+            "is a conductivity or rational-impedance coupon, a parked developer option"));
+  }
 
   auto rational_boundary_mode_config = boundary_mode_config;
   rational_boundary_mode_config["Boundaries"].erase("PEC");
@@ -1215,6 +1228,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-m
       rational_boundary_mode_iodata, automatic_meshes, rational_boundary_mode_material);
   SurfaceResponseOperator rational_boundary_mode_response(rational_boundary_mode_iodata,
                                                           rational_boundary_mode_op);
+  {
+    // A rational-impedance coupon: the same refusal without the switch (CUT-PLAN step 5d).
+    IoData no_switch(rational_boundary_mode_config, false);
+    no_switch.boundaries.cracked_attributes.insert(9);
+    no_switch.boundaries.cracked_attributes.insert(10);
+    no_switch.solver.surface_response_correction->developer = false;
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(no_switch, rational_boundary_mode_op),
+        Catch::Matchers::ContainsSubstring(
+            "is a conductivity or rational-impedance coupon, a parked developer option"));
+  }
   GridFunction rational_boundary_mode_field(rational_boundary_mode_op.GetNDSpace(), true);
   rational_boundary_mode_field.Real().ProjectCoefficient(boundary_mode_normal_coefficient);
   rational_boundary_mode_field.Imag() = 0.0;
@@ -1473,7 +1497,8 @@ TEST_CASE_METHOD(
       {"BoundaryMode", {{"Freq", 5.0}}},
       {"SurfaceResponseCorrection",
        {{"Library", parallel_cluster_library_2d_path.string()},
-        {"UnmatchedPolicy", "Error"}}}};
+        {"UnmatchedPolicy", "Error"},
+        {"Developer", true}}}};
   IoData parallel_cluster_boundary_iodata_2d(parallel_cluster_boundary_config_2d, false);
   parallel_cluster_boundary_iodata_2d.boundaries.cracked_attributes.insert(9);
   parallel_cluster_boundary_iodata_2d.boundaries.cracked_attributes.insert(10);

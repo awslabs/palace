@@ -2095,6 +2095,9 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       }
       if (auto flips = gate->find("ControlFlipProbePiece"); flips != gate->end())
       {
+        // A falsification control of the gate: parked (CUT-PLAN step 5d).
+        RequireDeveloperOption(data,
+                               "\"ConductorConsistency\": {\"ControlFlipProbePiece\"}");
         // Decision 1292 (B): a diagnostic CONTROL admitted only with RecordOnly true.
         MFEM_VERIFY(
             flips->is_array() && !flips->empty(),

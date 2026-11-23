@@ -331,6 +331,33 @@ void IoData::CheckConfiguration()
                   solver.surface_response_correction->IsAutomatic(),
               "Maxwell \"SurfaceResponseCorrection\" requires automatic fabrication-"
               "process library matching!");
+  // The v1 default path (CUT-PLAN step 5d): the 2D boundary-mode correction and the
+  // cracked sheets of the metal laws other than the perfect conductor and the impedance
+  // (Ls) sheet are parked developer options.
+  if (solver.surface_response_correction && problem.type == ProblemType::BOUNDARYMODE)
+  {
+    config::RequireDeveloperOption(*solver.surface_response_correction,
+                                   "on a BoundaryMode problem (the 2D boundary-mode "
+                                   "correction)");
+  }
+  for (auto *response :
+       {solver.electrostatic.response_correction
+            ? &*solver.electrostatic.response_correction
+            : nullptr,
+        solver.surface_response_correction ? &*solver.surface_response_correction
+                                           : nullptr})
+  {
+    const auto Cracked = [](const auto &data) { return data.crack; };
+    if (response && (std::any_of(boundaries.conductivity.begin(),
+                                 boundaries.conductivity.end(), Cracked) ||
+                     std::any_of(boundaries.rational_impedance.begin(),
+                                 boundaries.rational_impedance.end(), Cracked)))
+    {
+      config::RequireDeveloperOption(
+          *response,
+          "with \"Crack\": true on a Conductivity or RationalImpedance boundary");
+    }
+  }
   MFEM_VERIFY(!solver.surface_response_correction ||
                   problem.type != ProblemType::BOUNDARYMODE ||
                   solver.surface_response_correction->correction_mode !=

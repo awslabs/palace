@@ -1165,7 +1165,9 @@ json SurfaceResponseFiles::BoundaryModeConfig2D(CrackPolicy crack_policy) const
       {"Order", 1},
       {"BoundaryMode", {{"Freq", 5.0}}},
       {"SurfaceResponseCorrection",
-       {{"Library", library_path.string()}, {"UnmatchedPolicy", "Error"}}}};
+       {{"Library", library_path.string()},
+        {"UnmatchedPolicy", "Error"},
+        {"Developer", true}}}};  // the 2D boundary-mode correction is a developer option
   return boundary_mode_config;
 }
 

@@ -634,6 +634,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     maxwell["Solver"]["SurfaceResponseCorrection"] =
         maxwell["Solver"]["Electrostatic"]["ResponseCorrection"];
     maxwell["Solver"].erase("Electrostatic");
+    maxwell["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
     CHECK_THROWS_WITH(IoData(maxwell, /*print=*/false), ContainsSubstring("PatchEnergy"));
   }
   if (!Mpi::Root(Mpi::World()))
