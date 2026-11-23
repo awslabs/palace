@@ -19,6 +19,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the boundary-mode `Sn` output for materials whose out-of-plane permeability
+    differs from the in-plane one: the in-plane magnetic field of the mode was computed with
+    the out-of-plane inverse permeability, so that `Sn` did not integrate to the mode power.
+    [PR 1298](https://github.com/awslabs/palace/pull/1298).
   - `"BoundaryMode"` simulations stop when a boundary attribute is given more than one
     boundary condition, as the other simulation types do, instead of adding the terms of
     each.
