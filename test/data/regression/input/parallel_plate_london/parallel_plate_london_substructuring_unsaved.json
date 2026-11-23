@@ -1,0 +1,82 @@
+{
+  "Problem":
+  {
+    "Type": "Magnetostatic",
+    "Verbose": 2,
+    "Output": "postpro/london_substructuring_unsaved"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/parallel_plate.msh",
+    "L0": 1.0e-6  // μm: slabs t = 0.2, gaps d = 0.5, width W = 1, length ℓ = 4
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],
+        "Permeability": 1.0
+      },
+      {
+        "Attributes": [2, 3, 4],  // The three slabs superconducting
+        "Permeability": 1.0,
+        "LondonDepth": 0.2        // λ (μm)
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [1]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [2, 4]  // Slab ends at the ports, and the shorted far end
+    },
+    "SurfaceCurrent":
+    [
+      {
+        "Index": 1,
+        "Attributes": [3],
+        "Direction": "+Z"  // Across the lower gap at the near end
+      },
+      {
+        "Index": 2,
+        "Attributes": [7],
+        "Direction": "+Z"  // Across the upper gap at the near end
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 3,
+    "Device": "CPU",
+    "Substructuring":
+    {
+      "Region":
+      {
+        "Attributes": [1]  // The gaps, the slabs in the environment
+      },
+      "SaveModel": false
+    },
+    "Magnetostatic":
+    {
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "AMS",
+      "KSPType": "CG",
+      "Tol": 1.0e-10,
+      "MaxIts": 200
+    }
+  }
+}

@@ -138,7 +138,7 @@ Adaptive refinement in an offline run is rejected (use step 1). The indicators a
 the regular simulation's estimator (the gradient flux in electrostatics, the curl flux in
 magnetostatics), with the flux recovery restricted to the region, so that the unknown
 environment field does not affect them near the interface, and normalized as there by the energy
-of the field in the volume (without the kinetic energy of the London sheets).
+of the field in the volume (without the kinetic energy of the London sheets and domains).
 
 ### Solvers
 

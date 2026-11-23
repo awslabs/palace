@@ -440,9 +440,10 @@ struct SubstructuringSolver::Impl
   // interface DOFs, so their emptiness must not gate collectives).
   bool have_sk = false;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_K;
-  // Kinetic energy interface operator S^Kin = P^T M_sheet^E P of the London sheets of the
-  // environment (distributed like S_rows), materialized with S^K when the environment has
-  // sheets (EnvSheets); the region's kinetic energy is that of its solution.
+  // Kinetic energy interface operator S^Kin = P^T M_kin^E P of the London sheets and
+  // domains of the environment, M_kin^E = M_sheet^E + M_London^E (distributed like S_rows),
+  // materialized with S^K when the environment has them (EnvKinetic); the region's kinetic
+  // energy is that of its solution.
   std::vector<double> SKin_rows;
   bool have_skin = false;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_Kin;
@@ -452,13 +453,15 @@ struct SubstructuringSolver::Impl
 
   // A term of the operator of the solves on the elements with the given domain attributes
   // and the boundary elements bounding them (all, without), from the operator of the
-  // regular solve: the volume terms (curl-curl or Laplace), the superconductor sheet terms
-  // (magnetostatics; null without sheets), or the regularization eps M (magnetostatics,
-  // with attrs). Assembled, or applied matrix-free. Collective.
+  // regular solve: the volume terms (curl-curl, with the London mass of the London domains,
+  // or Laplace), the superconductor sheet terms (magnetostatics; null without sheets), the
+  // London mass alone (magnetostatics; null without London domains), or the regularization
+  // eps M (magnetostatics, with attrs). Assembled, or applied matrix-free. Collective.
   enum class Term
   {
     VOLUME,
     SHEETS,
+    LONDON,
     MASS
   };
   std::unique_ptr<ParOperator> GetTerm(const std::vector<int> *attrs, Term term,
@@ -483,8 +486,15 @@ struct SubstructuringSolver::Impl
   // Sheet masses on both sides and on the environment side.
   const mfem::HypreParMatrix &Msheet();
   const mfem::HypreParMatrix &MsheetEnv();
-  // Whether the environment has London sheets (collective).
-  bool EnvSheets();
+  // London masses of the London domains on both sides and on the environment side (null
+  // without them).
+  std::unique_ptr<mfem::HypreParMatrix> M_london, M_london_env;
+  const mfem::HypreParMatrix *Mlondon();
+  const mfem::HypreParMatrix *MlondonEnv();
+  // Whether the environment has London sheets or domains, of kinetic energy (collective).
+  bool EnvKinetic();
+  // y = M_kin^E x, the kinetic load of x in the environment. Collective.
+  void KineticEnvMult(const mfem::Vector &x, mfem::Vector &y);
 
   // Y_k = A_env X_k for true-DOF vectors X_k (M_sheet^E X_k without the volume terms), by
   // the assembled operator if there is one, else matrix-free (set up on first use).
@@ -509,15 +519,15 @@ struct SubstructuringSolver::Impl
   void SetUpBrokenSpace();
 
   // Mass regularization eps (1/mu) M / L^2 making the singular magnetostatic curl-curl
-  // definite, L the extent of the mesh (the largest side of its bounding box, in units of
-  // Lc: 1 for the default Lc), so that it scales as the curl-curl operator whatever the
-  // permeability and Lc; mag_eps is eps / L^2. The surface-current energies use the
-  // unregularized operator in a form stationary in eps, with an error O(eps^2), but the
-  // part of a current that its quadrature leaves incompatible with the null space is
-  // amplified by 1/eps. The flux-loop sources are orthogonal to the null space and their
-  // London energies are linear in eps, so London sheets take a much smaller eps. On the
-  // mesh of the region, which may lack the sheets of the environment and has another
-  // extent, mag_eps is that of the model.
+  // definite outside the London domains, L the extent of the mesh (the largest side of its
+  // bounding box, in units of Lc: 1 for the default Lc), so that it scales as the curl-curl
+  // operator whatever the permeability and Lc; mag_eps is eps / L^2. The energies of the
+  // sources use the unregularized operator in a form stationary in eps, with an error
+  // O(eps^2), but the part of a surface current that its quadrature leaves incompatible
+  // with the null space is amplified by 1/eps. The kinetic energies, and with them the
+  // energies in the volume, are linear in eps, so London sheets and domains take a much
+  // smaller eps. On the mesh of the region, which may lack the sheets of the environment
+  // and has another extent, mag_eps is that of the model.
   static constexpr double kMagRegularization = 1.0e-3;
   static constexpr double kMagRegularizationSheets = 1.0e-7;
   // Largest regularization energy of a surface current relative to its magnetic energy
@@ -556,19 +566,19 @@ struct SubstructuringSolver::Impl
   // model, since it assembles only the region's: the number of the faces on Gamma that the
   // region holds, and the sums over them of cos(k_j . c) for three fixed k_j, c the center
   // of the face. Checks the two-sided films against the interface. Collective.
-  bool has_sheets = false;
+  bool has_sheets = false, has_london = false;
   std::vector<int> gamma_sheet_faces;
   std::array<double, 4> gamma_sheet_sides = {};
   void CheckSheets();
 
-  // Sheet masses (both sides, and per side), for the flux-loop sources and energies.
-  std::unique_ptr<mfem::HypreParMatrix> M_sheet_region;
+  // Sheet and London masses of the region, for the flux-loop sources and energies.
+  std::unique_ptr<mfem::HypreParMatrix> M_sheet_region, M_london_region;
 
   // Source modes of magnetostatic sources (see ComputeSourceModes): ids, fingerprints of
   // the environment sources, the interface loads g and energy couplings h (Gamma rows), the
   // constants c and the works B_ij = b^E_i^T W_j, and with S^Kin their kinetic parts
-  // h^kin_k = Z^T M_sheet^E (W_k - a_k) (Gamma rows) and c^kin_ij = (W_i - a_i)^T
-  // M_sheet^E (W_j - a_j). Only sources with an environment part have modes.
+  // h^kin_k = Z^T M_kin^E (W_k - a_k) (Gamma rows) and c^kin_ij = (W_i - a_i)^T
+  // M_kin^E (W_j - a_j). Only sources with an environment part have modes.
   std::vector<int> src_ids;
   std::vector<double> src_fp, SG_rows, SH_rows, SC, SB, SHkin_rows, SCkin;
   bool src_ready = false;
@@ -700,7 +710,7 @@ struct SubstructuringSolver::Impl
   // SRCM [K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK] (then [h^kin nG x
   // K][c^kin KxK] in a model with S^Kin), and FLXD [K][L][excitation ids K][loop ids L]
   // [fluxoids KxL] (flux loops driven together).
-  static constexpr int kModelVersion = 9;
+  static constexpr int kModelVersion = 10;
   using ModelFile = substructuring::ModelFile;
   static constexpr std::uint32_t kHeadTag = ModelFile::Tag("HEAD"),
                                  kSETag = ModelFile::Tag("SENV"),
@@ -855,10 +865,10 @@ struct SubstructuringSolver::Impl
   void LoadModel(const std::string &model_path, int sig_w);
 
   // Materialize S_E (from the partial factorization, or S_E e_c = (A_env e_c)|_Gamma -
-  // (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma), S^K = S_E - P^T D P and, with London sheets in
-  // the environment, S^Kin = P^T M_sheet^E P, for a magnetostatic model to save: by batched
-  // multi-RHS environment solves for the lifts P e_c, and the condensations P^T D P e_c and
-  // P^T M_sheet^E P e_c. Collective.
+  // (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma), S^K = S_E - P^T D P and, with London sheets or
+  // domains in the environment, S^Kin = P^T M_kin^E P, for a magnetostatic model to save:
+  // by batched multi-RHS environment solves for the lifts P e_c, and the condensations P^T
+  // D P e_c and P^T M_kin^E P e_c. Collective.
   void MaterializeWithEnergy();
 
   // Save S_E, the region mesh and the sections to the model file. Collective.

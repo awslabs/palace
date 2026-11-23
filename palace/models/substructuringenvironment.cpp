@@ -51,8 +51,10 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
   std::vector<mfem::Vector> KW(K, mfem::Vector(nt)), MD(K, mfem::Vector(nt)),
       D(K, mfem::Vector(nt));
   // By condensations: h_k = Z^T q_k for q_k = (A_env - D_env) W_k - b^E_k, and with S^Kin
-  // h^kin_k = Z^T M_sheet^E D_k for D_k = W_k - a_k.
+  // h^kin_k = Z^T M_kin^E D_k for D_k = W_k - a_k. The London mass is in A_env, the sheet
+  // mass not: the energies c take the sheet loads MD, the kinetic parts the loads MK.
   const bool kin = have_skin;
+  std::vector<mfem::Vector> MK(kin && MlondonEnv() ? K : 0, mfem::Vector(nt));
   std::vector<const mfem::Vector *> V(kin ? 2 * K : K);
   for (int k = 0; k < K; k++)
   {
@@ -78,6 +80,11 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
     if (kin)
     {
       V[K + k] = &MD[k];
+      if (!MK.empty())
+      {
+        KineticEnvMult(D[k], MK[k]);
+        V[K + k] = &MK[k];
+      }
     }
   }
   std::vector<double> hrows;
@@ -121,12 +128,12 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
     for (int j = 0; j < K; j++)
     {
       const std::size_t ij = static_cast<std::size_t>(i) * K + j;
-      const double kinetic = D[i] * MD[j];
-      SC[ij] = (W[i] * KW[j]) + kinetic - (JE[i] * W[j]) - (JE[j] * W[i]);
+      const double sheets = D[i] * MD[j];
+      SC[ij] = (W[i] * KW[j]) + sheets - (JE[i] * W[j]) - (JE[j] * W[i]);
       SB[ij] = b[i] * W[j];
       if (kin)
       {
-        SCkin[ij] = kinetic;
+        SCkin[ij] = MK.empty() ? sheets : D[i] * MK[j];
       }
     }
   }
@@ -594,7 +601,7 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
   // lifts y = A_EE^-1 (A_env e_c)|_E: S_E e_c = (A_env e_c)|_Gamma - (A_env y)|_Gamma. The
   // energy operator S^K = S_E - P^T D P, for the lift p = e_c - y, takes the condensation
   // P^T D p onto Gamma (by the forward elimination of a partial factorization), and the
-  // kinetic one S^Kin = P^T M_sheet^E P that of M_sheet^E p. The first solve of a direct
+  // kinetic one S^Kin = P^T M_kin^E P that of M_kin^E p. The first solve of a direct
   // factor fixes its block size at kMaterializeBlock; the thin couplings are G = A_env
   // E_Gamma and R = E_Gamma^T A_env. Each rank stores its own rows.
   const bool partial = !env_partial.empty();
@@ -615,7 +622,7 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
   }
   E.reset();
   const int B = kMaterializeBlock;
-  const bool kin = EnvSheets();
+  const bool kin = EnvKinetic();
   std::vector<Vector> t(B, Vector(nt)), v(kin ? 2 * B : B, Vector(nt));
   std::vector<const mfem::Vector *> X(B), V;
   std::vector<mfem::Vector *> Y(B);
@@ -670,7 +677,7 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
         }
       }
       // The lift p = e_c - y (t[k] holds y), its regularization load D p and its kinetic
-      // load M_sheet^E p.
+      // load M_kin^E p.
       t[k].Neg();
       if (c >= off && c < off + nloc)
       {
@@ -680,7 +687,7 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
       V[k] = &v[k];
       if (kin)
       {
-        MsheetEnv().Mult(t[k], v[B + k]);
+        KineticEnvMult(t[k], v[B + k]);
         V[nb + k] = &v[B + k];
       }
     }

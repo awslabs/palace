@@ -241,8 +241,8 @@ json ElectrostaticConfig(int order)
 }
 
 // Superconductor sheets: one-sided sheets crossing the interface and on it, and a
-// two-sided film crossing the interface.
-json MagnetostaticConfig(int order, bool sheets, bool film)
+// two-sided film crossing the interface; London domains: a domain on each side.
+json MagnetostaticConfig(int order, bool sheets, bool film, bool london = false)
 {
   json sc = json::array();
   if (sheets)
@@ -266,6 +266,17 @@ json MagnetostaticConfig(int order, bool sheets, bool film)
   if (!sc.empty())
   {
     config["Boundaries"]["Superconductor"] = sc;
+  }
+  if (london)
+  {
+    for (auto &material : config["Domains"]["Materials"])
+    {
+      const int a = material["Attributes"][0].get<int>();
+      if (a == kRegion.back() || a == kEnvironment.back())
+      {
+        material["LondonDepth"] = 0.5;
+      }
+    }
   }
   return config;
 }
@@ -375,19 +386,35 @@ void CheckMagnetostatic(IoData &iodata, const std::vector<std::unique_ptr<Mesh>>
   REQUIRE(ss.GlobalTrueVSize() == nd_fespace.GlobalTrueVSize());
   const auto &mat_op = curlcurl_op.GetMaterialOp();
 
-  // The stiffness matrix of the regular solve (curl-curl and sheet terms), the curl-curl
-  // term alone (the energy operator), and the regularization eps M.
+  // The stiffness matrix of the regular solve (curl-curl, London and sheet terms), the
+  // volume terms alone (the energy operator), and the regularization eps M off the London
+  // domains.
   auto K = curlcurl_op.GetStiffnessMatrix();
+  const bool london = mat_op.HasLondonDepth();
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                          mat_op.GetCurlCurlInvPermeability());
+  MaterialPropertyCoefficient london_func(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetInvLondonDepth());
   BilinearForm kcc(nd_fespace);
   kcc.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+  if (london)
+  {
+    kcc.AddDomainIntegrator<VectorFEMassIntegrator>(london_func);
+  }
   ParOperator Kcc(kcc.Assemble(false), nd_fespace);
   std::vector<int> domain_attrs(kRegion);
   domain_attrs.insert(domain_attrs.end(), kEnvironment.begin(), kEnvironment.end());
+  mfem::DenseTensor muinv(mat_op.GetInvPermeability());
+  for (int i = 0; i < muinv.SizeK(); i++)
+  {
+    if (mat_op.GetInvLondonDepth()(i).MaxMaxNorm() > 0.0)
+    {
+      muinv(i) = 0.0;
+    }
+  }
   MaterialPropertyCoefficient eps_func(
-      mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(),
-      (with_sheets ? kMagRegularizationSheets : kMagRegularization) *
+      mat_op.GetAttributeToMaterial(), muinv,
+      ((with_sheets || london) ? kMagRegularizationSheets : kMagRegularization) *
           RegularizationScale(static_cast<const mfem::ParMesh &>(nd_fespace.GetMesh())));
   eps_func.RestrictCoefficient(mat_op.GetCeedAttributes(domain_attrs));
   BilinearForm m(nd_fespace);
@@ -629,6 +656,19 @@ TEST_CASE("Substructured magnetostatic operators match CurlCurlOperator",
   CAPTURE(order, sheets, film, opt.tet, opt.curvature, opt.nc);
   IoData iodata(MagnetostaticConfig(order, sheets, film), false);
   CheckMagnetostatic(iodata, MakeMesh(MakeParitySerial(8, opt)), sheets || film);
+}
+
+TEST_CASE(
+    "Substructured magnetostatic operators match CurlCurlOperator with London domains",
+    "[substructure][Serial][Parallel][GPU]")
+{
+  // A London domain on each side, whose London mass is in the energy operator and lifts
+  // the regularization, with and without sheets.
+  const auto [order, sheets] =
+      GENERATE(table<int, bool>({{1, false}, {2, false}, {1, true}}));
+  CAPTURE(order, sheets);
+  IoData iodata(MagnetostaticConfig(order, sheets, false, true), false);
+  CheckMagnetostatic(iodata, MakeMesh(MakeParitySerial(8, {})), sheets);
 }
 
 TEST_CASE("Substructured third-order magnetostatic operators match CurlCurlOperator",

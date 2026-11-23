@@ -256,6 +256,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   if (magnetostatic)
   {
     SetUpBrokenSpace();
+    has_london = curlcurl_op->GetMaterialOp().HasLondonDepth();
   }
   nt = SolutionSpace().GetTrueVSize();
   for (int a : sub.region_attributes)
@@ -437,7 +438,9 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
       mesh::GetAxisAlignedBoundingBox(parent, bbmin, bbmax);
       bbmax -= bbmin;
       const double L = bbmax.Max();
-      mag_eps = (has_sheets ? kMagRegularizationSheets : kMagRegularization) / (L * L);
+      mag_eps =
+          ((has_sheets || has_london) ? kMagRegularizationSheets : kMagRegularization) /
+          (L * L);
     }
   }
   AssembleRegion();
@@ -517,19 +520,24 @@ void SubstructuringSolver::Impl::SetUpClosure()
   }
   closure_G_abs = AbsRows(*G, {});
 
-  // The conductor DOFs of the ND space: those of the PEC boundaries and of the sheets (the
-  // rows of the sheet mass on both sides with a nonzero diagonal), and the connected
-  // conductors: the components of the graph of |G_C|^T |G_C|, G_C the rows of G on them.
+  // The conductor DOFs of the ND space: those of the PEC boundaries, of the sheets and of
+  // the London domains (the rows of the sheet and London masses with a nonzero diagonal),
+  // and the connected conductors: the components of the graph of |G_C|^T |G_C|, G_C the
+  // rows of G on them.
   const int n = SolutionSpace().GetTrueVSize();
   std::vector<bool> on(n, false);
   for (int t : dbc_tdofs)
   {
     on[t] = true;
   }
-  if (has_sheets)
+  for (const auto *M : {has_sheets ? &Msheet() : nullptr, Mlondon()})
   {
+    if (!M)
+    {
+      continue;
+    }
     Vector d;
-    Msheet().GetDiag(d);
+    M->GetDiag(d);
     const double *h_d = d.HostRead();
     for (int t = 0; t < n; t++)
     {
@@ -1223,6 +1231,8 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     }
     const std::vector<Vector> u = SolveSourceBatch(b);
     std::vector<Vector> d(u), Md(n, Vector(nt));
+    std::vector<double> london(n, 0.0);
+    Vector Ld(nt);
     for (int j = 0; j < n; j++)
     {
       if (src[j].HasA())
@@ -1233,6 +1243,11 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       if (impl->has_sheets)
       {
         impl->Msheet().Mult(d[j], Md[j]);
+      }
+      if (const auto *L = kinetic ? impl->Mlondon() : nullptr)
+      {
+        L->Mult(d[j], Ld);
+        london[j] = d[j] * Ld;
       }
     }
     // The kinetic and current terms, the source works b_k^T u_k and the functionals,
@@ -1251,7 +1266,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       {
         loc[nn + n + l * n + i] = *fun->l[l] * u[i];
       }
-      loc[nk + i] = d[i] * Md[i];
+      loc[nk + i] = (d[i] * Md[i]) + london[i];
     }
     MPI_Allreduce(MPI_IN_PLACE, loc.data(), static_cast<int>(loc.size()), MPI_DOUBLE,
                   MPI_SUM, comm);
@@ -1384,9 +1399,11 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   }
 
   // Per source, on the region elements' DOFs: u_j, K_R u_j, d_j = u_j - a_j, M_sheet^R d_j
-  // and the region part of J_j; on Gamma: u_j and S^K u_j. Full fields only for the saved
-  // ones (and all of them for region_fields).
+  // and the region part of J_j; on Gamma: u_j and S^K u_j; and the London kinetic energy
+  // d_j^T M_London^R d_j. Full fields only for the saved ones (and all of them for
+  // region_fields).
   std::vector<Vector> uc(n), Kuc(n), dc(n), Mdc(n), Jc(n), ug(n), Sug(n);
+  std::vector<double> london(n, 0.0);
   if (fields)
   {
     fields->clear();
@@ -1396,7 +1413,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     region_fields->clear();
   }
   {
-    Vector Ku(nt), Su(nt), d(nt), Md(nt), JR(nt);
+    Vector Ku(nt), Su(nt), d(nt), Md(nt), Ld(nt), JR(nt);
     for (int j = 0; j < n; j++)
     {
       Vector u = impl->RegionField(x[j]);
@@ -1412,6 +1429,11 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       if (impl->M_sheet_region)
       {
         impl->M_sheet_region->Mult(d, Md);
+      }
+      if (kinetic && impl->M_london_region)
+      {
+        impl->M_london_region->Mult(d, Ld);
+        london[j] = d * Ld;
       }
       JR = 0.0;
       if (src[j].HasJ())
@@ -1485,14 +1507,14 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   }
   if (kinetic)
   {
-    // (u_k - a_k)^T M_sheet^R (u_k - a_k) in the region, and in the environment u_k,G^T
+    // (u_k - a_k)^T M_kin^R (u_k - a_k) in the region, and in the environment u_k,G^T
     // S^Kin u_k,G + 2 u_k,G^T h^kin_k + c^kin_kk.
     kinetic->assign(n, 0.0);
     Vector u(nt), Qu(nt), Qug;
     u = 0.0;
     for (int k = 0; k < n; k++)
     {
-      double e = dc[k] * Mdc[k];
+      double e = (dc[k] * Mdc[k]) + london[k];
       if (impl->mat_dtn_Kin)
       {
         u.SetSubVector(gm, ug[k]);  // S^Kin reads the interface entries only

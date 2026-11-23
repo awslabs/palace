@@ -55,11 +55,19 @@ SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
   if (term == Term::MASS)
   {
     // The regularization mag_eps (1/mu) M on the elements of the domains, weighted as the
-    // curl-curl operator.
+    // curl-curl operator, but on the London domains, whose London mass lifts the gradients
+    // (as the shift of the regular solve).
     MFEM_ASSERT(attrs, "The regularization is assembled on the region or the environment!");
     const auto &mat_op = curlcurl_op->GetMaterialOp();
-    MaterialPropertyCoefficient eps(mat_op.GetAttributeToMaterial(),
-                                    mat_op.GetInvPermeability(), mag_eps);
+    mfem::DenseTensor muinv(mat_op.GetInvPermeability());
+    for (int i = 0; i < muinv.SizeK(); i++)
+    {
+      if (mat_op.GetInvLondonDepth()(i).MaxMaxNorm() > 0.0)
+      {
+        muinv(i) = 0.0;
+      }
+    }
+    MaterialPropertyCoefficient eps(mat_op.GetAttributeToMaterial(), muinv, mag_eps);
     BilinearForm m(SolutionSpace());
     m.AddDomainIntegrator<VectorFEMassIntegrator>(eps);
     m.SetAssemblyDomains(*attrs);
@@ -70,6 +78,34 @@ SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
   if (term == Term::SHEETS && !has_sheets)
   {
     return nullptr;
+  }
+  if (term == Term::LONDON)
+  {
+    // The London mass of the curl-curl operator, on the London domains of the elements.
+    std::vector<int> london;
+    for (const auto &data : iodata.domains.materials)
+    {
+      for (int a : data.attributes)
+      {
+        if (data.lambda_L > 0.0 && (!attrs || std::ranges::find(*attrs, a) != attrs->end()))
+        {
+          london.push_back(a);
+        }
+      }
+    }
+    if (london.empty())
+    {
+      return nullptr;
+    }
+    const auto &mat_op = curlcurl_op->GetMaterialOp();
+    MaterialPropertyCoefficient f(mat_op.GetAttributeToMaterial(),
+                                  mat_op.GetInvLondonDepth());
+    BilinearForm m(SolutionSpace());
+    m.AddDomainIntegrator<VectorFEMassIntegrator>(f);
+    m.SetAssemblyDomains(london);
+    return std::make_unique<ParOperator>(
+        assemble ? std::unique_ptr<Operator>(m.FullAssemble(true)) : m.PartialAssemble(),
+        SolutionSpace());
   }
   std::optional<AssemblyDomains::Restriction> restriction;
   if (attrs)
@@ -113,6 +149,7 @@ void SubstructuringSolver::Impl::AssembleRegion()
   A_region_energy = AssembleTerm(region, Term::VOLUME);
   K_region_e = A_region_energy.get();
   M_sheet_region = AssembleTerm(region, Term::SHEETS);
+  M_london_region = AssembleTerm(region, Term::LONDON);
   A_region = Sum({A_region_energy.get(), M_sheet_region.get(),
                   AssembleTerm(region, Term::MASS).get()});
 }
@@ -167,8 +204,30 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::MsheetEnv()
   return *M_sheet_env;
 }
 
-bool SubstructuringSolver::Impl::EnvSheets()
+const mfem::HypreParMatrix *SubstructuringSolver::Impl::Mlondon()
 {
+  if (!M_london && has_london)
+  {
+    M_london = AssembleTerm(nullptr, Term::LONDON);
+  }
+  return M_london.get();
+}
+
+const mfem::HypreParMatrix *SubstructuringSolver::Impl::MlondonEnv()
+{
+  if (!M_london_env && has_london)
+  {
+    M_london_env = AssembleTerm(&env_attributes, Term::LONDON);
+  }
+  return M_london_env.get();
+}
+
+bool SubstructuringSolver::Impl::EnvKinetic()
+{
+  if (MlondonEnv())
+  {
+    return true;
+  }
   if (!has_sheets)
   {
     return false;
@@ -179,6 +238,19 @@ bool SubstructuringSolver::Impl::EnvSheets()
   const double norm = M.FNorm();
   M.HypreRead();
   return norm > 0.0;
+}
+
+void SubstructuringSolver::Impl::KineticEnvMult(const mfem::Vector &x, mfem::Vector &y)
+{
+  y = 0.0;
+  if (has_sheets)
+  {
+    MsheetEnv().Mult(x, y);
+  }
+  if (const auto *L = MlondonEnv())
+  {
+    L->AddMult(x, y);
+  }
 }
 
 std::vector<mfem::Vector>
