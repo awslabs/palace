@@ -127,8 +127,9 @@ private:
   // DBC attributes.
   mfem::Array<int> dbc_bcs;
 
-  // Setup helper.
+  // Setup helpers.
   void SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>> &mesh);
+  void CheckBoundaryProperties() const;
 };
 
 }  // namespace palace

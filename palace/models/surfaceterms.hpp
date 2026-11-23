@@ -44,9 +44,9 @@ enum class ProblemType : char;
 // it has a damping term, each Add* method to which it contributes a term, and if a term
 // depends on frequency, the list of frequency-dependent terms (sigma_terms and the
 // ExtraSystemBdrMassTerm methods, from which the summed ExtraSystemBdrMass methods and
-// their preconditioner forms are built). Outside this class, SpaceOperator names each
-// type for its 3D boundary checks (CheckBoundaryProperties), and
-// config::BoundaryData::GetCrossSectionEdgeAttributes for the boundary edges of 2D
+// their preconditioner forms are built). Outside this class, SpaceOperator and
+// BoundaryModeOperator name each type for their boundary checks (CheckBoundaryProperties),
+// and config::BoundaryData::GetCrossSectionEdgeAttributes for the boundary edges of 2D
 // cross-sections.
 //
 // Next to a frequency-dependent material k, an absorbing boundary depends on frequency

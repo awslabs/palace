@@ -15,6 +15,15 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Bug Fixes
+
+  - `"BoundaryMode"` simulations stop when a boundary attribute is given more than one
+    boundary condition, as the other simulation types do, instead of adding the terms of
+    each.
+    [PR 1298](https://github.com/awslabs/palace/pull/1298).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features

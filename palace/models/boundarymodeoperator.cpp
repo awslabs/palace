@@ -9,6 +9,7 @@
 #include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
+#include "utils/geodata.hpp"
 
 namespace palace
 {
@@ -29,6 +30,7 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
 
   // Boundary operators.
   surface_terms = std::make_unique<SurfaceTerms>(iodata, mat_op, solve_mesh->Get());
+  CheckBoundaryProperties();
 
   // Frequency-independent block matrices. Atn is the ND/H1 gradient coupling,
   // Btn = -Atn^T, Btt is the ND mass.
@@ -83,6 +85,34 @@ BoundaryModeOperator::ComputePoyntingPower(double omega, std::complex<double> kn
          std::conj(linalg::Dot(comm, en, Atn, et));
   }
   return P;
+}
+
+void BoundaryModeOperator::CheckBoundaryProperties() const
+{
+  // No boundary attribute may be assigned more than one of the boundary conditions of the
+  // 2D mode solve (PEC, which includes WavePortPEC, and the absorbing, finite
+  // conductivity, impedance and rational impedance boundaries of SurfaceTerms), as for the
+  // 3D operators (SpaceOperator::CheckBoundaryProperties): the terms of each would be
+  // added on the boundary.
+  const auto &pmesh = solve_mesh->Get();
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_bcs);
+  const auto farfield_marker =
+      mesh::AttrToMarker(bdr_attr_max, surface_terms->GetFarfieldOp().GetAttrList());
+  const auto surf_sigma_marker = mesh::AttrToMarker(
+      bdr_attr_max, surface_terms->GetSurfaceConductivityOp().GetAttrList());
+  const auto surf_z_marker = mesh::AttrToMarker(
+      bdr_attr_max, surface_terms->GetSurfaceImpedanceOp().GetAttrList());
+  const auto surf_rz_marker = mesh::AttrToMarker(
+      bdr_attr_max, surface_terms->GetRationalImpedanceOp().GetAttrList());
+  for (int i = 0; i < bdr_attr_max; i++)
+  {
+    MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
+                        surf_z_marker[i] + surf_rz_marker[i] <=
+                    1,
+                "Boundary attribute " << i + 1
+                                      << " should not be specified with multiple BC!");
+  }
 }
 
 void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>> &mesh)

@@ -18,6 +18,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/boundarymodesolver.hpp"
 
 #include "fem/fespace.hpp"
@@ -2209,6 +2210,102 @@ TEST_CASE("Boundary mode Poynting power is the time average",
   const std::complex<double> expected = 0.5 * std::conj(kn) / omega * e * e;
   CHECK_THAT(P.real(), WithinRel(expected.real(), 1.0e-12));
   CHECK_THAT(P.imag(), WithinRel(expected.imag(), 1.0e-12));
+}
+
+TEST_CASE("BoundaryModeOperator rejects multiple boundary conditions on an attribute",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // As in the 3D operators, no boundary attribute may have more than one of the boundary
+  // conditions of the 2D mode solve, whose terms would otherwise all be added on it.
+  // MakeCartesian2D boundary attributes: bottom = 1, right = 2, top = 3, left = 4.
+  auto Construct = [](const std::function<void(IoData &)> &configure_bcs)
+  {
+    MPI_Comm comm = Mpi::World();
+    IoData iodata(Units(1.0, 1.0));
+    iodata.problem.type = ProblemType::BOUNDARYMODE;
+    iodata.model.Lc = 1.0;
+    iodata.domains.materials.emplace_back().attributes = {1};
+    iodata.boundaries.pec.attributes = {1, 3};
+    configure_bcs(iodata);
+    iodata.solver.order = 1;
+    iodata.solver.boundary_mode.freq = 1.0;
+    iodata.solver.boundary_mode.n = 1;
+    iodata.CheckConfiguration();
+    auto serial = mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::QUADRILATERAL);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, serial)));
+    MaterialOperator mat_op(iodata, *mesh.back());
+    BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+  };
+  auto Impedance = [](IoData &iodata, std::vector<int> attributes)
+  {
+    auto &data = iodata.boundaries.impedance.emplace_back();
+    data.attributes = std::move(attributes);
+    data.Rs = 50.0;
+  };
+  auto Conductivity = [](IoData &iodata, std::vector<int> attributes)
+  {
+    auto &data = iodata.boundaries.conductivity.emplace_back();
+    data.attributes = std::move(attributes);
+    data.sigma = 5.8e7;
+  };
+  auto RationalImpedance = [](IoData &iodata, std::vector<int> attributes)
+  {
+    auto &data = iodata.boundaries.rational_impedance.emplace_back();
+    data.attributes = std::move(attributes);
+    data.num = {1.0e-12, 50.0};
+    data.den = {1.0};
+  };
+  const auto multiple_bc = Catch::Matchers::ContainsSubstring(
+      "Boundary attribute 2 should not be specified with multiple BC!");
+
+  // One boundary condition on each attribute, and the same PEC attribute given as "PEC"
+  // and "WavePortPEC".
+  CHECK_NOTHROW(Construct(
+      [&](IoData &iodata)
+      {
+        iodata.boundaries.auxpec.attributes = {1};
+        Impedance(iodata, {2});
+        iodata.boundaries.farfield.attributes = {4};
+      }));
+  CHECK_NOTHROW(Construct(
+      [&](IoData &iodata)
+      {
+        Conductivity(iodata, {2});
+        RationalImpedance(iodata, {4});
+      }));
+
+  // The same attribute in two boundary conditions.
+  const std::vector<std::function<void(IoData &)>> configurations = {
+      [&](IoData &iodata)
+      {
+        Impedance(iodata, {2});
+        iodata.boundaries.farfield.attributes = {2};
+      },
+      [&](IoData &iodata)
+      {
+        iodata.boundaries.auxpec.attributes = {2, 4};
+        Impedance(iodata, {2});
+      },
+      [&](IoData &iodata)
+      {
+        iodata.boundaries.pec.attributes = {2};
+        Conductivity(iodata, {2, 4});
+      },
+      [&](IoData &iodata)
+      {
+        Conductivity(iodata, {2});
+        RationalImpedance(iodata, {2});
+      },
+      [&](IoData &iodata)
+      {
+        RationalImpedance(iodata, {2});
+        iodata.boundaries.farfield.attributes = {2, 4};
+      }};
+  for (const auto &configure_bcs : configurations)
+  {
+    CHECK_THROWS_WITH(Construct(configure_bcs), multiple_bc);
+  }
 }
 
 }  // namespace palace
