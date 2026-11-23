@@ -1429,19 +1429,21 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
     ModelFile::Create(path, MPI_COMM_SELF);
     InterfaceRecords{nG, sig_w, signatures, length_scale}.Append(path, MPI_COMM_SELF);
   }
-  const int head[8] = {kVersion,
+  const int head[9] = {kVersion,
                        static_cast<int>(env_fp.size()),
                        static_cast<int>(excitations.size()),
                        static_cast<int>(ports.size()),
                        static_cast<int>(omega.size()),
                        weights.empty() ? 0 : 1,
                        static_cast<int>(region_bdr_attributes.size()),
-                       converged ? 1 : 0};
+                       converged ? 1 : 0,
+                       static_cast<int>(port_attributes.size())};
   const double scalars[3] = {error, tol, passivity};
   const long long size =
       sizeof(head) + sizeof(scalars) + sizeof(fp_centers) +
       sizeof(double) * (env_fp.size() + exc_fp.size() + omega.size()) +
-      sizeof(int) * (excitations.size() + ports.size() + region_bdr_attributes.size()) +
+      sizeof(int) * (excitations.size() + ports.size() + port_attributes.size() +
+                     region_bdr_attributes.size()) +
       sizeof(std::complex<double>) * weights.size();
   ModelFile::Append(path, MPI_COMM_SELF, kHeaderTag, size,
                     [&](std::ostream &f)
@@ -1451,7 +1453,7 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                         f.write(reinterpret_cast<const char *>(x),
                                 static_cast<std::streamsize>(sizeof(*x) * n));
                       };
-                      write(head, 8);
+                      write(head, 9);
                       write(scalars, 3);
                       for (const auto &c : fp_centers)
                       {
@@ -1461,6 +1463,7 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
                       write(excitations.data(), excitations.size());
                       write(exc_fp.data(), exc_fp.size());
                       write(ports.data(), ports.size());
+                      write(port_attributes.data(), port_attributes.size());
                       write(region_bdr_attributes.data(), region_bdr_attributes.size());
                       write(omega.data(), omega.size());
                       write(weights.data(), weights.size());
@@ -1518,7 +1521,7 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
                                        << "\" was written by another version of Palace: "
                                           "rerun offline (without \"ModelFile\")!");
   at = 0;  // the version, then the whole head
-  read(head, 8);
+  read(head, 9);
   std::vector<double> scalars;
   read(scalars, 3);
   error = scalars[0];
@@ -1535,6 +1538,7 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   read(excitations, head[2]);
   read(exc_fp, static_cast<double>(kSourceFp) * head[2]);
   read(ports, head[3]);
+  read(port_attributes, head[8]);
   read(region_bdr_attributes, head[6]);
   read(omega, head[4]);
   read(weights, head[5] ? head[4] : 0);
@@ -1583,10 +1587,10 @@ bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
   const EnvironmentRecord &env = environment, &saved_env = saved.environment;
   if (saved.nG != nG || saved.sig_w != sig_w || saved.signatures != signatures ||
       saved.excitations != excitations || saved.exc_fp.size() != exc_fp.size() ||
-      saved.ports != ports || saved.region_bdr_attributes != region_bdr_attributes ||
-      saved.omega != omega || saved.weights != weights ||
-      saved.length_scale != length_scale || !SameEnvironment(saved.env_fp, env_fp) ||
-      saved_env.attributes != env.attributes ||
+      saved.ports != ports || saved.port_attributes != port_attributes ||
+      saved.region_bdr_attributes != region_bdr_attributes || saved.omega != omega ||
+      saved.weights != weights || saved.length_scale != length_scale ||
+      !SameEnvironment(saved.env_fp, env_fp) || saved_env.attributes != env.attributes ||
       saved_env.bdr_attributes != env.bdr_attributes ||
       saved_env.config_hash != env.config_hash ||
       saved_env.excitations_hash != env.excitations_hash ||
@@ -1636,9 +1640,17 @@ std::vector<long long> DrivenSubstructureModel::RecordPositions(const std::strin
 }
 
 std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
-                                  std::map<int, std::vector<char>> &port_dofs)
+                                  std::map<int, std::vector<char>> &port_dofs,
+                                  std::vector<int> &port_attributes)
 {
   std::vector<int> env_ports;
+  port_attributes.clear();
+  auto add = [&port_attributes](std::vector<int> attrs)
+  {
+    std::ranges::sort(attrs);
+    port_attributes.push_back(static_cast<int>(attrs.size()));
+    port_attributes.insert(port_attributes.end(), attrs.begin(), attrs.end());
+  };
   for (const auto &[idx, data] : iodata.boundaries.lumpedport)
   {
     std::vector<int> attrs;
@@ -1663,11 +1675,13 @@ std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure
     {
       env_ports.push_back(idx);
       port_dofs[idx] = std::move(mark);
+      add(attrs);
     }
   }
   for (int idx : ds.EnvironmentWavePorts())
   {
     env_ports.push_back(-idx);
+    add(iodata.boundaries.waveport.at(idx).attributes);
   }
   return env_ports;
 }

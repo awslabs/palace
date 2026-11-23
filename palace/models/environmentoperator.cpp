@@ -79,6 +79,10 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
     {
       attrs.insert(attrs.end(), data.attributes.begin(), data.attributes.end());
     }
+    for (const auto &data : iodata.boundaries.rational_impedance)
+    {
+      attrs.insert(attrs.end(), data.attributes.begin(), data.attributes.end());
+    }
     for (const auto &data : iodata.boundaries.conductivity)
     {
       attrs.insert(attrs.end(), data.attributes.begin(), data.attributes.end());
@@ -93,7 +97,8 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
   nG = ds->InterfaceSize();
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   std::map<int, std::vector<char>> port_dofs;
-  env_ports = EnvironmentPorts(iodata, *ds, port_dofs);
+  std::vector<int> port_attributes;
+  env_ports = EnvironmentPorts(iodata, *ds, port_dofs, port_attributes);
 
   // The pinned DOFs, and the rows of Γ of each process: its interface DOFs are a block of
   // the interface order (by owner, then local index).
@@ -163,9 +168,9 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
                     ds->EnvironmentFingerprint(model.omega[0]), model.env_fp),
                 kEnvironmentDiffers);
   }
-  MFEM_VERIFY(env_ports == model.ports,
-              "The environment's lumped ports differ from those of the saved "
-              "substructuring model!");
+  MFEM_VERIFY(env_ports == model.ports && port_attributes == model.port_attributes,
+              "The environment's ports differ from those of the saved substructuring "
+              "model, in their indices or attributes!");
   if (!sampled)
   {
     record_pos = model.RecordPositions(model_path, comm);
@@ -252,6 +257,11 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
                 "Excitation " << idx
                               << " has environment sources that differ from the saved "
                                  "substructuring model!");
+    MFEM_VERIFY(!region_mesh || col >= 0 ||
+                    std::ranges::find(model.excitations, idx) == model.excitations.end(),
+                "Excitation " << idx
+                              << " has environment sources that the mesh of the region "
+                                 "does not hold: run online on the full mesh!");
     if (col >= 0)
     {
       ex_col[idx] = col;

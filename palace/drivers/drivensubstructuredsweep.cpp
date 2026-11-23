@@ -159,7 +159,7 @@ private:
   std::vector<const ComplexVector *> rhs_ptr;
   // The lumped ports of the environment (for a model).
   std::map<int, std::vector<char>> port_dofs;
-  std::vector<int> env_ports;
+  std::vector<int> env_ports, env_port_attributes;
   // A restart continues the sweep in its order, all excitations at a frequency before the
   // next one: "Restart" - 1 results are written.
   std::size_t first_freq = 0, first_ex = 0;
@@ -230,7 +230,7 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
   }
   if (save || adaptive)
   {
-    env_ports = EnvironmentPorts(iodata, *ds, port_dofs);
+    env_ports = EnvironmentPorts(iodata, *ds, port_dofs, env_port_attributes);
   }
   const std::size_t restart = iodata.solver.driven.restart - 1;
   first_freq = restart / n;
@@ -269,6 +269,7 @@ void DrivenSubstructuredSweep::SetUpModel()
     }
   }
   model.ports = env_ports;
+  model.port_attributes = env_port_attributes;
   model.region_bdr_attributes =
       BoundaryAttributesInRegion(space_op.GetMesh().Get(), sub.region_attributes);
   model.length_scale = iodata.model.Lc;

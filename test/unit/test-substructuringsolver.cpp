@@ -4677,6 +4677,40 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     ContainsSubstring("has sources on the substructuring interface"));
 }
 
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "Driven substructuring tells the ports of the environment by their attributes",
+    "[substructure][Serial][Parallel]")
+{
+  // The ports 2 and 3 of the environment with their indices swapped online, which leaves
+  // the configuration of the environment and the excitations as they are: the saved port
+  // functionals are of the other port.
+  auto ports = [](bool swapped)
+  {
+    return [swapped](json &config)
+    {
+      config["Boundaries"]["PEC"]["Attributes"] = {2, 3, 4, 6, 7, 8};
+      config["Boundaries"]["LumpedPort"] = {{{"Index", 1},
+                                             {"R", 50.0},
+                                             {"Attributes", {9}},
+                                             {"Direction", "+X"},
+                                             {"Excitation", 1}},
+                                            {{"Index", swapped ? 3 : 2},
+                                             {"R", 50.0},
+                                             {"Attributes", {10}},
+                                             {"Direction", "+X"}},
+                                            {{"Index", swapped ? 2 : 3},
+                                             {"R", 75.0},
+                                             {"Attributes", {5}},
+                                             {"Direction", "+Y"}}};
+    };
+  };
+  RunDrivenSheetSquare(temp_dir, "Offline", ports(false));
+  CHECK_NOTHROW(RunDrivenSheetSquare(temp_dir, "Online", ports(false)));
+  CHECK_THROWS_WITH(RunDrivenSheetSquare(temp_dir, "Online", ports(true)),
+                    Catch::Matchers::ContainsSubstring("in their indices or attributes"));
+}
+
 #if defined(MFEM_USE_GSLIB)
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring writes the probes it interpolates in the region",
@@ -4893,15 +4927,22 @@ TEST_CASE_METHOD(
     "Driven substructuring on the mesh of the region rejects boundary terms on Γ",
     "[substructure][Serial][Parallel]")
 {
-  // An impedance or a conducting sheet on Γ, the interior boundary between the domains of
-  // the box, would be the region's alone on the mesh of the region, while the full mesh
-  // runs from the model. An impedance on the interior boundary inside the environment is
-  // the model's.
+  // An impedance (also a rational one) or a conducting sheet on Γ, the interior boundary
+  // between the domains of the box, would be the region's alone on the mesh of the region,
+  // while the full mesh runs from the model. An impedance on the interior boundary inside
+  // the environment is the model's.
   const std::string region_mesh = RegionMeshPath(DrivenModel(temp_dir).string());
   using Edit = std::function<void(json &)>;
   const std::vector<std::tuple<std::string, Edit, bool>> terms = {
       {"impedance", [](json &config)
        { config["Boundaries"]["Impedance"] = {{{"Attributes", {4}}, {"Rs", 377.0}}}; },
+       true},
+      {"rational impedance",
+       [](json &config)
+       {
+         config["Boundaries"]["RationalImpedance"] = {
+             {{"Attributes", {4}}, {"Numerator", {377.0}}, {"Denominator", {1.0}}}};
+       },
        true},
       {"conductivity",
        [](json &config)
@@ -4938,6 +4979,34 @@ TEST_CASE_METHOD(
       RunDrivenBox(temp_dir, "Online", on_region);
     }
   }
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "Driven substructuring needs the full mesh for a source of the environment",
+    "[substructure][Serial][Parallel]")
+{
+  // A current dipole in the environment, away from Γ, lies outside the mesh of the region,
+  // which holds no source of it: a sweep on it is rejected, and one on the full mesh runs.
+  auto dipole = [](json &config)
+  {
+    config["Domains"]["CurrentDipole"] = {{{"Index", 1},
+                                           {"Moment", 1.0e-3},
+                                           {"Center", {1.75, 0.25, 0.75}},
+                                           {"Direction", {0.0, 0.0, 1.0}}}};
+    config["Boundaries"]["LumpedPort"][0].erase("Excitation");
+  };
+  RunDrivenBox(temp_dir, "Offline", dipole);
+  CHECK_NOTHROW(RunDrivenBox(temp_dir, "Online", dipole));
+  const std::string region_mesh = RegionMeshPath(DrivenModel(temp_dir).string());
+  CHECK_THROWS_WITH(
+      RunDrivenBox(temp_dir, "Online",
+                   [&](json &config)
+                   {
+                     dipole(config);
+                     config["Model"]["Mesh"] = region_mesh;
+                   }),
+      Catch::Matchers::ContainsSubstring("the mesh of the region does not hold"));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

@@ -97,7 +97,7 @@ private:
 //
 struct DrivenSubstructureModel
 {
-  static constexpr int kVersion = 12;  // of the header
+  static constexpr int kVersion = 13;  // of the header
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
   // Relative tolerance of the comparisons of the environment with that of a saved model:
   // its fingerprint and element moments are sums over elements, which the partition changes
@@ -112,8 +112,9 @@ struct DrivenSubstructureModel
   std::vector<int> excitations;  // excitations with environment sources
   std::vector<double> exc_fp;    // their source fingerprints (kSourceFp each)
   std::vector<int> ports;        // environment lumped ports (index) and wave ports (-index)
-  std::vector<int> region_bdr_attributes;     // see BoundaryAttributesInRegion
-  std::vector<double> omega;                  // frequencies of the records (nondimensional)
+  std::vector<int> port_attributes;        // of each port: their number, then them (sorted)
+  std::vector<int> region_bdr_attributes;  // see BoundaryAttributesInRegion
+  std::vector<double> omega;               // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
   // The adaptive sampling of a rational model: whether it met its tolerance tol (false
   // until it ends), the error estimate of its last sample, and the least eigenvalue of
@@ -397,10 +398,12 @@ private:
 };
 
 // The lumped ports on the environment side (and its wave ports, as -index), with the true
-// DOFs of its lumped ports, aborting for a lumped port touching Γ (its excitation and
-// voltage would depend on both sides). Collective.
+// DOFs of its lumped ports and the attributes of each (see
+// DrivenSubstructureModel::port_attributes), aborting for a lumped port touching Γ (its
+// excitation and voltage would depend on both sides). Collective.
 std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
-                                  std::map<int, std::vector<char>> &port_dofs);
+                                  std::map<int, std::vector<char>> &port_dofs,
+                                  std::vector<int> &port_attributes);
 
 // The full S_E (n x n, row-major) of a record's lower triangle (by columns), mapped to the
 // current interface as M^-T S_E M^-1 with map, if given (SignatureMap::DualMatrix).
