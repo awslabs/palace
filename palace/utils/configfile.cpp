@@ -2213,16 +2213,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
             records->is_string() && (*records == "Metadata" || *records == "Directory"),
             "Response-correction \"Diagnostics.ConductorConsistencyRecords\" must be "
             "\"Metadata\" or \"Directory\"!");
+        // "Directory" without Diagnostics.Directory: the default directory
+        // conductor-consistency/ of the output (CUT-PLAN step 6).
         data.conductor_consistency_records =
             *records == "Directory"
                 ? ResponseCorrectionData::ConductorConsistencyRecordsOutput::DIRECTORY
                 : ResponseCorrectionData::ConductorConsistencyRecordsOutput::METADATA;
-        MFEM_VERIFY(
-            data.conductor_consistency_records !=
-                    ResponseCorrectionData::ConductorConsistencyRecordsOutput::DIRECTORY ||
-                !data.diagnostics_directory.empty(),
-            "Response-correction \"Diagnostics.ConductorConsistencyRecords\": "
-            "\"Directory\" requires \"Diagnostics.Directory\"!");
       }
       for (const auto &[key, value] : diagnostics->items())
       {

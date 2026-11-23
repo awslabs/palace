@@ -422,7 +422,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     two-dimensional boundary-mode correction, a library with conductivity or
     rational-impedance coupons (refused when it is read), `"Crack": true` on a
     `Conductivity` or `RationalImpedance` boundary of a correction run, and
-    `"ConductorConsistency": {"ControlFlipProbePiece"}`. Nothing is removed.
+    `"ConductorConsistency": {"ControlFlipProbePiece"}`. And the conductor-consistency
+    records leave `palace.json` by default: `"Diagnostics": {"ConductorConsistencyRecords"}`
+    defaults to `"Directory"` (was `"Metadata"`), which no longer requires
+    `Diagnostics.Directory` (without it the file is written to `conductor-consistency/` of
+    the output); `palace.json` keeps the count and the gate summary. Nothing is removed.
     SchemaVer 4-6-0
 
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue

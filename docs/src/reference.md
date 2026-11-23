@@ -2376,20 +2376,23 @@ writes `surface-response-patches.csv`, `surface-response-patch-energy.csv`,
 confidence, model, class-energy and terminal tables) and `palace.json` stay at the top level,
 unchanged. Under adaptive mesh refinement each `iterationNN/` folder holds its own
 `<name>/` (the final iteration's is `<Output>/<name>/`). `"ConductorConsistencyRecords":
-"Directory"` (default `"Metadata"`; requires `Directory`) moves the `Records` array of
+"Directory"` (the default since schema 4-6-0) writes the `Records` array of
 `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and
-excitation, the bulk of `palace.json` on a full chip) out of `palace.json` into
-`<Output>/<name>/surface-response-conductor-consistency-records.json`, a JSON document with
-the array at the same key path and in the same text; `palace.json` then lacks only that
-member (`TestedPatches`, the record count, and the gate's summary stay). The preflight's
+excitation, the bulk of `palace.json` on a full chip) not into `palace.json` but into
+`<Output>/<name>/surface-response-conductor-consistency-records.json`, or, without
+`Directory`, `<Output>/conductor-consistency/surface-response-conductor-consistency-records.json`
+(each `iterationNN/` folder holds its own), a JSON document with the array at the same key
+path and in the same text; `palace.json` then lacks only that member (`TestedPatches`, the
+record count, and the gate's summary stay). `"Metadata"` keeps the array in `palace.json`
+(the default before). The preflight's
 patch list stays beside its manifest. How large `palace.json` gets: on a full design the
 conductor-consistency `Records` are nearly all of it (measured on one corrected eigenmode
 run of a full chip at element order 4: 362.7 of 363.4 MB, 99.8 %, were
 `SurfaceResponse.Diagnostics.ConductorConsistency.Records`); a service that stores
 `palace.json` as run metadata may refuse a file that large. `"Diagnostics": {"Directory":
-"records", "ConductorConsistencyRecords": "Directory"}` moves that array into
+"records"}` puts that array into
 `<Output>/records/surface-response-conductor-consistency-records.json` and leaves the rest
-of `palace.json` as it was; both keys are off by default. `Diagnostics.Directory` names a sub-directory of
+of `palace.json` as it was. `Diagnostics.Directory` names a sub-directory of
 `Problem.Output`; it is not `Solver.Electrostatic.ResponseArchive.Directory`, which is the
 path of the field archive (relative to the working directory of the process).
 
