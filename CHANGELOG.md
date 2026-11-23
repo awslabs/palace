@@ -20,25 +20,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 #### New Features
 
   - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
-    eigenmode simulations. A PML meshed with the model is configured with blocks of
-    `config["Domains"]["PML"]`, whose `"Attributes"` are the domains of the PML regions (the
-    other parameters have suitable defaults). With the entries of
-    `config["Boundaries"]["PML"]`, *Palace* instead extrudes the PML from farfield
-    boundaries of the mesh, for example in place of an absorbing boundary on a sphere: each
-    face becomes a column of prisms or hexahedra, along the normal of a flat part of the
-    boundary, per component on a box (whose layer is the Cartesian PML of the box grown by
-    the thickness), or along rays from a core point or axis-aligned box, and the coordinates
-    are stretched across the layer. Periodic boundaries may cross a part extruded along its
-    normal, as on top of a Floquet cell. The stretch can be evaluated at a fixed reference
-    frequency or at the solve frequency (`"FrequencyDependent"`). For eigenmode simulations,
-    the fraction of the field energy of each mode in the PML regions is written to
-    `eig.csv`, which identifies the spurious modes of the layer. The multigrid
-    preconditioner is complemented by a sparse direct solve of the PML regions
-    (`Solver.Linear.PMLSubdomainSolver`), factored in complex arithmetic, and its smoothers
-    do not update the unknowns of strongly stretched PML elements
-    (`Solver.Linear.PMLSmootherThreshold`); with SuperLU_DIST, the accuracy of the
-    factorization is checked, and an inaccurate factorization is repeated with tiny pivot
-    replacement and iterative refinement. SchemaVer 6-1-0
+    eigenmode simulations, meshed with the model (`config["Domains"]["PML"]`) or extruded by
+    *Palace* from farfield boundaries of the mesh (`config["Boundaries"]["PML"]`), with a
+    stretch evaluated at a reference frequency or at the solve frequency. The multigrid
+    preconditioner solves the PML regions with a sparse direct solver, and `eig.csv` reports
+    the fraction of the energy of each mode in the PML regions. SchemaVer 6-1-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 #### Interface Changes
@@ -67,14 +53,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Documentation
 
-  - Added the microstrip patch antenna example of Sheen et al. (1990), whose substrate and
-    ground plane run through the truncation of the domain, comparing the extruded PML with
-    the second-order absorbing boundary against the published measured and computed
-    reflection coefficient, and a section on the extruded PML to the dipole antenna
-    example, with the input impedance for several layers and the far-field pattern and
-    directivity against the half-wave dipole. The guide shows the shapes of the extruded PML
-    and the reflection of the PML and of the absorbing boundaries against the angle of
-    incidence. [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Added the microstrip patch antenna example and a PML section to the dipole antenna
+    example, and described the PML in the boundary conditions guide.
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 ## [0.20.0] - 2026-11-23
 

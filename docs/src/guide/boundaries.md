@@ -275,11 +275,7 @@ elements next to the edges, which fan out the more, the closer the core comes to
 from a box just inside, the whole fan is in the last column, as wide as one element. This is
 less accurate unless the mesh is refined along the edges between the faces with a PML to
 about the element size of the layer, `"Thickness"` / `"Layers"`, as in the
-[patch antenna example](../examples/patch_antenna.md#Truncation). On a cube of 8
-hexahedra across with a layer of 4 elements, third-order elements give the field of a dipole
-at its center within 0.07 to 0.33% of that in free space at nine probes with the layer
-extruded from the center, and within 0.5 to 1.0% from a box one element inside or less (0.4
-to 3.7% and 2.3 to 5.1% with second-order elements).
+[patch antenna example](../examples/patch_antenna.md#Truncation).
 
 The extruded elements take the material of the elements below them, and the other boundaries
 through the edges of the extruded boundary, such as a ground plane, extend through the
@@ -287,8 +283,8 @@ layer. The outer boundary of the layer is PEC, unless a boundary condition is gi
 `"BackAttribute"`. The extruded boundary becomes an interior boundary, whose attribute can
 still be used for postprocessing, such as the far field of
 [`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries-postprocessing-farfield):
-for the antenna example, the far field with the extruded PML above agrees with the one with
-the second-order absorbing boundary to 0.06 dB.
+for the antenna example, the far field with the extruded PML above agrees closely with the
+one with the second-order absorbing boundary.
 
 The extruded layer is refined with the rest of the mesh by parallel uniform refinement
 ([`"UniformLevels"`](../config/reference.md#config-model-refinement-uniformlevels)) and by
@@ -317,12 +313,7 @@ theoretical reflection at normal incidence of a layer of ``N`` elements is then
 for a given order, it is set by the number of elements across the layer, and not by its
 thickness. A guided mode reflects as a plane wave with ``\cos\theta = k_z / k``, for its
 wavenumber ``k_z`` along the guide and ``k`` at the reference frequency, so that its
-reflection grows toward cutoff: with the default `"SigmaMax"` and `"ReferenceFrequency"`,
-the waveguide of
-[`examples/pml_waveguide`](https://github.com/awslabs/palace/blob/main/examples/pml_waveguide)
-reflects -65 dB at 6.7% above cutoff, -47 dB at 3.4%, and -22 dB at 0.7%, which the formula
-gives to 0.1 dB up to 3.4%.
-The thickness ``d`` still matters through the element size ``h = d / N``, which
+reflection grows toward cutoff. The thickness ``d`` still matters through the element size ``h = d / N``, which
 must resolve the fields in the layer like the mesh of the physical region does (for
 example, about ``\lambda / 10`` for second-order elements, for the wavelength
 ``\lambda`` in the materials of the PML regions at the highest frequency of interest): a
@@ -337,30 +328,20 @@ is recommended in the PML regions.
 
 The theoretical reflection, which is printed for each face, is that of the continuous
 layer. The discretized layer reflects more, which dominates at normal and moderate
-incidence where the theoretical reflection is very small: at normal incidence and with the
-default `"SigmaMax"`, second-order elements reflect about -80 to -85 dB with 8 elements
-and -93 to -100 dB with 12 elements for ``h`` between ``\lambda / 32`` and
-``\lambda / 16``, and refining the mesh at a fixed number of elements does not reduce
-this reflection. The default conductivity is chosen for oblique and grazing incidence,
-where the theoretical reflection is reached. For waves which leave the domain near normal
-incidence (such as the backscattered field of a scatterer), a weaker absorption, with a
-`"ReflectionTarget"` slightly below the required reflection, reflects less (for example
-5 to 20 dB less with 8 to 12 second-order elements and a target of ``10^{-6}`` to
-``10^{-7}``), at the cost of larger reflections at grazing incidence.
+incidence where the theoretical reflection is very small, and refining the mesh at a fixed
+number of elements does not reduce this reflection. The default conductivity is chosen for
+oblique and grazing incidence, where the theoretical reflection is reached. For waves which
+leave the domain near normal incidence (such as the backscattered field of a scatterer), a
+weaker absorption, with a `"ReflectionTarget"` slightly below the required reflection,
+reflects less, at the cost of larger reflections at grazing incidence.
 
 The figure shows both regimes for a plane wave on the periodic vacuum cell of
 [`examples/pml_oblique`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique)
-at 3 GHz, against its angle of incidence ``\theta``, with a layer of 24 second-order
-elements of size ``\lambda / 8`` and the theory as lines. With `"ReflectionTarget": 1e-3`,
-the reflection follows the theory of the continuous layer, ``R(0)^{\cos\theta}``, to
-1.2 dB at normal incidence and 0.5 dB from 15°. With `1e-12`, it follows the
-theory from 70° to grazing incidence, and below 65° it is set by the
-discretization of the layer: -77 dB at normal incidence, falling to -100 dB at
-60°. The figure shows the meshed PML. The same layer extruded along the normal of the
-back of the cell, where it follows 0.3 m more of the cell, reflects the same as the meshed PML
-on a cell of that length, to ``10^{-8}`` dB. The length of the cell changes the reflection by
-up to 0.1 dB with `1e-12`, and by up to 1.1 dB with `1e-3` from 10° to 30°, where the
-reflections of the two lengths differ by ``2 \times 10^{-4}`` of the incident amplitude. The
+at 3 GHz, against its angle of incidence ``\theta``, with the theory as lines. With
+`"ReflectionTarget": 1e-3`, the reflection follows the theory of the continuous layer,
+``R(0)^{\cos\theta}``. With `1e-12`, it follows the theory near grazing incidence, and is
+set by the discretization of the layer at smaller angles. The figure shows the meshed PML;
+the same layer extruded along the normal of the back of the cell reflects the same. The
 script
 [`pml_oblique.jl`](https://github.com/awslabs/palace/blob/main/examples/pml_oblique/pml_oblique.jl)
 runs the cases and draws the figure:
@@ -384,10 +365,8 @@ in both polarizations (-15.3 dB at 45°). The second-order condition imposes
 [Other boundary conditions](../reference.md#Other-boundary-conditions)), so that
 ``\lvert R \rvert = (1 - \cos\theta)^2 / (1 + \cos\theta)^2``, the square of the first-order
 reflection (-30.6 dB at 45°), and it is the first-order condition in TM
-polarization. *Palace* matches these to 0.1 dB from 5° (first order) and
-0.2 dB from 25° (second order). Below 25°, the reflection of the
-second-order condition approaches the discretization error of the cell, -108 dB at normal
-incidence.
+polarization. *Palace* matches these closely, until the reflection of the second-order
+condition reaches the discretization error of the cell near normal incidence.
 
 A PML absorbs the propagating waves leaving the domain, but not the evanescent near fields
 of the structures, which it distorts instead. The PML regions should therefore be placed at
@@ -402,11 +381,8 @@ does not detect. A strongly anisotropic material whose axes are tilted from the 
 the layer also carries such a wave. The reflection of the continuous layer is then still
 right, but the field grows across the layer by ``R(0)^{-\lvert k_z \rvert / 2k}``, so near
 total reflection a strong layer gives a result which depends on the mesh and the linear
-solver: for TM waves at 47° from a relative permittivity of 9 into principal permittivities
-9, 1, and 9 on axes rotated by 45°, with `"ReflectionTarget": 1e-12` and the mesh of
-`examples/pml_oblique` refined once, 6.1 dB off the Fresnel reflection with STRUMPACK and
-0.7 dB with MUMPS. A larger `"ReflectionTarget"` avoids this, at the cost of a larger
-reflection of the layer.
+solver. A larger `"ReflectionTarget"` avoids this, at the cost of a larger reflection of the
+layer.
 
 By default, the stretch factors are evaluated at a fixed `"ReferenceFrequency"`: the lowest
 frequency for driven simulations, or the target frequency for eigenmode simulations. This
@@ -418,15 +394,11 @@ frequency, for an absorption independent of frequency, and a complex frequency s
 
 With the static stretch, the absorption across each element of the layer grows with
 frequency, so over a wide sweep the layer becomes too coarse for the wave at the upper
-frequencies, and reflects more of it. For a vacuum cell at normal incidence, swept from 0.3
-to 3 GHz, a layer of 8 third-order elements that is ``\lambda / 10`` thick at 0.3 GHz
-reflects -109 dB at 0.3 GHz and -70 dB at 3 GHz, while 16 elements in the same thickness
-stay below -110 dB. With `"FrequencyDependent": true`, the 8 elements stay below -109 dB.
-An adaptive sweep of a waveguide over 1001 frequencies then takes 4% longer with 186,820
-unknowns and 25% longer with 25,252, where a rational fit of the PML terms in frequency
-passes its accuracy check. Where the fit fails, as on this cell, *Palace* assembles and
-projects the PML terms at every output frequency, and an adaptive sweep over 301
-frequencies takes 30% longer, with 4.5 s instead of 0.2 s spent at the output frequencies.
+frequencies, and reflects more of it: more elements across the layer, or the
+frequency-dependent stretch, keep the reflection low over the band. With
+`"FrequencyDependent": true`, an adaptive frequency sweep evaluates the PML terms of the
+reduced-order model from a rational fit in frequency when it is accurate, and otherwise
+assembles and projects them at every output frequency, which takes longer.
 
 ### Eigenmode simulations and postprocessing with PML regions
 
