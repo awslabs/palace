@@ -1477,15 +1477,24 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
 
 void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r) const
 {
-  const auto x = Flatten(r);
-  ModelFile::Append(
-      path, MPI_COMM_SELF, kRecordTag,
-      static_cast<long long>(sizeof(std::complex<double>) * x.size()),
-      [&](std::ostream &f)
-      {
-        f.write(reinterpret_cast<const char *>(x.data()),
-                static_cast<std::streamsize>(sizeof(std::complex<double>) * x.size()));
-      });
+  // From the parts of the record: S_E by the columns of its lower triangle, then g, h and
+  // c.
+  ModelFile::Append(path, MPI_COMM_SELF, kRecordTag, static_cast<long long>(RecordBytes()),
+                    [&](std::ostream &f)
+                    {
+                      auto write = [&f](const std::complex<double> *x, std::size_t n)
+                      {
+                        f.write(reinterpret_cast<const char *>(x),
+                                static_cast<std::streamsize>(sizeof(*x) * n));
+                      };
+                      for (int j = 0; j < nG; j++)
+                      {
+                        write(r.S.data() + static_cast<std::size_t>(j) * nG + j, nG - j);
+                      }
+                      write(r.g.data(), r.g.size());
+                      write(r.h.data(), r.h.size());
+                      write(r.c.data(), r.c.size());
+                    });
 }
 
 void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
