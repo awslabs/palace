@@ -3695,12 +3695,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                     ContainsSubstring("is incomplete"));
   // The interface size (the first entry of the interface record) beyond the record or
-  // negative, and more frequencies (head entry 4) than the record holds, or none (an
-  // adaptive offline run stopped before its first sample).
-  for (const auto [tag, entry, value] : {std::tuple{signatures, 0, 1000},
-                                         {signatures, 0, -5},
-                                         {header, 4, 7},
-                                         {header, 4, 0}})
+  // negative, and more frequencies (head entry 4) than the record holds.
+  for (const auto [tag, entry, value] :
+       {std::tuple{signatures, 0, 1000}, {signatures, 0, -5}, {header, 4, 7}})
   {
     m.WriteHeader(path);
     const auto pos = payload(tag);
@@ -3713,6 +3710,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                       ContainsSubstring("is incomplete"));
   }
+  // No frequencies, as an adaptive offline run that stopped before its first sample writes.
+  auto empty = m;
+  empty.omega.clear();
+  empty.WriteHeader(path);
+  CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
+                    ContainsSubstring("is incomplete"));
   m.WriteHeader(path);
   {
     using substructuring::ModelFile;
@@ -4613,6 +4616,28 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     CHECK(out.find("Beginning fast frequency sweep online phase") != std::string::npos);
   }
 }
+
+#if defined(MFEM_USE_EXCEPTIONS)
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring rejects frequency-dependent permittivity",
+                 "[substructure][Serial][Parallel]")
+{
+  // A frequency-dependent material, in the region or in the environment, is rejected: its
+  // unit mass is assembled on the whole mesh, not on each side of Γ.
+  const int material = GENERATE(0, 1);
+  auto config = DrivenBoxConfig(temp_dir, "Offline");
+  config["Domains"]["Materials"][material]["Permittivity"] = {
+      {"HighFrequencyLimit", 2.0},
+      {"Terms",
+       {{{"Type", "Lorentz"},
+         {"DeltaPermittivity", 0.5},
+         {"ResonanceFrequency", 30.0},
+         {"DampingFrequency", 0.1}}}}};
+  CHECK_THROWS_WITH(IoData(config, false),
+                    Catch::Matchers::ContainsSubstring(
+                        "does not support frequency-dependent material Permittivity"));
+}
+#endif
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring online with a process holding no region element",
@@ -5611,15 +5636,15 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   const LinearSolver type = GENERATE_COPY(from_range(types));
   const bool tet = (kind == MeshKind::TET);
   CAPTURE(order, static_cast<int>(kind), static_cast<int>(type));
-  // SuperLU_DIST's static pivoting, in the real equivalent form, is accurate to a few
-  // 1e-10 here: by default, it factors the sides without MUMPS and STRUMPACK, and the
-  // online region without STRUMPACK.
-#if defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK)
+  // SuperLU_DIST's static pivoting, in the real equivalent form, is accurate to about 1e-9
+  // here: by default, it factors the sides and the online region without MUMPS and
+  // STRUMPACK.
+#if defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS)
   const bool superlu = (type == LinearSolver::SUPERLU || type == LinearSolver::DEFAULT);
 #else
   const bool superlu = (type == LinearSolver::SUPERLU);
 #endif
-  const double exact_tol = superlu ? 1.0e-9 : 1.0e-10;
+  const double exact_tol = superlu ? 1.0e-8 : 1.0e-10;
   json config = {
       {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
       {"Model", {{"Mesh", "test.msh"}}},

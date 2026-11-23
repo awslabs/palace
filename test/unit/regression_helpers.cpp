@@ -401,7 +401,16 @@ private:
 std::string ResolveSolverOverride(SolverOverridePolicy policy,
                                   const std::string &global_override)
 {
-  return (policy == SolverOverridePolicy::ForceDefault) ? "Default" : global_override;
+  switch (policy)
+  {
+    case SolverOverridePolicy::ForceDefault:
+      return "Default";
+    case SolverOverridePolicy::KeepCase:
+      return {};
+    case SolverOverridePolicy::UseGlobalOverride:
+      break;
+  }
+  return global_override;
 }
 
 // Inject any override knobs and return a fully constructed IoData.

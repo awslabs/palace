@@ -453,6 +453,7 @@ palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
 const std::vector<std::string> eigen_excluded = {"Maximum", "Minimum", "Mean",
                                                  "Error (Bkwd.)", "Error (Abs.)"};
 constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceDefault;
+constexpr auto keep_case_solver = palace::test::SolverOverridePolicy::KeepCase;
 
 // Floquet-port S-parameters: compare only the |S[...]| (dB) magnitude columns
 // (phase isn't reproducible). NaN entries (evanescent modes) count as matches. By default
@@ -3088,6 +3089,26 @@ TEST_CASE("substructuring_driven_box_region", "[Serial][Parallel][GPU][Regressio
   palace::test::RunRegressionCase("substructuring_driven_box", "driven_online_region.json",
                                   "online_region", opts);
 }
+
+#if defined(MFEM_USE_MUMPS)
+
+// The box at order 3 (|Γ| = 1722, the interface system in many blocks over the process
+// grid, of two rows from 4 processes), with the region's Schur complement from MUMPS,
+// distributed over the grid: against a regular simulation of the redesign.
+TEST_CASE("substructuring_driven_box_region_order3", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-22;
+  opts.linear_solver_policy = keep_case_solver;
+  opts.paraview_fields = false;
+  opts.setup_config = "driven_offline_order3.json";
+  palace::test::RunRegressionCase("substructuring_driven_box",
+                                  "driven_online_region_order3.json",
+                                  "online_region_order3", opts);
+}
+
+#endif
 
 #endif
 
