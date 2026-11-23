@@ -49,144 +49,86 @@ void SubstructuringSolver::Impl::AppendRecord(
 namespace substructuring
 {
 
-void RowsToRoot(MPI_Comm comm, const std::vector<double> &rows, int w,
-                const std::vector<int> &cnt, std::size_t chunk,
-                const std::function<void(const double *, int)> &write)
-{
-  const int per = static_cast<int>(std::max<std::size_t>(1, chunk / w));
-  const RowType row(w);
-  if (!Mpi::Root(comm))
-  {
-    const int m = static_cast<int>(rows.size() / w);
-    for (int r0 = 0; r0 < m; r0 += per)
-    {
-      MPI_Send(rows.data() + static_cast<std::size_t>(r0) * w, std::min(per, m - r0),
-               row.type, 0, 0, comm);
-    }
-    return;
-  }
-  // The chunks of another rank as it sends them, until it has sent its rows.
-  std::vector<double> buf;
-  for (std::size_t q = 0; q < cnt.size(); q++)
-  {
-    for (int r0 = 0; r0 < cnt[q];)
-    {
-      int n = std::min(per, cnt[q] - r0);
-      const double *x = rows.data() + static_cast<std::size_t>(r0) * w;
-      if (q > 0)
-      {
-        MPI_Status status;
-        MPI_Probe(static_cast<int>(q), 0, comm, &status);
-        MPI_Get_count(&status, row.type, &n);
-        buf.resize(static_cast<std::size_t>(n) * w);
-        MPI_Recv(buf.data(), n, row.type, static_cast<int>(q), 0, comm, MPI_STATUS_IGNORE);
-        x = buf.data();
-      }
-      write(x, n);
-      r0 += n;
-    }
-  }
-}
-
-RowsFromRoot::RowsFromRoot(MPI_Comm comm, int w, std::size_t chunk)
-  : comm(comm), w(w), per(static_cast<int>(std::max<std::size_t>(1, chunk / w))), row(w)
-{
-}
-
-void RowsFromRoot::Serve(const std::function<std::vector<int>(int)> &need,
-                         const std::function<void(int, double *)> &read)
-{
-  for (int q = 1; q < Mpi::Size(comm); q++)
-  {
-    const std::vector<int> a = need(q);
-    for (std::size_t i0 = 0; i0 < a.size(); i0 += per)
-    {
-      const int m = static_cast<int>(std::min<std::size_t>(per, a.size() - i0));
-      buf.resize(static_cast<std::size_t>(m) * w);
-      for (int k = 0; k < m; k++)
-      {
-        read(a[i0 + k], buf.data() + static_cast<std::size_t>(k) * w);
-      }
-      MPI_Send(buf.data(), m, row.type, q, 0, comm);
-    }
-  }
-}
-
-void RowsFromRoot::Next(double *x)
-{
-  if (i == n)
-  {
-    MPI_Status status;
-    MPI_Probe(0, 0, comm, &status);
-    MPI_Get_count(&status, row.type, &n);
-    buf.resize(static_cast<std::size_t>(n) * w);
-    MPI_Recv(buf.data(), n, row.type, 0, 0, comm, MPI_STATUS_IGNORE);
-    i = 0;
-  }
-  std::copy_n(buf.data() + static_cast<std::size_t>(i++) * w, w, x);
-}
-
 }  // namespace substructuring
 
 void SubstructuringSolver::Impl::AppendRows(const std::string &path, std::uint32_t tag,
                                             const std::vector<double> &rows) const
 {
   MPI_Comm comm = parent_fes.GetComm();
-  const int nG = nG_global;
-  const long long size = static_cast<long long>(sizeof(double)) * nG * nG;
-  if (nG == 0)
-  {
-    ModelFile::Append(path, comm, tag, size, [](std::ostream &) {});
-    return;
-  }
+  const int nG = nG_global, rank = Mpi::Rank(comm);
   std::vector<int> cnt, disp;
   RowLayout(cnt, disp);
+  // The parts of the lower triangle of the ranks: row b from its diagonal, for their rows.
+  std::vector<long long> size(cnt.size(), 0);
+  for (std::size_t q = 0; q < cnt.size(); q++)
+  {
+    for (int b = disp[q]; b < disp[q] + cnt[q]; b++)
+    {
+      size[q] += nG - b;
+    }
+  }
+  std::vector<double> part;
+  part.reserve(static_cast<std::size_t>(size[rank]));
+  for (int i = 0; i < cnt[rank]; i++)
+  {
+    const auto *row = rows.data() + static_cast<std::size_t>(i) * nG;
+    part.insert(part.end(), row + disp[rank] + i, row + nG);
+  }
   ModelFile::Append(
-      path, comm, tag, size,
+      path, comm, tag,
+      static_cast<long long>(sizeof(double)) * substructuring::TriangleSize(nG),
       [&](std::ostream &f)
       {
-        substructuring::RowsToRoot(
-            comm, rows, nG, cnt, kIoChunk, [&](const double *x, int n)
-            { f.write(reinterpret_cast<const char *>(x), sizeof(double) * n * nG); });
+        substructuring::ToRoot<double>(
+            comm, part, size, kIoChunk,
+            [&](const double *x, std::size_t n)
+            {
+              f.write(reinterpret_cast<const char *>(x),
+                      static_cast<std::streamsize>(sizeof(double) * n));
+            });
       },
-      [&]() { substructuring::RowsToRoot(comm, rows, nG, cnt, kIoChunk, {}); });
+      [&]() { substructuring::ToRoot<double>(comm, part, size, kIoChunk, {}); });
 }
 
 std::vector<double> SubstructuringSolver::Impl::ReadRows(const std::string &path,
                                                          std::streamoff pos,
                                                          const SignatureMap &map) const
 {
-  // Rank 0 sends every row even if the file fails, then tells whether it did.
   MPI_Comm comm = parent_fes.GetComm();
-  const int nG = nG_global;
-  std::vector<double> rows;
-  if (nG == 0)
-  {
-    return rows;
-  }
+  const int nG = nG_global, row0 = gamma_off;
   std::vector<int> cnt, disp;
   RowLayout(cnt, disp);
-  substructuring::RowsFromRoot from(comm, nG, kIoChunk);
-  int ok = 1;
-  if (Mpi::Root(comm))
+  std::vector<std::vector<std::pair<int, double>>> to(nG);
+  for (int g = 0; g < nG; g++)
   {
-    std::ifstream f(path, std::ios::binary);
-    auto read = [&](int a, double *x)
+    for (const auto &[a, c] : map.rows[g])
     {
-      f.seekg(pos + static_cast<std::streamoff>(sizeof(double)) * a * nG);
-      f.read(reinterpret_cast<char *>(x), sizeof(double) * nG);
-    };
-    from.Serve([&](int q) { return map.SavedRows(disp[q], cnt[q]); }, read);
-    rows = map.DualMatrix<double>(gamma_off, gamma_nloc, read);
-    ok = static_cast<bool>(f);
+      to[a].emplace_back(g, c);
+    }
   }
-  else
-  {
-    rows = map.DualMatrix<double>(gamma_off, gamma_nloc,
-                                  [&](int, double *x) { from.Next(x); });
-  }
-  Mpi::Broadcast(1, &ok, 0, comm);
-  MFEM_VERIFY(ok, "Reading the substructuring model \"" << path << "\" failed!");
+  std::vector<double> rows(static_cast<std::size_t>(gamma_nloc) * nG, 0.0);
+  std::ifstream f(path, std::ios::binary);
+  bool ok = f.good();
+  substructuring::RedistributeTriangle<double>(
+      comm, nG,
+      [&](long long e, long long m, double *x)
+      {
+        f.seekg(pos + static_cast<std::streamoff>(sizeof(double)) * e);
+        f.read(reinterpret_cast<char *>(x),
+               static_cast<std::streamsize>(sizeof(double) * m));
+        ok = ok && f.good();
+      },
+      to,
+      [&](int g, int)
+      {
+        return static_cast<int>(std::upper_bound(disp.begin(), disp.end(), g) -
+                                disp.begin()) -
+               1;
+      },
+      [&](int g, int h) { return static_cast<std::size_t>(g - row0) * nG + h; }, rows);
+  int all = ok;
+  Mpi::GlobalMin(1, &all, comm);
+  MFEM_VERIFY(all, "Reading the substructuring model \"" << path << "\" failed!");
   return rows;
 }
 
@@ -287,9 +229,10 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
           : std::nullopt;
   substructuring::InterfaceRecords iface;
   if (h.file.incomplete || w == 0 || nG < 0 || !S ||
-      S->size != static_cast<long long>(sizeof(double)) * nG * nG || !fp ||
-      fp->size != static_cast<long long>(sizeof(double)) * kEnvFpSize || !environment ||
-      !iface.Read(path, h.file, comm) || iface.n != nG || iface.width != w)
+      S->size !=
+          static_cast<long long>(sizeof(double)) * substructuring::TriangleSize(nG) ||
+      !fp || fp->size != static_cast<long long>(sizeof(double)) * kEnvFpSize ||
+      !environment || !iface.Read(path, h.file, comm) || iface.n != nG || iface.width != w)
   {
     return h;
   }
@@ -743,7 +686,8 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
   {
     if (const auto *r = file.Find(tag))
     {
-      complete(r->size == static_cast<long long>(sizeof(double)) * nG * nG);
+      complete(r->size ==
+               static_cast<long long>(sizeof(double)) * substructuring::TriangleSize(nG));
       (tag == kSKenTag ? SK_rows : SKin_rows) = ReadRows(path, r->pos, map);
       (tag == kSKenTag ? have_sk : have_skin) = true;
     }

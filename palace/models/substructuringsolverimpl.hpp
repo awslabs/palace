@@ -299,36 +299,6 @@ private:
   mutable std::vector<double> xo, xg;
 };
 
-// Rows of width w through rank 0 in chunks of at most chunk doubles, so that it holds one
-// chunk of another rank's rows at a time.
-//
-// To rank 0: the rows of every rank (cnt[q] of rank q) in rank order, which write(x, n)
-// takes n at a time at x on rank 0; it receives them all even if writing fails, and the
-// other ranks only send theirs.
-void RowsToRoot(MPI_Comm comm, const std::vector<double> &rows, int w,
-                const std::vector<int> &cnt, std::size_t chunk,
-                const std::function<void(const double *, int)> &write);
-
-// From rank 0: Serve on rank 0 sends the ranks q > 0 in turn the rows need(q) in order,
-// read(a, x) filling row a, and Next on the other ranks fills x with the next row sent to
-// it.
-class RowsFromRoot
-{
-public:
-  RowsFromRoot(MPI_Comm comm, int w, std::size_t chunk);
-
-  void Serve(const std::function<std::vector<int>(int)> &need,
-             const std::function<void(int, double *)> &read);
-
-  void Next(double *x);
-
-private:
-  MPI_Comm comm;
-  int w, per, n = 0, i = 0;
-  RowType row;
-  std::vector<double> buf;
-};
-
 }  // namespace substructuring
 
 // Region/environment operators are those of Palace's regular solve, restricted to the
@@ -687,31 +657,36 @@ struct SubstructuringSolver::Impl
   // Scatter a full (rank 0) interface-row array of width w onto the owned rows.
   void ScatterRows(const std::vector<double> &full, int w, std::vector<double> &rows) const;
 
-  // Append an interface operator (nG x nG, row-major, each rank its rows like S_rows) to
-  // the model as the record tag: rank 0 writes the rows of the ranks in turn, which the
-  // others send it in chunks, so that it holds one chunk of theirs at a time. Collective.
+  // Append an interface operator (symmetric nG x nG, row-major, each rank its rows like
+  // S_rows) to the model as the record tag, by its lower triangle (see
+  // substructuring::TriangleSize): column b is row b from its diagonal, so that the rows of
+  // a rank give a contiguous part of it, which rank 0 writes in rank order (see
+  // substructuring::ToRoot).
+  // Collective.
   void AppendRows(const std::string &path, std::uint32_t tag,
                   const std::vector<double> &rows) const;
 
   // The rows of this rank of an interface operator of the model at byte offset pos, mapped
-  // onto the current interface (SignatureMap::DualMatrix): rank 0 reads the saved rows that
-  // the rows of each rank combine, and sends them in chunks. Collective.
+  // onto the current interface (S_cur = M^-T S M^-1, see SignatureMap): each rank reads its
+  // share of the lower triangle, whose entries go to the ranks holding the rows they add to
+  // (see substructuring::RedistributeTriangle). Collective.
   std::vector<double> ReadRows(const std::string &path, std::streamoff pos,
                                const SignatureMap &map) const;
 
   // The records of a model file (see substructuring::ModelFile): HEAD [kModelVersion,
   // Solver.Order, nG, signature type], SIGS and LENC (substructuring::InterfaceRecords: the
-  // signatures nG x width and Model.Lc of the offline run), SENV [S_E nG x nG], ENVF
-  // [environment fingerprint, 5 doubles], in
-  // magnetostatics MEPS [the regularization eps] and SIDS [the sides of the sheet faces on
-  // Gamma, 6 doubles], ENVR [the EnvironmentRecord], ELPS [the flux loops of the
-  // environment, which the mesh of the region leaves out], and as they are computed SKEN
-  // [S^K nG x nG] (magnetostatics), SKIN [S^Kin nG x nG] (with London sheets in the
-  // environment), MODE [K][ids][fingerprints 2K][G nG x K][Cmode KxK] (electrostatics),
-  // SRCM [K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK] (then [h^kin nG x
-  // K][c^kin KxK] in a model with S^Kin), and FLXD [K][L][excitation ids K][loop ids L]
-  // [fluxoids KxL] (flux loops driven together).
-  static constexpr int kModelVersion = 10;
+  // signatures nG x width and Model.Lc of the offline run), SENV [S_E, lower triangle],
+  // ENVF [environment fingerprint, 5 doubles], in magnetostatics MEPS [the regularization
+  // eps] and SIDS [the sides of the sheet faces on Gamma, 6 doubles], ENVR [the
+  // EnvironmentRecord], ELPS [the flux loops of the environment, which the mesh of the
+  // region leaves out], and as they are computed SKEN [S^K, lower triangle]
+  // (magnetostatics), SKIN [S^Kin, lower triangle] (with London sheets or domains in the
+  // environment),
+  // MODE [K][ids][fingerprints 2K][G nG x K][Cmode KxK] (electrostatics), SRCM
+  // [K][ids][fingerprints 2K][g nG x K][h nG x K][c KxK][B KxK] (then [h^kin nG x K][c^kin
+  // KxK] in a model with S^Kin), and FLXD [K][L][excitation ids K][loop ids L] [fluxoids
+  // KxL] (flux loops driven together).
+  static constexpr int kModelVersion = 11;
   using ModelFile = substructuring::ModelFile;
   static constexpr std::uint32_t kHeadTag = ModelFile::Tag("HEAD"),
                                  kSETag = ModelFile::Tag("SENV"),

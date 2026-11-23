@@ -839,6 +839,45 @@ TEST_CASE("Saved lower triangles are redistributed onto rows and process grids",
   CheckTriangleRedistribution<std::complex<double>>(n, mapped);
 }
 
+TEST_CASE("The parts of a model record pass through rank 0 in chunks",
+          "[substructure][Serial][Parallel]")
+{
+  // Rank q holds 3 q + 2 doubles, but rank 1 none; a chunk of 1 or 4 doubles holds part of
+  // those of a rank, the largest one all of them.
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
+  const std::size_t chunk = GENERATE(1, 4, 1000);
+  auto count = [](int q) { return (q == 1) ? 0 : 3 * q + 2; };
+  auto value = [](int q, int i) { return 100.0 * q + i; };
+  std::vector<long long> size(nranks);
+  for (int q = 0; q < nranks; q++)
+  {
+    size[q] = count(q);
+  }
+  std::vector<double> x(count(rank)), expected;
+  for (int i = 0; i < count(rank); i++)
+  {
+    x[i] = value(rank, i);
+  }
+  std::vector<double> got;
+  std::size_t most = 0;
+  substructuring::ToRoot<double>(comm, x, size, chunk,
+                                 [&](const double *y, std::size_t n)
+                                 {
+                                   got.insert(got.end(), y, y + n);
+                                   most = std::max(most, n);
+                                 });
+  for (int q = 0; Mpi::Root(comm) && q < nranks; q++)
+  {
+    for (int i = 0; i < count(q); i++)
+    {
+      expected.push_back(value(q, i));
+    }
+  }
+  CHECK(got == expected);
+  CHECK(most <= chunk);
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir, "Records of a substructuring model file",
                  "[substructure][Serial][Parallel]")
 {

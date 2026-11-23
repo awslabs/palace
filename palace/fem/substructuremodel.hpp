@@ -123,6 +123,14 @@ void RedistributeTriangle(MPI_Comm comm, long long n,
                           const std::function<std::size_t(int, int)> &index,
                           std::vector<T> &y);
 
+// To rank 0: the values x of every process (size[q] of process q) in rank order, which
+// write(x, n) takes n at a time at x on rank 0, in chunks of at most chunk values, so that
+// it holds one chunk of another process's at a time. It receives them all even if writing
+// fails, and the other processes only send theirs. Collective.
+template <typename T>
+void ToRoot(MPI_Comm comm, const std::vector<T> &x, const std::vector<long long> &size,
+            std::size_t chunk, const std::function<void(const T *, std::size_t)> &write);
+
 // The records of the interface every substructuring model holds: the signatures of its DOFs
 // (n x width, row-major, see TrueDofSignatures) and the characteristic length of the run
 // that saved it (model.Lc, which an online run takes, see BaseSolver::Preprocess).

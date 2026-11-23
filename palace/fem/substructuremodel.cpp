@@ -261,6 +261,49 @@ std::array<long long, 2> TriangleShare(long long n, MPI_Comm comm)
 }
 
 template <typename T>
+void ToRoot(MPI_Comm comm, const std::vector<T> &x, const std::vector<long long> &size,
+            std::size_t chunk, const std::function<void(const T *, std::size_t)> &write)
+{
+  const auto type = mpi::DataType<T>();
+  const std::size_t per = std::max<std::size_t>(1, chunk);
+  if (!Mpi::Root(comm))
+  {
+    for (std::size_t i = 0; i < x.size(); i += per)
+    {
+      MPI_Send(x.data() + i, static_cast<int>(std::min(per, x.size() - i)), type, 0, 0,
+               comm);
+    }
+    return;
+  }
+  // The chunks of another process as it sends them, until it has sent its part.
+  std::vector<T> buf;
+  for (std::size_t q = 0; q < size.size(); q++)
+  {
+    for (std::size_t i = 0; i < static_cast<std::size_t>(size[q]);)
+    {
+      const std::size_t n = std::min(per, static_cast<std::size_t>(size[q]) - i);
+      const T *y = x.data() + i;
+      if (q > 0)
+      {
+        buf.resize(n);
+        MPI_Recv(buf.data(), static_cast<int>(n), type, static_cast<int>(q), 0, comm,
+                 MPI_STATUS_IGNORE);
+        y = buf.data();
+      }
+      write(y, n);
+      i += n;
+    }
+  }
+}
+
+template void ToRoot<double>(MPI_Comm, const std::vector<double> &,
+                             const std::vector<long long> &, std::size_t,
+                             const std::function<void(const double *, std::size_t)> &);
+template void ToRoot<std::complex<double>>(
+    MPI_Comm, const std::vector<std::complex<double>> &, const std::vector<long long> &,
+    std::size_t, const std::function<void(const std::complex<double> *, std::size_t)> &);
+
+template <typename T>
 void RedistributeTriangle(MPI_Comm comm, long long n,
                           const std::function<void(long long, long long, T *)> &read,
                           const std::vector<std::vector<std::pair<int, double>>> &to,
