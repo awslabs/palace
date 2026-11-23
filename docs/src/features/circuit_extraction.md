@@ -362,12 +362,12 @@ divided by their diagonal entries) satisfy
 for a scalar $s$. The anchor is therefore the field of a unit current through the port in the
 inductive limit, up to the $O(\nu^2/\omega^2)$ screening term, which junction-anchored
 (bare-basis) netlist extraction can use directly instead of a pseudo-inverse of
-$\widehat{\bm{L}}^{-1}$. Setting
-[`"AdaptiveCircuitSynthesisAnchorExtrapolate"`](../config/reference.md#config-solver-driven)
-removes the screening term: each anchor is then solved at both $\nu$ and $\nu/2$ and combined by
-Richardson extrapolation, $\bm{x}_0 \approx [4\bm{x}(\nu/2) - \bm{x}(\nu)]/3$, which leaves an
-$O(\nu^4)$ error, so that $\widehat{\bm{L}}^{-1}\bm{v} = s\,\bm{e}_p$ holds to the solver
-tolerance, at the cost of a second solve per anchor.
+$\widehat{\bm{L}}^{-1}$. The static inductance of the port in the synthesized circuit is
+accurate to $O(\nu^4)$ all the same, since the Galerkin error of the static response is the
+square of the $O(\nu^2)$ error of the anchor field. Listing both $\nu/2$ and $\nu$ as screening
+frequencies (see below) also puts the Richardson extrapolation
+$[4\bm{x}(\nu/2) - \bm{x}(\nu)]/3$ of the anchor, which satisfies
+$\widehat{\bm{L}}^{-1}\bm{v} = s\,\bm{e}_p$ to $O(\nu^4)$, in the span of the basis.
 
 An anchor is needed only when the quasistatic response of the port is not already in the basis.
 The sample at the lowest frequency of each excitation index contains, to a very good approximation,
@@ -383,8 +383,8 @@ anchoring both also brings the loop mode into the basis.
 
 [`"AdaptiveCircuitSynthesisAnchorFreq"`](../config/reference.md#config-solver-driven) also takes
 a list of screening frequencies. The lowest, which should stay well below the sweep band, gives
-the quasistatic anchor `anchor_<idx>_re` above, extrapolated when requested, and each other
-frequency $\nu_k$, in ascending order, adds the screened response
+the quasistatic anchor `anchor_<idx>_re` above, and each other frequency $\nu_k$, in ascending
+order, adds the screened response
 $\bm{x}(\nu_k) = (\bm{K} + \nu_k^2\bm{M})^{-1}\bm{b}_p$ of the port as a further column,
 `anchor_<idx>_nu<k>_re` with $k = 1, 2, \ldots$. Since the synthesized matrices are a Galerkin
 projection of these symmetric systems, the synthesized circuit reproduces the screened response of

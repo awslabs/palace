@@ -675,21 +675,19 @@ public:
   // AddLumpedPortModesForSynthesis and before the offline sampling loop, so the leading
   // port-mode block and the RHS1r projection bookkeeping stay consistent.
   //
-  // The exported column satisfies the screened identity L⁻¹ v + ν² C v = s e_p; the
-  // deviation from the unscreened L-column identity L⁻¹ v = s e_p is O((ν/ω)²). With
-  // `extrapolate` set, solve at both ν and ν/2 and Richardson-extrapolate,
-  // x₀ ≈ [4 x(ν/2) − x(ν)]/3, cancelling that term so the column satisfies the
-  // unscreened identity to O(ν⁴) at the cost of one extra solve per anchored port.
+  // The exported column satisfies the screened identity L⁻¹ v + ν² C v = s e_p, and the
+  // unscreened L-column identity L⁻¹ v = s e_p up to O((ν/ω)²). The static response of
+  // the port in the reduced model is accurate to O(ν⁴) all the same: the Galerkin error of
+  // its quadratic form is the square of the O(ν²) field error.
   //
   // With several screening frequencies, in ascending order, the lowest gives the
-  // quasistatic anchor above ("anchor_<idx>", extrapolated when requested) and each other
-  // frequency ν_k adds the screened response x(ν_k) of every anchored port as its own basis
-  // vector ("anchor_<idx>_nu<k>", k = 1, 2, ...).
-  void AddLumpedPortAnchorModesForSynthesis(const std::vector<double> &nu,
-                                            bool extrapolate = false);
-  void AddLumpedPortAnchorModesForSynthesis(double nu, bool extrapolate = false)
+  // quasistatic anchor above ("anchor_<idx>") and each other frequency ν_k adds the
+  // screened response x(ν_k) of every anchored port as its own basis vector
+  // ("anchor_<idx>_nu<k>", k = 1, 2, ...).
+  void AddLumpedPortAnchorModesForSynthesis(const std::vector<double> &nu);
+  void AddLumpedPortAnchorModesForSynthesis(double nu)
   {
-    AddLumpedPortAnchorModesForSynthesis(std::vector<double>{nu}, extrapolate);
+    AddLumpedPortAnchorModesForSynthesis(std::vector<double>{nu});
   }
 
   // The screening frequencies of the anchor solves for the configured ones

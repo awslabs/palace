@@ -3177,12 +3177,6 @@
           "description": "Screening frequency ``\\nu / 2\\pi``, GHz, or a list of them, of the anchor solves of adaptive driven circuit synthesis (see [SynthesisAnchor](@ref config-boundaries-lumpedport) on `LumpedPort`), ``(K_0 + \\nu^2 M)\\,x = b_p``. The lowest, which should be well below the sweep band, gives the quasistatic anchor `anchor_<index>_re`, and each other frequency adds the screened response of the port at that imaginary frequency as the column `anchor_<index>_nu<k>_re` (``k = 1, 2, \\ldots``), which the synthesized circuit then reproduces exactly. `0` (default) selects one tenth of the lowest sweep frequency.",
           "default": 0.0,
           "x-palace-advanced": true
-        },
-        "AdaptiveCircuitSynthesisAnchorExtrapolate": {
-          "type": "boolean",
-          "description": "Cancel the ``O(\\nu^2)`` screening bias of the quasistatic anchor solves (see [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq)) by Richardson extrapolation: each anchored port is solved at the lowest screening frequency ``\\nu`` and at ``\\nu/2`` and combined as ``[4 x(\\nu/2) - x(\\nu)]/3``, which solves the unscreened ``K_0 x = b_p`` up to ``O(\\nu^4)``, at the cost of a second solve per anchor.",
-          "default": false,
-          "x-palace-advanced": true
         }
       },
       "allOf": [

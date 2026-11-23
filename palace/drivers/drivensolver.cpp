@@ -368,8 +368,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
                      "sweep band, so its anchors are not quasistatic!\n",
                      nu_GHz.front());
       }
-      prom_op.AddLumpedPortAnchorModesForSynthesis(
-          nu, iodata.solver.driven.adaptive_circuit_synthesis_anchor_extrapolate);
+      prom_op.AddLumpedPortAnchorModesForSynthesis(nu);
     }
   }
 

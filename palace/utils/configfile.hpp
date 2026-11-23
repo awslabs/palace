@@ -1171,15 +1171,6 @@ public:
   // the basis. 0 (default) selects 1/10 of the lowest sweep sample frequency.
   std::vector<double> adaptive_circuit_synthesis_anchor_freq = {0.0};
 
-  // Cancel the O(ν²) screening bias of the quasistatic anchor solves by Richardson
-  // extrapolation: solve at ν and ν/2 and combine as (4 x(ν/2) − x(ν))/3, which is the
-  // unscreened response K₀ x = b_p up to O(ν⁴). Costs one extra solve and one extra
-  // preconditioner setup per shift, and the exported anchor column then satisfies
-  // L⁻¹ v = s e_p (the bare L-column identity) rather than L⁻¹ v + ν² C v = s e_p.
-  // Default false: the single-shift anchor is sufficient whenever the downstream consumer
-  // accounts for the screening term.
-  bool adaptive_circuit_synthesis_anchor_extrapolate = false;
-
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);
 };

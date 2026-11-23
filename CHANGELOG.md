@@ -35,9 +35,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added quasistatic anchor solves to adaptive driven circuit synthesis: a lumped port with
     `"SynthesisAnchor": true`, such as a Josephson junction, adds its screened quasistatic
     response to the reduced basis as the column `anchor_<index>_re`, with the screening
-    frequency, or a list of them, set by `Solver.Driven.AdaptiveCircuitSynthesisAnchorFreq`,
-    and `AdaptiveCircuitSynthesisAnchorExtrapolate` removes the screening by Richardson
-    extrapolation. SchemaVer 6-2-0
+    frequency, or a list of them, set by `Solver.Driven.AdaptiveCircuitSynthesisAnchorFreq`.
+    SchemaVer 6-2-0
     [PR 1157](https://github.com/awslabs/palace/pull/1157).
 
 #### Interface Changes

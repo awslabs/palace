@@ -1744,9 +1744,6 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     MFEM_VERIFY(std::ranges::adjacent_find(anchor_freq) == anchor_freq.end(),
                 "\"AdaptiveCircuitSynthesisAnchorFreq\" must not list a frequency twice!");
   }
-  adaptive_circuit_synthesis_anchor_extrapolate =
-      driven.value("AdaptiveCircuitSynthesisAnchorExtrapolate",
-                   adaptive_circuit_synthesis_anchor_extrapolate);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");

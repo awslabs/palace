@@ -6006,16 +6006,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 // With several screening frequencies, the lowest gives the quasistatic anchor anchor_1_re,
-// the same as alone and Richardson-extrapolated when requested, and each other frequency
-// ν_k adds the screened response of the port at that frequency, anchor_1_nu<k>_re, whose
+// the same as alone, and each other frequency ν_k adds the screened response of the port
+// at that frequency, anchor_1_nu<k>_re, whose
 // coordinates c satisfy (Kr + ν_k²Mr) c = s e_p whatever the other basis vectors are. The
 // screened response of the port at any imaginary frequency iκ, e_pᵀ (Kr + κ²Mr)⁻¹ e_p,
 // which is a lower bound in any basis, can then only increase.
 TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-AnchorFrequencies",
                  "[romoperator][Serial][Parallel]")
 {
-  const bool extrapolate = GENERATE(false, true);
-  CAPTURE(extrapolate);
   MPI_Comm world_comm = Mpi::World();
   json setup_json;
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
@@ -6045,7 +6043,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-AnchorFrequ
        {{"AdaptiveTol", 1.0e-3},
         {"AdaptiveCircuitSynthesis", true},
         {"AdaptiveCircuitSynthesisAnchorFreq", json::array({30.0, 0.0, 3.0})},
-        {"AdaptiveCircuitSynthesisAnchorExtrapolate", extrapolate},
         {"MinFreq", 1.0},
         {"MaxFreq", 3.0},
         {"FreqStep", 0.5}}},
@@ -6063,7 +6060,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-AnchorFrequ
   {
     auto prom_op = std::make_unique<RomOperatorTest>(iodata, space_op, 10);
     prom_op->AddLumpedPortModesForSynthesis();
-    prom_op->AddLumpedPortAnchorModesForSynthesis(nu_s, extrapolate);
+    prom_op->AddLumpedPortAnchorModesForSynthesis(nu_s);
     for (int seed : {42, 44})
     {
       ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
@@ -6089,17 +6086,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-AnchorFrequ
   const Eigen::VectorXd c0 = prom_all->GetOrthR().col(1).head(2);
   CHECK((c0 - prom_one->GetOrthR().col(1).head(2)).norm() <= 1.0e-12 * c0.norm());
 
-  // Each anchor solves its screened system: the extrapolated quasistatic anchor the
-  // unscreened one, to O(ν⁴).
+  // Each anchor solves its screened system.
   const Eigen::MatrixXd Kr = prom_all->GetKr().real(), Mr = prom_all->GetMr().real();
   for (std::size_t k = 0; k < nu.size(); k++)
   {
     CAPTURE(k);
-    const double nu_k = (k == 0 && extrapolate) ? 0.0 : nu[k];
     const Eigen::VectorXd c = prom_all->GetOrthR().col(1 + k);
-    const Eigen::VectorXd r = (Kr + nu_k * nu_k * Mr) * c;
+    const Eigen::VectorXd r = (Kr + nu[k] * nu[k] * Mr) * c;
     REQUIRE(std::abs(r(0)) > 0.0);
-    CHECK(r.tail(r.size() - 1).norm() <= ((nu_k > 0.0) ? 1.0e-8 : 1.0e-5) * std::abs(r(0)));
+    CHECK(r.tail(r.size() - 1).norm() <= 1.0e-8 * std::abs(r(0)));
   }
 
   // The screened response of the port between the two upper frequencies is a lower bound
@@ -6117,168 +6112,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-AnchorFrequ
   CHECK(response_all >= response_one * (1.0 - 1.0e-12));
 }
 
-// Richardson-extrapolated anchors ("AdaptiveCircuitSynthesisAnchorExtrapolate"): solving at
-// nu and nu/2 and combining as [4 x(nu/2) - x(nu)]/3 must still add exactly one labeled
-// anchor column, and the resulting column must differ from the single-shift anchor by the
-// O(nu^2) screening term it is designed to cancel (the vectors are close but not equal).
-TEST_CASE_METHOD(palace::test::PerRankTempDir,
-                 "RomOperator-Synthesis-AnchorExtrapolationEntersBasis",
-                 "[romoperator][Serial]")
-{
-  MPI_Comm world_comm = Mpi::World();
-  auto mesh_path =
-      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
-
-  json setup_json;
-  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
-  setup_json["Model"] = {{"Mesh", mesh_path},
-                         {"Refinement", json::object({})},
-                         {"CrackInternalBoundaryElements", false}};
-  setup_json["Domains"] = {
-      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
-                                               {"Permeability", 1.0},
-                                               {"Permittivity", 1.0}})})}};
-  setup_json["Boundaries"] = {
-      {"LumpedPort", json::array({json::object({{"Index", 1},
-                                                {"L", 25.0e-9},
-                                                {"SynthesisAnchor", true},
-                                                {"Excitation", uint(1)},
-                                                {"Attributes", json::array({100})},
-                                                {"Direction", "+X"}})})}};
-  setup_json["Solver"] = {
-      {"Order", 1UL},
-      {"Device", "CPU"},
-      {"Driven",
-       {{"AdaptiveTol", 1e-3},
-        {"AdaptiveCircuitSynthesis", true},
-        {"AdaptiveCircuitSynthesisAnchorExtrapolate", true},
-        {"MinFreq", 2.0},
-        {"MaxFreq", 32.0},
-        {"FreqStep", 1.0}}},
-      {"Linear",
-       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1e-10}}}};
-
-  IoData iodata(setup_json, false);
-  CHECK(iodata.solver.driven.adaptive_circuit_synthesis_anchor_extrapolate);
-
-  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
-  SpaceOperator space_op(iodata, mesh_io);
-
-  const double nu = 0.1 * iodata.solver.driven.sample_f.front();
-
-  // Single-shift anchor.
-  Vector v_single;
-  {
-    RomOperatorTest prom_op(iodata, space_op, 100);
-    prom_op.AddLumpedPortModesForSynthesis();
-    prom_op.AddLumpedPortAnchorModesForSynthesis(nu, false);
-    REQUIRE(prom_op.GetReducedDimension() == 2);
-    v_single = prom_op.GetVectors().at(1);
-  }
-
-  // Extrapolated anchor: same basis bookkeeping (one labeled column), different vector.
-  RomOperatorTest prom_op(iodata, space_op, 100);
-  prom_op.AddLumpedPortModesForSynthesis();
-  auto dim_after_ports = prom_op.GetReducedDimension();
-  prom_op.AddLumpedPortAnchorModesForSynthesis(nu, true);
-
-  REQUIRE(prom_op.GetReducedDimension() == dim_after_ports + 1);
-  CHECK(prom_op.GetNodeLabels().back() == "anchor_1_re");
-  CHECK(prom_op.GetOrthR()(0, 0) > 0.0);
-  CHECK(prom_op.GetOrthR()(1, 1) > 0.0);
-
-  // Compare directions: basis columns are normalized in the hybrid weight W, not the
-  // Euclidean norm, so normalize explicitly here. The extrapolation removes an
-  // O((nu/omega)^2) component, so the columns must be nearly parallel but not identical.
-  const auto &v_extrap = prom_op.GetVectors().at(1);
-  REQUIRE(v_extrap.Size() == v_single.Size());
-  const double n_extrap = std::sqrt(linalg::Dot(world_comm, v_extrap, v_extrap));
-  const double n_single = std::sqrt(linalg::Dot(world_comm, v_single, v_single));
-  REQUIRE(n_extrap > 0.0);
-  REQUIRE(n_single > 0.0);
-  const double cos_angle =
-      std::abs(linalg::Dot(world_comm, v_extrap, v_single)) / (n_extrap * n_single);
-  // The two columns span the same physical direction; they differ only by the
-  // O((nu/omega)^2) screening term. On this trivial cube the lowest mode is ~1e5 GHz
-  // against nu = 0.2 GHz, so that term is ~1e-12 and the vectors agree to ~1e-8 in angle:
-  // assert near-parallel (the feature must not rotate the anchor) and let the
-  // SCT-001/device-scale runs cover the quantitative cancellation, where (nu/omega)^2 is
-  // O(1e-3).
-  CHECK(cos_angle > 1.0 - 1.0e-4);
-  CHECK(cos_angle <= 1.0 + 1.0e-12);
-}
-
-// Richardson extrapolation removes the O(ν²) screening term of the anchor: the coordinates
-// c of the extrapolated anchor satisfy the bare identity Kr c = s e_p to O(ν⁴), while the
-// single-shift anchor satisfies it only to O(ν²).
-TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "RomOperator-Synthesis-AnchorExtrapolationSolvesBareSystem",
-                 "[romoperator][Serial][Parallel]")
-{
-  MPI_Comm world_comm = Mpi::World();
-  json setup_json;
-  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
-  setup_json["Model"] = {
-      {"Mesh", fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_3_2_1_tet.msh"},
-      {"L0", 1.0e-2},
-      {"Refinement", json::object({})}};
-  setup_json["Domains"] = {
-      {"Materials",
-       json::array({json::object({{"Attributes", json::array({1, 2, 3, 4, 5, 6})},
-                                  {"Permeability", 1.0},
-                                  {"Permittivity", 4.0}})})}};
-  setup_json["Boundaries"] = {
-      {"LumpedPort",
-       json::array({json::object(
-           {{"Index", 1},
-            {"L", 10.0e-9},
-            {"C", 1.0e-12},
-            {"SynthesisAnchor", true},
-            {"Excitation", uint(1)},
-            {"Elements", json::array({json::object({{"Attributes", json::array({14})},
-                                                    {"Direction", "+Z"}})})}})})}};
-  setup_json["Solver"] = {
-      {"Order", 2UL},
-      {"Device", "CPU"},
-      {"Driven",
-       {{"AdaptiveTol", 1.0e-3},
-        {"AdaptiveCircuitSynthesis", true},
-        {"MinFreq", 1.0},
-        {"MaxFreq", 3.0},
-        {"FreqStep", 0.5}}},
-      {"Linear",
-       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 500}, {"Tol", 1.0e-12}}}};
-
-  IoData iodata(setup_json, false);
-  auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
-  SpaceOperator space_op(iodata, mesh_io);
-  const double nu = 0.2 * iodata.solver.driven.sample_f.front();
-  auto BareResidual = [&](bool extrapolate)
-  {
-    RomOperatorTest prom_op(iodata, space_op, 10);
-    prom_op.AddLumpedPortModesForSynthesis();
-    prom_op.AddLumpedPortAnchorModesForSynthesis(nu, extrapolate);
-    for (int seed : {42, 44})
-    {
-      ComplexVector sample(space_op.GetNDSpace().GetTrueVSize());
-      sample.UseDevice(true);
-      linalg::SetRandom(world_comm, sample.Real(), seed);
-      linalg::SetRandom(world_comm, sample.Imag(), seed + 1);
-      prom_op.UpdatePROM(sample, fmt::format("sample_{:d}", seed));
-    }
-    REQUIRE(prom_op.GetNodeLabels().at(1) == "anchor_1_re");
-    const Eigen::VectorXd c = prom_op.GetOrthR().col(1);
-    const Eigen::VectorXd r = prom_op.GetKr().real() * c;
-    REQUIRE(std::abs(r(0)) > 0.0);
-    return r.tail(r.size() - 1).norm() / std::abs(r(0));
-  };
-  const double residual_single = BareResidual(false);
-  const double residual_extrapolated = BareResidual(true);
-  CAPTURE(residual_single, residual_extrapolated);
-  CHECK(residual_single > 1.0e-4);
-  CHECK(residual_extrapolated < 0.05 * residual_single);
-}
-
 // =============================================================================
 // ANCHOR SOLVES WITH FREQUENCY-DEPENDENT BOUNDARIES
 // =============================================================================
@@ -6288,8 +6121,7 @@ namespace
 
 // Driven circuit-synthesis configuration on the unit cube with an inductive, anchored
 // lumped port on attribute 100 and the given boundary conditions on the other faces.
-json AnchorCubeConfig(const std::string &output, const json &boundaries,
-                      bool extrapolate = false)
+json AnchorCubeConfig(const std::string &output, const json &boundaries)
 {
   json setup_json;
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", output}};
@@ -6314,7 +6146,6 @@ json AnchorCubeConfig(const std::string &output, const json &boundaries,
       {"Driven",
        {{"AdaptiveTol", 1e-3},
         {"AdaptiveCircuitSynthesis", true},
-        {"AdaptiveCircuitSynthesisAnchorExtrapolate", extrapolate},
         {"MinFreq", 2.0},
         {"MaxFreq", 32.0},
         {"FreqStep", 1.0}}},
@@ -6332,9 +6163,7 @@ Vector ComputeAnchorColumn(const json &setup_json)
   SpaceOperator space_op(iodata, mesh_io);
   RomOperatorTest prom_op(iodata, space_op, 100);
   prom_op.AddLumpedPortModesForSynthesis();
-  prom_op.AddLumpedPortAnchorModesForSynthesis(
-      0.1 * iodata.solver.driven.sample_f.front(),
-      iodata.solver.driven.adaptive_circuit_synthesis_anchor_extrapolate);
+  prom_op.AddLumpedPortAnchorModesForSynthesis(0.1 * iodata.solver.driven.sample_f.front());
   REQUIRE(prom_op.GetReducedDimension() == 2);
   REQUIRE(prom_op.GetNodeLabels().back() == "anchor_1_re");
   return prom_op.GetVectors().at(1);
@@ -6409,14 +6238,11 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
                  "RomOperator-Synthesis-AnchorInductiveRationalImpedance",
                  "[romoperator][Serial]")
 {
-  const bool extrapolate = GENERATE(false, true);
   json impedance, rational;
   impedance["Impedance"] = InductiveImpedance(101);
   rational["RationalImpedance"] = InductiveRationalImpedance(101);
-  const auto v_impedance =
-      ComputeAnchorColumn(AnchorCubeConfig(temp_dir, impedance, extrapolate));
-  const auto v_rational =
-      ComputeAnchorColumn(AnchorCubeConfig(temp_dir, rational, extrapolate));
+  const auto v_impedance = ComputeAnchorColumn(AnchorCubeConfig(temp_dir, impedance));
+  const auto v_rational = ComputeAnchorColumn(AnchorCubeConfig(temp_dir, rational));
   CHECK(RelativeDifference(v_impedance, v_rational) < 1.0e-8);
 
   // The DC Robin term must actually matter: without the sheet, the anchor differs.

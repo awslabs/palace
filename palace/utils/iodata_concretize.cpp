@@ -171,9 +171,7 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                           {"AdaptiveCircuitSynthesisAnchorFreq",
                            (driven.adaptive_circuit_synthesis_anchor_freq.size() == 1)
                                ? json(driven.adaptive_circuit_synthesis_anchor_freq.front())
-                               : json(driven.adaptive_circuit_synthesis_anchor_freq)},
-                          {"AdaptiveCircuitSynthesisAnchorExtrapolate",
-                           driven.adaptive_circuit_synthesis_anchor_extrapolate}});
+                               : json(driven.adaptive_circuit_synthesis_anchor_freq)}});
 }
 
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,
