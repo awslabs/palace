@@ -962,10 +962,11 @@ void SubstructuringSolver::EnvironmentFluxoids(const std::vector<int> &ids,
   }
 }
 
-std::vector<int>
-SubstructuringSolver::ModelExcitations(const std::map<int, std::vector<int>> &excitations)
+void SubstructuringSolver::TakeModelExcitations(
+    const std::map<int, std::vector<int>> &excitations)
 {
-  MFEM_VERIFY(impl->mat_dtn, "CondenseEnvironment must be called before ModelExcitations!");
+  MFEM_VERIFY(impl->mat_dtn,
+              "CondenseEnvironment must be called before TakeModelExcitations!");
   impl->model_sources.clear();
   const bool single =
       std::ranges::all_of(excitations, [](const auto &x) { return x.second.size() == 1; });
@@ -981,7 +982,6 @@ SubstructuringSolver::ModelExcitations(const std::map<int, std::vector<int>> &ex
       }
     }
   }
-  return {impl->model_sources.begin(), impl->model_sources.end()};
 }
 
 }  // namespace palace
