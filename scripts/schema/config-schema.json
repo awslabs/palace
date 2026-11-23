@@ -3174,7 +3174,7 @@
               "uniqueItems": true
             }
           ],
-          "description": "Screening frequency ``\\nu / 2\\pi``, GHz, or a list of them, of the anchor solves of adaptive driven circuit synthesis (see [SynthesisAnchor](@ref config-boundaries-lumpedport) on `LumpedPort`), ``(K_0 + \\nu^2 M)\\,x = b_p``. The lowest, which should be well below the sweep band, gives the quasistatic anchor `anchor_<index>_re`, and each other frequency adds the screened response of the port at that imaginary frequency as the column `anchor_<index>_nu<k>_re` (``k = 1, 2, \\ldots``), which the synthesized circuit then reproduces exactly. `0` (default) selects one tenth of the lowest sweep frequency.",
+          "description": "Screening frequency ``\\nu / 2\\pi``, GHz, or a list of them, of the anchor solves of adaptive driven circuit synthesis (see [SynthesisAnchor](@ref config-boundaries-lumpedport) on `LumpedPort`), ``(K_0 + \\nu^2 M)\\,x = b_p``. The lowest, which should be well below the sweep band, gives the quasistatic anchor `anchor_<index>_re`, and each other frequency adds the screened response of the port at that imaginary frequency, of the lossless DC-limit model, as the column `anchor_<index>_nu<k>_re` (``k = 1, 2, \\ldots``), which the synthesized circuit then reproduces exactly. `0` (default) selects one tenth of the lowest sweep frequency.",
           "default": 0.0,
           "x-palace-advanced": true
         }

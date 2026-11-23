@@ -1340,7 +1340,8 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
   // same, since the Galerkin error of a quadratic form is the square of the field error.
   //
   // Each further screening frequency ν_k adds the screened response x(ν_k) of every
-  // anchored port, the response at the imaginary frequency iν_k, as its own basis vector.
+  // anchored port, the response of the lossless DC-limit model at the imaginary frequency
+  // s = ν_k, as its own basis vector.
   // As the reduced system is a Galerkin projection of a symmetric system, the synthesized
   // matrices then reproduce the screened port response b_pᵀ (K₀ + ν_k²M)⁻¹ b_p and its
   // derivative in ν_k² exactly, and, when no port inductance is negative (the system is

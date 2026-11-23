@@ -5787,9 +5787,9 @@ TEST_CASE("RomOperator-Synthesis-AnchorFreqList", "[romoperator][Serial]")
 }
 
 // The anchor column solves the screened system (K + ν²M) x = b_p. In the reduced basis,
-// where the port drive projects onto the port row only (the other basis vectors are
-// orthogonal to the port mode on the port boundary), the coordinates c of x = V c then
-// satisfy (Kr + ν²Mr) c = s e_p, whatever the other basis vectors are.
+// where the drive of this rectangular port projects onto its row only (the other basis
+// vectors carry no voltage on the port), the coordinates c of x = V c then satisfy
+// (Kr + ν²Mr) c = s e_p, whatever the other basis vectors are.
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RomOperator-Synthesis-AnchorSolvesScreenedSystem",
                  "[romoperator][Serial][Parallel]")

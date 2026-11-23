@@ -336,30 +336,41 @@ the screened quasistatic system
 with $\bm{b}_p$ the drive of port $p$ and a screening angular frequency $\nu$ well below the
 sweep band, where $\nu/2\pi$ is set by
 [`"AdaptiveCircuitSynthesisAnchorFreq"`](../config/reference.md#config-solver-driven) (by
-default one tenth of the lowest sweep frequency). When no port inductance is negative, the
-positive screening term makes the system positive definite, so the solve cannot resonate with
-modes of the device. Frequency-dependent boundaries and materials enter $\bm{K}$ at their static
-(DC) limit: an inductive `"RationalImpedance"` keeps its DC term, while wave-port,
-`"Conductivity"`, and frequency-dependent `"Permittivity"` terms vanish at DC, and the
-second-order `"Absorbing"` term, a pole at $\omega = 0$ with no static limit, is left out. As in
-``\widehat{\bm{C}}``, a frequency-dependent material enters $\bm{M}$ with its high-frequency
-permittivity $\varepsilon_\infty$. The anchor adds one real column, `anchor_<idx>_re`, to the
-synthesized matrices and to `rom-orthogonalization-matrix-R.csv`.
+default one tenth of the lowest sweep frequency). This is the system of the lossless DC-limit
+model of the device at the imaginary frequency $s = \nu$: the damping terms, which vanish at
+DC, are left out, and frequency-dependent boundaries and materials enter $\bm{K}$ at their static
+limit. An
+inductive `"RationalImpedance"` keeps its DC term, while wave-port, `"Conductivity"`, and
+frequency-dependent `"Permittivity"` terms vanish at DC, and the second-order `"Absorbing"` term,
+a pole at $\omega = 0$ with no static limit, is left out. As in ``\widehat{\bm{C}}``, a
+frequency-dependent material enters $\bm{M}$ with its high-frequency permittivity
+$\varepsilon_\infty$. When no port inductance is negative, the positive screening term makes
+the system positive definite, so the solve cannot resonate with modes of the device. The anchor
+adds one real column, `anchor_<idx>_re`, to the synthesized matrices and to
+`rom-orthogonalization-matrix-R.csv`.
 
 A port with a negative inductance, such as the linearized inductance of a Josephson junction
 biased at a phase beyond $\pi/2$, can be anchored as well. Its anchor is still its quasistatic
 response, but with any negative port inductance in the model the system is indefinite, and it is
 singular when $\nu^2 = -\omega_m^2$ for a mode of the linearized model with $\omega_m^2 < 0$.
 
-Since the drive of port $p$ projects onto its own port row only, the synthesized coordinates
-$\bm{v}$ of the anchor (its column of `rom-orthogonalization-matrix-R.csv`, with the port rows
-divided by their diagonal entries) satisfy
+The synthesized coordinates $\bm{v}$ of the anchor (its column of
+`rom-orthogonalization-matrix-R.csv`, with the port rows divided by their diagonal entries)
+satisfy
 
 ```math
 \left(\widehat{\bm{L}}^{-1} + \nu^2\widehat{\bm{C}}\right)\bm{v} = s\,\bm{e}_p
 ```
 
-for a scalar $s$. The anchor is therefore the field of a unit current through the port in the
+for a scalar $s$ when two conditions hold. First, the drive of port $p$ projects onto its own
+port row only: the other basis vectors carry no voltage on the port. This holds for a
+rectangular port between PEC terminals, such as a junction port, but not exactly for a coaxial
+port or a port with PEC along its sides. Second, the static limit of the model is in
+$\widehat{\bm{L}}^{-1}$ alone. This does not hold when a frequency-dependent boundary puts a
+static term in $\widehat{\bm{L}}^{-1}$ which its auxiliary states compensate at DC, as the fit
+of a `"Conductivity"` boundary or the polynomial part of the Robin coefficient of a series RL
+`"RationalImpedance"` does, while an inductive `"RationalImpedance"` contributes its exact
+static term. The anchor is then the field of a unit current through the port in the
 inductive limit, up to the $O(\nu^2/\omega^2)$ screening term, which junction-anchored
 (bare-basis) netlist extraction can use directly instead of a pseudo-inverse of
 $\widehat{\bm{L}}^{-1}$. The static inductance of the port in the synthesized circuit is
@@ -370,8 +381,9 @@ $[4\bm{x}(\nu/2) - \bm{x}(\nu)]/3$ of the anchor, which satisfies
 $\widehat{\bm{L}}^{-1}\bm{v} = s\,\bm{e}_p$ to $O(\nu^4)$, in the span of the basis.
 
 An anchor is needed only when the quasistatic response of the port is not already in the basis.
-The sample at the lowest frequency of each excitation index contains, to a very good approximation,
-the quasistatic response to the combined drive of the ports under that index. A port alone under
+The samples of each excitation index span, to a very good approximation, the quasistatic response
+to the combined drive of the ports under that index, even when the lowest sample is close to a
+mode. A port alone under
 its excitation index therefore needs no anchor, while a port which shares its index with other
 ports, or is not excited, gets its own quasistatic response only from its anchor. Without it, the
 synthesized matrices underestimate the static inductance across the port, by part of the
@@ -384,9 +396,10 @@ anchoring both also brings the loop mode into the basis.
 [`"AdaptiveCircuitSynthesisAnchorFreq"`](../config/reference.md#config-solver-driven) also takes
 a list of screening frequencies. The lowest, which should stay well below the sweep band, gives
 the quasistatic anchor `anchor_<idx>_re` above, and each other frequency $\nu_k$, in ascending
-order, adds the screened response
-$\bm{x}(\nu_k) = (\bm{K} + \nu_k^2\bm{M})^{-1}\bm{b}_p$ of the port as a further column,
-`anchor_<idx>_nu<k>_re` with $k = 1, 2, \ldots$. Since the synthesized matrices are a Galerkin
+order, adds the screened response $\bm{x}(\nu_k) = (\bm{K} + \nu_k^2\bm{M})^{-1}\bm{b}_p$ of
+the port as a further column, `anchor_<idx>_nu<k>_re` with $k = 1, 2, \ldots$: the response at
+$s = \nu_k$ of the lossless DC-limit model above, which is that of the device only when it has
+neither damping nor frequency-dependent terms. Since the synthesized matrices are a Galerkin
 projection of these symmetric systems, the synthesized circuit reproduces the screened response of
 the port,
 
@@ -394,15 +407,12 @@ the port,
 G_p(\kappa) = \bm{b}_p^T\left(\bm{K} + \kappa^2\bm{M}\right)^{-1}\bm{b}_p ,
 ```
 
-proportional to the inductance across the port at the imaginary frequency $i\kappa$, exactly,
+proportional to the inductance across the port of that model at $s = \kappa$, exactly,
 with its derivative in $\kappa^2$, at each anchor frequency, and, when no port inductance is
 negative, as a lower bound at every $\kappa$. Anchor frequencies above the sweep band, where the
 samples do not resolve the response, therefore make it exact at those frequencies and, with
 nonnegative port inductances, tighter in between. This matters for quantities set by the modes
 above the band, such as the zero-point phase fluctuations of a Josephson junction port.
-With frequency-dependent boundaries or materials, $G_p$ is the response of the anchor system
-above, with the static limits of the boundaries and the high-frequency permittivity of the
-materials, so that it leaves out their frequency dependence.
 
 Anchor solves are not supported with PML regions, whose stretch has no static limit.
 

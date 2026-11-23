@@ -737,8 +737,8 @@ public:
   // false (opt-in, preserving existing behavior); requires a port with a nonzero
   // inductance, which may be negative (the linearized inductance of a Josephson junction
   // biased at a phase beyond π/2, for example), included in synthesis. A port alone under
-  // its excitation index needs no anchor (its quasistatic response is in the basis from the
-  // sample at the lowest frequency), unlike a port which shares its index with other ports
+  // its excitation index needs no anchor (the samples of its excitation span its
+  // quasistatic response), unlike a port which shares its index with other ports
   // or is not excited. The responses of the two arms of a SQUID differ by its loop mode,
   // which anchoring both arms brings into the basis.
   bool synthesis_anchor = false;
@@ -1167,9 +1167,9 @@ public:
   // no port inductance is negative, so that the solve cannot resonate with band or
   // near-degenerate basis modes. The lowest frequency should sit well below the sweep band,
   // so that its anchor is the quasistatic (inductive-limit) response of the port; each
-  // other frequency adds the screened response of the port at that imaginary frequency to
-  // the basis. A 0 (default) is replaced on input by one tenth of the lowest sweep
-  // frequency.
+  // other frequency adds the screened response of the port at that imaginary frequency, of
+  // the lossless DC-limit model, to the basis. A 0 (default) is replaced on input by one
+  // tenth of the lowest sweep frequency.
   std::vector<double> adaptive_circuit_synthesis_anchor_freq = {0.0};
 
   DrivenSolverData() = default;
