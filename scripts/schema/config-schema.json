@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-5-4",
+  "$id": "urn:palace:schema:4-6-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3625,6 +3625,11 @@
               },
               "description": "Spatial-support contract options of the automatic matching."
             },
+            "Developer": {
+              "type": "boolean",
+              "description": "The developer switch of the correction. The default correction is post-processing only, with the fabrication-process `Library`; the options set aside from it (parked) are refused by name unless this key is true: `CorrectionMode` `SelfConsistent` / `Both`, `SolveTol`, `TranslationalDomainCorrection`. With it, the run prints one line `DEVELOPER OPTIONS: <the parked options in use>` and `palace.json` records the same list as `SurfaceResponse.Developer`.",
+              "default": false
+            },
             "CorrectionMode": {
               "type": "string",
               "enum": [
@@ -3632,13 +3637,13 @@
                 "SelfConsistent",
                 "Both"
               ],
-              "description": "Select fixed-trace/fixed-flux postprocessing only, a self-consistent corrected solve only, or both. `Both` preserves the historical behavior and means all correction families available for the problem type. Boundary mode supports `PostprocessOnly` and `Both`, but rejects `SelfConsistent` because it has no corrected boundary-mode eigenproblem.",
-              "default": "Both"
+              "description": "Select fixed-trace postprocessing only (the default: the correction of the raw thin-metal solution), a self-consistent corrected solve only, or both. `SelfConsistent` and `Both` (the historical default: all correction families available for the problem type) are developer options and need `\"Developer\": true`. Boundary mode supports `PostprocessOnly` and `Both`, but rejects `SelfConsistent` because it has no corrected boundary-mode eigenproblem.",
+              "default": "PostprocessOnly"
             },
             "SolveTol": {
               "type": "number",
               "exclusiveMinimum": 0.0,
-              "description": "Relative convergence tolerance for an optional self-consistent fabrication-response corrected-field solve. The raw field solve continues to use `Solver.Linear.Tol`.",
+              "description": "Relative convergence tolerance for an optional self-consistent fabrication-response corrected-field solve. The raw field solve continues to use `Solver.Linear.Tol`. A developer option (the self-consistent solve only): needs `\"Developer\": true`.",
               "default": 1e-06
             },
             "TranslationalDomainCorrection": {
@@ -3648,7 +3653,7 @@
                 "FixedTrace",
                 "FixedFlux"
               ],
-              "description": "Self-consistent domain coupling for translational isolated-edge, gap, strip, and parallel-edge coupon families. `Disabled` retains their fabricated surface-energy evaluation but omits their domain defect from the corrected global operator. Spatial clusters and corners remain fixed-trace coupled.",
+              "description": "Self-consistent domain coupling for translational isolated-edge, gap, strip, and parallel-edge coupon families. `Disabled` retains their fabricated surface-energy evaluation but omits their domain defect from the corrected global operator. Spatial clusters and corners remain fixed-trace coupled. A developer option (the self-consistent solve only): needs `\"Developer\": true`.",
               "default": "FixedTrace"
             },
             "TraceCoupling": {

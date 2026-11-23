@@ -326,6 +326,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction["Library"] = spatial_cluster_library_3d_path.string();
   correction["UnmatchedPolicy"] = "Warn";
   correction.erase("PatchConstruction");
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   const fs::path fallback_dir = temp.temp_dir / "h1-run-fallback";
   const fs::path plain_dir = temp.temp_dir / "h1-run-plain";

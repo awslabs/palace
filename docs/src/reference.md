@@ -1326,11 +1326,8 @@ and `Patches` lists:
   "UnmatchedPolicy": "Warn",
   "GeometryFailurePolicy": "RecordRaw",
   "PatchConstruction": "Features",
-  "CorrectionMode": "Both",
-  "TranslationalDomainCorrection": "FixedTrace",
-  "TraceCoupling": "Collocated",
-  "MortarOversampling": 2,
-  "SolveTol": 1.0e-6
+  "CorrectionMode": "PostprocessOnly",
+  "TraceCoupling": "Collocated"
 }
 ```
 
@@ -1371,20 +1368,32 @@ counted in `Exact` (they are matched cells left uncorrected): the uncorrected le
 `Missing` + `DomainBoundary`, and `Exact` + `Interpolated` + `Missing` + `DomainBoundary`
 double counts them.
 
-`CorrectionMode` selects `PostprocessOnly`, `SelfConsistent`, or `Both` (the default).
+`CorrectionMode` selects `PostprocessOnly` (the default), `SelfConsistent`, or `Both`.
 Postprocessing-only mode evaluates fixed-trace and fixed-flux responses on the raw field
 without constructing a corrected global solver. Self-consistent mode solves only the
 globally coupled corrected field; fixed-trace/fixed-flux and their confidence columns are
 retained in the output schema as `NaN`. `Both` preserves the historical behavior and
-computes both families. The raw field, ordinary output, and raw AMR estimator remain
-unchanged in every mode.
+computes both families (the default before schema 4-6-0). The raw field, ordinary output,
+and raw AMR estimator remain unchanged in every mode.
 
-`SolveTol` controls only the optional self-consistent corrected-field solve. The raw
+`Developer` (default `false`) is the developer switch of the correction. The default
+correction is post-processing only, with the fabrication-process `Library`; the options
+set aside from it (parked) are refused by name at set-up unless the same block sets
+`"Developer": true`: `CorrectionMode` `SelfConsistent` and `Both`, and `SolveTol` and
+`TranslationalDomainCorrection`, which configure the self-consistent solve only. With the
+switch the run prints one line `DEVELOPER OPTIONS: <the parked options in use>` and
+`palace.json` records the same list as `SurfaceResponse.Developer`; every other default is
+unchanged, so a developer run that also states `"CorrectionMode": "Both"` is the run of
+the historical default.
+
+`SolveTol` (a developer option) controls only the optional self-consistent
+corrected-field solve. The raw
 thin-metal field and AMR estimator retain `Solver.Linear.Tol` and `EstimatorTol`,
 respectively. The default `1.0e-6` is normally well below the accuracy of the local
 fabrication response model; it can be tightened independently when needed.
 
-`TranslationalDomainCorrection` controls how isolated-edge, gap, strip, and parallel-edge
+`TranslationalDomainCorrection` (a developer option) controls how isolated-edge, gap,
+strip, and parallel-edge
 coupon domain matrices enter the self-consistent global operator. `FixedTrace` preserves
 the original additive defect, while `FixedFlux` pulls the fabricated domain response back
 to the thin trace under conserved coupon flux. `Disabled` omits only these translational
@@ -2421,8 +2430,7 @@ fabrication-process library to a complex Maxwell field:
   "SurfaceResponseCorrection": {
     "Library": "process-library.json",
     "TargetInterfaces": [1, 2, 3],
-    "UnmatchedPolicy": "Error",
-    "CorrectionMode": "Both"
+    "UnmatchedPolicy": "Error"
   }
 }
 ```
@@ -2432,8 +2440,8 @@ raw thin-metal result. `surface-Q-corrected.csv` is an additional long-form tabl
 containing raw, fixed-trace, fixed-flux, and, when available, self-consistent
 normalization energies, interface energies, participations, and quality factors for each
 frequency and excitation, eigenmode, or boundary mode. The same `CorrectionMode`
-semantics apply as for electrostatics. `PostprocessOnly` avoids corrected KSP, PROM, and
-eigenmode solves; `SelfConsistent` skips raw-field fixed-trace/fixed-flux evaluation;
+semantics apply as for electrostatics, with the same default `PostprocessOnly` and the same
+developer switch. `PostprocessOnly` avoids corrected KSP, PROM, and eigenmode solves; `SelfConsistent` skips raw-field fixed-trace/fixed-flux evaluation;
 `Both` computes all correction families available to the problem type. Boundary mode has
 no self-consistent corrected eigensolver: it accepts `PostprocessOnly` and `Both`, where
 `Both` means all available boundary-mode correction paths, and rejects

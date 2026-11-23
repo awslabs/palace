@@ -1701,6 +1701,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction.erase("PatchConstruction");
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
   const fs::path full_dir = temp.temp_dir / "db-full";
@@ -2211,6 +2212,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     correction["UnmatchedPolicy"] = "Warn";
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
+    correction["Developer"] = true;
     correction["CorrectionMode"] = "Both";
     correction["PatchEnergy"] = true;
     correction["DomainBoundary"] = {{"Mirror", mirror}};

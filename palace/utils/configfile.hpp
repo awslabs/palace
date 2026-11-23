@@ -1595,9 +1595,20 @@ public:
     // Automatic three-dimensional patch construction (Features by default).
     PatchConstruction patch_construction = PatchConstruction::FEATURES;
 
-    // Select postprocessing-only fixed-trace/fixed-flux evaluation, a self-consistent
-    // corrected solve, or both. Both preserves the historical behavior.
-    CorrectionMode correction_mode = CorrectionMode::BOTH;
+    // The developer switch of the v1 default path ("Developer", default false): a parked
+    // option of the correction (the self-consistent path and the other options set aside
+    // for v1, which corrects by post-processing only) is refused by name without it.
+    bool developer = false;
+
+    // The parked options this block selects, in the order the parser met them (with the
+    // switch on): printed in one log line and recorded in palace.json as
+    // SurfaceResponse.Developer.
+    std::vector<std::string> developer_options;
+
+    // Select postprocessing-only fixed-trace/fixed-flux evaluation (the default), a
+    // self-consistent corrected solve, or both. SelfConsistent and Both (the historical
+    // default) need the developer switch.
+    CorrectionMode correction_mode = CorrectionMode::POSTPROCESS_ONLY;
 
     // Relative tolerance for an optional self-consistent corrected-field solve. The raw
     // field solve continues to use Solver.Linear.Tol.
@@ -2557,6 +2568,13 @@ ParseStringAsDirection(std::string str, bool required = true);
 // Validation functions for cross-field checks. Return empty string if valid, otherwise
 // return all error messages concatenated.
 std::optional<std::string> Validate(const BoundaryData &boundaries);
+
+// The v1 default path (the correction by post-processing only): a parked option of a
+// correction run (`option`, as the configuration spells it) needs "Developer": true in its
+// response-correction block. Refused by name without the switch; recorded in
+// data.developer_options with it.
+void RequireDeveloperOption(ElectrostaticSolverData::ResponseCorrectionData &data,
+                            const std::string &option);
 
 }  // namespace palace::config
 

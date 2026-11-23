@@ -246,6 +246,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // Mesh units are metres, unscaled, as the library's R (m).
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
+  config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
   config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
   // The two lowest modes of the 2 m PEC box (about 0.1 GHz).
   config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
@@ -368,6 +369,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // Mesh units are metres, unscaled, as the library's R (m).
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
+  config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
   config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
   // The two lowest modes of the 2 m PEC box (about 0.1 GHz).
   config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}, {"Save", 0}};

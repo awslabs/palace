@@ -229,9 +229,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
   // then postprocessing only.
   config["Problem"]["Output"] = both_dir.string();
   config["Solver"]["Electrostatic"]["ResponseCorrection"] = correction;
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Developer"] = true;
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] = "Both";
   RunElectrostatic(config);
   config["Problem"]["Output"] = postprocess_dir.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"].erase("Developer");
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] =
       "PostprocessOnly";
   RunElectrostatic(config);
@@ -240,6 +242,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
   // relative tolerance of 1e-300, so every source's corrected solve ends unconverged while
   // the raw solve (6 iterations) is unchanged.
   config["Problem"]["Output"] = unconverged_dir.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Developer"] = true;
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] = "Both";
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["SolveTol"] = 1.0e-300;
   RunElectrostatic(config);
@@ -362,9 +365,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "Electrostatic corrected terminal c
     }
   }
   CHECK(record.at("SelfConsistent").is_null() == !accepted);
+  // The developer switch (the v1 cut): the run with it lists its parked options.
+  CHECK(metadata.at("SurfaceResponse").at("Developer") ==
+        json::array({"\"CorrectionMode\": \"Both\""}));
   std::ifstream postprocess_metadata_input(postprocess_dir / "palace.json");
   REQUIRE(postprocess_metadata_input);
   const auto postprocess_metadata = json::parse(postprocess_metadata_input);
+  CHECK_FALSE(postprocess_metadata.at("SurfaceResponse").contains("Developer"));
   CHECK(postprocess_metadata.at("SurfaceResponse")
             .at("TerminalCapacitance")
             .at("SelfConsistent")
@@ -418,6 +425,7 @@ TEST_CASE_METHOD(
   const auto crack_policy = GENERATE(test::CrackPolicy::Legacy, test::CrackPolicy::Default);
   INFO("crack policy: " << test::CrackPolicyName(crack_policy));
   json config = CorrectedCapacitanceConfig(*this, crack_policy);
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Developer"] = true;
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] = "Both";
   const fs::path warn_dir = temp.temp_dir / "coverage-mark-warn";
   const fs::path marked_dir = temp.temp_dir / "coverage-mark-marknotapplied";
@@ -564,6 +572,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   config["Model"]["Mesh"] = mesh_path.string();
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
       scaled_library_path.string();
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["Developer"] = true;
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] = "Both";
   config["Boundaries"]["Ground"] = {{"Attributes", {1, 3, 4}}};
   config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {2}}},

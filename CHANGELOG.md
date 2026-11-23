@@ -394,6 +394,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - The surface-response correction is post-processing only by default (the v1 default
+    path): `"CorrectionMode"` defaults to `"PostprocessOnly"` (was `"Both"`, which also
+    ran the self-consistent corrected solves), and the options set aside from the default
+    path need the new developer switch `"Developer": true` of the response-correction block
+    (refused by name without it): `"CorrectionMode"` `"SelfConsistent"` / `"Both"`,
+    `"SolveTol"` and `"TranslationalDomainCorrection"`. With the switch the run prints one
+    line `DEVELOPER OPTIONS: ...` and `palace.json` records the list as
+    `SurfaceResponse.Developer`. Nothing is removed. SchemaVer 4-6-0
+
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous
     one, transferred to the refined mesh, instead of the start vector of

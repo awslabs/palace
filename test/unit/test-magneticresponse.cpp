@@ -1340,6 +1340,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         {"ControlStateAnchorSetbackOverR", 0.5}};
     CHECK_THROWS_WITH(IoData(bad, false), Catch::Matchers::ContainsSubstring("RecordOnly"));
     json self_consistent = config;
+    self_consistent["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
     self_consistent["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
     self_consistent["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"] = {
         {"RecordOnly", true}, {"ControlStateAnchorSetbackOverR", 0.5}};

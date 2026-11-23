@@ -1193,6 +1193,7 @@ TEST_CASE_METHOD(
   correction.erase("PatchConstruction");
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   correction["ConductorConsistency"]["Exclusion"] = exclusion;
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
@@ -1708,6 +1709,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction.erase("PatchConstruction");
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
   const fs::path output_dir = temp.temp_dir / "coverage-matrix";
@@ -1928,6 +1930,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction.erase("PatchConstruction");
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   correction["PatchEnergy"] = true;
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
