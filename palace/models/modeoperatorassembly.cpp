@@ -3,6 +3,7 @@
 
 #include "modeoperatorassembly.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include "fem/bilinearform.hpp"
@@ -12,6 +13,7 @@
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfaceterms.hpp"
+#include "utils/communication.hpp"
 
 namespace palace::mode_assembly
 {
@@ -346,6 +348,54 @@ ModeOperatorModel::ModeOperatorModel(
     surface_terms.AddScalarExtraSystemBdrMassTermCoefficients(i, unit_n);
     add_boundary_component(CoefficientType::SURFACE_TERM, i, unit_t, unit_n);
   }
+
+  // Second-order absorbing boundary terms, the components -[0, G; 0, D] and -[M, 0; Gᵀ, 0]
+  // (see ModeOperatorModel), for the terms with boundary elements on any process.
+  for (int i = 0; i < surface_terms.GetNumSecondOrderFarfieldTerms(); i++)
+  {
+    MaterialPropertyCoefficient unit(max_bdr_attr);
+    surface_terms.AddSecondOrderFarfieldTermCoefficients(i, unit, -1.0);
+    bool any = !unit.empty();
+    Mpi::GlobalOr(1, &any, nd_fespace.GetComm());
+    if (!any)
+    {
+      continue;
+    }
+    BilinearForm m(nd_fespace), d(h1_fespace), g(h1_fespace, nd_fespace);
+    if (!unit.empty())
+    {
+      m.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+      d.AddBoundaryIntegrator<DiffusionIntegrator>(unit);
+      g.AddBoundaryIntegrator<MixedVectorGradientIntegrator>(unit);
+    }
+    auto M = assemble_nd(m);
+    auto D = assemble_h1(d);
+    auto G = ParOperator(g.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
+                 .StealParallelAssemble();
+    std::unique_ptr<mfem::HypreParMatrix> Gt(G->Transpose());
+    auto [Cr, Ci] =
+        BuildSystemMatrixA(nd_fespace, h1_fespace, dbc_tdof_list, nullptr, nullptr, G.get(),
+                           nullptr, D.get(), nullptr, nullptr, Operator::DIAG_ZERO);
+    components.emplace_back(CoefficientType::SECOND_ORDER_FARFIELD, i, std::move(Cr),
+                            std::move(Ci));
+    auto [Sr, Si] =
+        BuildSystemMatrixA(nd_fespace, h1_fespace, dbc_tdof_list, M.get(), nullptr, nullptr,
+                           nullptr, nullptr, nullptr, Gt.get(), Operator::DIAG_ZERO);
+    components.emplace_back(CoefficientType::SECOND_ORDER_FARFIELD_SHIFT, i, std::move(Sr),
+                            std::move(Si));
+    farfield_lower_blocks.emplace_back(i, std::move(Gt));
+  }
+}
+
+void ModeOperatorModel::AddSecondOrderFarfieldLowerBlock(
+    std::complex<double> omega, double sigma, std::unique_ptr<mfem::HypreParMatrix> &real,
+    std::unique_ptr<mfem::HypreParMatrix> &imag) const
+{
+  for (const auto &[i, block] : farfield_lower_blocks)
+  {
+    AddScaledComplex(real, imag, block.get(), nullptr,
+                     sigma * surface_terms.GetSecondOrderFarfieldTermScale(i, omega));
+  }
 }
 
 std::complex<double>
@@ -368,9 +418,46 @@ ModeOperatorModel::EvaluateCoefficient(const OperatorComponent &component,
       return mat_op.EvaluateFrequencyDependentPermittivityA2(
           static_cast<std::size_t>(component.index),
           std::complex<double>(0.0, 1.0) * omega);
+    case CoefficientType::SECOND_ORDER_FARFIELD:
+      return surface_terms.GetSecondOrderFarfieldTermScale(component.index, omega);
+    case CoefficientType::SECOND_ORDER_FARFIELD_SHIFT:
+      return sigma * surface_terms.GetSecondOrderFarfieldTermScale(component.index, omega);
   }
   MFEM_ABORT("Unknown mode-operator coefficient type!");
   return 0.0;
+}
+
+std::complex<double>
+ModeOperatorModel::EvaluateBCoefficient(const OperatorComponent &component,
+                                        std::complex<double> omega) const
+{
+  return (component.type == CoefficientType::SECOND_ORDER_FARFIELD_SHIFT)
+             ? -surface_terms.GetSecondOrderFarfieldTermScale(component.index, omega)
+             : 0.0;
+}
+
+bool ModeOperatorModel::HasFrequencyDependentB() const
+{
+  return std::ranges::any_of(
+      components, [](const auto &component)
+      { return component.type == CoefficientType::SECOND_ORDER_FARFIELD_SHIFT; });
+}
+
+std::unique_ptr<ComplexOperator>
+ModeOperatorModel::AssembleB(const mfem::HypreParMatrix &B0,
+                             std::complex<double> omega) const
+{
+  auto real = std::make_unique<mfem::HypreParMatrix>(B0);
+  std::unique_ptr<mfem::HypreParMatrix> imag;
+  for (const auto &component : components)
+  {
+    const auto coeff = EvaluateBCoefficient(component, omega);
+    if (coeff != 0.0)
+    {
+      AddScaledComplex(real, imag, component.Ar.get(), component.Ai.get(), coeff);
+    }
+  }
+  return std::make_unique<ComplexWrapperOperator>(std::move(real), std::move(imag));
 }
 
 std::unique_ptr<ComplexOperator> ModeOperatorModel::Assemble(std::complex<double> omega,

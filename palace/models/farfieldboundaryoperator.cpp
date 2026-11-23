@@ -429,6 +429,17 @@ void FarfieldBoundaryOperator::AddDispersiveDampingBdrCoefficients(
   }
 }
 
+void FarfieldBoundaryOperator::AddCurlCurlBdrCoefficients(
+    double coeff, MaterialPropertyCoefficient &df) const
+{
+  if (coeff != 0.0 && order > 1 && ceed_attr_other.Size())
+  {
+    MaterialPropertyCoefficient c(curlcurl_attr_mat, curlcurl_mat);
+    c.RestrictCoefficient(ceed_attr_other);
+    df.AddCoefficient(c.GetAttributeToMaterial(), c.GetMaterialProperties(), coeff);
+  }
+}
+
 void FarfieldBoundaryOperator::AddDispersiveCurlCurlBdrCoefficients(
     std::size_t k, double coeff, MaterialPropertyCoefficient &df) const
 {

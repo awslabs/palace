@@ -46,9 +46,10 @@ struct LinearSolverData;
 // solved via shift-and-invert on sigma = -kn_target^2. Frequency-independent matrices
 // (Atn, Btn = -Atn^T, Btt) come either from a BoundaryModeOperator (2D domain path) or
 // local assembly (3D wave-port submesh path). Frequency-dependent Att/Ann blocks are
-// evaluated from the shared mode_assembly component bank. The solver builds the block
-// system, drives KSP + EPS, and returns eigenpairs; wave-port projection is delegated to
-// WavePortReducedModel.
+// evaluated from the shared mode_assembly component bank, as are the frequency-dependent
+// boundary terms of second-order absorbing boundaries in all four blocks, which make B
+// depend on frequency. The solver builds the block system, drives KSP + EPS, and returns
+// eigenpairs; wave-port projection is delegated to WavePortReducedModel.
 
 class ModeEigenSolver
 {
@@ -198,12 +199,16 @@ private:
   std::unique_ptr<mfem::HypreParMatrix> owned_Btnr, owned_Btni;
   std::unique_ptr<mfem::HypreParMatrix> owned_Bttr;
 
+  // Frequency-independent block B operator B₀ = [Btt, 0; Btn, 0], which is B, except with
+  // second-order absorbing boundaries on the cross-section, which make B depend on
+  // frequency (see mode_assembly::ModeOperatorModel).
   std::unique_ptr<ComplexOperator> opB;
 
-  // Frequency-dependent block A operator and sparse-direct preconditioner operator
-  // (rebuilt each Solve). The latter is assembled collectively on the FE space
-  // communicator before non-port ranks return from Solve.
-  std::unique_ptr<ComplexOperator> opA, direct_pc_op;
+  // Frequency-dependent block A operator, the block B operator when it depends on frequency
+  // (null otherwise), and sparse-direct preconditioner operator (rebuilt each Solve). These
+  // are assembled collectively on the FE space communicator before non-port ranks return
+  // from Solve.
+  std::unique_ptr<ComplexOperator> opA, opB_omega, direct_pc_op;
 
   // Eigenvalue and linear solvers (null on processes without solver_comm).
   std::unique_ptr<EigenvalueSolver> eigen;
@@ -225,8 +230,9 @@ private:
   // ordering regardless of eigensolver backend.
   std::vector<int> mode_perm;
 
-  // Evaluate frequency-dependent Att and Ann from shared components, then build block A
-  // (MPI collective on the FE-space communicator). Omega may be complex.
+  // Evaluate frequency-dependent Att and Ann from shared components, then build block A,
+  // and block B when it depends on frequency (MPI collective on the FE-space
+  // communicator). Omega may be complex.
   void AssembleFrequencyDependent(std::complex<double> omega, double sigma);
 
   using ComplexHypreParMatrix = std::tuple<std::unique_ptr<mfem::HypreParMatrix>,

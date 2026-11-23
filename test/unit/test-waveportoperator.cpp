@@ -13,6 +13,7 @@
 #include <utility>
 #include <vector>
 #include <Eigen/Dense>
+#include <fmt/format.h>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -24,6 +25,7 @@
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/waveportoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
@@ -899,6 +901,72 @@ TEST_CASE("WavePortOperator London slab", "[waveportoperator][Serial][Parallel]"
       CHECK(std::abs(data.kn0.imag()) < 1.0e-6 * std::abs(data.kn0.real()));
       CHECK_THAT(n_eff, WithinRel(n_exact, 1.0e-7));
     }
+  }
+}
+
+TEST_CASE("WavePortOperator absorbing boundaries on the port edges",
+          "[waveportoperator][Serial][Parallel]")
+{
+  // The ports z = 0 and z = L of a box between PEC plates at y = 0 and y = H, with
+  // absorbing sides at x = 0 and x = W, have the cross-section of
+  // test::ExactAbsorbingParallelPlateKn, whose fundamental mode (m = 0) is the port mode,
+  // with the absorbing boundary condition of the 3D solve, of first or second order, on
+  // the edges of the ports. The two conditions give modes 1e-2 apart. With the
+  // second-order condition, the wave port boundary condition lacks its term along the
+  // edges of the ports, and each port warns about it.
+  MPI_Comm comm = Mpi::World();
+  constexpr double W = 1.0, H = 0.5, L = 0.5, freq_ghz = 0.5;
+  const int abc_order = GENERATE(1, 2);
+  // MakeCartesian3D boundary attributes: z = 0 is 1, y = 0 is 2, x = W is 3, y = H is 4,
+  // x = 0 is 5, and z = L is 6.
+  json setup = {
+      {"Problem", {{"Type", "Driven"}, {"Output", ""}}},
+      {"Model", {{"Mesh", "box.mesh"}, {"L0", 1.0}}},
+      {"Domains", {{"Materials", json::array({{{"Attributes", {1}}}})}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {2, 4}}}},
+        {"Absorbing", {{"Attributes", {3, 5}}, {"Order", abc_order}}},
+        {"WavePort", json::array({{{"Index", 1}, {"Attributes", {1}}, {"Excitation", true}},
+                                  {{"Index", 2}, {"Attributes", {6}}}})}}},
+      {"Solver",
+       {{"Order", 2},
+        {"Driven",
+         {{"Samples", json::array({{{"Type", "Point"}, {"Freq", {freq_ghz}}}})}}}}}};
+  IoData iodata(setup, /*print=*/false);
+  auto smesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(8, 4, 1, mfem::Element::HEXAHEDRON, W, H, L));
+  iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+  iodata.NondimensionalizeInputs(smesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
+  std::unique_ptr<SpaceOperator> space_op;
+  const auto out = test::CaptureStdout(
+      [&] { space_op = std::make_unique<SpaceOperator>(iodata, mesh); });
+  if (Mpi::Root(comm))
+  {
+    for (int idx : {1, 2})
+    {
+      CAPTURE(abc_order, idx);
+      CHECK((out.find(fmt::format("Wave port {:d} meets a second-order absorbing boundary",
+                                  idx)) != std::string::npos) == (abc_order > 1));
+    }
+  }
+
+  auto &wp_op = space_op->GetWavePortOp();
+  REQUIRE(wp_op.Size() == 2);
+  const double omega =
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  wp_op.PrepareFrequency(omega);
+  const double k0 = 2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_;
+  const auto n_exact = test::ExactAbsorbingParallelPlateKn(W, H, k0, 0, abc_order) / k0;
+  const auto n_other = test::ExactAbsorbingParallelPlateKn(W, H, k0, 0, 3 - abc_order) / k0;
+  CHECK(std::abs(n_other - n_exact) > 1.0e-2 * std::abs(n_exact));
+  for (const auto &[idx, data] : wp_op)
+  {
+    const std::complex<double> n_eff = data.kn0 / omega;
+    CAPTURE(abc_order, idx, n_eff, n_exact, n_other);
+    CHECK(std::abs(n_eff - n_exact) < 1.0e-5 * std::abs(n_exact));
   }
 }
 

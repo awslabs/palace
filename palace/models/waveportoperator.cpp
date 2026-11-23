@@ -718,6 +718,17 @@ WavePortData::WavePortData(const config::WavePortData &data,
                                                    problem_type, *port_mesh);
   port_surface_terms =
       std::make_unique<SurfaceTerms>(boundaries, problem_type, units, *port_mat_op, mesh);
+  if (boundaries.farfield.order > 1)
+  {
+    const auto &port_pmesh = port_mesh->Get();
+    for (int be = 0; be < port_pmesh.GetNBE() && !second_order_farfield_edges; be++)
+    {
+      second_order_farfield_edges = std::ranges::find(boundaries.farfield.attributes,
+                                                      port_pmesh.GetBdrAttribute(be)) !=
+                                    boundaries.farfield.attributes.end();
+    }
+    Mpi::GlobalOr(1, &second_order_farfield_edges, port_mesh->GetComm());
+  }
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -1729,6 +1740,26 @@ void WavePortOperator::PrintBoundaryInfo(const Units &units, const mfem::ParMesh
   {
     Mpi::Print("\nConfiguring wave port excitation source term at attributes:\n");
     Mpi::Print("{}", fmt::to_string(buffer));
+  }
+
+  // The second-order absorbing boundary condition is the boundary curl-curl term of the
+  // absorbing faces, whose integration by parts over a face leaves a term along its edges.
+  // Where an absorbing face ends at a wave port, this term of the face beyond the port is
+  // missing: the port boundary condition stands for the volume beyond the port, but not for
+  // the absorbing faces there. The port mode, which has the second-order term on the edges
+  // of its cross-section, is then not a solution of the 3D problem next to these edges.
+  for (const auto &[idx, data] : ports)
+  {
+    if (data.active && data.second_order_farfield_edges)
+    {
+      Mpi::Warning(
+          "Wave port {:d} meets a second-order absorbing boundary (\"Absorbing\" with "
+          "\"Order\": 2) on the edges of its cross-section. The wave port boundary "
+          "condition does not include the term of the second-order condition along these "
+          "edges, so part of the port mode is reflected there, the more the larger its "
+          "field on them. The first-order condition (\"Order\": 1) has no such term.\n",
+          idx);
+    }
   }
 }
 

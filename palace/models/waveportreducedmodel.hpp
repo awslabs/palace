@@ -89,6 +89,8 @@ private:
   MPI_Comm solver_comm;
   bool wave_port;
   const mode_assembly::ModeOperatorModel &mode_op_model;
+
+  // The frequency-independent part B₀ of B (see mode_assembly::ModeOperatorModel).
   const ComplexOperator &opB;
 
   bool enabled = false;
@@ -118,14 +120,19 @@ private:
   const ComplexVector &Action(std::size_t col) const;
   double ValidateAffineModel(const ComplexOperator &truth_operator, double omega,
                              double sigma) const;
+  // Residuals and solve of the reduced eigenproblem, with the reduced A(ω, σ) and B(ω) and
+  // the coefficients of the components in A and in B (B₀ has unit coefficient).
   std::optional<double>
   EvaluateGramResidual(const Eigen::VectorXcd &y, std::complex<double> lambda,
-                       const std::vector<std::complex<double>> &coefficients);
+                       const std::vector<std::complex<double>> &coefficients,
+                       const std::vector<std::complex<double>> &b_coefficients);
   double
   EvaluateDirectResidual(const Eigen::VectorXcd &y, std::complex<double> lambda,
-                         const std::vector<std::complex<double>> &coefficients) const;
-  bool SolveFromGram(double sigma, const Eigen::MatrixXcd &Ar,
-                     const std::vector<std::complex<double>> &coefficients);
+                         const std::vector<std::complex<double>> &coefficients,
+                         const std::vector<std::complex<double>> &b_coefficients) const;
+  bool SolveFromGram(double sigma, const Eigen::MatrixXcd &Ar, const Eigen::MatrixXcd &Br,
+                     const std::vector<std::complex<double>> &coefficients,
+                     const std::vector<std::complex<double>> &b_coefficients);
   bool AddBasisVector(const ComplexVector &x);
 };
 

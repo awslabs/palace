@@ -184,6 +184,12 @@ void ModeEigenSolver::AssembleFrequencyDependent(std::complex<double> omega, dou
   last_assembled_omega = omega;
   last_assembled_sigma = sigma;
   opA = mode_op_model->Assemble(omega, sigma);
+  if (mode_op_model->HasFrequencyDependentB())
+  {
+    const auto *B0 = dynamic_cast<const mfem::HypreParMatrix *>(opB->Real());
+    MFEM_VERIFY(B0, "Expected assembled real boundary mode matrix B!");
+    opB_omega = mode_op_model->AssembleB(*B0, omega);
+  }
 }
 
 ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
@@ -313,12 +319,16 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     block_pc_ptr->SetBlockOperators(*att_mg_op, *ann_mg_op);
 
     // Set the off-diagonal operator -sigma*Btn for block lower-triangular preconditioning.
-    // This captures the shift-and-invert coupling that dominates the off-diagonal.
+    // This captures the shift-and-invert coupling that dominates the off-diagonal. Btn has
+    // the terms of second-order absorbing boundaries, at the real frequency Re(omega).
     if (Btnr && std::abs(sigma) > 0.0)
     {
       auto sBtnr = std::make_unique<mfem::HypreParMatrix>(*Btnr);
       *sBtnr *= -sigma;
-      shifted_Btn_op = std::make_unique<ComplexWrapperOperator>(std::move(sBtnr), nullptr);
+      std::unique_ptr<mfem::HypreParMatrix> sBtni;
+      mode_op_model->AddSecondOrderFarfieldLowerBlock(omega.real(), sigma, sBtnr, sBtni);
+      shifted_Btn_op =
+          std::make_unique<ComplexWrapperOperator>(std::move(sBtnr), std::move(sBtni));
       block_pc_ptr->SetOffDiagonalOperator(shifted_Btn_op.get());
     }
     else
@@ -334,7 +344,8 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     direct_pc->SetCallerBlockForm(direct_pc_block_form);
     ksp->SetOperators(*opA, *direct_pc_op);
   }
-  eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
+  eigen->SetOperators(opB_omega ? *opB_omega : *opB, *opA,
+                      EigenvalueSolver::ScaleType::NONE);
 
   // Every exact solve starts from the same vector, so that its result depends on the
   // frequency and the shift only, not on the solves before it. Within a degenerate pair of
@@ -840,6 +851,24 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   surface_terms.AddMassBdrCoefficients(mass_coeff, fbr);
   surface_terms.AddDampingBdrCoefficients(damp_coeff, fb_loss);
   surface_terms.AddPreconditionerExtraSystemBdrMassCoefficients(omega, fbr, fb_loss);
+  // The boundary mass -σ β(ω) M of second-order absorbing boundaries (see
+  // mode_assembly::ModeOperatorModel), shifted like the domain term of Btt, with the terms
+  // of the system, except for the magnitude next to a frequency-dependent material or in a
+  // real-valued preconditioner, like the damping of the absorbing boundaries.
+  for (int i = 0; i < surface_terms.GetNumSecondOrderFarfieldTerms(); i++)
+  {
+    const auto coeff =
+        shift_coeff * surface_terms.GetSecondOrderFarfieldTermScale(i, omega);
+    if (real_pc || i > 0)
+    {
+      surface_terms.AddSecondOrderFarfieldTermCoefficients(i, fb_loss, std::abs(coeff));
+    }
+    else
+    {
+      surface_terms.AddSecondOrderFarfieldTermCoefficients(i, fbr, coeff.real());
+      surface_terms.AddSecondOrderFarfieldTermCoefficients(i, fbi, coeff.imag());
+    }
+  }
   const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
 
   // Assemble ND operators at all levels, and the auxiliary H1 operators for Hiptmair
@@ -988,12 +1017,30 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
       }
     }
   }
-  const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi});
+  // The boundary diffusion -β(ω) D of second-order absorbing boundaries (see
+  // mode_assembly::ModeOperatorModel), as for the ND block, with the opposite sign.
+  MaterialPropertyCoefficient dfbr(max_bdr_attr), dfbi(max_bdr_attr);
+  auto &dfb_loss = real_pc ? dfbr : dfbi;
+  for (int i = 0; i < surface_terms.GetNumSecondOrderFarfieldTerms(); i++)
+  {
+    const auto beta = surface_terms.GetSecondOrderFarfieldTermScale(i, omega);
+    if (real_pc || i > 0)
+    {
+      surface_terms.AddSecondOrderFarfieldTermCoefficients(i, dfb_loss, -std::abs(beta));
+    }
+    else
+    {
+      surface_terms.AddSecondOrderFarfieldTermCoefficients(i, dfbr, -beta.real());
+      surface_terms.AddSecondOrderFarfieldTermCoefficients(i, dfbi, -beta.imag());
+    }
+  }
+  const bool has_imag = AnyNonEmpty(solver_comm, {&fi, &fbi, &dfbi});
 
   // Assemble H1 operators at all levels using hierarchy-aware assembly.
   auto AssembleH1 = [&](const MaterialPropertyCoefficient *neg_muinv,
                         const MaterialPropertyCoefficient &f,
-                        const MaterialPropertyCoefficient &fb)
+                        const MaterialPropertyCoefficient &fb,
+                        const MaterialPropertyCoefficient &dfb)
   {
     BilinearForm a(h1_spaces.GetFinestFESpace());
     if (neg_muinv)
@@ -1008,13 +1055,17 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
     {
       a.AddBoundaryIntegrator<MassIntegrator>(fb);
     }
+    if (!dfb.empty())
+    {
+      a.AddBoundaryIntegrator<DiffusionIntegrator>(dfb);
+    }
     return a.Assemble(h1_spaces, skip_zeros);
   };
-  auto ann_ops = AssembleH1(&neg_muinv_func, fr, fbr);
+  auto ann_ops = AssembleH1(&neg_muinv_func, fr, fbr, dfbr);
   std::vector<std::unique_ptr<Operator>> ann_i_ops(n_levels);
   if (has_imag)
   {
-    ann_i_ops = AssembleH1(nullptr, fi, fbi);
+    ann_i_ops = AssembleH1(nullptr, fi, fbi, dfbi);
   }
   for (std::size_t l = 0; l < n_levels; l++)
   {
