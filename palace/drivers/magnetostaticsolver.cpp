@@ -123,12 +123,12 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
   // extraction) and fluxoid generators of the flux loops, from the operator of the
   // substructuring. The mesh of the region leaves out the flux loops of the environment,
   // and so their generators, whose excitations the model holds (see
-  // SubstructuringSolver::ModelExcitations).
+  // SubstructuringSolver::TakeModelExcitations).
   std::vector<int> current_idx, flux_idx, loop_idx;
   std::vector<Vector> J, apertures, a;
   std::vector<double> I_inc, Phi_inc;
   const bool single_loops = surf_flux_op.HasSingleLoopExcitations();
-  sub.ModelExcitations(surf_flux_op.GetExcitations());
+  sub.TakeModelExcitations(surf_flux_op.GetExcitations());
   mfem::DenseMatrix loop_fluxoid;
   {
     CurlCurlOperator &curlcurl_op = sub.GetCurlCurlOperator();

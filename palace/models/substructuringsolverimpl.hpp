@@ -734,7 +734,7 @@ struct SubstructuringSolver::Impl
 
   // Online: whether the excitations of the environment are those of the model (always on
   // the mesh of the region), and the sources taken from the model whole (see
-  // SubstructuringSolver::ModelExcitations).
+  // SubstructuringSolver::TakeModelExcitations).
   bool env_excitations_unchanged = false;
   std::set<int> model_sources;
 
