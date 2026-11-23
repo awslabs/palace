@@ -187,7 +187,7 @@ SubstructuringSolver::Impl::ReadOnlineHead(const IoData &iodata, bool magnetosta
                                            MPI_Comm comm)
 {
   const auto &sub = iodata.solver.substructuring;
-  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->model_file.empty())
+  if (!sub || !sub->Online())
   {
     return {};
   }
@@ -198,18 +198,20 @@ SubstructuringSolver::Impl::ReadOnlineHead(const IoData &iodata, bool magnetosta
     saved = ReadSavedHead(model, comm);
   }
   MFEM_VERIFY(saved.version >= 0, "Cannot read the saved substructuring model \""
-                                      << model << "\" (run in \"Offline\" mode first)!");
+                                      << model
+                                      << "\" (run offline first, without \"ModelFile\")!");
   MFEM_VERIFY(saved.version > 0, "\"" << model
                                       << "\" is not a saved substructuring model: run "
-                                         "in \"Offline\" mode to write one!");
+                                         "offline (without \"ModelFile\") to write one!");
   MFEM_VERIFY(saved.version == kModelVersion,
               "The saved substructuring model \""
                   << model
-                  << "\" was written by another version of Palace: rerun in "
-                     "\"Offline\" mode!");
+                  << "\" was written by another version of Palace: rerun offline "
+                     "(without \"ModelFile\")!");
   MFEM_VERIFY(saved.width > 0, "The saved substructuring model \""
                                    << model
-                                   << "\" is incomplete: rerun in \"Offline\" mode!");
+                                   << "\" is incomplete: rerun offline (without "
+                                      "\"ModelFile\")!");
   MFEM_VERIFY((saved.sig_type == 1) != magnetostatic,
               "The saved substructuring model \""
                   << model << "\" is "
@@ -425,7 +427,8 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
       MFEM_VERIFY(same, "The sheet faces on the interface are not on the same sides as in "
                         "the saved substructuring model: a face belongs to the side of its "
                         "neighbor with the lower attribute, and the attributes next to the "
-                        "interface changed. Keep them, or rerun in \"Offline\" mode!");
+                        "interface changed. Keep them, or rerun offline (without "
+                        "\"ModelFile\")!");
     }
     mag_eps = model_eps;
     if (!(mag_eps > 0.0))
@@ -793,8 +796,9 @@ void SubstructuringSolver::CondenseEnvironment()
   // Online with a saved model: load S_E (and the model's sections); otherwise materialize
   // S_E, and save it when a path is set.
   const auto &subcfg = *impl->iodata.solver.substructuring;
-  const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
-  const std::string &model_path = subcfg.model_file;
+  const bool online = subcfg.Online();
+  const std::string model_path =
+      online ? subcfg.model_file : substructuring::SaveModelPath(impl->iodata);
   if (!online && !model_path.empty())
   {
     // Fail before the condensation if the model cannot be written (an existing one is
@@ -807,7 +811,8 @@ void SubstructuringSolver::CondenseEnvironment()
   MFEM_VERIFY(
       model_path.empty() || !impl->InterfaceSplit() || !impl->parent.Nonconforming(),
       "A saved substructuring model with \"TwoSided\" superconductor films crossing "
-      "the interface needs a conforming mesh!");
+      "the interface needs a conforming mesh"
+          << (online ? "!" : " (with \"SaveModel\": false, no model is saved)!"));
   bool loaded = false;
   if (online && !model_path.empty())
   {
@@ -1308,10 +1313,9 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       }
     }
     impl->ComputeSourceModes(req_ids, req_src);
-    const auto &subcfg = *impl->iodata.solver.substructuring;
-    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.model_file.empty())
+    if (const auto path = substructuring::SaveModelPath(impl->iodata); !path.empty())
     {
-      impl->AppendSourceModes(subcfg.model_file);
+      impl->AppendSourceModes(path);
     }
   }
   const int K = static_cast<int>(impl->src_ids.size());
@@ -1567,10 +1571,9 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       }
     }
     impl->ComputeModes(req_ids, req_lifts);
-    const auto &subcfg = *impl->iodata.solver.substructuring;
-    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.model_file.empty())
+    if (const auto path = substructuring::SaveModelPath(impl->iodata); !path.empty())
     {
-      impl->AppendModes(subcfg.model_file);
+      impl->AppendModes(path);
     }
   }
   const int K = static_cast<int>(impl->mode_ids.size());

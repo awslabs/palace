@@ -2361,7 +2361,7 @@ TEST_CASE("substructuring_magnetostatic_two_films_region",
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_two_films.json";
   opts.custom_checks["terminal-M.csv"] =
-      TestRegionMeshLeavesOut("environment_two_films_region.mesh", {4, 5}, {2, 3},
+      TestRegionMeshLeavesOut("postpro/two_films/environment_region.mesh", {4, 5}, {2, 3},
                               TestOfflineRunReproduced("two_films", opts));
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_films_online_region.json",

@@ -1037,8 +1037,6 @@ void IoData::CheckConfiguration()
 #endif
     MFEM_VERIFY(!sub.region_attributes.empty(),
                 "Substructuring requires a nonempty Region attribute set!");
-    MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.model_file.empty(),
-                "\"Online\" substructuring requires the saved model path \"ModelFile\"!");
     // The interface DOFs of a model are matched by their coordinates, which on a periodic
     // seam depend on the partition.
     MFEM_VERIFY(boundaries.periodic.boundary_pairs.empty(),
@@ -1048,11 +1046,11 @@ void IoData::CheckConfiguration()
     // does not spread into it.
     if (model.refinement.max_it > 0)
     {
-      MFEM_VERIFY(sub.mode == SubstructuringMode::ONLINE,
+      MFEM_VERIFY(sub.Online(),
                   "Adaptive mesh refinement with substructuring refines the region of an "
-                  "\"Online\" run; to refine the full model, run the adaptation without "
-                  "\"Solver.Substructuring\" (with \"SaveAdaptMesh\") and condense the "
-                  "saved mesh offline!");
+                  "online run (with a \"ModelFile\"); to refine the full model, run the "
+                  "adaptation without \"Solver.Substructuring\" (with \"SaveAdaptMesh\") "
+                  "and condense the saved mesh offline!");
       MFEM_VERIFY(model.refinement.nonconformal && model.refinement.max_nc_levels == 0,
                   "Adaptive mesh refinement with substructuring requires nonconforming "
                   "refinement (\"Nonconformal\": true) without a level constraint "

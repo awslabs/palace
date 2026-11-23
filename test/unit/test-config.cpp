@@ -22,6 +22,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "embedded_schema.hpp"
+#include "fem/substructuremodel.hpp"
 #include "linalg/ksp.hpp"
 #include "utils/configfile.hpp"
 #include "utils/iodata.hpp"
@@ -198,16 +199,21 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     json solver = {{"Substructuring",
                     {{"Region", {{"Attributes", {1}}}},
                      {"Environment", {{"Attributes", {2, 3}}}},
-                     {"Mode", "Offline"},
                      {"ModelFile", "env_dtn.dat"}}}};
     config::SolverData data(solver);
     REQUIRE(data.substructuring.has_value());
     CHECK(data.substructuring->region_attributes == std::vector<int>{1});
     CHECK(data.substructuring->environment_attributes == std::vector<int>{2, 3});
-    CHECK(data.substructuring->mode == SubstructuringMode::OFFLINE);
     CHECK(data.substructuring->model_file == "env_dtn.dat");
+    CHECK(data.substructuring->Online());
     solver["Substructuring"].erase("Environment");
     CHECK(config::SolverData(solver).substructuring->environment_attributes.empty());
+    // Without a model, a run is offline, and saves its model unless told not to.
+    solver["Substructuring"].erase("ModelFile");
+    CHECK_FALSE(config::SolverData(solver).substructuring->Online());
+    CHECK(config::SolverData(solver).substructuring->save_model);
+    solver["Substructuring"]["SaveModel"] = false;
+    CHECK_FALSE(config::SolverData(solver).substructuring->save_model);
   }
 
   SECTION("Absent block leaves substructuring unset")
@@ -279,19 +285,17 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
 
   SECTION("Adaptive mesh refinement refines the region of an online run")
   {
-    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}, {"Refinement", {{"MaxIts", 2}}}}},
-                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
-                   {"Boundaries", json::object()},
-                   {"Solver",
-                    {{"Substructuring",
-                      {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", "Offline"},
-                       {"ModelFile", "environment.model"}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}, {"Refinement", {{"MaxIts", 2}}}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
     CHECK_THROWS_WITH(IoData(config, false),
                       Catch::Matchers::ContainsSubstring("\"SaveAdaptMesh\""));
-    config["Solver"]["Substructuring"]["Mode"] = "Online";
+    config["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
     CHECK_THROWS_WITH(IoData(config, false),
                       Catch::Matchers::ContainsSubstring("\"MaxNCLevels\": 0"));
     config["Model"]["Refinement"]["MaxNCLevels"] = 0;
@@ -321,21 +325,20 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     CHECK_NOTHROW(IoData(config, false));
   }
 
-  SECTION("Online substructuring requires a saved model")
+  SECTION("An offline run saves its model in its output directory")
   {
-    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "postpro/offline"}}},
                    {"Model", {{"Mesh", "test.msh"}}},
                    {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
                    {"Boundaries", json::object()},
-                   {"Solver",
-                    {{"Substructuring",
-                      {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", "Online"}}}}}};
-    CHECK_THROWS_WITH(IoData(config, false),
-                      Catch::Matchers::ContainsSubstring("\"ModelFile\""));
-    config["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
-    CHECK_NOTHROW(IoData(config, false));
+                   {"Solver", {{"Substructuring", {{"Region", {{"Attributes", {1}}}}}}}}};
+    CHECK(substructuring::SaveModelPath(IoData(config, false)) ==
+          "postpro/offline/environment.model");
+    config["Solver"]["Substructuring"]["SaveModel"] = false;
+    CHECK(substructuring::SaveModelPath(IoData(config, false)).empty());
+    config["Solver"]["Substructuring"]["SaveModel"] = true;
+    config["Solver"]["Substructuring"]["ModelFile"] = "postpro/offline/environment.model";
+    CHECK(substructuring::SaveModelPath(IoData(config, false)).empty());
   }
 
   SECTION("Substructuring takes the postprocessing of the region")
@@ -2974,7 +2977,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(err.empty());
 
     IoData iodata2(config, false);
-    CHECK(iodata2.solver.substructuring->mode == iodata1.solver.substructuring->mode);
+    CHECK(iodata2.solver.substructuring->save_model ==
+          iodata1.solver.substructuring->save_model);
     CHECK(iodata2.solver.substructuring->model_file ==
           iodata1.solver.substructuring->model_file);
 

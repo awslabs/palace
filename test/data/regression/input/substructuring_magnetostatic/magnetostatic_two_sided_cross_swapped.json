@@ -16,6 +16,5 @@
   "Solver": { "Order": 1,
     "Magnetostatic": { "Save": 0 },
     "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
-    "Substructuring": { "Region": { "Attributes": [2] }, "Environment": { "Attributes": [1] },
-      "ModelFile": "environment_two_sided_cross_swapped.model" } }
+    "Substructuring": { "Region": { "Attributes": [2] }, "Environment": { "Attributes": [1] } } }
 }

@@ -10,6 +10,7 @@
 #include <map>
 #include <random>
 #include <stdexcept>
+#include <system_error>
 #include <unistd.h>
 #include "fixtures.hpp"
 
@@ -63,6 +64,25 @@ std::string TestMeshPath(const std::string &name)
 
 namespace palace::test
 {
+
+void SetModelRun(nlohmann::json &config, std::string_view mode,
+                 const std::string &model_path)
+{
+  const std::filesystem::path path(model_path);
+  if (mode == "Online")
+  {
+    config["Solver"]["Substructuring"]["ModelFile"] = model_path;
+    return;
+  }
+  if (path.filename() != "environment.model")
+  {
+    throw std::invalid_argument("An offline run saves its model as environment.model!");
+  }
+  config["Problem"]["Output"] = path.parent_path().string();
+  config["Solver"]["Substructuring"]["SaveModel"] = true;
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+}
 
 std::string CaptureStdout(const std::function<void()> &f)
 {

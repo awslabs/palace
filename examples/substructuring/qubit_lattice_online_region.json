@@ -5,7 +5,7 @@
     "Output": "postpro/qubit_lattice_online_region"
   },
   "Model": {
-    "Mesh": "postpro/qubit_lattice_environment_region.mesh",
+    "Mesh": "postpro/qubit_lattice_offline/environment_region.mesh",
     "L0": 1e-06
   },
   "Domains": {
@@ -380,8 +380,7 @@
           11
         ]
       },
-      "Mode": "Online",
-      "ModelFile": "postpro/qubit_lattice_environment.model"
+      "ModelFile": "postpro/qubit_lattice_offline/environment.model"
     }
   }
 }

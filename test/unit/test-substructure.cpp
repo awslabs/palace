@@ -130,7 +130,7 @@ TEST_CASE("Configuration hash of the environment", "[substructure][Serial]")
           {"DonorAttributes": [6], "ReceiverAttributes": [7], "Translation": [0, 1, 0]}]},
       "Postprocessing": {"SurfaceFlux": [{"Index": 1, "Attributes": [5], "Type": "Magnetic"}]}},
     "Solver": {"Order": 2, "QuadratureOrderExtra": 0,
-               "Substructuring": {"Mode": "Offline", "ModelFile": "model.bin"}}})");
+               "Substructuring": {"SaveModel": true}}})");
   const std::vector<int> attrs = {3, 2}, bdr = {9, 8, 5, 4};
   for (const bool excitations : {false, true})
   {
@@ -171,7 +171,7 @@ TEST_CASE("Configuration hash of the environment", "[substructure][Serial]")
           c["Problem"]["Output"] = "online";
           c["Model"]["Mesh"] = "region.mesh";
           c["Model"]["Refinement"]["UniformLevels"] = 1;
-          c["Solver"]["Substructuring"]["Mode"] = "Online";
+          c["Solver"]["Substructuring"] = {{"ModelFile", "postpro/environment.model"}};
         }));
     CHECK_FALSE(differs(
         [](json &c)

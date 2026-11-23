@@ -30,6 +30,7 @@
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/substructuringsolver.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -224,7 +225,8 @@ json Materials(const std::string &property)
 json Substructuring()
 {
   return {{"Region", {{"Attributes", kRegion}}},
-          {"Environment", {{"Attributes", kEnvironment}}}};
+          {"Environment", {{"Attributes", kEnvironment}}},
+          {"SaveModel", false}};
 }
 
 json ElectrostaticConfig(int order)
@@ -799,7 +801,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                                        {true, 1, true},
                                        {false, 1, true}}));
   CAPTURE(region_below, order, by_side);
-  const std::string model_path = (temp_dir / "sheet_side.model").string();
+  const std::string model_path = (temp_dir / "sheet_side" / "environment.model").string();
   auto make_config = [&](const std::string &mode)
   {
     json config = MagnetostaticConfig(order, true, false);
@@ -809,8 +811,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     auto &sub = config["Solver"]["Substructuring"];
     sub["Region"]["Attributes"] = region_below ? kRegion : kEnvironment;
     sub["Environment"]["Attributes"] = region_below ? kEnvironment : kRegion;
-    sub["Mode"] = mode;
-    sub["ModelFile"] = model_path;
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   // The energy of the surface current, and whether the environment was solved.
@@ -822,8 +823,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     SubstructuringSolver ss(iodata, mesh);
     ss.CondenseEnvironment();
     const double E = ss.MagnetostaticEnergyMatrix({1}, {J}, {}, {}, {}, nullptr)(0, 0);
-    CHECK(ss.EnvironmentFactored() ==
-          (iodata.solver.substructuring->mode == SubstructuringMode::OFFLINE));
+    CHECK(ss.EnvironmentFactored() == !iodata.solver.substructuring->Online());
     return E;
   };
   const ParityMesh opt{false, 0, true};
@@ -846,14 +846,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // Renumbering the region above the environment on the mesh of the region moves the sheet
   // faces on Gamma, which belong to the side of their neighbor with the lower attribute, to
   // the environment, which the online run does not assemble: the run is rejected.
-  const std::string model_path = (temp_dir / "sheet_moved.model").string();
+  const std::string model_path = (temp_dir / "sheet_moved" / "environment.model").string();
   constexpr int shift = 10;
   auto make_config = [&](const std::string &mode, bool renumbered)
   {
     json config = MagnetostaticConfig(1, true, false);
+    test::SetModelRun(config, mode, model_path);
     auto &sub = config["Solver"]["Substructuring"];
-    sub["Mode"] = mode;
-    sub["ModelFile"] = model_path;
     if (renumbered)
     {
       std::vector<int> region;
@@ -912,7 +911,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // A model with a two-sided film crossing the interface on a nonconforming mesh, whose
   // coarse faces have several neighbors, is rejected before the condensation.
   json config = MagnetostaticConfig(1, false, true);
-  config["Solver"]["Substructuring"]["ModelFile"] = (temp_dir / "film_nc.model").string();
+  test::SetModelRun(config, "Offline",
+                    (temp_dir / "film_nc" / "environment.model").string());
   IoData iodata(config, false);
   auto mesh = MakeMesh(MakeParitySerial(8, {false, 0, false, true}));
   SubstructuringSolver ss(iodata, mesh);

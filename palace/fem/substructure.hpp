@@ -240,14 +240,14 @@ std::uint64_t EnvironmentConfigHash(const nlohmann::json &config,
 inline constexpr const char *kEnvironmentDiffers =
     "The environment differs from the one the saved substructuring model was condensed "
     "from (environment mesh, materials, boundary conditions, order or problem type "
-    "changed): rerun in \"Offline\" mode to condense it again!";
+    "changed): rerun offline (without \"ModelFile\") to condense it again!";
 inline constexpr const char *kEnvironmentMeshDiffers =
     "The environment differs from the one the saved substructuring model was condensed "
-    "from: its mesh changed. Rerun in \"Offline\" mode to condense it again!";
+    "from: its mesh changed. Rerun offline (without \"ModelFile\") to condense it again!";
 inline constexpr const char *kEnvironmentConfigDiffers =
     "The environment differs from the one the saved substructuring model was condensed "
     "from: its attributes, materials, boundary conditions or discretization changed. Rerun "
-    "in \"Offline\" mode to condense it again!";
+    "offline (without \"ModelFile\") to condense it again!";
 
 // The message of excitations of the environment which differ from those of a saved
 // substructuring model, on the mesh of the region (the full mesh computes their modes).

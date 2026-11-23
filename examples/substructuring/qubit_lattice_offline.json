@@ -379,9 +379,7 @@
           10,
           11
         ]
-      },
-      "Mode": "Offline",
-      "ModelFile": "postpro/qubit_lattice_environment.model"
+      }
     }
   }
 }

@@ -3135,19 +3135,6 @@
         }
       }
     },
-    "SubstructuringMode": {
-      "type": "string",
-      "oneOf": [
-        {
-          "const": "Offline",
-          "description": "Condense the environment to a boundary (DtN) operator now."
-        },
-        {
-          "const": "Online",
-          "description": "Load a previously saved environment model and solve only the region."
-        }
-      ]
-    },
     "Substructuring": {
       "type": "object",
       "title": "Substructuring",
@@ -3183,14 +3170,14 @@
             }
           }
         },
-        "Mode": {
-          "$ref": "#/$defs/SubstructuringMode",
-          "description": "\"Offline\" condenses the environment (and writes \"ModelFile\" if given); \"Online\" loads the model from \"ModelFile\" (required) and solves only the region. The online run may use a re-meshed region, provided the interface is unchanged.",
-          "default": "Offline"
-        },
         "ModelFile": {
           "type": "string",
-          "description": "Path of the environment model file written in \"Offline\" mode and read in \"Online\" mode. An \"Offline\" run on a conforming mesh also writes, and replaces, the mesh of the region next to it (`<stem>_region.mesh` for `<stem>.model`), on which \"Online\" runs read only the region: they tell it from the full mesh by the environment elements it holds."
+          "description": "A saved model of the environment: the run is online, and solves only the region against the model. The region may be re-meshed, provided the interface is unchanged, and on the mesh of the region, which an online run tells from the full mesh by the environment elements it holds, only the region is read. A run without a model condenses the environment (offline) and, with \"SaveModel\", saves its model as `environment.model` in [`/Problem/Output`](@ref config-problem-output), and on a conforming mesh the mesh of the region, `environment_region.mesh`, next to it."
+        },
+        "SaveModel": {
+          "type": "boolean",
+          "description": "Whether an offline run, without \"ModelFile\", saves its model of the environment for online runs.",
+          "default": true
         }
       }
     },

@@ -9,8 +9,10 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <mfem.hpp>
+#include <nlohmann/json.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
 #include "utils/configfile.hpp"
@@ -63,6 +65,12 @@ namespace palace::test
 // The standard output of this process while f runs (on the root process, the output of
 // Mpi::Print and Mpi::Warning). The standard output is restored also when f throws.
 std::string CaptureStdout(const std::function<void()> &f);
+
+// Set a substructuring configuration for an offline run which saves its model at
+// model_path (environment.model in the output directory, which it creates), or for an
+// online run ("Online") which loads it.
+void SetModelRun(nlohmann::json &config, std::string_view mode,
+                 const std::string &model_path);
 
 // Deterministic pseudo-random orthonormal frames (e1, e2, normal) of planes oblique to
 // every coordinate axis.

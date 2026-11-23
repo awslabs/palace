@@ -1,6 +1,6 @@
 {
   "Problem": { "Type": "Magnetostatic", "Output": "postpro/two_sided_end_online_region" },
-  "Model": { "Mesh": "environment_two_sided_end_region.mesh", "L0": 1.0e-6 },
+  "Model": { "Mesh": "postpro/two_sided_end/environment_region.mesh", "L0": 1.0e-6 },
   "Domains": { "Materials": [
     { "Attributes": [1], "Permeability": 1.0 },
     { "Attributes": [2], "Permeability": 1.0 } ] },
@@ -14,5 +14,5 @@
     "Magnetostatic": { "Save": 0 },
     "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
-      "Mode": "Online", "ModelFile": "environment_two_sided_end.model" } }
+      "ModelFile": "postpro/two_sided_end/environment.model" } }
 }
