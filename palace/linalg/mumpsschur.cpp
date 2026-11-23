@@ -340,14 +340,14 @@ void MumpsSchurSolverT<T>::Factor()
 {
   // Factorization (+ Schur). The workspace estimates of the analysis can be too small in
   // parallel (the dense Schur root sits on one rank). If the integer workspace or the
-  // buffers are (INFOG(1) = -8, -20), double their relaxation ICNTL(14) and retry. If the
-  // real workspace is (-9), its shortfall can be in the main workspace, which MUMPS sizes
-  // from the estimate relaxed by ICNTL(14), or in the allocations it makes within the
+  // buffers are (INFOG(1) = -8, -17, -20), double their relaxation ICNTL(14) and retry. If
+  // the real workspace is (-9), its shortfall can be in the main workspace, which MUMPS
+  // sizes from the estimate relaxed by ICNTL(14), or in the allocations it makes within the
   // memory allowed per process (ICNTL(23), in MB, which MUMPS reads on each process when it
-  // is set on more than the host), such as that of the dense Schur root: double the
-  // relaxation and the memory allowed, from what each process allocated (INFO(16)) with
-  // twice their shortfall (INFO(2) entries) more on the processes that ran short, and
-  // retry.
+  // is set on more than the host), such as that of the dense Schur root, which a
+  // refactorization with ICNTL(23) set can exceed (-19): double the relaxation and the
+  // memory allowed, from what each process allocated (INFO(16)) with twice their shortfall
+  // (INFO(2) entries) more on the processes that ran short, and retry.
   if (InGrid() && n_schur > 0 && schur.empty())
   {
     // (Again after ReleaseSchurRows.)
@@ -361,7 +361,7 @@ void MumpsSchurSolverT<T>::Factor()
     id.job = 2;
     Call();
     const MUMPS_INT err = id.infog[0];
-    if (attempt >= 5 || (err != -8 && err != -9 && err != -20))
+    if (attempt >= 5 || (err != -8 && err != -9 && err != -17 && err != -19 && err != -20))
     {
       break;
     }
@@ -370,12 +370,12 @@ void MumpsSchurSolverT<T>::Factor()
                "{:d}): retrying\n",
                err, id.infog[1]);
     id.icntl[13] *= 2;  // ICNTL(14)
-    if (err != -9)
+    if (err != -9 && err != -19)
     {
       continue;
     }
     double short_mb = 0.0;
-    if (id.info[0] == -9)
+    if (id.info[0] == -9 || id.info[0] == -19)
     {
       const double entries = (id.info[1] > 0) ? id.info[1] : -1.0e6 * id.info[1];
       short_mb = entries * sizeof(T) / 1.0e6;

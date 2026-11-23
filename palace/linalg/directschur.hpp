@@ -79,8 +79,10 @@ private:
   // of A_II, A_IS (CSR over the local rows of A_II) or A_SS (dense, on rank 0, with
   // ss_slots those of its structural entries).
   std::vector<int> send_src, send_cnt, send_dsp, recv_cnt, recv_dsp;
-  std::vector<int> recv_kind, recv_slot;
-  std::vector<int> ii_ptr, is_ptr, is_col, ss_slots;
+  std::vector<int> recv_kind;
+  std::vector<long long> recv_slot;
+  std::vector<int> ii_ptr, is_ptr, is_col;
+  std::vector<long long> ss_slots;
   std::vector<HYPRE_BigInt> ii_col;
   std::vector<T> ii_val, is_val, ss_val;
 
