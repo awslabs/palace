@@ -15,6 +15,16 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Bug Fixes
+
+  - Fixed NaN from the AMS preconditioner for a singular curl-curl operator on a domain
+    with a part that has no essential boundary condition: hypre's l1-Jacobi relaxation
+    divided by the zero l1 norm of a coarse-level row. Added a hypre patch for
+    [hypre-space/hypre#1676](https://github.com/hypre-space/hypre/pull/1676), which leaves
+    such rows unchanged.
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features

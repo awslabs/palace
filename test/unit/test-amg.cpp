@@ -113,6 +113,51 @@ TEST_CASE("BoomerAMG zero initial guess", "[amg][Serial][Parallel]")
   }
 }
 
+// BoomerAMG with l1-Jacobi relaxation of all points (relaxation type 18, as on GPUs and in
+// the hierarchies of a singular AMS) on an operator with exactly zero rows and columns.
+// hypre divided by their zero l1 norms, 0 / 0, before
+// https://github.com/hypre-space/hypre/pull/1676, which leaves these points unchanged.
+TEST_CASE("BoomerAMG l1-Jacobi with zero rows", "[amg][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  LaplaceProblem problem(comm, 10, 8, 6);
+  auto &A = *problem.A;
+  mfem::Array<int> zero_rows;
+  for (int i = 0; i < A.Height(); i += 7)
+  {
+    zero_rows.Append(i);
+  }
+  A.EliminateBC(zero_rows, Operator::DIAG_ZERO);
+
+  // A consistent right-hand side, which vanishes on the zero rows.
+  const int n = A.Height();
+  mfem::Vector u(n), b(n), x(n);
+  u.Randomize(1 + Mpi::Rank(comm));
+  A.Mult(u, b);
+
+  BoomerAmgSolver amg(1, 1, 1, 0);
+  HYPRE_BoomerAMGSetRelaxType(amg, 18);
+  HYPRE_BoomerAMGSetRelaxOrder(amg, 0);
+  amg.SetErrorMode(mfem::HypreSolver::IGNORE_HYPRE_ERRORS);  // Zero l1 norms before the fix
+  amg.SetOperator(A);
+  x = 0.0;
+  amg.Mult(b, x);
+
+  int nonfinite = 0, changed = 0;
+  for (int i = 0; i < n; i++)
+  {
+    nonfinite += !std::isfinite(x(i));
+  }
+  for (int i : zero_rows)
+  {
+    changed += (x(i) != 0.0);
+  }
+  Mpi::GlobalSum(1, &nonfinite, comm);
+  Mpi::GlobalSum(1, &changed, comm);
+  CHECK(nonfinite == 0);
+  CHECK(changed == 0);
+}
+
 TEST_CASE("BoomerAMG multiple right-hand sides", "[amg][Serial][Parallel]")
 {
   MPI_Comm comm = Mpi::World();

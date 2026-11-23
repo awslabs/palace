@@ -139,6 +139,14 @@ list(APPEND HYPRE_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/hypre/hypre_ams_coarse_agglomeration.diff"
 )
 
+# Leave zero rows unchanged in l1-Jacobi for all points, instead of 0 / 0
+# (https://github.com/hypre-space/hypre/pull/1676)
+download_patch(HYPRE_PATCH_FILES "${CMAKE_BINARY_DIR}/extern/hypre-patches"
+  hypre_pr1676.patch
+  "https://github.com/hypre-space/hypre/commit/c10dcea187d8f4a2dda19aa7e1c37ccffdcb9e6b.patch?full_index=1"
+  042379c3ab4de0c7327a853e8a21496967e75e1b9e6beb999a2e99ef03c6fe44
+)
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}

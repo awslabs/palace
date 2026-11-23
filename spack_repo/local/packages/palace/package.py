@@ -333,8 +333,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # copies in extern/patch/hypre of the patch for AMS with a fixed number of iterations (no
     # residual norms with a zero tolerance, and the zero flag of the initial guess used and
     # maintained) and of the patch for the AMS coarse-level agglomeration (a prototype for
-    # https://github.com/hypre-space/hypre/issues/1654), which applies after it. Kept off
-    # the `with` blocks so the Palace variants are not folded into the patch conditions.
+    # https://github.com/hypre-space/hypre/issues/1654), which applies after it, and
+    # https://github.com/hypre-space/hypre/pull/1676 (l1-Jacobi for all points leaves zero
+    # rows unchanged). Kept off the `with` blocks so the Palace variants are not folded into
+    # the patch conditions.
     depends_on(
         "hypre",
         when="@develop",
@@ -365,6 +367,20 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "hypre_ams_coarse_agglomeration.diff",
                 sha256="e72059250253adc29275a936a0ab322b9d8f231aa72a486c8c74755dfb2f152c",
                 when="@3.2.0:3.2.1",
+            ),
+            patch(
+                "https://github.com/hypre-space/hypre/commit/"
+                "c10dcea187d8f4a2dda19aa7e1c37ccffdcb9e6b.patch?full_index=1",
+                sha256="042379c3ab4de0c7327a853e8a21496967e75e1b9e6beb999a2e99ef03c6fe44",
+                when="@3.2.0:3.2.1",
+            ),
+            # Until hypre's master has https://github.com/hypre-space/hypre/pull/1676; this
+            # stops applying once it does, and is then removed.
+            patch(
+                "https://github.com/hypre-space/hypre/commit/"
+                "c10dcea187d8f4a2dda19aa7e1c37ccffdcb9e6b.patch?full_index=1",
+                sha256="042379c3ab4de0c7327a853e8a21496967e75e1b9e6beb999a2e99ef03c6fe44",
+                when="@develop",
             ),
         ],
     )

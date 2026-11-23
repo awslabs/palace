@@ -204,4 +204,66 @@ TEST_CASE("AMS with agglomerated auxiliary space coarse levels on more processes
   }
 }
 
+// A singular operator (curl-curl without a mass term or essential DOFs) on two separate
+// parts, a box and a small column, like the inside of a via enclosed by the Dirichlet
+// boundary of a broken space. The Galerkin product of the constant of the column can be an
+// exactly zero row on a coarse level of the Pi-space hierarchies, which hypre's l1-Jacobi
+// relaxation for all points divided by, 0 / 0, before
+// https://github.com/hypre-space/hypre/pull/1676. Whether the row is exactly zero depends
+// on rounding, so this only checks that the result is finite; "BoomerAMG l1-Jacobi with
+// zero rows" in test-amg.cpp has zero rows on every platform.
+TEST_CASE("AMS for a singular operator with a separate part", "[ams][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  auto box = mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::TETRAHEDRON);
+  auto column =
+      mfem::Mesh::MakeCartesian3D(3, 3, 6, mfem::Element::TETRAHEDRON, 0.1, 0.1, 0.5);
+  column.Transform(
+      [](const mfem::Vector &x, mfem::Vector &y)
+      {
+        y = x;
+        y(0) += 2.0;
+      });
+  mfem::Mesh *pieces[2] = {&box, &column};
+  mfem::Mesh smesh(pieces, 2);
+  Mesh mesh(comm, smesh);
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  mfem::ND_FECollection nd_fec(order, mesh.Dimension());
+  mfem::H1_FECollection h1_fec(order, mesh.Dimension());
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec);
+  mfem::ConstantCoefficient one(1.0);
+  mfem::ParBilinearForm a(&nd_fespace.Get());
+  a.AddDomainIntegrator(new mfem::CurlCurlIntegrator(one));
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+
+  // A consistent right-hand side.
+  const int n = A->Height();
+  mfem::Vector u(n), b(n), x(n);
+  u.Randomize(1 + Mpi::Rank(comm));
+  A->Mult(u, b);
+
+  // With the coarse levels of the hierarchies kept distributed, and agglomerated (with the
+  // hypre patch for it in extern/patch/hypre; otherwise the same).
+  for (int target : {0, 64, 2048})
+  {
+    HypreAmsSolver ams(nd_fespace, h1_fespace, /*cycle_it*/ 1, /*smooth_it*/ 1,
+                       /*vector_interp*/ false, /*singular_op*/ true, /*agg_coarsen*/ true,
+                       target, /*print*/ 0);
+    ams.SetOperator(*A);
+    x = 0.0;
+    ams.Mult(b, x);
+    int nonfinite = 0;
+    for (int i = 0; i < n; i++)
+    {
+      nonfinite += !std::isfinite(x(i));
+    }
+    Mpi::GlobalSum(1, &nonfinite, comm);
+    CAPTURE(target);
+    CHECK(nonfinite == 0);
+  }
+}
+
 }  // namespace palace
