@@ -79,11 +79,11 @@ fluxoids they impose come from the model. An online run on it (as `"Model"/"Mesh
 configuration otherwise unchanged) reads and partitions the region only, and tells it from the full
 mesh by the environment elements it holds. The environment is then that of the model: a
 configuration that changes it is rejected (an excitation of the environment that changed needs the
-full mesh), and the mesh must hold the environment elements written with it; the interface is found
-from the saved interface DOFs, and the nondimensionalization is that of the model. Every excitation
-with sources in the environment must be in the model, the fields are written in the region and on
-the interface only, and a priori and adaptive refinement need the full mesh (the mesh of the region
-is written refined).
+full mesh, and in driven problems a new offline run), and the mesh must hold the environment
+elements written with it; the interface is found from the saved interface DOFs, and the
+nondimensionalization is that of the model. Every excitation with sources in the environment must be
+in the model, the fields are written in the region and on the interface only, and a priori and
+adaptive refinement need the full mesh (the mesh of the region is written refined).
 A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
@@ -117,13 +117,15 @@ in a coarsely meshed part of the domain (substrate or vacuum away from the metal
 one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense
 (``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``), and each process holds its rows, except
 with the STRUMPACK partial factorization, which gives it whole to one process (two copies while the
-environment is condensed). One process holds the whole mesh to write the mesh of the region. The
-[transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
-the position of their centroids.
+environment is condensed). A driven model holds one per frequency or sample, complex, by its lower
+triangle (see [Driven problems](#Driven-problems)). One process holds the whole mesh to write the
+mesh of the region. The [transmon example](@ref substructuring-transmon-example) retags the elements
+of an existing mesh by the position of their centroids.
 
 ### Adaptive mesh refinement
 
-The environment is condensed once, so its mesh resolution is fixed in the saved model. Meshes
+In electrostatics and magnetostatics (driven substructuring refines no mesh), the environment is
+condensed once, so its mesh resolution is fixed in the saved model. Meshes
 from layout tools are often coarse and meant to be refined by
 [adaptive mesh refinement](../reference.md#Error-estimation-and-adaptive-mesh-refinement-(AMR))
 (AMR), so the refinement is done in two steps:
@@ -280,15 +282,17 @@ voltage of a lumped port, would depend on both sides.
     that the superbuild and the Spack package patch in, else with one solve per interface
     unknown). SuperLU_DIST, whose condensation goes wrong through a resonance, is not used
     offline. An offline exact sweep factors the region with the Schur complement of the
-    environment as one sparse system, by STRUMPACK, MUMPS or SuperLU_DIST (preferred in this
-    order). Online, and once an offline adaptive sweep has sampled the environment, GMRES
-    solves the region, preconditioned by the region's own Schur complement onto the interface
-    with the environment's added, a dense matrix factored across the processes by ScaLAPACK
-    (which MUMPS and STRUMPACK build with; without it, on one process). The region's Schur
-    complement is STRUMPACK's, gathered on one process, for interfaces of up to 10,000
-    unknowns, else MUMPS's, distributed (or, without them, from SuperLU_DIST's solves).
-    Near a resonance of the region with the interface held fixed, GMRES takes a few more
-    iterations. A sparse direct solver that
+    environment as one sparse system, by STRUMPACK or MUMPS (preferred in this order). Online,
+    and once an offline adaptive sweep has sampled the environment, FGMRES solves the region,
+    preconditioned by the region's own Schur complement onto the interface with the
+    environment's added, a dense matrix factored across the processes by ScaLAPACK (which MUMPS
+    and STRUMPACK build with; without it, on one process). The region's Schur complement is
+    STRUMPACK's, gathered on one process, for interfaces of up to 10,000 unknowns, else MUMPS's,
+    distributed (or, without them, from SuperLU_DIST's solves). Near a resonance of the region
+    with the interface held fixed, where this preconditioner is nearly singular, FGMRES takes a
+    few more iterations (it is used whatever
+    [`config["Solver"]["Linear"]["KSPType"]`](../config/reference.md#config-solver-linear-ksptype)
+    names, as GMRES loses digits there). A sparse direct solver that
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names
     is used for all of them instead.
     Floquet ports and periodic boundaries (which make the system non-symmetric), frequency-dependent
