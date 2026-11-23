@@ -178,9 +178,8 @@ class ThinConfigTest(unittest.TestCase):
         self.assertEqual(response["Library"], "/lib/process-library.json")
         self.assertEqual(response["TargetInterfaces"], [1, 2, 3, 4, 5])
         # The v1 form (the default): the protocol path's settings less the parked options.
-        self.assertEqual(list(response), ["Library", "TargetInterfaces", "UnmatchedPolicy", "CorrectionMode", "TraceCoupling", "MortarOversampling", "PatchConstruction"])
-        self.assertEqual((response["TraceCoupling"], response["MortarOversampling"], response["CorrectionMode"], response["PatchConstruction"]),
-                         ("SurfaceMortar", 2, "PostprocessOnly", "Features"))
+        self.assertEqual(list(response), ["Library", "TargetInterfaces", "UnmatchedPolicy", "CorrectionMode", "TraceCoupling", "PatchConstruction"])
+        self.assertEqual((response["TraceCoupling"], response["CorrectionMode"], response["PatchConstruction"]), ("Collocated", "PostprocessOnly", "Features"))
         developer = thin_config(POLYGON_SET, THIN_MANIFEST, "/m/thin.msh2", "/lib/process-library.json", "T", "/m/postpro", developer=True)
         response = developer["Solver"]["Electrostatic"]["ResponseCorrection"]
         self.assertEqual((response["TraceCoupling"], response["MortarOversampling"], response["SolveTol"], response["CorrectionMode"], response["TranslationalDomainCorrection"], response["PatchConstruction"],

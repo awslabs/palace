@@ -467,6 +467,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   json config = HighOrderSpatialConfig();
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   IoData iodata(config, false);

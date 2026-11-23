@@ -417,8 +417,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the key stays accepted where the interior metal it cracks is impedance (Ls) sheets.
     The device-run writers of the examples default to `--crack-policy default` (the v1
     form; `--developer` writes the records' `legacy` crack with `"Developer": true`), and
-    the preflight writer's `legacy` default writes `"Developer": true` with it. Nothing
-    is removed. SchemaVer 4-6-0
+    the preflight writer's `legacy` default writes `"Developer": true` with it. The
+    alternatives need the switch: `"TraceCoupling": "SurfaceMortar"` (its quadrature key
+    `"MortarOversampling"` is not read without it, and named in the `keys ignored`
+    warning) and the hand-placed form (a block without `"Library"`).
+    Nothing is removed. SchemaVer 4-6-0
 
   - The config writers of the examples write the v1 form by default: the recorded settings
     less the parked options (`developer_form.py`); `--developer` writes the recorded

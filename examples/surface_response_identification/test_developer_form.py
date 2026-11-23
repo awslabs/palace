@@ -28,6 +28,12 @@ class DeveloperFormTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             F.v1_block({"Library": "l", "Developer": True})
 
+    def test_v1_block_drops_the_mortar_coupling(self):
+        recorded = {"Library": "l", "TraceCoupling": "SurfaceMortar", "MortarOversampling": 2}
+        self.assertEqual(F.v1_block(recorded), {"Library": "l", "TraceCoupling": "Collocated"})
+        self.assertEqual(F.parked_block_settings(recorded), ["TraceCoupling SurfaceMortar", "MortarOversampling"])
+        self.assertEqual(F.parked_block_settings({"Models": []}), ["the hand-placed form (no Library)"])
+
     def test_developer_block_states_the_defaults_of_record_and_the_switch_last(self):
         self.assertEqual(list(F.developer_block({"Library": "l", "SolveTol": 1e-6}).items()),
                          [("Library", "l"), ("SolveTol", 1e-6), ("CorrectionMode", "Both"), ("Developer", True)])

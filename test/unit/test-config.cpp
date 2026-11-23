@@ -1107,13 +1107,25 @@ TEST_CASE("Config interface dielectric region", "[config][Serial]")
 
 TEST_CASE("Config electrostatic response correction", "[config][Serial]")
 {
-  const json correction = {{"FabricatedMatrix", "fabricated.csv"},
+  // The hand-placed form (models and patches instead of the library) is a parked
+  // alternative (CUT-PLAN step 5b): refused by name without the developer switch.
+  const json correction = {{"Developer", true},
+                           {"FabricatedMatrix", "fabricated.csv"},
                            {"ThinMatrix", "thin.csv"},
                            {"BasisPoints", "points.csv"},
                            {"Edges",
                             {{{"Origin", {1.0, 2.0, 0.0}},
                               {"AxisU", {1.0, 0.0, 0.0}},
                               {"AxisV", {0.0, 1.0, 0.0}}}}}};
+  {
+    auto without_switch = correction;
+    without_switch.erase("Developer");
+    CHECK_THROWS_WITH(
+        config::ElectrostaticSolverData(json{{"ResponseCorrection", without_switch}}),
+        Catch::Matchers::ContainsSubstring(
+            "without \"Library\" (the hand-placed models and "
+            "patches) is a parked developer option"));
+  }
   const config::ElectrostaticSolverData electrostatic(
       json{{"ResponseCorrection", correction}});
   REQUIRE(electrostatic.response_correction);
@@ -1121,11 +1133,13 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
       config::ElectrostaticSolverData::ResponseCorrectionData::CorrectionMode;
   using DomainCorrection = config::ElectrostaticSolverData::ResponseCorrectionData::
       TranslationalDomainCorrection;
-  // The v1 default path: post-processing only; the developer switch is off.
+  // The v1 default path: post-processing only, also with the developer switch.
   CHECK(electrostatic.response_correction->correction_mode ==
         CorrectionMode::POSTPROCESS_ONLY);
-  CHECK_FALSE(electrostatic.response_correction->developer);
-  CHECK(electrostatic.response_correction->developer_options.empty());
+  CHECK(electrostatic.response_correction->developer);
+  CHECK(
+      electrostatic.response_correction->developer_options ==
+      std::vector<std::string>{"without \"Library\" (the hand-placed models and patches)"});
   CHECK(electrostatic.response_correction->translational_domain_correction ==
         DomainCorrection::FIXED_TRACE);
   CHECK(electrostatic.response_correction->IncludesPostprocessing());
@@ -1154,7 +1168,6 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   sparse["Solver"]["Electrostatic"].erase("ResponseCorrection");
   sparse = IoData::ConcretizeDefaults(iodata, sparse);
   auto concretized_correction = correction;
-  concretized_correction["Developer"] = false;
   concretized_correction["CorrectionMode"] = "PostprocessOnly";
   concretized_correction["SolveTol"] = 1.0e-6;
   concretized_correction["TranslationalDomainCorrection"] = "FixedTrace";
@@ -1167,6 +1180,7 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK_THROWS(IoData(config, false));
 
   const json multi_model = {
+      {"Developer", true},
       {"Models",
        {{{"Index", 7},
          {"FabricatedMatrix", "fabricated-domain.csv"},
@@ -1209,6 +1223,8 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(automatic.response_correction->unmatched_policy ==
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmatchedPolicy::ERROR);
   CHECK(automatic.response_correction->solve_tol == 1.0e-6);
+  CHECK_FALSE(automatic.response_correction->developer);
+  CHECK(automatic.response_correction->developer_options.empty());
   CHECK(automatic.response_correction->correction_mode == CorrectionMode::POSTPROCESS_ONLY);
   {
     // SolveTol configures the self-consistent solve alone: without it the key is not read
@@ -1366,8 +1382,18 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
            {"SurfaceMortar", config::ElectrostaticSolverData::ResponseCorrectionData::
                                  TraceCoupling::SURFACE_MORTAR}})
   {
+    // SurfaceMortar is a parked alternative (CUT-PLAN step 5b); Collocated needs no switch.
     auto trace_config = automatic_correction;
     trace_config["TraceCoupling"] = name;
+    if (mode == config::ElectrostaticSolverData::ResponseCorrectionData::TraceCoupling::
+                    SURFACE_MORTAR)
+    {
+      CHECK_THROWS_WITH(
+          config::ElectrostaticSolverData(json{{"ResponseCorrection", trace_config}}),
+          Catch::Matchers::ContainsSubstring(
+              "\"TraceCoupling\": \"SurfaceMortar\" is a parked developer option"));
+      trace_config["Developer"] = true;
+    }
     const config::ElectrostaticSolverData trace_data(
         json{{"ResponseCorrection", trace_config}});
     REQUIRE(trace_data.response_correction);
@@ -1378,11 +1404,26 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK_THROWS(config::ElectrostaticSolverData(
       json{{"ResponseCorrection", invalid_trace_coupling}}));
   auto oversampled_mortar = automatic_correction;
-  oversampled_mortar["MortarOversampling"] = 2;
+  oversampled_mortar["MortarOversampling"] = 3;
+  {
+    // The quadrature of the (parked) mortar coupling alone: without it not read (the
+    // default 2 stays) and named among the ignored keys.
+    const config::ElectrostaticSolverData ignored(
+        json{{"ResponseCorrection", oversampled_mortar}});
+    REQUIRE(ignored.response_correction);
+    CHECK(ignored.response_correction->mortar_oversampling == 2);
+    CHECK(ignored.response_correction->ignored_keys ==
+          std::vector<std::string>{"\"MortarOversampling\" (no surface-mortar coupling)"});
+  }
+  oversampled_mortar["TraceCoupling"] = "SurfaceMortar";
+  oversampled_mortar["Developer"] = true;
   const config::ElectrostaticSolverData oversampled_data(
       json{{"ResponseCorrection", oversampled_mortar}});
   REQUIRE(oversampled_data.response_correction);
-  CHECK(oversampled_data.response_correction->mortar_oversampling == 2);
+  CHECK(oversampled_data.response_correction->mortar_oversampling == 3);
+  CHECK(oversampled_data.response_correction->ignored_keys.empty());
+  CHECK(oversampled_data.response_correction->developer_options ==
+        std::vector<std::string>{"\"TraceCoupling\": \"SurfaceMortar\""});
   oversampled_mortar["MortarOversampling"] = 0;
   CHECK_THROWS(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", oversampled_mortar}}));

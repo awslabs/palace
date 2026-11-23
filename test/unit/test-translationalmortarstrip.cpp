@@ -256,6 +256,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
     correction.erase("PatchConstruction");
     correction["Library"] = library_path.string();
+    correction["Developer"] = true;
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
     IoData iodata(config, false);
@@ -358,6 +359,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       INFO("MortarOversampling " << oversampling);
       json config = IslandConfig();
       auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+      correction["Developer"] = true;
       correction["TraceCoupling"] = "SurfaceMortar";
       correction["MortarOversampling"] = oversampling;
       IoData iodata(config, false);
@@ -600,6 +602,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction["Library"] = library_path.string();
   // The strip's end corners across the 0.25 gap are cluster events without a model.
   correction["UnmatchedPolicy"] = "Warn";
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   const auto &rule = mfem::IntRules.Get(mfem::Geometry::SEGMENT, 2);

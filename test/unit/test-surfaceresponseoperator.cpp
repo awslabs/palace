@@ -358,7 +358,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator explicit p
        {{"Order", 1},
         {"Electrostatic",
          {{"ResponseCorrection",
-           {{"Models",
+           {// The hand-placed form, a developer fixture (as before: CorrectionMode Both).
+            {"Developer", true},
+            {"CorrectionMode", "Both"},
+            {"Models",
              {{{"Index", 1},
                {"FabricatedMatrix", fabricated_path.string()},
                {"ThinMatrix", thin_path.string()},
@@ -1431,6 +1434,8 @@ TEST_CASE_METHOD(
   CHECK(parallel_cluster_response_2d.GetBasisSize() == 5);
 
   auto mortar_cluster_config_2d = parallel_cluster_config_2d;
+  mortar_cluster_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]["Developer"] =
+      true;
   mortar_cluster_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
                           ["TraceCoupling"] = "SurfaceMortar";
   IoData mortar_cluster_iodata_2d(mortar_cluster_config_2d, false);
@@ -7345,6 +7350,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
             "OpenContourPaths requires a version-2 DifferentConductorGap or edge-cluster "
             "model with ConductorReferences and no ContourGroups"));
     auto mortar_config = cluster_maxwell_config;
+    mortar_config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
     mortar_config["Solver"]["SurfaceResponseCorrection"]["TraceCoupling"] = "SurfaceMortar";
     IoData mortar_iodata(mortar_config, false);
     mortar_iodata.boundaries.cracked_attributes.insert(9);
@@ -9231,6 +9237,7 @@ IoData CornerTraceBasisFixture::FamilyIoData(bool mortar) const
   if (mortar)
   {
     auto &correction = family_config["Solver"]["Electrostatic"]["ResponseCorrection"];
+    correction["Developer"] = true;
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
   }

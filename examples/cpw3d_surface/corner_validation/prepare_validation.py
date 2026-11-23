@@ -154,7 +154,9 @@ def config(
         # with MortarOversampling 2, the transmon operating point). The Collocated default samples
         # the potential at the knots and does not represent the coupons' trace basis (corner-basis
         # fix 2026-09-29: the square control's MA fixed-trace / self-consistent spread of 55 points
-        # came from the collocated lift of the corner patches).
+        # came from the collocated lift of the corner patches). The mortar coupling is parked by the v1 cut, so
+        # the v1 form collocates (the benchmark lane measures the collocated twins); the recorded developer form
+        # keeps the protocol's lift, and un-parking the mortar (its developer_form.PARKED_OPTIONS line) restores it.
         recorded = {
             "Library": str(library),
             "TargetInterfaces": [1, 2, 3],

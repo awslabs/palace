@@ -84,6 +84,11 @@ class ResponseFormsTest(unittest.TestCase):
         self.assertEqual(PREPARE.developer_form.parked_config_settings(config), [])
         self.assertNotIn("Developer", config["Solver"]["Electrostatic"]["ResponseCorrection"])
         self.assertNotIn("CrackInternalBoundaryElements", config["Model"])
+        # The protocol's mortar trace lift is parked: the v1 form collocates.
+        self.assertEqual(config["Solver"]["Electrostatic"]["ResponseCorrection"],
+                         {"Library": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/corner-basis-refinement-20260930/"
+                                     "libraries/corner-basis-refinement-R1p9-convex/process-library.json",
+                          "TargetInterfaces": [1, 2, 3], "UnmatchedPolicy": "Error", "TraceCoupling": "Collocated"})
 
     def test_developer_form_is_the_record(self):
         # The recorded developer form = the record byte for byte plus the keys that state its behaviour on today's

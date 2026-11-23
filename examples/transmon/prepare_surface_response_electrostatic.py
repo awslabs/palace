@@ -18,9 +18,10 @@ implicitly.
 
 FORMS (the v1 cut; developer_form.py): by default the response-correction block is the V1 FORM,
 post-processing only (no self-consistent solve: ``--correction-mode SelfConsistent`` / ``Both``,
-SolveTol and TranslationalDomainCorrection are parked); ``--developer`` writes the RECORDED
+SolveTol and TranslationalDomainCorrection are parked; no mortar: ``--trace-coupling
+SurfaceMortar`` and ``--mortar-oversampling`` are parked); ``--developer`` writes the RECORDED
 DEVELOPER FORM (the recorded settings: ``--correction-mode`` Both by default, SolveTol 1e-6,
-TranslationalDomainCorrection FixedTrace, with "Developer": true). A parked flag without
+TranslationalDomainCorrection FixedTrace, MortarOversampling 2, with "Developer": true). A parked flag without
 ``--developer`` is refused. Values from the v1 form are not comparable with records made before
 this cut until the benchmark's collocated twins are read.
 """
@@ -39,6 +40,8 @@ import developer_form  # noqa: E402
 # The recorded settings of the response-correction block (the recorded prism-library device runs):
 # the developer form writes them, the v1 form less the parked options.
 RECORDED_CORRECTION_MODE = "Both"
+RECORDED_TRACE_COUPLING = "Collocated"
+RECORDED_MORTAR_OVERSAMPLING = 2
 
 # Refinement block of the recorded prism-library device runs (config-p5-exact-amr*.json).
 PRISM_ERA_REFINEMENT = {
@@ -107,9 +110,10 @@ def main():
     parser.add_argument(
         "--trace-coupling",
         choices=("Collocated", "SurfaceMortar"),
-        default="Collocated",
+        help=f"default {RECORDED_TRACE_COUPLING}; SurfaceMortar needs --developer",
     )
-    parser.add_argument("--mortar-oversampling", type=int, choices=range(1, 9), default=2)
+    parser.add_argument("--mortar-oversampling", type=int, choices=range(1, 9),
+                        help=f"the mortar quadrature (default {RECORDED_MORTAR_OVERSAMPLING}); needs --developer")
     parser.add_argument(
         "--amr-max-its", type=int, default=0,
         help="AMR cycles with the recorded prism-era Refinement block (default 0: one solve)",
@@ -130,7 +134,8 @@ def main():
     developer_form.add_developer_argument(parser)
     args = parser.parse_args()
     # A parked flag needs --developer (the flags alone are judged, in a block with a Library).
-    flags = {"Library": "", "CorrectionMode": args.correction_mode}
+    flags = {"Library": "", "CorrectionMode": args.correction_mode, "TraceCoupling": args.trace_coupling,
+             "MortarOversampling": args.mortar_oversampling}
     parked = developer_form.parked_block_settings({k: v for k, v in flags.items() if v is not None})
     if parked and not args.developer:
         parser.error(f"{parked} select a parked developer option: add --developer")
@@ -189,8 +194,8 @@ def main():
                 "UnmatchedPolicy": "Error",
                 "CorrectionMode": args.correction_mode or RECORDED_CORRECTION_MODE,
                 "TranslationalDomainCorrection": "FixedTrace",
-                "TraceCoupling": args.trace_coupling,
-                "MortarOversampling": args.mortar_oversampling,
+                "TraceCoupling": args.trace_coupling or RECORDED_TRACE_COUPLING,
+                "MortarOversampling": args.mortar_oversampling or RECORDED_MORTAR_OVERSAMPLING,
                 "SolveTol": 1.0e-6,
             }),
         },

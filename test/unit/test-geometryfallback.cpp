@@ -1602,6 +1602,7 @@ TEST_CASE_METHOD(
     correction["Library"] = wide_library.string();
     correction["UnmatchedPolicy"] = "Warn";
     correction.erase("PatchConstruction");
+    correction["Developer"] = true;
     correction["TraceCoupling"] = "SurfaceMortar";
     const json manifest = Preflight(config, temp.temp_dir / "uinv-h8");
     const auto &preflight_record =

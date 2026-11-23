@@ -2046,6 +2046,9 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
     }
     else if (trace_coupling == "SurfaceMortar")
     {
+      // The mortar trace coupling: a parked alternative (CUT-PLAN step 5b); its quadrature
+      // key MortarOversampling follows it.
+      RequireDeveloperOption(data, "\"TraceCoupling\": \"SurfaceMortar\"");
       data.trace_coupling = ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR;
     }
     else
@@ -2053,10 +2056,19 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       MFEM_ABORT("Response-correction \"TraceCoupling\" must be \"Collocated\" or "
                  "\"SurfaceMortar\"!");
     }
-    data.mortar_oversampling =
-        correction.value("MortarOversampling", data.mortar_oversampling);
-    MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
-                "Response-correction \"MortarOversampling\" must be between 1 and 8!");
+    // The quadrature of the mortar coupling alone: read with it; without it not read
+    // (IoData names the key in one warning).
+    if (data.trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR)
+    {
+      data.mortar_oversampling =
+          correction.value("MortarOversampling", data.mortar_oversampling);
+      MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
+                  "Response-correction \"MortarOversampling\" must be between 1 and 8!");
+    }
+    else if (correction.contains("MortarOversampling"))
+    {
+      data.ignored_keys.push_back("\"MortarOversampling\" (no surface-mortar coupling)");
+    }
     data.patch_energy = correction.value("PatchEnergy", data.patch_energy);
     data.allow_electric_only_fallback =
         correction.value("AllowElectricOnlyFallback", data.allow_electric_only_fallback);
@@ -2491,6 +2503,11 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       response_correction = std::move(data);
       return;
     }
+
+    // The hand-placed form (explicit models and patches instead of the library): a parked
+    // alternative (CUT-PLAN step 5b).
+    RequireDeveloperOption(data,
+                           "without \"Library\" (the hand-placed models and patches)");
 
     auto ParseModel = [](const json &model, int default_idx)
     {

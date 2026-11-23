@@ -1606,8 +1606,8 @@ public:
     std::vector<std::string> developer_options;
 
     // The keys of a parked option the block states without selecting the option (SolveTol
-    // or TranslationalDomainCorrection without a self-consistent solve): not read; IoData
-    // names them in one warning.
+    // or TranslationalDomainCorrection without a self-consistent solve, MortarOversampling
+    // without the surface-mortar coupling): not read; IoData names them in one warning.
     std::vector<std::string> ignored_keys;
 
     // Select postprocessing-only fixed-trace/fixed-flux evaluation (the default), a

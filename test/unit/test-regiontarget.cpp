@@ -414,6 +414,7 @@ void UseDefaultConstruction(json &correction, const fs::path &library, bool mort
   correction["Library"] = library.string();
   if (mortar)
   {
+    correction["Developer"] = true;
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
   }

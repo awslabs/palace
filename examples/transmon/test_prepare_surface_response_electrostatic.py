@@ -59,7 +59,8 @@ class PrepareSurfaceResponseElectrostaticTest(unittest.TestCase):
             self.assertNotIn("EdgeRefinement", dielectric)
         self.assertEqual(config["Solver"]["Order"], 3)
         correction = config["Solver"]["Electrostatic"]["ResponseCorrection"]
-        self.assertEqual((correction["TraceCoupling"], correction["MortarOversampling"]), ("Collocated", 2))
+        self.assertEqual(correction["TraceCoupling"], "Collocated")
+        self.assertNotIn("MortarOversampling", correction)
         # The v1 form (the default; the v1 cut): post-processing only, no parked key.
         self.assertEqual(correction["CorrectionMode"], "PostprocessOnly")
         self.assertEqual(developer_form.parked_config_settings(config), [])
@@ -84,6 +85,10 @@ class PrepareSurfaceResponseElectrostaticTest(unittest.TestCase):
         self.assertIn("the recorded developer form", result.stderr)
 
     def test_parked_flags_need_the_developer_switch(self):
+        for flags in (("--trace-coupling", "SurfaceMortar"), ("--mortar-oversampling", "3")):
+            result, _ = prepare(*flags)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--developer", result.stderr)
         for mode in ("SelfConsistent", "Both"):
             result, _ = prepare("--correction-mode", mode)
             self.assertNotEqual(result.returncode, 0)
@@ -94,7 +99,7 @@ class PrepareSurfaceResponseElectrostaticTest(unittest.TestCase):
 
     def test_amr_writes_the_recorded_prism_era_refinement_block(self):
         result, config = prepare("--order", "5", "--amr-max-its", "10", "--amr-max-size", "120000000", "--save-adapt-mesh",
-                                 "--trace-coupling", "SurfaceMortar", "--mortar-oversampling", "2")
+                                 "--trace-coupling", "SurfaceMortar", "--mortar-oversampling", "2", "--developer")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(config["Model"]["Refinement"], {
             "MaxIts": 10, "Tol": 0.01, "UpdateFraction": 0.7, "MaximumImbalance": 1.15, "MaxNCLevels": 8, "Nonconformal": True,

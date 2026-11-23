@@ -38,8 +38,9 @@ order of the set fix the Ground / Terminal boundaries and their order on both si
               The library path is a parameter (--library; the geometry-only seed by default for
               the preflight). FORMS (the v1 cut; developer_form.py): by default the thin config is
               the V1 FORM, the protocol path's settings less the parked options (no self-consistent
-              solve: no CorrectionMode Both, SolveTol or TranslationalDomainCorrection) on the
-              uncracked mesh (crack policy default); `--developer` writes the RECORDED DEVELOPER
+              solve: no CorrectionMode Both, SolveTol or TranslationalDomainCorrection; no mortar:
+              TraceCoupling Collocated, no MortarOversampling) on the uncracked mesh (crack policy
+              default); `--developer` writes the RECORDED DEVELOPER
               FORM, the protocol path's recorded settings with "Developer": true on the cracked
               mesh of the records (crack policy legacy; refused without `--developer`). The window protocol's bars were set on the recorded
               form: values from the v1 form are not comparable with records made before this cut

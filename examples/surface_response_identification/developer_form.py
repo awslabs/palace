@@ -39,6 +39,7 @@ RECORD_DEFAULTS = {"CorrectionMode": "Both"}
 PARKED_OPTIONS = {
     "self-consistent solve": ("CorrectionMode", ("SelfConsistent", "Both"),
                               ("SolveTol", "TranslationalDomainCorrection"), "PostprocessOnly"),
+    "mortar trace coupling": ("TraceCoupling", ("SurfaceMortar",), ("MortarOversampling",), "Collocated"),
 }
 # The other parked settings of a block, which no writer selects: (key path, the parked value; None = any value).
 PARKED_SETTINGS = (
@@ -76,6 +77,8 @@ def parked_block_settings(block):
         parent = _node(block, path[:-1])
         if isinstance(parent, dict) and path[-1] in parent and (value is None or parent[path[-1]] == value):
             found.append(".".join(path) + ("" if value is None else f" {value}"))
+    if "Library" not in block:
+        found.append("the hand-placed form (no Library)")
     return found
 
 
