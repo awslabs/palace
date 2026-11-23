@@ -4,6 +4,7 @@
 #include "substructuringsolverimpl.hpp"
 
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <set>
 #include <utility>
@@ -55,11 +56,19 @@ SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
   if (term == Term::MASS)
   {
     // The regularization mag_eps (1/mu) M on the elements of the domains, weighted as the
-    // curl-curl operator.
+    // curl-curl operator, but on the London domains, whose London mass lifts the gradients
+    // (as the shift of the regular solve).
     MFEM_ASSERT(attrs, "The regularization is assembled on the region or the environment!");
     const auto &mat_op = curlcurl_op->GetMaterialOp();
-    MaterialPropertyCoefficient eps(mat_op.GetAttributeToMaterial(),
-                                    mat_op.GetInvPermeability(), mag_eps);
+    mfem::DenseTensor muinv(mat_op.GetInvPermeability());
+    for (int i = 0; i < muinv.SizeK(); i++)
+    {
+      if (mat_op.GetInvLondonDepth()(i).MaxMaxNorm() > 0.0)
+      {
+        muinv(i) = 0.0;
+      }
+    }
+    MaterialPropertyCoefficient eps(mat_op.GetAttributeToMaterial(), muinv, mag_eps);
     BilinearForm m(SolutionSpace());
     m.AddDomainIntegrator<VectorFEMassIntegrator>(eps);
     m.SetAssemblyDomains(*attrs);
@@ -70,6 +79,34 @@ SubstructuringSolver::Impl::GetTerm(const std::vector<int> *attrs, Term term,
   if (term == Term::SHEETS && !has_sheets)
   {
     return nullptr;
+  }
+  if (term == Term::LONDON)
+  {
+    // The London mass of the curl-curl operator, on the London domains of the elements.
+    std::vector<int> london;
+    for (const auto &data : iodata.domains.materials)
+    {
+      for (int a : data.attributes)
+      {
+        if (data.lambda_L > 0.0 && (!attrs || std::ranges::find(*attrs, a) != attrs->end()))
+        {
+          london.push_back(a);
+        }
+      }
+    }
+    if (london.empty())
+    {
+      return nullptr;
+    }
+    const auto &mat_op = curlcurl_op->GetMaterialOp();
+    MaterialPropertyCoefficient f(mat_op.GetAttributeToMaterial(),
+                                  mat_op.GetInvLondonDepth());
+    BilinearForm m(SolutionSpace());
+    m.AddDomainIntegrator<VectorFEMassIntegrator>(f);
+    m.SetAssemblyDomains(london);
+    return std::make_unique<ParOperator>(
+        assemble ? std::unique_ptr<Operator>(m.FullAssemble(true)) : m.PartialAssemble(),
+        SolutionSpace());
   }
   std::optional<AssemblyDomains::Restriction> restriction;
   if (attrs)
@@ -113,6 +150,7 @@ void SubstructuringSolver::Impl::AssembleRegion()
   A_region_energy = AssembleTerm(region, Term::VOLUME);
   K_region_e = A_region_energy.get();
   M_sheet_region = AssembleTerm(region, Term::SHEETS);
+  M_london_region = AssembleTerm(region, Term::LONDON);
   A_region = Sum({A_region_energy.get(), M_sheet_region.get(),
                   AssembleTerm(region, Term::MASS).get()});
 }
@@ -167,8 +205,30 @@ const mfem::HypreParMatrix &SubstructuringSolver::Impl::MsheetEnv()
   return *M_sheet_env;
 }
 
-bool SubstructuringSolver::Impl::EnvSheets()
+const mfem::HypreParMatrix *SubstructuringSolver::Impl::Mlondon()
 {
+  if (!M_london && has_london)
+  {
+    M_london = AssembleTerm(nullptr, Term::LONDON);
+  }
+  return M_london.get();
+}
+
+const mfem::HypreParMatrix *SubstructuringSolver::Impl::MlondonEnv()
+{
+  if (!M_london_env && has_london)
+  {
+    M_london_env = AssembleTerm(&env_attributes, Term::LONDON);
+  }
+  return M_london_env.get();
+}
+
+bool SubstructuringSolver::Impl::EnvKinetic()
+{
+  if (MlondonEnv())
+  {
+    return true;
+  }
   if (!has_sheets)
   {
     return false;
@@ -179,6 +239,19 @@ bool SubstructuringSolver::Impl::EnvSheets()
   const double norm = M.FNorm();
   M.HypreRead();
   return norm > 0.0;
+}
+
+void SubstructuringSolver::Impl::KineticEnvMult(const mfem::Vector &x, mfem::Vector &y)
+{
+  y = 0.0;
+  if (has_sheets)
+  {
+    MsheetEnv().Mult(x, y);
+  }
+  if (const auto *L = MlondonEnv())
+  {
+    L->AddMult(x, y);
+  }
 }
 
 std::vector<mfem::Vector>
@@ -280,8 +353,7 @@ void SubstructuringSolver::Impl::CheckSheets()
   mfem::IsoparametricTransformation T1, T2;
   gamma_sheet_faces.clear();
   gamma_sheet_sides = {};
-  constexpr double k[3][3] = {{1.3, 2.9, 0.7}, {2.3, 0.5, 3.1}, {0.9, 1.7, 2.6}};
-  mfem::Array<int> vertices;
+  mfem::Vector x(3), c(3);
   for (int be = 0; be < parent.GetNBE(); be++)
   {
     const int attr = parent.GetBdrAttribute(be);
@@ -305,27 +377,26 @@ void SubstructuringSolver::Impl::CheckSheets()
       gamma_sheet_faces.push_back(be);
       if ((FET.Elem1->Attribute < FET.Elem2->Attribute) ? region1 : region2)
       {
-        std::array<double, 3> c = {0.0, 0.0, 0.0};
-        parent.GetBdrElementVertices(be, vertices);
-        for (int v : vertices)
+        // The area and centroid of the face, whose moments a refinement of it keeps.
+        mfem::ElementTransformation &T = *parent.GetBdrElementTransformation(be);
+        double area = 0.0;
+        c = 0.0;
+        for (const auto &ip : mfem::IntRules.Get(T.GetGeometryType(), 2 * T.Order() + 2))
         {
-          for (int d = 0; d < 3; d++)
-          {
-            c[d] += parent.GetVertex(v)[d] / vertices.Size();
-          }
+          T.SetIntPoint(&ip);
+          T.Transform(ip, x);
+          area += ip.weight * T.Weight();
+          c.Add(ip.weight * T.Weight(), x);
         }
-        gamma_sheet_sides[0] += 1.0;
-        for (int j = 0; j < 3; j++)
-        {
-          gamma_sheet_sides[j + 1] +=
-              std::cos(k[j][0] * c[0] + k[j][1] * c[1] + k[j][2] * c[2]);
-        }
+        c /= area;
+        AddMoments(gamma_sheet_sides, area, c);
       }
     }
     count[0]++;
   }
   Mpi::GlobalSum(3, count.data(), parent.GetComm());
-  Mpi::GlobalSum(4, gamma_sheet_sides.data(), parent.GetComm());
+  Mpi::GlobalSum(static_cast<int>(gamma_sheet_sides.size()), gamma_sheet_sides.data(),
+                 parent.GetComm());
   has_sheets = (count[0] > 0) || broken;
   MFEM_VERIFY(count[1] == 0, "Substructuring does not support a \"TwoSided\" "
                              "superconductor film between the region and the environment!");
@@ -355,9 +426,10 @@ mfem::Vector SubstructuringSolver::Impl::EnvSource(const Source &src,
       }
     }
   }
+  const int *h_dbc = dbc_tdofs.HostRead();
   for (int d = 0; d < dbc_tdofs.Size(); d++)
   {
-    bb[dbc_tdofs[d]] = 0.0;
+    bb[h_dbc[d]] = 0.0;
   }
   double loc[3] = {b.Normlinf(), CachedFingerprintField(0) * b,
                    CachedFingerprintField(1) * b},
@@ -630,6 +702,13 @@ std::unique_ptr<mfem::HypreParMatrix>
 SubstructuringSolver::Impl::AssembleDenseInterface() const
 {
   const int nG = nG_global, nloc = gamma_nloc;
+  // The rows of a hypre matrix are offset by int.
+  const long long entries = static_cast<long long>(nloc) * nG;
+  MFEM_VERIFY(entries <= std::numeric_limits<int>::max(),
+              "The substructuring interface puts "
+                  << entries
+                  << " entries of S_E on one process, more than 2^31 - 1: run on more "
+                     "processes!");
   const std::vector<HYPRE_BigInt> g2t = InterfaceTrueDofs();
   std::vector<int> I(nt + 1, 0);
   std::vector<HYPRE_BigInt> J;

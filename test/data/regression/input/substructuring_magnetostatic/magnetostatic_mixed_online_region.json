@@ -1,6 +1,6 @@
 {
   "Problem": { "Type": "Magnetostatic", "Output": "postpro/mixed_online_region" },
-  "Model": { "Mesh": "environment_mixed_region.mesh", "L0": 1.0e-6 },
+  "Model": { "Mesh": "postpro/mixed/environment_region.mesh", "L0": 1.0e-6 },
   "Domains": { "Materials": [
     { "Attributes": [1], "Permeability": 1.0 },
     { "Attributes": [8], "Permeability": 1.0 } ] },
@@ -15,5 +15,5 @@
     "Magnetostatic": { "Save": 0 },
     "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000 },
     "Substructuring": { "Region": { "Attributes": [8] }, "Environment": { "Attributes": [1] },
-      "Mode": "Online", "ModelFile": "environment_mixed.model" } }
+      "ModelFile": "postpro/mixed/environment.model" } }
 }

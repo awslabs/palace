@@ -1,6 +1,6 @@
 {
   "Problem": { "Type": "Magnetostatic", "Output": "postpro/two_films_grouped_online_region" },
-  "Model": { "Mesh": "environment_two_films_grouped_region.mesh", "L0": 1.0e-6 },
+  "Model": { "Mesh": "postpro/two_films_grouped/environment_region.mesh", "L0": 1.0e-6 },
   "Domains": { "Materials": [
     { "Attributes": [1], "Permeability": 1.0 },
     { "Attributes": [2], "Permeability": 1.0 } ] },
@@ -13,5 +13,5 @@
     "Magnetostatic": { "Save": 0 },
     "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 500 },
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
-      "Mode": "Online", "ModelFile": "environment_two_films_grouped.model" } }
+      "ModelFile": "postpro/two_films_grouped/environment.model" } }
 }

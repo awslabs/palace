@@ -11,8 +11,19 @@
 #include <vector>
 #include <mpi.h>
 
+namespace palace
+{
+
+class IoData;
+
+}  // namespace palace
+
 namespace palace::substructuring
 {
+
+// The model which an offline substructuring run saves, environment.model in its output
+// directory, or empty: an online run, or an offline one with "SaveModel": false.
+std::string SaveModelPath(const IoData &iodata);
 
 // The file of a saved substructuring model: a magic number and the version of the
 // container, then records [tag][size][payload], with a tag of four characters and the size

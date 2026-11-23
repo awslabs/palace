@@ -12,11 +12,13 @@
 #include <initializer_list>
 #include <iterator>
 #include <limits>
+#include <numeric>
 #include <set>
 #include <nlohmann/json.hpp>
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
 #include "utils/communication.hpp"
+#include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
 #include "utils/outputdir.hpp"
 
@@ -753,18 +755,6 @@ namespace
 
 using json = nlohmann::json;
 
-// Add an element of volume (or area) v and center c to the moments of AttributeMoments.
-void AddMoments(std::array<double, 6> &m, double v, const mfem::Vector &c)
-{
-  m[0] += 1.0;
-  m[1] += v;
-  m[2] += v * c.Norml2();
-  for (int d = 0; d < c.Size() && d < 3; d++)
-  {
-    m[3 + d] += v * c(d);
-  }
-}
-
 // The moments of each of n attributes, summed over the processes.
 void SumMoments(std::vector<std::array<double, 6>> &m, MPI_Comm comm)
 {
@@ -861,8 +851,12 @@ json CutToAttributes(const json &node, const std::vector<int> &attrs, bool excit
           cut.push_back(a.get<int>());
         }
       }
-      std::ranges::sort(cut);
-      cut.erase(std::unique(cut.begin(), cut.end()), cut.end());
+      // The order of the polarity of a wave port, signal then ground, is its sign.
+      if (key != "PolarityAttributes")
+      {
+        std::ranges::sort(cut);
+        cut.erase(std::unique(cut.begin(), cut.end()), cut.end());
+      }
       listed = listed || !cut.empty();
       value = cut;
     }
@@ -874,6 +868,133 @@ json CutToAttributes(const json &node, const std::vector<int> &attrs, bool excit
     }
   }
   return listed ? entry : json();
+}
+
+// A material of the configuration as parsed, each tensor by its principal values and axes
+// (a scalar if isotropic), so that a material hashes alike however it is written.
+json ParsedMaterial(const json &entry)
+{
+  const config::MaterialData data(entry);
+  auto tensor = [](const config::SymmetricMatrixData<3> &t) -> json
+  {
+    if (t.s[0] == t.s[1] && t.s[1] == t.s[2])
+    {
+      return t.s[0];
+    }
+    return {{"Values", t.s}, {"Axes", t.v}};
+  };
+  json parsed = entry;
+  parsed.erase("MaterialAxes");
+  parsed["Permeability"] = tensor(data.mu_r);
+  parsed["LossTan"] = tensor(data.tandelta);
+  parsed["Conductivity"] = tensor(data.sigma);
+  parsed["LondonDepth"] = data.lambda_L;
+  if (!data.HasFrequencyDependentPermittivity())
+  {
+    parsed["Permittivity"] = tensor(data.epsilon_r);
+  }
+  return parsed;
+}
+
+// The numbers as doubles, so that 10 and 10.0 hash alike, but the lists of attributes.
+json Doubles(json node)
+{
+  if (node.is_number())
+  {
+    return node.get<double>();
+  }
+  if (node.is_object())
+  {
+    for (auto &[key, value] : node.items())
+    {
+      if (!key.ends_with("Attributes"))
+      {
+        value = Doubles(std::move(value));
+      }
+    }
+  }
+  else if (node.is_array())
+  {
+    for (auto &x : node)
+    {
+      x = Doubles(std::move(x));
+    }
+  }
+  return node;
+}
+
+// The configuration as parsed where it can be written in several ways: the materials, the
+// aliases "Ground" and "ZeroCharge" of "PEC" and "PMC" (which take precedence), and the
+// numbers.
+json Canonical(json config)
+{
+  if (auto domains = config.find("Domains");
+      domains != config.end() && domains->contains("Materials"))
+  {
+    for (auto &material : (*domains)["Materials"])
+    {
+      material = ParsedMaterial(material);
+    }
+  }
+  if (auto boundaries = config.find("Boundaries"); boundaries != config.end())
+  {
+    for (const auto &[alias, key] :
+         {std::pair{"Ground", "PEC"}, std::pair{"ZeroCharge", "PMC"}})
+    {
+      if (boundaries->contains(alias))
+      {
+        if (!boundaries->contains(key))
+        {
+          (*boundaries)[key] = (*boundaries)[alias];
+        }
+        boundaries->erase(alias);
+      }
+    }
+  }
+  return Doubles(std::move(config));
+}
+
+// The boundary attributes the configuration names, but in postprocessing, sorted.
+std::vector<int> NamedBoundaryAttributes(const json &config)
+{
+  std::vector<int> named;
+  auto collect = [&named](const json &node, auto &&self) -> void
+  {
+    if (!node.is_structured())
+    {
+      return;
+    }
+    for (const auto &[key, value] : node.items())
+    {
+      if (key.ends_with("Attributes") && value.is_array())
+      {
+        for (const auto &a : value)
+        {
+          if (a.is_number_integer())
+          {
+            named.push_back(a.get<int>());
+          }
+        }
+      }
+      else
+      {
+        self(value, self);
+      }
+    }
+  };
+  if (const auto it = config.find("Boundaries"); it != config.end() && it->is_object())
+  {
+    for (const auto &[key, value] : it->items())
+    {
+      if (key != "Postprocessing")
+      {
+        collect(value, collect);
+      }
+    }
+  }
+  std::ranges::sort(named);
+  named.erase(std::unique(named.begin(), named.end()), named.end());
+  return named;
 }
 
 // The entries of a section of the configuration, but postprocessing (and without the
@@ -904,6 +1025,17 @@ json SectionOn(const json &config, const char *section, std::vector<int> attrs,
 }
 
 }  // namespace
+
+void AddMoments(std::array<double, 6> &m, double v, const mfem::Vector &c)
+{
+  m[0] += 1.0;
+  m[1] += v;
+  m[2] += v * c.Norml2();
+  for (int d = 0; d < c.Size() && d < 3; d++)
+  {
+    m[3 + d] += v * c(d);
+  }
+}
 
 std::vector<std::array<double, 6>> AttributeMoments(mfem::ParMesh &mesh,
                                                     const std::vector<int> &attributes,
@@ -980,22 +1112,24 @@ std::uint64_t EnvironmentConfigHash(const nlohmann::json &config,
                                     const std::vector<int> &bdr_attributes,
                                     bool excitations)
 {
-  auto setting = [&config](const char *section, const char *key)
+  const json canonical = Canonical(config);
+  auto setting = [&canonical](const char *section, const char *key)
   {
-    const auto it = config.find(section);
-    return (it != config.end() && it->is_object()) ? it->value(key, json()) : json();
+    const auto it = canonical.find(section);
+    return (it != canonical.end() && it->is_object()) ? it->value(key, json()) : json();
   };
   const json described = {
       {"Problem", {{"Type", setting("Problem", "Type")}}},
       {"Model",
-       {{"CrackInternalBoundaryElements",
+       {{"L0", setting("Model", "L0")},
+        {"CrackInternalBoundaryElements",
          setting("Model", "CrackInternalBoundaryElements")}}},
       {"Solver",
        {{"Order", setting("Solver", "Order")},
         {"QuadratureOrderJacobian", setting("Solver", "QuadratureOrderJacobian")},
         {"QuadratureOrderExtra", setting("Solver", "QuadratureOrderExtra")}}},
-      {"Domains", SectionOn(config, "Domains", attributes, excitations)},
-      {"Boundaries", SectionOn(config, "Boundaries", bdr_attributes, excitations)}};
+      {"Domains", SectionOn(canonical, "Domains", attributes, excitations)},
+      {"Boundaries", SectionOn(canonical, "Boundaries", bdr_attributes, excitations)}};
   // FNV-1a of the description.
   std::uint64_t hash = 14695981039346656037ULL;
   for (const unsigned char c : described.dump())
@@ -1101,7 +1235,8 @@ bool MomentsAgree(const std::array<double, 6> &a, const std::array<double, 6> &b
 
 }  // namespace
 
-bool EnvironmentRecord::CheckMesh(mfem::ParMesh &mesh, double tol) const
+bool EnvironmentRecord::CheckMesh(mfem::ParMesh &mesh, const nlohmann::json &config,
+                                  double tol) const
 {
   // Whether the moments of each attribute match, or with refined only those which a
   // refinement of the elements keeps: their volume and first moments, not their number.
@@ -1118,10 +1253,39 @@ bool EnvironmentRecord::CheckMesh(mfem::ParMesh &mesh, double tol) const
   const auto current = AttributeMoments(mesh, attributes);
   if (match(current, moments))
   {
-    MFEM_VERIFY(
-        BoundaryAttributesNextTo(mesh, attributes) == bdr_attributes &&
-            match(BoundaryAttributeMoments(mesh, bdr_attributes, attributes), bdr_moments),
-        kEnvironmentMeshDiffers);
+    // The boundary attributes the configuration names, and in order the others, which
+    // Palace numbers, for the boundary elements it adds, from the largest attribute of the
+    // mesh: an attribute added elsewhere shifts them.
+    const std::vector<int> named = NamedBoundaryAttributes(config);
+    auto in_order = [&named](const std::vector<int> &attrs)
+    {
+      std::vector<int> order(attrs.size());
+      std::iota(order.begin(), order.end(), 0);
+      std::ranges::stable_partition(
+          order, [&](int i) { return std::ranges::binary_search(named, attrs[i]); });
+      return order;
+    };
+    const std::vector<int> next = BoundaryAttributesNextTo(mesh, attributes);
+    const std::vector<int> cur = in_order(next), rec = in_order(bdr_attributes);
+    bool same = (cur.size() == rec.size());
+    for (std::size_t i = 0; same && i < cur.size(); i++)
+    {
+      const bool is_named = std::ranges::binary_search(named, next[cur[i]]);
+      same = (is_named == std::ranges::binary_search(named, bdr_attributes[rec[i]])) &&
+             (!is_named || next[cur[i]] == bdr_attributes[rec[i]]);
+    }
+    if (same)
+    {
+      std::vector<int> attrs;
+      std::vector<std::array<double, 6>> saved;
+      for (std::size_t i = 0; i < cur.size(); i++)
+      {
+        attrs.push_back(next[cur[i]]);
+        saved.push_back(bdr_moments[rec[i]]);
+      }
+      same = match(BoundaryAttributeMoments(mesh, attrs, attributes), saved);
+    }
+    MFEM_VERIFY(same, kEnvironmentMeshDiffers);
     return false;
   }
   // The mesh of the region is written refined, and refined again, it is told from another
@@ -1151,6 +1315,12 @@ bool MomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b
                   double tol)
 {
   return a[0] == b[0] && MomentsAgree(a, b, tol, {1, 2, 3, 4, 5});
+}
+
+bool RefinedMomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
+                         double tol)
+{
+  return MomentsAgree(a, b, tol, {1, 3, 4, 5});
 }
 
 std::vector<char> RegionMeshInterface(mfem::ParFiniteElementSpace &parent_fespace,

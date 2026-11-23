@@ -583,11 +583,7 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
     {
       j_sub["Environment"]["Attributes"] = sub.environment_attributes;
     }
-    Concretize(j_sub, "Mode", ToString(sub.mode));
-    if (!sub.model_file.empty())
-    {
-      Concretize(j_sub, "ModelFile", sub.model_file);
-    }
+    Concretize(j_sub, "SaveModel", sub.save_model);
   }
 
   if (config.contains("Domains"))

@@ -1063,8 +1063,6 @@ void IoData::CheckConfiguration()
 #endif
     MFEM_VERIFY(!sub.region_attributes.empty(),
                 "Substructuring requires a nonempty Region attribute set!");
-    MFEM_VERIFY(sub.mode != SubstructuringMode::ONLINE || !sub.model_file.empty(),
-                "\"Online\" substructuring requires the saved model path \"ModelFile\"!");
     // The interface DOFs of a model are matched by their coordinates, which on a periodic
     // seam depend on the partition.
     MFEM_VERIFY(boundaries.periodic.boundary_pairs.empty(),
@@ -1078,11 +1076,11 @@ void IoData::CheckConfiguration()
     // does not spread into it.
     if (model.refinement.max_it > 0)
     {
-      MFEM_VERIFY(sub.mode == SubstructuringMode::ONLINE,
+      MFEM_VERIFY(sub.Online(),
                   "Adaptive mesh refinement with substructuring refines the region of an "
-                  "\"Online\" run; to refine the full model, run the adaptation without "
-                  "\"Solver.Substructuring\" (with \"SaveAdaptMesh\") and condense the "
-                  "saved mesh offline!");
+                  "online run (with a \"ModelFile\"); to refine the full model, run the "
+                  "adaptation without \"Solver.Substructuring\" (with \"SaveAdaptMesh\") "
+                  "and condense the saved mesh offline!");
       MFEM_VERIFY(model.refinement.nonconformal && model.refinement.max_nc_levels == 0,
                   "Adaptive mesh refinement with substructuring requires nonconforming "
                   "refinement (\"Nonconformal\": true) without a level constraint "
@@ -1101,8 +1099,7 @@ void IoData::CheckConfiguration()
       constexpr bool condenser = false;
 #endif
       MFEM_VERIFY(
-          sub.mode == SubstructuringMode::ONLINE ||
-              (condenser && sub.direct_solver != LinearSolver::SUPERLU),
+          sub.Online() || (condenser && sub.direct_solver != LinearSolver::SUPERLU),
           "Driven substructuring condenses the environment with MUMPS or STRUMPACK, "
           "not SuperLU_DIST, whose condensation goes wrong through a resonance: "
           "build Palace with one of them, and do not name SuperLU in "
@@ -1120,7 +1117,7 @@ void IoData::CheckConfiguration()
       // From a model (online, or after an adaptive sweep's samples), the field is known in
       // the region and on Γ only.
       MFEM_VERIFY(
-          (sub.mode != SubstructuringMode::ONLINE && solver.driven.adaptive_tol <= 0.0) ||
+          (!sub.Online() && solver.driven.adaptive_tol <= 0.0) ||
               (boundaries.postpro.dielectric.empty() &&
                boundaries.postpro.farfield.attributes.empty()),
           "Online or adaptive driven substructuring does not compute interface dielectric "

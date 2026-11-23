@@ -86,9 +86,9 @@ public:
 
   // Online, the excitations (index -> loops) of a single flux loop of the environment whose
   // modes the model holds, if the excitations of the environment are those of the model
-  // (always on the mesh of the region): having no part in the region, they need no fluxoid
-  // generator. None if an excitation drives several loops, whose fluxoids are reported.
-  // After CondenseEnvironment.
+  // (always on the mesh of the region): having no part in the region, their energies need
+  // no fluxoid generator, which the mesh of the region does not have. None if an excitation
+  // drives several loops, whose fluxoids are reported. After CondenseEnvironment.
   std::vector<int> ModelExcitations(const std::map<int, std::vector<int>> &excitations);
 
   // Error indicators for adaptive refinement of the region only: Palace's gradient-flux

@@ -16,6 +16,7 @@
 #include <regex>
 #include <set>
 #include <sstream>
+#include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -380,7 +381,9 @@ TEST_CASE("SubstructuringSolver environment defaults to the attributes not in th
          {{"Terminal",
            {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
         {"Solver",
-         {{"Order", 1}, {"Substructuring", {{"Region", {{"Attributes", region}}}}}}}};
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", region}}}, {"SaveModel", false}}}}}};
     if (environment)
     {
       config["Solver"]["Substructuring"]["Environment"] = {{"Attributes", {2}}};
@@ -425,7 +428,9 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
         {"Solver",
          {{"Order", order},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"SaveModel", false}}}}}};
     IoData iodata(config, false);
 
     std::vector<std::unique_ptr<Mesh>> mesh;
@@ -501,11 +506,12 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     // Compare the full reconstructed field (region + recovered environment) to the monolith
     // on all true DOFs.
     double num = 0.0, den = 0.0;
+    const double *h_u = u.HostRead(), *h_full = u_full.HostRead();
     for (int i = 0; i < pfes.GetTrueVSize(); i++)
     {
-      double e = u(i) - u_full(i);
+      double e = h_u[i] - h_full[i];
       num += e * e;
-      den += u_full(i) * u_full(i);
+      den += h_full[i] * h_full[i];
     }
     double gnum = 0.0, gden = 0.0;
     MPI_Allreduce(&num, &gnum, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
@@ -582,7 +588,8 @@ TEST_CASE("SubstructuringSolver rejects attribute sets that do not split the mes
         {"Solver",
          {{"Substructuring",
            {{"Region", {{"Attributes", region}}},
-            {"Environment", {{"Attributes", environment}}}}}}}};
+            {"Environment", {{"Attributes", environment}}},
+            {"SaveModel", false}}}}}};
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(2)));
@@ -604,7 +611,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // The offline run writes the mesh of the region refined: an online run on it with a
   // priori refinement would refine the region again, its interface included, so it is
   // rejected (on the full mesh, both runs refine alike).
-  const std::string model_path = (temp_dir / "substruct_region_refined.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_region_refined" / "environment.model").string();
   auto make_config =
       [&](const std::string &mode, const json &refinement, bool ground = false)
   {
@@ -621,10 +629,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     if (ground)
     {
       config["Boundaries"]["Ground"] = {{"Attributes", {3}}};
@@ -703,7 +709,9 @@ TEST_CASE("SubstructuringSolver factors without STRUMPACK compression",
             {"STRUMPACKCompressionType", compression},
             {"STRUMPACKCompressionTol", 1.0e-2}}},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"SaveModel", false}}}}}};
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(16)));
@@ -739,7 +747,9 @@ TEST_CASE("SubstructuringSolver rejects unknown terminal attributes",
             {{"Index", 2}, {"Attributes", {2}}}}}}},
         {"Solver",
          {{"Substructuring",
-           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"SaveModel", false}}}}}};
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(2)));
@@ -770,7 +780,9 @@ TEST_CASE("SubstructuringSolver anisotropic permittivity",
       {"Solver",
        {{"Order", 1},
         {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+         {{"Region", {{"Attributes", {1}}}},
+          {"Environment", {{"Attributes", {2}}}},
+          {"SaveModel", false}}}}}};
   IoData iodata(config, false);
 
   std::vector<std::unique_ptr<Mesh>> mesh;
@@ -806,7 +818,9 @@ TEST_CASE("SubstructuringSolver reproduces full-domain magnetostatic energy",
       {"Solver",
        {{"Order", order},
         {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+         {{"Region", {{"Attributes", {1}}}},
+          {"Environment", {{"Attributes", {2}}}},
+          {"SaveModel", false}}}}}};
   IoData iodata(config, false);
 
   std::vector<std::unique_ptr<Mesh>> mesh;
@@ -867,7 +881,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver offline/online model reuse",
                  "[substructure][Serial][Parallel][GPU]")
 {
-  const std::string model_path = (temp_dir / "substruct_model_roundtrip.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_model_roundtrip" / "environment.model").string();
   auto make_config = [](const std::string &mode, const std::string &path)
   {
     json config = {
@@ -883,10 +898,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, path);
     return IoData(config, false);
   };
 
@@ -919,7 +932,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // The model records a fingerprint of the environment operator: loading it with a changed
   // environment (material or mesh) must fail instead of silently reusing a stale S_E, while
   // changes confined to the region are accepted.
-  const std::string model_path = (temp_dir / "substruct_env_fingerprint.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_env_fingerprint" / "environment.model").string();
   auto make_config =
       [&model_path](const std::string &mode, double eps_region, double eps_env)
   {
@@ -936,10 +950,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   auto condense = [](const IoData &iodata, int a, int b)
@@ -983,7 +995,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                                                             {"Magnetostatic", 2}}));
   CAPTURE(type, order);
   const bool electrostatic = (type == "Electrostatic");
-  const std::string model_path = (temp_dir / "substruct_mirror.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_mirror" / "environment.model").string();
   auto make_config = [&](const std::string &mode, double m2, double m3, int grounded)
   {
     const char *property = electrostatic ? "Permittivity" : "Permeability";
@@ -1005,9 +1018,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     {{"Order", order},
                      {"Substructuring",
                       {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2, 3}}}},
-                       {"Mode", mode},
-                       {"ModelFile", model_path}}}}}};
+                       {"Environment", {{"Attributes", {2, 3}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   // The unit cube moved to -0.5 < y < 0.5: the region x < 0.5 (attribute 1), the
@@ -1073,7 +1085,8 @@ TEST_CASE_METHOD(
   // The mesh of the region holds little of the environment, so its configuration tells a
   // changed environment there: another material or boundary condition on it is rejected,
   // while the region may change.
-  const std::string model_path = (temp_dir / "substruct_region_config.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_region_config" / "environment.model").string();
   auto make_config =
       [&](const std::string &mode, double eps_region, double eps_env, bool ground)
   {
@@ -1090,10 +1103,8 @@ TEST_CASE_METHOD(
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     if (ground)
     {
       config["Boundaries"]["Ground"] = {{"Attributes", {3}}};
@@ -1130,7 +1141,8 @@ TEST_CASE_METHOD(
 {
   // The grounded faces of the environment extended, with the configuration unchanged: the
   // moments of the boundary attributes next to the environment tell the mesh apart.
-  const std::string model_path = (temp_dir / "substruct_retag.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_retag" / "environment.model").string();
   auto make_config = [&model_path](const std::string &mode)
   {
     json config = {
@@ -1147,10 +1159,8 @@ TEST_CASE_METHOD(
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   // The unit cube split at x = 1/2 (attributes 1 and 2), with the faces x = 0 (1), x = 1
@@ -1192,31 +1202,107 @@ TEST_CASE_METHOD(
                     Catch::Matchers::ContainsSubstring("its mesh changed"));
 }
 
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "SubstructuringSolver saved model takes a boundary attribute of the region",
+    "[substructure][Serial][Parallel]")
+{
+  // Palace adds boundary elements on the interface, numbered from the largest boundary
+  // attribute of the mesh: an attribute added to the region renumbers them, and the model
+  // compares the boundary attributes the configuration names only. Online, the grounded
+  // faces y = 0 of the region take the new attribute 4.
+  const std::string model_path =
+      (temp_dir / "substruct_added" / "environment.model").string();
+  auto write_mesh = [&](bool added)
+  {
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+    mfem::Vector c;
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      serial.GetElementCenter(e, c);
+      serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+    }
+    for (int b = 0; b < serial.GetNBE(); b++)
+    {
+      mfem::Array<int> vtx;
+      serial.GetBdrElementVertices(b, vtx);
+      double xc[2] = {0.0, 0.0};
+      for (int v : vtx)
+      {
+        xc[0] += serial.GetVertex(v)[0] / vtx.Size();
+        xc[1] += serial.GetVertex(v)[1] / vtx.Size();
+      }
+      serial.SetBdrAttribute(b, (xc[0] < 1e-9)                           ? 1
+                                : (xc[0] > 1.0 - 1e-9)                   ? 2
+                                : (added && xc[1] < 1e-9 && xc[0] < 0.5) ? 4
+                                                                         : 3);
+    }
+    serial.SetAttributes();
+    const auto path = temp_dir / (added ? "added.mesh" : "base.mesh");
+    if (Mpi::Root(Mpi::World()))
+    {
+      serial.Save(path.string());
+    }
+    Mpi::Barrier(Mpi::World());
+    return path.string();
+  };
+  auto capacitance = [&](const std::string &mode, const std::string &mesh_path,
+                         const std::vector<int> &ground)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", mesh_path}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", ground}}},
+          {"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, 2});
+  };
+  const mfem::DenseMatrix C_off = capacitance("Offline", write_mesh(false), {3});
+  mfem::DenseMatrix C_on;
+  REQUIRE_NOTHROW(C_on = capacitance("Online", write_mesh(true), {3, 4}));
+  C_on -= C_off;
+  CHECK(C_on.MaxMaxNorm() <= 1.0e-10 * C_off.MaxMaxNorm());
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver saved model of another problem or order",
                  "[substructure][Serial][Parallel]")
 {
   // A model is loaded by a run of its problem type and order only, and a file that is not
   // one is reported as such.
-  const std::string model_path = (temp_dir / "substruct_problem.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_problem" / "environment.model").string();
   auto make_config =
       [&model_path](const std::string &type, const std::string &mode, int order)
   {
     const json terminals = {{{"Index", 1}, {"Attributes", {1}}},
                             {{"Index", 2}, {"Attributes", {2}}}};
-    json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
-                   {"Boundaries", (type == "Electrostatic")
-                                      ? json{{"Terminal", terminals}}
-                                      : json{{"PEC", {{"Attributes", {1, 2}}}}}},
-                   {"Solver",
-                    {{"Order", order},
-                     {"Substructuring",
-                      {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", mode},
-                       {"ModelFile", model_path}}}}}};
+    json config = {
+        {"Problem", {{"Type", type}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+        {"Boundaries", (type == "Electrostatic") ? json{{"Terminal", terminals}}
+                                                 : json{{"PEC", {{"Attributes", {1, 2}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   auto condense = [](const IoData &iodata)
@@ -1275,8 +1361,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     Catch::Matchers::ContainsSubstring("Cannot read the saved"));
   // A model that cannot be written, found before the condensation.
   IoData unwritable = make_config("Electrostatic", "Offline", 1);
-  unwritable.solver.substructuring->model_file =
-      (temp_dir / "missing" / "model.bin").string();
+  unwritable.problem.output = (temp_dir / "missing").string();
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(MakeGradedSplit(3, 4, 4)));
   SubstructuringSolver ss(unwritable, mesh);
@@ -1299,7 +1384,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const int order = GENERATE(1, 2);
   const bool remesh = GENERATE(false, true);
   CAPTURE(order, remesh);
-  const std::string model_path = (temp_dir / "substruct_capacitance_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_capacitance_model" / "environment.model").string();
   auto make_config = [order](const std::string &mode, const std::string &path)
   {
     json config = {
@@ -1315,10 +1401,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         {"Solver",
          {{"Order", order},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, path);
     return IoData(config, false);
   };
   const std::vector<int> terms = {1, 2};
@@ -1404,7 +1488,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // offline one.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  const std::string model_path = (temp_dir / "substruct_current_orient_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_current_orient_model" / "environment.model").string();
   auto make_config = [order, &model_path](const std::string &mode)
   {
     json config = {
@@ -1420,10 +1505,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         {"Solver",
          {{"Order", order},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   auto current = [order](Mesh &mesh)
@@ -1450,10 +1533,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     f.Assemble();
     Vector J(pfes.GetTrueVSize());
     f.ParallelAssemble(J);
-    for (int i : pec_tdofs)
-    {
-      J(i) = 0.0;
-    }
+    J.SetSubVector(pec_tdofs, 0.0);
     return std::vector<Vector>{J};
   };
 
@@ -1482,24 +1562,24 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver column order
   // factor of a saved magnetostatic model has no Schur variables, so ParMETIS analyzes it
   // in parallel, and the partial factorization of STRUMPACK takes METIS for it. The energy
   // of a closed current does not depend on the ordering.
-  const std::string model_path = (temp_dir / "substruct_ordering_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_ordering_model" / "environment.model").string();
   auto energy = [&](const std::string &ordering)
   {
-    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains",
-                    {{"Materials",
-                      {{{"Attributes", {1}}, {"Permeability", 1.0}},
-                       {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
-                   {"Boundaries", {}},
-                   {"Solver",
-                    {{"Order", 1},
-                     {"Linear", {{"ColumnOrdering", ordering}}},
-                     {"Substructuring",
-                      {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", "Offline"},
-                       {"ModelFile", model_path}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+        {"Boundaries", {}},
+        {"Solver",
+         {{"Order", 1},
+          {"Linear", {{"ColumnOrdering", ordering}}},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, "Offline", model_path);
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(MakeWavyTetSplit(4)));
@@ -1528,27 +1608,27 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // gives the energy of a current closed in the region that the mesh of the region gives.
   const bool offline_sheet = GENERATE(false, true);
   CAPTURE(offline_sheet);
-  const std::string model_path = (temp_dir / "substruct_sheet_eps.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_sheet_eps" / "environment.model").string();
   auto make_config = [&](const std::string &mode, bool sheet)
   {
-    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains",
-                    {{"Materials",
-                      {{{"Attributes", {1}}, {"Permeability", 1.0}},
-                       {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
-                   {"Boundaries", sheet ? json{{"Superconductor",
-                                                {{{"Attributes", {1}},
-                                                  {"PenetrationDepth", 0.2},
-                                                  {"Thickness", 0.05}}}}}
-                                        : json::object()},
-                   {"Solver",
-                    {{"Order", 1},
-                     {"Substructuring",
-                      {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", mode},
-                       {"ModelFile", model_path}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+        {"Boundaries", sheet ? json{{"Superconductor",
+                                     {{{"Attributes", {1}},
+                                       {"PenetrationDepth", 0.2},
+                                       {"Thickness", 0.05}}}}}
+                             : json::object()},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   auto energy = [](const IoData &iodata, std::unique_ptr<mfem::ParMesh> &&pmesh)
@@ -1586,8 +1666,11 @@ TEST_CASE_METHOD(
   // x = 1) has no DOFs: the model must hold it (the terminal would otherwise give a zero
   // row of C). A renamed one is an excitation of the environment which differs from the
   // model's, and so is one of a model without its terminal modes: both need the full mesh.
-  const std::string model_path = (temp_dir / "substruct_terminals.bin").string();
-  auto make_config = [&](const std::string &mode, int env_index)
+  // An attribute in neither the mesh nor the environment of the model is unknown.
+  const std::string model_path =
+      (temp_dir / "substruct_terminals" / "environment.model").string();
+  auto make_config =
+      [&](const std::string &mode, int env_index, const std::vector<int> &attrs = {1})
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -1596,15 +1679,13 @@ TEST_CASE_METHOD(
         {"Boundaries",
          {{"Ground", {{"Attributes", {3}}}},
           {"Terminal",
-           {{{"Index", 1}, {"Attributes", {1}}},
+           {{{"Index", 1}, {"Attributes", attrs}},
             {{"Index", env_index}, {"Attributes", {2}}}}}}},
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   auto capacitance = [](const IoData &iodata, std::unique_ptr<mfem::ParMesh> &&pmesh, int k)
@@ -1619,6 +1700,9 @@ TEST_CASE_METHOD(
   mfem::Mesh serial(RegionMeshPath(model_path).c_str());
   auto region = [&]() { return std::make_unique<mfem::ParMesh>(Mpi::World(), serial); };
   CHECK(capacitance(make_config("Online", 2), region(), 2)(1, 1) > 0.0);
+  CHECK_THROWS_WITH(
+      capacitance(make_config("Online", 2, {1, 99}), region(), 2),
+      Catch::Matchers::ContainsSubstring("Unknown terminal boundary attribute 99"));
   CHECK_THROWS_WITH(
       capacitance(make_config("Online", 5), region(), 5),
       Catch::Matchers::ContainsSubstring("The excitations of the environment differ"));
@@ -1654,7 +1738,9 @@ TEST_CASE("SubstructuringSolver magnetostatics ignores terminals",
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+           {{"Region", {{"Attributes", {1}}}},
+            {"Environment", {{"Attributes", {2}}}},
+            {"SaveModel", false}}}}}};
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
     mesh.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
@@ -1675,7 +1761,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // A terminal added inside the region does not reach the environment, so its modes are
   // zero: online runs on the full mesh and on the mesh of the region solve no environment
   // and give the capacitance of a fresh condensation with it.
-  const std::string model_path = (temp_dir / "substruct_new_terminal.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_new_terminal" / "environment.model").string();
   auto make_config =
       [](const std::string &mode, bool region_terminal, const std::string &path)
   {
@@ -1684,20 +1771,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     {
       terminals.push_back({{"Index", 1}, {"Attributes", {1}}});
     }
-    json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains",
-                    {{"Materials",
-                      {{{"Attributes", {1}}, {"Permittivity", 1.0}},
-                       {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
-                   {"Boundaries", {{"Terminal", terminals}}},
-                   {"Solver",
-                    {{"Order", 1},
-                     {"Substructuring",
-                      {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", mode},
-                       {"ModelFile", path}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries", {{"Terminal", terminals}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, path);
     return IoData(config, false);
   };
   auto capacitance =
@@ -1718,7 +1804,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   (void)capacitance(make_config("Offline", false, model_path), MakeSplitCube(4), nullptr);
   bool factored = true;
   const mfem::DenseMatrix C_ref =
-      capacitance(make_config("Offline", true, (temp_dir / "substruct_ref.bin").string()),
+      capacitance(make_config("Offline", true,
+                              (temp_dir / "substruct_ref" / "environment.model").string()),
                   MakeSplitCube(4), &factored);
   const mfem::DenseMatrix C_full =
       capacitance(make_config("Online", true, model_path), MakeSplitCube(4), &factored);
@@ -1744,7 +1831,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 {
   // A model cut after its reference length is incomplete: every process reads the same of
   // it (the length is not used), and the online run says that it is incomplete.
-  const std::string model_path = (temp_dir / "substruct_incomplete_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_incomplete_model" / "environment.model").string();
   auto make_config = [&model_path](const std::string &mode, double Lc)
   {
     json config = {
@@ -1760,10 +1848,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     if (Lc > 0.0)
     {
       config["Model"]["Lc"] = Lc;
@@ -1807,7 +1893,8 @@ TEST_CASE_METHOD(
   // among those written with the mesh of the region (they touch the grounded faces that
   // reach the interface), no mesh of the region is written; the model still serves an
   // online run on the full mesh.
-  const std::string model_path = (temp_dir / "substruct_nc_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_nc_model" / "environment.model").string();
   auto make_config = [&model_path](const std::string &mode)
   {
     json config = {
@@ -1824,10 +1911,8 @@ TEST_CASE_METHOD(
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   auto capacitance = [](const IoData &iodata)
@@ -1869,7 +1954,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 {
   // Modes missing from a saved model are recomputed on demand (this needs the environment
   // once) and give the same matrix.
-  const std::string model_path = (temp_dir / "substruct_nomodes_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_nomodes_model" / "environment.model").string();
   auto make_config = [&model_path](const std::string &mode)
   {
     json config = {
@@ -1885,10 +1971,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         {"Solver",
          {{"Order", 1},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   const std::vector<int> terms = {1, 2};
@@ -1935,7 +2019,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // fixed, load and geometrically re-order S_E onto the new interface DOFs, and solve. The
   // re-meshed region-condensed energy must match a monolith on the online mesh (S_E is
   // exact for the fixed environment).
-  const std::string model_path = (temp_dir / "substruct_remesh_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_remesh_model" / "environment.model").string();
   // Several (offline, online) region resolutions: re-mesh finer, coarser, and identical
   // (the identity-reorder sanity case). All must match the monolith on the online mesh.
   const auto res = GENERATE(std::make_pair(4, 8), std::make_pair(8, 4),
@@ -1958,10 +2043,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
         {"Solver",
          {{"Order", order},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, path);
     return IoData(config, false);
   };
 
@@ -2250,7 +2333,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       {"Solver",
        {{"Order", 1},
         {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+         {{"Region", {{"Attributes", {1}}}},
+          {"Environment", {{"Attributes", {2}}}},
+          {"SaveModel", false}}}}}};
 #if defined(MFEM_USE_GSLIB)
   // Probes need GSLIB.
   config["Domains"]["Postprocessing"]["Probe"] = {
@@ -2280,8 +2365,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 #endif
   CHECK(indices(post.boundaries.postpro.flux) == std::vector<int>{1});
   CHECK(indices(post.boundaries.postpro.dielectric) == std::vector<int>{1});
-  const std::string model_path = (temp_dir / "substruct_postprocessing_model.bin").string();
-  config["Solver"]["Substructuring"]["ModelFile"] = model_path;
+  const std::string model_path =
+      (temp_dir / "substruct_postprocessing_model" / "environment.model").string();
+  test::SetModelRun(config, "Offline", model_path);
   {
     std::vector<std::unique_ptr<Mesh>> full;
     full.push_back(std::make_unique<Mesh>(MakeSplitCube(4)));
@@ -2289,7 +2375,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     SubstructuringSolver offline(saving, full);
     offline.CondenseEnvironment();
   }
-  config["Solver"]["Substructuring"]["Mode"] = "Online";
+  test::SetModelRun(config, "Online", model_path);
   const IoData online(config, false);
   mfem::Mesh serial(RegionMeshPath(model_path).c_str());
   std::vector<std::unique_ptr<Mesh>> region;
@@ -2317,18 +2403,19 @@ TEST_CASE("SubstructuringSolver region factored with the environment operator",
   const std::vector<int> ground = grounded ? std::vector<int>{2, 4} : std::vector<int>{4};
   json boundaries = {{"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
                      {"Ground", {{"Attributes", ground}}}};
-  json config = {
-      {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
-      {"Model", {{"Mesh", "test.msh"}}},
-      {"Domains",
-       {{"Materials",
-         {{{"Attributes", {1}}, {"Permittivity", 1.0}},
-          {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
-      {"Boundaries", boundaries},
-      {"Solver",
-       {{"Order", 2},
-        {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains",
+                  {{"Materials",
+                    {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+                     {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+                 {"Boundaries", boundaries},
+                 {"Solver",
+                  {{"Order", 2},
+                   {"Substructuring",
+                    {{"Region", {{"Attributes", {1}}}},
+                     {"Environment", {{"Attributes", {2}}}},
+                     {"SaveModel", false}}}}}};
   IoData iodata(config, false);
   // The split cube with the boundary attributes 1 at x = 1, 2 at x = 0, 4 on the sides of
   // the environment away from the interface (x > 9 / 16) and 3 elsewhere.
@@ -2377,21 +2464,22 @@ TEST_CASE("SubstructuringSolver grounded PEC boundaries",
   // boundaries grounded.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  json config = {
-      {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
-      {"Model", {{"Mesh", "test.msh"}}},
-      {"Domains",
-       {{"Materials",
-         {{{"Attributes", {1}}, {"Permittivity", 1.0}},
-          {{"Attributes", {3}}, {"Permittivity", 4.0}},
-          {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
-      {"Boundaries",
-       {{"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
-        {"PEC", {{"Attributes", {2, 3}}}}}},
-      {"Solver",
-       {{"Order", order},
-        {"Substructuring",
-         {{"Region", {{"Attributes", {1, 3}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains",
+                  {{"Materials",
+                    {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+                     {{"Attributes", {3}}, {"Permittivity", 4.0}},
+                     {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+                 {"Boundaries",
+                  {{"Terminal", {{{"Index", 1}, {"Attributes", {1}}}}},
+                   {"PEC", {{"Attributes", {2, 3}}}}}},
+                 {"Solver",
+                  {{"Order", order},
+                   {"Substructuring",
+                    {{"Region", {{"Attributes", {1, 3}}}},
+                     {"Environment", {{"Attributes", {2}}}},
+                     {"SaveModel", false}}}}}};
   IoData iodata(config, false);
   const RegionDesign design{0.5, {0.25, 0.5, 0.5}};
   std::vector<std::unique_ptr<Mesh>> mesh;
@@ -2433,7 +2521,8 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
                   {"Linear", {{"Type", type}}},
                   {"Substructuring",
                    {{"Region", {{"Attributes", {1, 3}}}},
-                    {"Environment", {{"Attributes", {2}}}}}}}}};
+                    {"Environment", {{"Attributes", {2}}}},
+                    {"SaveModel", false}}}}}};
   };
   std::vector<std::string> types;
 #if defined(MFEM_USE_STRUMPACK)
@@ -2532,32 +2621,32 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   const double mu_r = 1.0, mu_e = 4.0, lambda = 0.2, thickness = 0.05;
-  const std::string model_path = (temp_dir / "substruct_london_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_london_model" / "environment.model").string();
   auto make_config =
       [&](const std::string &mode, bool save = true, const std::string &path = "")
   {
-    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains",
-                    {{"Materials",
-                      {{{"Attributes", {1}}, {"Permeability", mu_r}},
-                       {{"Attributes", {2}}, {"Permeability", mu_e}}}}}},
-                   {"Boundaries",
-                    {{"PEC", {{"Attributes", {1, 2}}}},
-                     {"Superconductor",
-                      {{{"Attributes", {4}},
-                        {"PenetrationDepth", lambda},
-                        {"Thickness", thickness}}}}}},
-                   {"Solver",
-                    {{"Order", order},
-                     {"Substructuring",
-                      {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", mode},
-                       {"ModelFile", path.empty() ? model_path : path}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", mu_r}},
+            {{"Attributes", {2}}, {"Permeability", mu_e}}}}}},
+        {"Boundaries",
+         {{"PEC", {{"Attributes", {1, 2}}}},
+          {"Superconductor",
+           {{{"Attributes", {4}},
+             {"PenetrationDepth", lambda},
+             {"Thickness", thickness}}}}}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, path.empty() ? model_path : path);
     if (!save)
     {
-      config["Solver"]["Substructuring"].erase("ModelFile");
+      config["Solver"]["Substructuring"]["SaveModel"] = false;
     }
     return IoData(config, false);
   };
@@ -2601,10 +2690,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
     Vector full;
     g.GetTrueDofs(full);
     a[k] = 0.0;
-    for (int i : sheet_tdofs)
-    {
-      a[k](i) = full(i);
-    }
+    Vector on_sheets;
+    full.GetSubVector(sheet_tdofs, on_sheets);
+    a[k].SetSubVector(sheet_tdofs, on_sheets);
   }
 
   SubstructuringSolver ss(iodata, mesh);
@@ -2662,10 +2750,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
   pcg.SetPreconditioner(ams);
   auto solve = [&](Vector rhs)
   {
-    for (int i : pec_tdofs)
-    {
-      rhs(i) = 0.0;
-    }
+    rhs.SetSubVector(pec_tdofs, 0.0);
     Vector x(rhs.Size());
     x = 0.0;
     pcg.Mult(rhs, x);
@@ -2798,6 +2883,23 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
     CHECK(nd <= 1.0e-10 * nf);
   }
 
+  // On the mesh of the region, a source without DOFs in it is of the environment, whose
+  // modes the model must hold (a model without them reads as complete).
+  {
+    mfem::Mesh serial(RegionMeshPath(model_path).c_str());
+    std::vector<std::unique_ptr<Mesh>> region;
+    region.push_back(
+        std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), serial)));
+    SubstructuringSolver on_region(iodata_on, region);
+    on_region.CondenseEnvironment();
+    Vector zero(on_region.GetCurlCurlOperator().GetNDSpace().GetTrueVSize());
+    zero.UseDevice(true);
+    zero = 0.0;
+    CHECK_THROWS_WITH(SheetEnergies(on_region, {7}, {zero}),
+                      Catch::Matchers::ContainsSubstring(
+                          "Excitation 7 has no DOFs in the mesh of the region"));
+  }
+
   // A model cut in the kinetic parts of its source modes (its last section) is incomplete.
   const std::string cut_path = (temp_dir / "substruct_london_cut.bin").string();
   if (Mpi::Root(Mpi::World()))
@@ -2831,7 +2933,8 @@ void CheckSurfaceCurrentEnergies(const std::filesystem::path &temp_dir, int orde
 {
   CAPTURE(order, london);
   const double mu_r = 1.0, mu_e = 4.0, lambda = 0.2, thickness = 0.05;
-  const std::string model_path = (temp_dir / "substruct_current_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_current_model" / "environment.model").string();
   auto make_config = [&](const std::string &mode)
   {
     json config = {
@@ -2847,10 +2950,8 @@ void CheckSurfaceCurrentEnergies(const std::filesystem::path &temp_dir, int orde
         {"Solver",
          {{"Order", order},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     if (london)
     {
       config["Boundaries"].erase("SurfaceCurrent");  // a port may not be a Superconductor
@@ -2901,10 +3002,7 @@ void CheckSurfaceCurrentEnergies(const std::filesystem::path &temp_dir, int orde
     f.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(c), sheet_marker);
     f.Assemble();
     f.ParallelAssemble(J[k]);
-    for (int i : pec_tdofs)
-    {
-      J[k](i) = 0.0;
-    }
+    J[k].SetSubVector(pec_tdofs, 0.0);
   }
   const std::vector<Vector> J12 = {J[0], J[1]}, J123 = {J[0], J[1], J[2]};
 
@@ -3093,10 +3191,9 @@ void CheckSurfaceCurrentEnergies(const std::filesystem::path &temp_dir, int orde
       g.ProjectCoefficient(c);
       g.GetTrueDofs(full);
       a = 0.0;
-      for (int i : sheet_tdofs)
-      {
-        a(i) = full(i);
-      }
+      Vector on_sheets;
+      full.GetSubVector(sheet_tdofs, on_sheets);
+      a.SetSubVector(sheet_tdofs, on_sheets);
     }
     auto Ms = [&]()
     {
@@ -4028,6 +4125,12 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
 namespace
 {
 
+// The model of the offline driven runs below, saved in their output directory.
+std::filesystem::path DrivenModel(const std::filesystem::path &dir)
+{
+  return dir / "postpro_Offline" / "environment.model";
+}
+
 // A driven sweep of the substructuring_driven mesh (Γ the plane x = 0.5, the sheet 8 at
 // z = 0.5 crossing it, lumped port 1 in the region and 2 in the environment, each its own
 // excitation), run in process. Collective.
@@ -4061,10 +4164,11 @@ void RunDrivenSheetSquare(const std::filesystem::path &dir, const std::string &m
         {"Device", "CPU"},
         {"Driven", {{"MinFreq", 1000.0}, {"MaxFreq", 2000.0}, {"FreqStep", 1000.0}}},
         {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}},
-          {"Environment", {{"Attributes", {2}}}},
-          {"Mode", mode},
-          {"ModelFile", (dir / "driven_model.bin").string()}}}}}};
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  if (mode == "Online")
+  {
+    config["Solver"]["Substructuring"]["ModelFile"] = DrivenModel(dir).string();
+  }
   if (edit)
   {
     edit(config);
@@ -4147,10 +4251,11 @@ json DrivenBoxConfig(const std::filesystem::path &dir, const std::string &mode,
         {"Device", "CPU"},
         {"Driven", {{"MinFreq", 20.0}, {"MaxFreq", 20.0}, {"FreqStep", 1.0}}},
         {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}},
-          {"Environment", {{"Attributes", {2}}}},
-          {"Mode", mode},
-          {"ModelFile", (dir / "box_model.bin").string()}}}}}};
+         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+  if (mode == "Online")
+  {
+    config["Solver"]["Substructuring"]["ModelFile"] = DrivenModel(dir).string();
+  }
   if (edit)
   {
     edit(config);
@@ -4703,7 +4808,11 @@ TEST_CASE_METHOD(
     config["Model"]["Mesh"] = (dir / config["Model"]["Mesh"].get<std::string>()).string();
     config["Problem"]["Output"] = (temp_dir / file).string();
     config["Solver"]["Linear"]["Type"] = "Default";
-    config["Solver"]["Substructuring"]["ModelFile"] = (temp_dir / "model.bin").string();
+    if (config["Solver"]["Substructuring"].contains("ModelFile"))
+    {
+      config["Solver"]["Substructuring"]["ModelFile"] =
+          (temp_dir / "driven_wave_inactive_offline.json" / "environment.model").string();
+    }
     config["Boundaries"]["WavePort"][1]["VoltagePath"] = {{0.0, 0.0, 0.0},
                                                           {2.74, 0.0, 0.0}};
     IoData iodata(config, false);
@@ -4787,7 +4896,7 @@ TEST_CASE_METHOD(
   // the box, would be the region's alone on the mesh of the region, while the full mesh
   // runs from the model. An impedance on the interior boundary inside the environment is
   // the model's.
-  const std::string region_mesh = RegionMeshPath((temp_dir / "box_model.bin").string());
+  const std::string region_mesh = RegionMeshPath(DrivenModel(temp_dir).string());
   using Edit = std::function<void(json &)>;
   const std::vector<std::tuple<std::string, Edit, bool>> terms = {
       {"impedance", [](json &config)
@@ -4840,7 +4949,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // excitation of the environment's port is not its configuration: a sweep without it runs,
   // as does one with it on the mesh of the region, which fingerprints its sources there.
   RunDrivenSheetSquare(temp_dir, "Offline");
-  const std::string region_mesh = RegionMeshPath((temp_dir / "driven_model.bin").string());
+  const std::string region_mesh = RegionMeshPath(DrivenModel(temp_dir).string());
   auto on_region = [&](json &config) { config["Model"]["Mesh"] = region_mesh; };
   auto online = [&](const std::function<void(json &)> &edit)
   { RunDrivenSheetSquare(temp_dir, "Online", edit); };
@@ -4939,7 +5048,7 @@ TEST_CASE_METHOD(
   {
     // The model without its final header.
     using substructuring::ModelFile;
-    const auto path = (temp_dir / "driven_model.bin").string();
+    const auto path = DrivenModel(temp_dir).string();
     long long pos = 0;
     for (const auto &r : ModelFile::Read(path, MPI_COMM_SELF).records)
     {
@@ -5071,7 +5180,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // run on it takes no a priori refinement, also of the region only (which leaves the
   // written environment elements as they were).
   RunDrivenSheetSquare(temp_dir, "Offline");
-  const std::string region_mesh = RegionMeshPath((temp_dir / "driven_model.bin").string());
+  const std::string region_mesh = RegionMeshPath(DrivenModel(temp_dir).string());
   const json uniform = {{"UniformLevels", 1}},
              boxes = {{"Nonconformal", true},
                       {"MaxNCLevels", 0},
@@ -5675,7 +5784,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // faces (a field linear in x would satisfy the constraints trivially).
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  const std::string model_path = (temp_dir / "substruct_nc_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_nc_model" / "environment.model").string();
   auto make_config = [order, &model_path](const std::string &mode)
   {
     json config = {
@@ -5693,9 +5803,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
          {{"Order", order},
           {"Substructuring",
            {{"Region", {{"Attributes", {1, 3}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+            {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   const RegionDesign design{0.5, {0.25, 0.5, 0.5}};
@@ -5759,7 +5868,8 @@ void CheckNonconformingMagnetostaticEnergy(const std::filesystem::path &temp_dir
 {
   CAPTURE(order);
   const double mu_r = 1.0, mu_e = 4.0;
-  const std::string model_path = (temp_dir / "substruct_nc_mag_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_nc_mag_model" / "environment.model").string();
   auto make_config = [order, mu_r, mu_e, &model_path](const std::string &mode)
   {
     json config = {
@@ -5773,10 +5883,8 @@ void CheckNonconformingMagnetostaticEnergy(const std::filesystem::path &temp_dir
         {"Solver",
          {{"Order", order},
           {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   IoData iodata = make_config("Offline");
@@ -5899,7 +6007,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // the estimated region error decreases.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  const std::string model_path = (temp_dir / "substruct_amr_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_amr_model" / "environment.model").string();
   auto make_config = [order, &model_path](const std::string &mode)
   {
     json config = {
@@ -5917,9 +6026,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
          {{"Order", order},
           {"Substructuring",
            {{"Region", {{"Attributes", {1, 3}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+            {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   const RegionDesign design{0.5, {0.25, 0.5, 0.5}};
@@ -5964,11 +6072,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const ErrorIndicator ind0 = on0.RegionErrorIndicator(region_fields, half_diagonal(C0));
   CHECK_FALSE(on0.EnvironmentFactored());
   REQUIRE(ind0.Local().Size() == pm0.GetNE());
+  const double *h_ind0 = ind0.Local().HostRead();
   double env_max = 0.0, reg_max = 0.0;
   for (int e = 0; e < pm0.GetNE(); e++)
   {
     (pm0.GetAttribute(e) == 2 ? env_max : reg_max) =
-        std::max(pm0.GetAttribute(e) == 2 ? env_max : reg_max, ind0.Local()(e));
+        std::max(pm0.GetAttribute(e) == 2 ? env_max : reg_max, h_ind0[e]);
   }
   MPI_Allreduce(MPI_IN_PLACE, &env_max, 1, MPI_DOUBLE, MPI_MAX, pm0.GetComm());
   MPI_Allreduce(MPI_IN_PLACE, &reg_max, 1, MPI_DOUBLE, MPI_MAX, pm0.GetComm());
@@ -5981,7 +6090,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mfem::Array<int> marked;
   for (int e = 0; e < pm0.GetNE(); e++)
   {
-    if (ind0.Local()(e) >= 0.3 * reg_max)
+    if (h_ind0[e] >= 0.3 * reg_max)
     {
       marked.Append(e);
     }
@@ -6032,23 +6141,23 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // matches a monolith on the refined mesh, and the estimated region error decreases.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  const std::string model_path = (temp_dir / "substruct_mag_amr_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_mag_amr_model" / "environment.model").string();
   auto make_config = [order, &model_path](const std::string &mode)
   {
-    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains",
-                    {{"Materials",
-                      {{{"Attributes", {1}}, {"Permeability", 1.0}},
-                       {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
-                   {"Boundaries", {}},
-                   {"Solver",
-                    {{"Order", order},
-                     {"Substructuring",
-                      {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", mode},
-                       {"ModelFile", model_path}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+        {"Boundaries", {}},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   // J = curl (0, 0, phi) with phi = (x (1 - x) y (1 - y) z (1 - z))^2: divergence-free with
@@ -6116,11 +6225,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   double e0 = 0.0;
   const ErrorIndicator ind0 = solve(mesh0, e0);
   REQUIRE(ind0.Local().Size() == pm0.GetNE());
+  const double *h_ind0 = ind0.Local().HostRead();
   double env_max = 0.0, reg_max = 0.0;
   for (int e = 0; e < pm0.GetNE(); e++)
   {
     double &m = (pm0.GetAttribute(e) == 2) ? env_max : reg_max;
-    m = std::max(m, ind0.Local()(e));
+    m = std::max(m, h_ind0[e]);
   }
   Mpi::GlobalMax(1, &env_max, pm0.GetComm());
   Mpi::GlobalMax(1, &reg_max, pm0.GetComm());
@@ -6133,7 +6243,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mfem::Array<int> marked;
   for (int e = 0; e < pm0.GetNE(); e++)
   {
-    if (ind0.Local()(e) >= 0.3 * reg_max)
+    if (h_ind0[e] >= 0.3 * reg_max)
     {
       marked.Append(e);
     }
@@ -6207,7 +6317,9 @@ TEST_CASE("SubstructuringSolver region error indicators across sheets",
        {{"Order", 1},
         {"Linear", {{"EstimatorTol", 1.0e-13}, {"EstimatorMaxIts", 1000}}},
         {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+         {{"Region", {{"Attributes", {1}}}},
+          {"Environment", {{"Attributes", {2}}}},
+          {"SaveModel", false}}}}}};
   IoData iodata(config, false);
   RegionDesign design;
   design.sheet = true;
@@ -6260,6 +6372,7 @@ TEST_CASE("SubstructuringSolver region error indicators across sheets",
   double err = 0.0, scale = 0.0;
   int matched = 0;
   mfem::Vector c, rc;
+  const double *h_ind = ind.Local().HostRead(), *h_ref = ref.Local().HostRead();
   for (int e = 0; e < pm.GetNE(); e++)
   {
     if (pm.GetAttribute(e) != 1)
@@ -6273,8 +6386,8 @@ TEST_CASE("SubstructuringSolver region error indicators across sheets",
       rc -= c;
       if (rc.Normlinf() < 1.0e-12)
       {
-        err = std::max(err, std::abs(ind.Local()(e) - ref.Local()(r)));
-        scale = std::max(scale, std::abs(ref.Local()(r)));
+        err = std::max(err, std::abs(h_ind[e] - h_ref[r]));
+        scale = std::max(scale, std::abs(h_ref[r]));
         matched++;
         break;
       }
@@ -6312,7 +6425,9 @@ TEST_CASE("SubstructuringSolver region error indicators",
        {{"Order", order},
         {"Linear", {{"EstimatorTol", 1.0e-13}, {"EstimatorMaxIts", 1000}}},
         {"Substructuring",
-         {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+         {{"Region", {{"Attributes", {1}}}},
+          {"Environment", {{"Attributes", {2}}}},
+          {"SaveModel", false}}}}}};
   IoData iodata(config, false);
   const int nx = 4;
   std::vector<std::unique_ptr<Mesh>> mesh;
@@ -6408,11 +6523,12 @@ TEST_CASE("SubstructuringSolver region error indicators",
   const auto &rm = rmesh[0]->Get();
   const auto &pm = mesh.back()->Get();
   double err = 0.0, scale = 0.0, env = 0.0, unmatched = 0.0;
+  const double *h_ind = ind.Local().HostRead(), *h_ref = ref.Local().HostRead();
   for (int e = 0; e < pm.GetNE(); e++)
   {
     if (pm.GetAttribute(e) != 1)
     {
-      env = std::max(env, std::abs(ind.Local()(e)));
+      env = std::max(env, std::abs(h_ind[e]));
       continue;
     }
     const auto c = center(pm, e);
@@ -6427,8 +6543,8 @@ TEST_CASE("SubstructuringSolver region error indicators",
       unmatched += 1.0;
       continue;
     }
-    err = std::max(err, std::abs(ind.Local()(e) - ref.Local()(match)));
-    scale = std::max(scale, ref.Local()(match));
+    err = std::max(err, std::abs(h_ind[e] - h_ref[match]));
+    scale = std::max(scale, h_ref[match]);
   }
   Mpi::GlobalMax(1, &err, Mpi::World());
   Mpi::GlobalMax(1, &scale, Mpi::World());
@@ -6453,7 +6569,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // redesigned mesh.
   const int order = GENERATE(1, 2);
   CAPTURE(order);
-  const std::string model_path = (temp_dir / "substruct_redesign_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_redesign_model" / "environment.model").string();
   auto make_config = [order, &model_path](const std::string &mode, double eps_block)
   {
     json config = {
@@ -6471,9 +6588,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
          {{"Order", order},
           {"Substructuring",
            {{"Region", {{"Attributes", {1, 3}}}},
-            {"Environment", {{"Attributes", {2}}}},
-            {"Mode", mode},
-            {"ModelFile", model_path}}}}}};
+            {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   const std::vector<int> terms = {1, 2};
@@ -6575,7 +6691,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // leaves one conductor for another. On its strip x < 3/8 of the region, it ends in free
   // space, also on the mesh of the region.
   const int order = 1;
-  const std::string model_path = (temp_dir / "substruct_closure_model.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_closure_model" / "environment.model").string();
   RegionDesign design;
   design.sheet = true;
   auto energy = [&](const std::vector<int> &pec, bool london, bool strip = false,
@@ -6603,10 +6720,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       config["Boundaries"]["SurfaceCurrent"] = {
           {{"Index", 1}, {"Attributes", {4}}, {"Direction", "+X"}}};
     }
-    if (!mode.empty())
+    if (mode.empty())
     {
-      config["Solver"]["Substructuring"]["Mode"] = mode;
-      config["Solver"]["Substructuring"]["ModelFile"] = model_path;
+      config["Solver"]["Substructuring"]["SaveModel"] = false;
+    }
+    else
+    {
+      test::SetModelRun(config, mode, model_path);
     }
     IoData iodata(config, false);
     std::vector<std::unique_ptr<Mesh>> mesh;
@@ -6669,18 +6789,19 @@ TEST_CASE("SubstructuringSolver magnetostatic energies scale with the permeabili
   const int order = 1;
   auto energy = [order](double m, double s, Vector &J)
   {
-    json config = {
-        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-        {"Model", {{"Mesh", "test.msh"}}},
-        {"Domains",
-         {{"Materials",
-           {{{"Attributes", {1}}, {"Permeability", m}},
-            {{"Attributes", {2}}, {"Permeability", 4.0 * m}}}}}},
-        {"Boundaries", json::object()},
-        {"Solver",
-         {{"Order", order},
-          {"Substructuring",
-           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials",
+                      {{{"Attributes", {1}}, {"Permeability", m}},
+                       {{"Attributes", {2}}, {"Permeability", 4.0 * m}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Order", order},
+                     {"Substructuring",
+                      {{"Region", {{"Attributes", {1}}}},
+                       {"Environment", {{"Attributes", {2}}}},
+                       {"SaveModel", false}}}}}};
     IoData iodata(config, false);
     auto pmesh = MakeSplitCube(4);
     mfem::VectorFunctionCoefficient scale(3, [s](const mfem::Vector &x, mfem::Vector &y)
@@ -6720,20 +6841,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CAPTURE(a_off, a_on, order);
   auto make_config = [&](const std::string &mode, const std::string &path)
   {
-    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains",
-                    {{"Materials",
-                      {{{"Attributes", {1}}, {"Permeability", 1.0}},
-                       {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
-                   {"Boundaries", json::object()},
-                   {"Solver",
-                    {{"Order", order},
-                     {"Substructuring",
-                      {{"Region", {{"Attributes", {1}}}},
-                       {"Environment", {{"Attributes", {2}}}},
-                       {"Mode", mode},
-                       {"ModelFile", path}}}}}};
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permeability", 1.0}},
+            {{"Attributes", {2}}, {"Permeability", 4.0}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Order", order},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, path);
     return IoData(config, false);
   };
   auto solve = [&](const std::string &mode, const std::string &path, int a, Vector *u)
@@ -6755,11 +6875,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
   // Offline on the coarse region (the model with the source modes), a fresh condensation on
   // the re-meshed region, and the online run on it with the coarse-region model.
-  const std::string model_path = (temp_dir / "substruct_mag_remesh.bin").string();
+  const std::string model_path =
+      (temp_dir / "substruct_mag_remesh" / "environment.model").string();
   (void)solve("Offline", model_path, a_off, nullptr);
   Vector u_ref, u_on;
   const double E_ref =
-      solve("Offline", (temp_dir / "substruct_mag_ref.bin").string(), a_on, &u_ref);
+      solve("Offline", (temp_dir / "substruct_mag_ref" / "environment.model").string(),
+            a_on, &u_ref);
   const double E_on = solve("Online", model_path, a_on, &u_on);
   CHECK(E_ref > 0.0);
   CHECK(std::abs(E_on - E_ref) <= 1.0e-10 * E_ref);

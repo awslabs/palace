@@ -91,9 +91,7 @@
           10,
           11
         ]
-      },
-      "Mode": "Offline",
-      "ModelFile": "postpro/transmon_substructuring_environment.model"
+      }
     }
   }
 }

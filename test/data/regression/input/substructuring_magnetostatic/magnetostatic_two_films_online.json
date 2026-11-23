@@ -13,5 +13,5 @@
     "Magnetostatic": { "Save": 0 },
     "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 500 },
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
-      "Mode": "Online", "ModelFile": "environment_two_films.model" } }
+      "ModelFile": "postpro/two_films/environment.model" } }
 }

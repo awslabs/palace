@@ -203,8 +203,7 @@ void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
   // An online substructuring run takes the characteristic length of its saved model, that
   // of the offline run, so that a mesh of the region alone is nondimensionalized as the
   // model was (a configured one must equal it).
-  if (const auto &sub = iodata.solver.substructuring;
-      sub && sub->mode == SubstructuringMode::ONLINE && !sub->model_file.empty())
+  if (const auto &sub = iodata.solver.substructuring; sub && sub->Online())
   {
     const double L = substructuring::InterfaceRecords::ReadLength(sub->model_file, comm);
     if (L > 0.0)

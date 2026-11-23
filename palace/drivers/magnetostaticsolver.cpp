@@ -108,6 +108,9 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
     const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   BlockTimer bt(Timer::CONSTRUCT);
+  // The interface of a model is matched by the signatures of its Nédélec DOFs, in 3D.
+  MFEM_VERIFY(mesh.back()->Dimension() == 3,
+              "Magnetostatic substructuring requires a 3D mesh!");
   SubstructuringSolver sub(iodata, mesh);
   SaveMetadata(sub.GetFESpaces());
   const SurfaceFluxOperator surf_flux_op(iodata);  // all the flux loops
@@ -118,15 +121,14 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
   sub.CondenseEnvironment();
   // Excitations of the surface currents (with their aperture flux functionals, for mixed
   // extraction) and fluxoid generators of the flux loops, from the operator of the
-  // substructuring. A flux loop of the environment has no generator where the model holds
-  // its excitation (see SubstructuringSolver::ModelExcitations), nor on the mesh of the
-  // region, which leaves it out.
+  // substructuring. The mesh of the region leaves out the flux loops of the environment,
+  // and so their generators, whose excitations the model holds (see
+  // SubstructuringSolver::ModelExcitations).
   std::vector<int> current_idx, flux_idx, loop_idx;
   std::vector<Vector> J, apertures, a;
   std::vector<double> I_inc, Phi_inc;
   const bool single_loops = surf_flux_op.HasSingleLoopExcitations();
-  const std::vector<int> model_excitations =
-      sub.ModelExcitations(surf_flux_op.GetExcitations());
+  sub.ModelExcitations(surf_flux_op.GetExcitations());
   mfem::DenseMatrix loop_fluxoid;
   {
     CurlCurlOperator &curlcurl_op = sub.GetCurlCurlOperator();
@@ -180,11 +182,9 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
       Vector a_ex(curlcurl_op.GetSolutionNDSpace().GetTrueVSize());
       a_ex.UseDevice(true);
       a_ex = 0.0;
-      const bool from_model =
-          std::ranges::find(model_excitations, idx) != model_excitations.end();
       for (int loop : loops)
       {
-        if (on_mesh.contains(loop) && !from_model)
+        if (on_mesh.contains(loop))
         {
           curlcurl_op.GetFluxExcitationVector(loop, RHS, &boundary_values);
           a_ex += boundary_values;

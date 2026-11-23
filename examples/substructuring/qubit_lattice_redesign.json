@@ -380,8 +380,7 @@
           11
         ]
       },
-      "Mode": "Online",
-      "ModelFile": "postpro/qubit_lattice_environment.model"
+      "ModelFile": "postpro/qubit_lattice_offline/environment.model"
     }
   }
 }

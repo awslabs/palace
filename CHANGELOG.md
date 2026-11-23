@@ -405,6 +405,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     power-normalized port, such as an impressed current. Their port overlaps are not
     S-parameters, and a fresh run removes the S-parameter CSVs of an earlier run.
     [PR 937](https://github.com/awslabs/palace/pull/937).
+  - Fixed sparse direct solves with `config["Solver"]["Linear"]["ComplexCoarseSolve"]`
+    which could crash, hang, or return NaN when a process owns no unknowns of the solve: in
+    `BoundaryMode` and wave port mode solves, and on the coarsest multigrid level with the
+    solvers which factor the real-valued system of twice the size.
+    [PR 1206](https://github.com/awslabs/palace/pull/1206).
   - Fixed slow and failing linear solves with the second-order absorbing boundary condition
     (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
     is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
@@ -677,6 +682,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed probe postprocessing aborting with "invalid host pointer access" in Debug builds
     on GPUs, and with MFEM's debug device.
     [PR 1042](https://github.com/awslabs/palace/pull/1042).
+  - Added an MFEM patch for [mfem/mfem#5780](https://github.com/mfem/mfem/pull/5780),
+    which fixes the unit tests on MFEM's debug device that could segfault at random in the
+    AMS setup, as seen on 2 processes: with hypre built without GPU support, the debug
+    device could protect a heap page of hypre with unrelated data on it.
+    [PR 1266](https://github.com/awslabs/palace/pull/1266).
 
 #### Documentation
 

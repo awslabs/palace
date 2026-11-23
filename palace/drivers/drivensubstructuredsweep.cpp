@@ -17,6 +17,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/interpolator.hpp"
 #include "fem/substructure.hpp"
+#include "fem/substructuremodel.hpp"
 #include "linalg/vector.hpp"
 #include "models/drivensubstructure.hpp"
 #include "models/environmentoperator.hpp"
@@ -143,7 +144,7 @@ private:
   const std::vector<double> &omega_sample;
   const config::SubstructuringData &sub;
   const bool adaptive;
-  const std::string &model_path;
+  const std::string model_path;
   const bool save;
   MPI_Comm comm;
   const bool root;
@@ -203,8 +204,9 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
                                                    bool adaptive_sweep)
   : iodata(iodata), space_op(space_op), port_excitations(space_op.GetPortExcitations()),
     omega_sample(iodata.solver.driven.sample_f), sub(*iodata.solver.substructuring),
-    adaptive(adaptive_sweep), model_path(sub.model_file), save(!model_path.empty()),
-    comm(space_op.GetComm()), root(Mpi::Root(comm)), Curl(space_op.GetCurlMatrix()),
+    adaptive(adaptive_sweep), model_path(substructuring::SaveModelPath(iodata)),
+    save(!model_path.empty()), comm(space_op.GetComm()), root(Mpi::Root(comm)),
+    Curl(space_op.GetCurlMatrix()),
     unit_GHz(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
              (2 * std::numbers::pi)),
     nt(static_cast<int>(Curl.Width()))

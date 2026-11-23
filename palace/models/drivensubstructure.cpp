@@ -1487,13 +1487,14 @@ void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record
 void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
 {
   const auto file = ModelFile::Read(path, comm);
-  MFEM_VERIFY(file.version > 0,
-              "Cannot read the driven substructuring model \""
-                  << path << "\" (run in \"Offline\" mode with \"ModelFile\" first)!");
+  MFEM_VERIFY(file.version > 0, "Cannot read the driven substructuring model \""
+                                    << path
+                                    << "\" (run offline first, without \"ModelFile\")!");
   auto incomplete = [&](bool ok)
   {
     MFEM_VERIFY(ok, "The saved substructuring model \""
-                        << path << "\" is incomplete: rerun in \"Offline\" mode!");
+                        << path
+                        << "\" is incomplete: rerun offline (without \"ModelFile\")!");
   };
   const auto *h = file.Find(kHeaderTag);
   incomplete(h);
@@ -1514,7 +1515,7 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
   MFEM_VERIFY(head[0] == kVersion, "The saved substructuring model \""
                                        << path
                                        << "\" was written by another version of Palace: "
-                                          "rerun in \"Offline\" mode!");
+                                          "rerun offline (without \"ModelFile\")!");
   at = 0;  // the version, then the whole head
   read(head, 8);
   std::vector<double> scalars;

@@ -52,6 +52,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
   {
     model.ReadHeader(model_path, comm);
     region_mesh = model.environment.CheckMesh(space_op.GetNDSpace().GetParMesh(),
+                                              *iodata.resolved_config,
                                               DrivenSubstructureModel::kEnvironmentTol);
     if (region_mesh)
     {

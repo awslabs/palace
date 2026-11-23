@@ -30,6 +30,7 @@
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/substructuringsolver.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -224,7 +225,8 @@ json Materials(const std::string &property)
 json Substructuring()
 {
   return {{"Region", {{"Attributes", kRegion}}},
-          {"Environment", {{"Attributes", kEnvironment}}}};
+          {"Environment", {{"Attributes", kEnvironment}}},
+          {"SaveModel", false}};
 }
 
 json ElectrostaticConfig(int order)
@@ -239,8 +241,8 @@ json ElectrostaticConfig(int order)
 }
 
 // Superconductor sheets: one-sided sheets crossing the interface and on it, and a
-// two-sided film crossing the interface.
-json MagnetostaticConfig(int order, bool sheets, bool film)
+// two-sided film crossing the interface; London domains: a domain on each side.
+json MagnetostaticConfig(int order, bool sheets, bool film, bool london = false)
 {
   json sc = json::array();
   if (sheets)
@@ -265,6 +267,17 @@ json MagnetostaticConfig(int order, bool sheets, bool film)
   {
     config["Boundaries"]["Superconductor"] = sc;
   }
+  if (london)
+  {
+    for (auto &material : config["Domains"]["Materials"])
+    {
+      const int a = material["Attributes"][0].get<int>();
+      if (a == kRegion.back() || a == kEnvironment.back())
+      {
+        material["LondonDepth"] = 0.5;
+      }
+    }
+  }
   return config;
 }
 
@@ -279,9 +292,10 @@ Vector RandomVector(int n, const mfem::Array<int> &zero, unsigned seed)
   {
     xx[i] = dist(gen);
   }
-  for (int i : zero)
+  const int *z = zero.HostRead();
+  for (int k = 0; k < zero.Size(); k++)
   {
-    xx[i] = 0.0;
+    xx[z[k]] = 0.0;
   }
   x.UseDevice(true);
   return x;
@@ -372,19 +386,35 @@ void CheckMagnetostatic(IoData &iodata, const std::vector<std::unique_ptr<Mesh>>
   REQUIRE(ss.GlobalTrueVSize() == nd_fespace.GlobalTrueVSize());
   const auto &mat_op = curlcurl_op.GetMaterialOp();
 
-  // The stiffness matrix of the regular solve (curl-curl and sheet terms), the curl-curl
-  // term alone (the energy operator), and the regularization eps M.
+  // The stiffness matrix of the regular solve (curl-curl, London and sheet terms), the
+  // volume terms alone (the energy operator), and the regularization eps M off the London
+  // domains.
   auto K = curlcurl_op.GetStiffnessMatrix();
+  const bool london = mat_op.HasLondonDepth();
   MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
                                          mat_op.GetCurlCurlInvPermeability());
+  MaterialPropertyCoefficient london_func(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetInvLondonDepth());
   BilinearForm kcc(nd_fespace);
   kcc.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+  if (london)
+  {
+    kcc.AddDomainIntegrator<VectorFEMassIntegrator>(london_func);
+  }
   ParOperator Kcc(kcc.Assemble(false), nd_fespace);
   std::vector<int> domain_attrs(kRegion);
   domain_attrs.insert(domain_attrs.end(), kEnvironment.begin(), kEnvironment.end());
+  mfem::DenseTensor muinv(mat_op.GetInvPermeability());
+  for (int i = 0; i < muinv.SizeK(); i++)
+  {
+    if (mat_op.GetInvLondonDepth()(i).MaxMaxNorm() > 0.0)
+    {
+      muinv(i) = 0.0;
+    }
+  }
   MaterialPropertyCoefficient eps_func(
-      mat_op.GetAttributeToMaterial(), mat_op.GetInvPermeability(),
-      (with_sheets ? kMagRegularizationSheets : kMagRegularization) *
+      mat_op.GetAttributeToMaterial(), muinv,
+      ((with_sheets || london) ? kMagRegularizationSheets : kMagRegularization) *
           RegularizationScale(static_cast<const mfem::ParMesh &>(nd_fespace.GetMesh())));
   eps_func.RestrictCoefficient(mat_op.GetCeedAttributes(domain_attrs));
   BilinearForm m(nd_fespace);
@@ -628,6 +658,19 @@ TEST_CASE("Substructured magnetostatic operators match CurlCurlOperator",
   CheckMagnetostatic(iodata, MakeMesh(MakeParitySerial(8, opt)), sheets || film);
 }
 
+TEST_CASE(
+    "Substructured magnetostatic operators match CurlCurlOperator with London domains",
+    "[substructure][Serial][Parallel][GPU]")
+{
+  // A London domain on each side, whose London mass is in the energy operator and lifts
+  // the regularization, with and without sheets.
+  const auto [order, sheets] =
+      GENERATE(table<int, bool>({{1, false}, {2, false}, {1, true}}));
+  CAPTURE(order, sheets);
+  IoData iodata(MagnetostaticConfig(order, sheets, false, true), false);
+  CheckMagnetostatic(iodata, MakeMesh(MakeParitySerial(8, {})), sheets);
+}
+
 TEST_CASE("Substructured third-order magnetostatic operators match CurlCurlOperator",
           "[substructure][Serial][Parallel][GPU][Long]")
 {
@@ -798,7 +841,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                                        {true, 1, true},
                                        {false, 1, true}}));
   CAPTURE(region_below, order, by_side);
-  const std::string model_path = (temp_dir / "sheet_side.model").string();
+  const std::string model_path = (temp_dir / "sheet_side" / "environment.model").string();
   auto make_config = [&](const std::string &mode)
   {
     json config = MagnetostaticConfig(order, true, false);
@@ -808,8 +851,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     auto &sub = config["Solver"]["Substructuring"];
     sub["Region"]["Attributes"] = region_below ? kRegion : kEnvironment;
     sub["Environment"]["Attributes"] = region_below ? kEnvironment : kRegion;
-    sub["Mode"] = mode;
-    sub["ModelFile"] = model_path;
+    test::SetModelRun(config, mode, model_path);
     return IoData(config, false);
   };
   // The energy of the surface current, and whether the environment was solved.
@@ -821,8 +863,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     SubstructuringSolver ss(iodata, mesh);
     ss.CondenseEnvironment();
     const double E = ss.MagnetostaticEnergyMatrix({1}, {J}, {}, {}, {}, nullptr)(0, 0);
-    CHECK(ss.EnvironmentFactored() ==
-          (iodata.solver.substructuring->mode == SubstructuringMode::OFFLINE));
+    CHECK(ss.EnvironmentFactored() == !iodata.solver.substructuring->Online());
     return E;
   };
   const ParityMesh opt{false, 0, true};
@@ -836,6 +877,62 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(E_off > 0.0);
   CHECK(std::abs(E_on - E_off) <= 1.0e-9 * E_off);
   CHECK(std::abs(E_region - E_off) <= 1.0e-9 * E_off);
+  // Refined in the region next to the sheet on Gamma, nonconformingly as by the adaptation
+  // of an online run, its faces split and keep their side.
+  mfem::Mesh refined = MakeParitySerial(8, opt);
+  refined.EnsureNCMesh(true);
+  mfem::Array<int> marked;
+  mfem::Vector c;
+  for (int e = 0; e < refined.GetNE(); e++)
+  {
+    refined.GetElementCenter(e, c);
+    if ((region_below ? (c(0) > 0.37 && c(0) < 0.5) : (c(0) > 0.5 && c(0) < 0.63)) &&
+        c(1) > 0.37 && c(1) < 0.63)
+    {
+      marked.Append(e);
+    }
+  }
+  refined.GeneralRefinement(marked, 1, 0);
+  const double E_refined = energy(make_config("Online"), std::move(refined));
+  CAPTURE(E_refined);
+  CHECK(std::abs(E_refined - E_off) <= 1.0e-2 * E_off);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Substructuring tells apart the copies of a crack across the interface",
+                 "[substructure][Serial][Parallel]")
+{
+  // A cracked boundary across the interface (the patch y = 1/4, of zero charge) doubles its
+  // interface DOFs, which a saved model matches by their positions: displaced as by
+  // default, the copies are told apart and an online run gives the capacitance of the
+  // offline one, and not displaced, the run is rejected.
+  const std::string mesh_path = (temp_dir / "cracked.mesh").string();
+  if (Mpi::Root(Mpi::World()))
+  {
+    MakeParitySerial(8, {}).Save(mesh_path);
+  }
+  Mpi::Barrier(Mpi::World());
+  const std::string model_path = (temp_dir / "cracked" / "environment.model").string();
+  auto capacitance = [&](const std::string &mode, double displacement)
+  {
+    json config = ElectrostaticConfig(1);
+    config["Model"] = {{"Mesh", mesh_path}, {"CrackDisplacementFactor", displacement}};
+    config["Boundaries"]["ZeroCharge"] = {{"Attributes", {kSheet}}};
+    test::SetModelRun(config, mode, model_path);
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, 2});
+  };
+  CHECK_THROWS_WITH(
+      capacitance("Offline", 0.0),
+      Catch::Matchers::ContainsSubstring("crosses the substructuring interface"));
+  const mfem::DenseMatrix C_off = capacitance("Offline", 1.0e-12);
+  mfem::DenseMatrix C_on = capacitance("Online", 1.0e-12);
+  C_on -= C_off;
+  CHECK(C_on.MaxMaxNorm() <= 1.0e-10 * C_off.MaxMaxNorm());
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -845,14 +942,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // Renumbering the region above the environment on the mesh of the region moves the sheet
   // faces on Gamma, which belong to the side of their neighbor with the lower attribute, to
   // the environment, which the online run does not assemble: the run is rejected.
-  const std::string model_path = (temp_dir / "sheet_moved.model").string();
+  const std::string model_path = (temp_dir / "sheet_moved" / "environment.model").string();
   constexpr int shift = 10;
   auto make_config = [&](const std::string &mode, bool renumbered)
   {
     json config = MagnetostaticConfig(1, true, false);
+    test::SetModelRun(config, mode, model_path);
     auto &sub = config["Solver"]["Substructuring"];
-    sub["Mode"] = mode;
-    sub["ModelFile"] = model_path;
     if (renumbered)
     {
       std::vector<int> region;
@@ -911,7 +1007,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // A model with a two-sided film crossing the interface on a nonconforming mesh, whose
   // coarse faces have several neighbors, is rejected before the condensation.
   json config = MagnetostaticConfig(1, false, true);
-  config["Solver"]["Substructuring"]["ModelFile"] = (temp_dir / "film_nc.model").string();
+  test::SetModelRun(config, "Offline",
+                    (temp_dir / "film_nc" / "environment.model").string());
   IoData iodata(config, false);
   auto mesh = MakeMesh(MakeParitySerial(8, {false, 0, false, true}));
   SubstructuringSolver ss(iodata, mesh);

@@ -18,5 +18,5 @@
     "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 1000,
       "EstimatorTol": 1e-12 },
     "Substructuring": { "Region": { "Attributes": [8] }, "Environment": { "Attributes": [1] },
-      "Mode": "Online", "ModelFile": "environment_mixed.model" } }
+      "ModelFile": "postpro/mixed/environment.model" } }
 }

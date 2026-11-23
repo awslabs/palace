@@ -22,6 +22,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "driver.hpp"
+#include "fem/substructuremodel.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
@@ -151,12 +152,18 @@ std::set<std::string> ExpectedDirectories(int max_its, const RegressionOptions &
   return expected;
 }
 
-std::set<std::string> ExpectedMetadataFiles(int max_its)
+std::set<std::string> ExpectedMetadataFiles(int max_its, const IoData &iodata)
 {
   std::set<std::string> expected{"palace.json"};
   for (int i = 1; i <= max_its; ++i)
   {
     expected.insert("iteration" + std::to_string(i) + "/palace.json");
+  }
+  // The model of an offline substructuring run, and the mesh of the region next to it (of a
+  // conforming mesh, as every offline case has).
+  if (!substructuring::SaveModelPath(iodata).empty())
+  {
+    expected.insert({"environment.model", "environment_region.mesh"});
   }
   return expected;
 }
@@ -164,7 +171,18 @@ std::set<std::string> ExpectedMetadataFiles(int max_its)
 nlohmann::json LoadConfigJson(const std::filesystem::path &config_path)
 {
   std::stringstream buffer = PreprocessFile(config_path.string().c_str());
-  return nlohmann::json::parse(buffer);
+  auto config = nlohmann::json::parse(buffer);
+#if !defined(MFEM_USE_GSLIB)
+  // Without GSLIB, there are no probes: a case leaves them out, and their outputs.
+  if (auto domains = config.find("Domains"); domains != config.end())
+  {
+    if (auto postpro = domains->find("Postprocessing"); postpro != domains->end())
+    {
+      postpro->erase("Probe");
+    }
+  }
+#endif
+  return config;
 }
 
 int GetMaxRefinementIterations(const nlohmann::json &config)
@@ -558,7 +576,11 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   {
     const std::set<std::string> skip_dirs{"paraview", "gridfunction"};
     FileListing got = ListRegressionFiles(postpro_path, skip_dirs);
-    const FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
+    FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
+#if !defined(MFEM_USE_GSLIB)
+    std::erase_if(want.csv_files, [](const std::string &rel)
+                  { return rel.find("probe-") != std::string::npos; });
+#endif
 
     // Drop intentionally-unstored outputs (large files no check consumes) from the live
     // listing so their absence in the reference tree is not flagged as a missing file,
@@ -580,7 +602,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
                   ExpectedDirectories(max_refinement_iterations, effective_opts));
     CheckSetEqual("regression CSV files", got.csv_files, want.csv_files);
     CheckSetEqual("regression metadata files", got.meta_files,
-                  ExpectedMetadataFiles(max_refinement_iterations));
+                  ExpectedMetadataFiles(max_refinement_iterations, iodata));
 
     for (const auto &rel : want.csv_files)
     {

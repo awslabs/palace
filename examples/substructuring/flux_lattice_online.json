@@ -408,8 +408,7 @@
           2
         ]
       },
-      "Mode": "Online",
-      "ModelFile": "postpro/flux_lattice_environment.model"
+      "ModelFile": "postpro/flux_lattice_offline/environment.model"
     }
   }
 }

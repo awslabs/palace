@@ -1668,6 +1668,46 @@ palace::test::CustomCheck TestOfflineRunReproduced(const std::string &offline,
   };
 }
 
+// The check, and that the fields of the online run saved as grid functions are those of the
+// offline run, on the same mesh and processes.
+palace::test::CustomCheck TestFieldsReproduced(const std::string &offline,
+                                               const std::vector<std::string> &fields,
+                                               const palace::test::CustomCheck &check)
+{
+  return [=](palace::Table &actual, palace::Table &reference,
+             const std::filesystem::path &actual_path)
+  {
+    check(actual, reference, actual_path);
+    const auto dir = actual_path.parent_path();
+    for (const auto &field : fields)
+    {
+      double diff = 0.0, scale = 0.0;
+      int ranks = 0;
+      for (;; ranks++)
+      {
+        std::string rank = std::to_string(ranks);
+        rank = std::string(6 - rank.size(), '0') + rank;
+        const auto on = dir / "gridfunction" / "magnetostatic",
+                   off = dir.parent_path() / offline / "gridfunction" / "magnetostatic";
+        if (!std::filesystem::is_regular_file(on / ("mesh." + rank)))
+        {
+          break;
+        }
+        mfem::Mesh mesh((on / ("mesh." + rank)).string().c_str());
+        std::ifstream on_file(on / (field + ".gf." + rank)),
+            off_file(off / (field + ".gf." + rank));
+        mfem::GridFunction x(&mesh, on_file), y(&mesh, off_file);
+        scale = std::max(scale, y.Normlinf());
+        y -= x;
+        diff = std::max(diff, y.Normlinf());
+      }
+      CAPTURE(field, ranks, diff, scale);
+      CHECK(ranks > 0);
+      CHECK(diff <= 1.0e-10 * scale);
+    }
+  };
+}
+
 // The check, and that the mesh of the region next to the model (in the staging directory)
 // lacks the boundary attributes left_out and holds those kept.
 palace::test::CustomCheck TestRegionMeshLeavesOut(const std::string &mesh,
@@ -2126,6 +2166,34 @@ TEST_CASE("parallel_plate_london_sheet", "[Serial][Parallel][GPU][Regression]")
                                   "parallel_plate_london_sheet.json", "london_sheet", opts);
 }
 
+// The line substructured, with the gaps and the middle slab in the region: the currents
+// close through the London slabs on both sides of the interface, and the energy of the
+// field leaves out their kinetic energy. The references are a regular simulation, solved to
+// a tight tolerance.
+TEST_CASE("substructuring_parallel_plate_london", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("parallel_plate_london",
+                                  "parallel_plate_london_substructuring.json",
+                                  "london_substructuring", opts);
+}
+
+// The same with the slabs in the environment, condensed without saving a model.
+TEST_CASE("substructuring_parallel_plate_london_unsaved",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("parallel_plate_london",
+                                  "parallel_plate_london_substructuring_unsaved.json",
+                                  "london_substructuring_unsaved", opts);
+}
+
 // Current-driven microstrip with PEC conductors (lambda -> 0 limit).
 TEST_CASE("microstrip_pec", "[Serial][Parallel][GPU][Regression]")
 {
@@ -2322,6 +2390,20 @@ TEST_CASE("substructuring_magnetostatic_current_london",
                                   opts);
 }
 
+// As above with the environment a London domain (λ = 2 μm), whose kinetic energy the
+// energy of the field leaves out, as the environment's excitation shows.
+TEST_CASE("substructuring_magnetostatic_current_london_domain",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_current_london_domain.json",
+                                  "current_london_domain", opts);
+}
+
 // Mixed surface-current and flux-loop extraction with substructuring on a small ring-disk
 // mesh: the region holds the ring terminal, and the ring's aperture crosses the interface.
 // The references are regular simulations of the same configurations.
@@ -2365,7 +2447,7 @@ TEST_CASE("substructuring_magnetostatic_two_films_region",
   opts.paraview_fields = false;  // Solver.Magnetostatic.Save = 0
   opts.setup_config = "magnetostatic_two_films.json";
   opts.custom_checks["terminal-M.csv"] =
-      TestRegionMeshLeavesOut("environment_two_films_region.mesh", {4, 5}, {2, 3},
+      TestRegionMeshLeavesOut("postpro/two_films/environment_region.mesh", {4, 5}, {2, 3},
                               TestOfflineRunReproduced("two_films", opts));
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_films_online_region.json",
@@ -2387,6 +2469,25 @@ TEST_CASE("substructuring_magnetostatic_two_films_online",
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_films_online.json", "two_films_online",
                                   opts);
+}
+
+// The same with the fields of both excitations saved: that of the flux loop of the
+// environment, whose excitation is the model's, has its own drive.
+TEST_CASE("substructuring_magnetostatic_two_films_fields",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;
+  opts.gridfunction_fields = true;  // Solver.Magnetostatic.Save = 2
+  opts.setup_config = "magnetostatic_two_films_fields.json";
+  opts.custom_checks["terminal-M.csv"] =
+      TestFieldsReproduced("two_films_fields", {"B_000001", "B_000002"},
+                           TestOfflineRunReproduced("two_films_fields", opts));
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_fields_online.json",
+                                  "two_films_fields_online", opts);
 }
 
 // The same with the flux of the loop of the environment changed: its excitation is then
@@ -2737,8 +2838,8 @@ TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regr
       std::ofstream(entry.path()) << header << "\n" << first << "\n" << row << "\n";
     }
     // The model: its first record and half of its second.
-    const auto model = dir / "environment_model.bin";
-    fs::copy_file(model, dir / "environment_model_full.bin");
+    const auto model = dir / "postpro" / "offline" / "environment.model";
+    fs::copy_file(model, dir / "environment_full.model");
     using palace::substructuring::ModelFile;
     std::vector<ModelFile::Record> records;
     for (const auto &r : ModelFile::Read(model.string(), MPI_COMM_SELF).records)
@@ -2760,8 +2861,8 @@ TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regr
     {
       return;
     }
-    const auto path = (dir / "environment_model.bin").string(),
-               full = (dir / "environment_model_full.bin").string();
+    const auto path = (dir / "postpro" / "offline" / "environment.model").string(),
+               full = (dir / "environment_full.model").string();
     DrivenSubstructureModel m, ref;
     m.ReadHeader(path, MPI_COMM_SELF);
     ref.ReadHeader(full, MPI_COMM_SELF);

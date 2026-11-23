@@ -68,6 +68,8 @@ public:
           iodata.solver.linear.ams_agglomeration_target, print)
   {
   }
+  HypreAmsSolver(const HypreAmsSolver &) = delete;
+  HypreAmsSolver &operator=(const HypreAmsSolver &) = delete;
   ~HypreAmsSolver() override;
 
   void SetOperator(const Operator &op) override;

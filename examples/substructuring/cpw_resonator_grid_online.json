@@ -165,8 +165,7 @@
           11
         ]
       },
-      "Mode": "Online",
-      "ModelFile": "postpro/cpw_resonator_grid_environment.model"
+      "ModelFile": "postpro/cpw_resonator_grid_offline/environment.model"
     }
   }
 }

@@ -1,12 +1,13 @@
 {
   "Problem": { "Type": "Electrostatic", "Output": "postpro/postpro_online_region" },
-  "Model": { "Mesh": "environment_postpro_region.mesh", "L0": 1.0 },
+  "Model": { "Mesh": "postpro/postpro/environment_region.mesh", "L0": 1.0 },
   "Domains": { "Materials": [
     { "Attributes": [1], "Permittivity": 1.0 },
     { "Attributes": [2], "Permittivity": 10.0 } ],
     "Postprocessing": { "Energy": [
       { "Index": 1, "Attributes": [1] },
-      { "Index": 2, "Attributes": [2] } ] } },
+      { "Index": 2, "Attributes": [2] } ],
+      "Probe": [ { "Index": 1, "Center": [0.3, 0.4, 0.45] } ] } },
   "Boundaries": { "Ground": { "Attributes": [3] }, "Terminal": [
     { "Index": 1, "Attributes": [1] },
     { "Index": 2, "Attributes": [2] } ],
@@ -20,5 +21,5 @@
       { "Index": 2, "Attributes": [3], "Thickness": 1.0e-3, "Permittivity": 4.0, "LossTan": 1.0e-3 } ] } },
   "Solver": { "Order": 2,
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
-      "Mode": "Online", "ModelFile": "environment_postpro.model" } }
+      "ModelFile": "postpro/postpro/environment.model" } }
 }
