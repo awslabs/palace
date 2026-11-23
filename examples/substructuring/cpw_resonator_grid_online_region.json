@@ -5,7 +5,7 @@
     "Output": "postpro/cpw_resonator_grid_online_region"
   },
   "Model": {
-    "Mesh": "postpro/cpw_resonator_grid_environment_region.mesh",
+    "Mesh": "postpro/cpw_resonator_grid_offline/environment_region.mesh",
     "L0": 1e-06
   },
   "Domains": {
@@ -165,8 +165,7 @@
           11
         ]
       },
-      "Mode": "Online",
-      "ModelFile": "postpro/cpw_resonator_grid_environment.model"
+      "ModelFile": "postpro/cpw_resonator_grid_offline/environment.model"
     }
   }
 }

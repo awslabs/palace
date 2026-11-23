@@ -383,9 +383,7 @@
         "Attributes": [
           2
         ]
-      },
-      "Mode": "Offline",
-      "ModelFile": "postpro/flux_sheet_environment.model"
+      }
     }
   }
 }

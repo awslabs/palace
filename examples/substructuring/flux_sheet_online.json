@@ -384,8 +384,7 @@
           2
         ]
       },
-      "Mode": "Online",
-      "ModelFile": "postpro/flux_sheet_environment.model"
+      "ModelFile": "postpro/flux_sheet_offline/environment.model"
     }
   }
 }

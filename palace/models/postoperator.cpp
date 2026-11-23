@@ -106,6 +106,27 @@ double ParticipationRatio(double energy, double total)
   return (total != 0.0) ? energy / total : 0.0;
 }
 
+// The domains in which the probes are found: those of the region where its field is known
+// there only (a substructured static solve, or a driven sweep against the environment of a
+// model), else all, as for a regular simulation (a driven sweep of the whole device).
+template <ProblemType solver_t>
+std::vector<int> ProbeDomains(const config::SolverData &solver,
+                              const fem_op_t<solver_t> &fem_op)
+{
+  if (!solver.substructuring)
+  {
+    return {};
+  }
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    if (!fem_op.GetEnvironment())
+    {
+      return {};
+    }
+  }
+  return solver.substructuring->region_attributes;
+}
+
 }  // namespace
 
 template <ProblemType solver_t>
@@ -155,8 +176,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
                  fem_op->GetH1Space(), fem_op->GetNDSpace(),
                  boundaries.GetSheetAttributes()),
     interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace(),
-              solver.substructuring ? solver.substructuring->region_attributes
-                                    : std::vector<int>{})
+              ProbeDomains<solver_t>(solver, fem_op_))
 {
   // Define primary grid-functions.
   if constexpr (HasVGridFunction<solver_t>())

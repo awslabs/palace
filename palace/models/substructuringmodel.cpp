@@ -298,8 +298,8 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   h.S_pos = S->pos;
   h.environment = *environment;
   values(kEpsTag, 1, &h.regularization);
-  h.sheet_sides.resize(4);
-  if (!values(kSheetSidesTag, 4, h.sheet_sides.data()))
+  h.sheet_sides.resize(6);
+  if (!values(kSheetSidesTag, 6, h.sheet_sides.data()))
   {
     h.sheet_sides.clear();
   }
@@ -696,8 +696,8 @@ void SubstructuringSolver::Impl::AppendFluxoids(const std::string &path,
 void SubstructuringSolver::Impl::CheckEnvFingerprint()
 {
   const std::array<double, kEnvFpSize> fp = EnvironmentFingerprint();  // collective
-  MFEM_VERIFY(have_env_fp, "The saved substructuring model has no environment "
-                           "fingerprint: rerun in \"Offline\" mode to condense it again!");
+  MFEM_VERIFY(have_env_fp, "The saved substructuring model has no environment fingerprint: "
+                           "rerun offline (without \"ModelFile\") to condense it again!");
   // The counts exactly, the energies relative to themselves.
   MFEM_VERIFY(FingerprintsMatch(fp, saved_env_fp, 2, kFingerprintTol), kEnvironmentDiffers);
 }
@@ -734,7 +734,8 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
   auto complete = [&](bool ok)
   {
     MFEM_VERIFY(ok, "The saved substructuring model \""
-                        << path << "\" is incomplete: rerun in \"Offline\" mode!");
+                        << path
+                        << "\" is incomplete: rerun offline (without \"ModelFile\")!");
   };
   {
     const std::vector<char> p = ModelFile::ReadPayload(path, *file.Find(kEnvFpTag), comm);
@@ -893,11 +894,11 @@ void SubstructuringSolver::EnvironmentFluxoids(const std::vector<int> &ids,
                   fluxoid.Width() == static_cast<int>(loop_ids.size()),
               "EnvironmentFluxoids: one row per excitation and one column per loop!");
   const auto &sub = *impl->iodata.solver.substructuring;
-  if (sub.mode != SubstructuringMode::ONLINE)
+  if (!sub.Online())
   {
-    if (!sub.model_file.empty())
+    if (const auto path = substructuring::SaveModelPath(impl->iodata); !path.empty())
     {
-      impl->AppendFluxoids(sub.model_file, ids, loop_ids, fluxoid);  // collective
+      impl->AppendFluxoids(path, ids, loop_ids, fluxoid);  // collective
     }
     return;
   }
@@ -939,7 +940,7 @@ void SubstructuringSolver::EnvironmentFluxoids(const std::vector<int> &ids,
   MFEM_VERIFY(ok, "The saved substructuring model \""
                       << sub.model_file
                       << "\" holds no fluxoids of the flux loops of its environment: rerun "
-                         "in \"Offline\" mode!");
+                         "offline (without \"ModelFile\")!");
   auto index = [](const std::vector<int> &v, int x)
   { return static_cast<int>(std::find(v.begin(), v.end(), x) - v.begin()); };
   for (int loop : impl->env_loops)
@@ -947,13 +948,15 @@ void SubstructuringSolver::EnvironmentFluxoids(const std::vector<int> &ids,
     const int j = index(loop_ids, loop), q = index(saved_loops, loop);
     MFEM_VERIFY(j < static_cast<int>(loop_ids.size()) && q < KL[1],
                 "Flux loop " << loop << " of the environment of the saved substructuring "
-                             << "model is not in its fluxoids: rerun in \"Offline\" mode!");
+                             << "model is not in its fluxoids: rerun offline (without "
+                                "\"ModelFile\")!");
     for (std::size_t k = 0; k < ids.size(); k++)
     {
       const int row = index(saved_ids, ids[k]);
       MFEM_VERIFY(row < KL[0], "Flux loop excitation "
                                    << ids[k] << " is not in the fluxoids of the saved "
-                                   << "substructuring model: rerun in \"Offline\" mode!");
+                                   << "substructuring model: rerun offline (without "
+                                      "\"ModelFile\")!");
       fluxoid(static_cast<int>(k), j) = values[static_cast<std::size_t>(row) * KL[1] + q];
     }
   }

@@ -39,18 +39,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     GPUs, with the factorizations on the CPU. Offline, the partial factorization of MUMPS
     or, without it, of STRUMPACK gives the condensed environment (SuperLU_DIST, whose
     condensation goes wrong through a resonance, is not used offline). An offline exact
-    sweep factors the region with the condensed environment as one system, by STRUMPACK,
-    MUMPS or SuperLU_DIST; online and adaptive sweeps solve it by GMRES, preconditioned by
+    sweep factors the region with the condensed environment as one system, by STRUMPACK or
+    MUMPS; online and adaptive sweeps solve it by FGMRES, preconditioned by
     its Schur complement onto the interface with the condensed environment added, factored
     as a dense matrix across the processes (ScaLAPACK). A sparse direct solver that
     `config["Solver"]["Linear"]["Type"]` names factors both instead. Adds a driven example
-    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 6-1-1.
+    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 6-2-0.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - Substructuring offline runs also write the interface as a Gmsh mesh of its faces
-    (`<model>_interface.msh`), for meshing a redesigned region against it, and online runs
-    take a mesh of the region alone, adding the environment elements of the model's mesh of
-    the region. An interface which differs from the model's is rejected at a point where it
-    does. [PR 1275](https://github.com/awslabs/palace/pull/1275).
+    (`environment_interface.msh`), for meshing a redesigned region against it, and online
+    runs take a mesh of the region alone, adding the environment elements of the model's
+    mesh of the region. An interface which differs from the model's is rejected at a point
+    where it does. [PR 1275](https://github.com/awslabs/palace/pull/1275).
   - `validate-config` accepts several configuration files and validates them in one Julia
     session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
@@ -410,6 +410,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     power-normalized port, such as an impressed current. Their port overlaps are not
     S-parameters, and a fresh run removes the S-parameter CSVs of an earlier run.
     [PR 937](https://github.com/awslabs/palace/pull/937).
+  - Fixed sparse direct solves with `config["Solver"]["Linear"]["ComplexCoarseSolve"]`
+    which could crash, hang, or return NaN when a process owns no unknowns of the solve: in
+    `BoundaryMode` and wave port mode solves, and on the coarsest multigrid level with the
+    solvers which factor the real-valued system of twice the size.
+    [PR 1206](https://github.com/awslabs/palace/pull/1206).
   - Fixed slow and failing linear solves with the second-order absorbing boundary condition
     (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
     is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
@@ -682,6 +687,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed probe postprocessing aborting with "invalid host pointer access" in Debug builds
     on GPUs, and with MFEM's debug device.
     [PR 1042](https://github.com/awslabs/palace/pull/1042).
+  - Added an MFEM patch for [mfem/mfem#5780](https://github.com/mfem/mfem/pull/5780),
+    which fixes the unit tests on MFEM's debug device that could segfault at random in the
+    AMS setup, as seen on 2 processes: with hypre built without GPU support, the debug
+    device could protect a heap page of hypre with unrelated data on it.
+    [PR 1266](https://github.com/awslabs/palace/pull/1266).
 
 #### Documentation
 
@@ -733,8 +743,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (Nédélec of order 2 and above, H1 of order 4 and above) were wrong across processes, and
     so were the region error indicators of substructuring.
     [PR 995](https://github.com/awslabs/palace/pull/995).
-  - Builds with MUMPS now also need its complex double precision library (ZMUMPS), used by
-    driven substructuring; the superbuild and the Spack recipe build it.
+  - Builds with MUMPS or STRUMPACK now link *Palace* itself with their ScaLAPACK (and its
+    BLACS), which factors the dense interface system of driven substructuring.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - The superbuild's sub-makes (the unit tests, GSLIB, LIBXSMM, libCEED, SLEPc, and MFEM's
     test step) now inherit the make jobserver, so GNU make 4.3 and later build them in

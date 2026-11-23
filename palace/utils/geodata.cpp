@@ -3051,8 +3051,7 @@ namespace
 void AddModelCollar(std::unique_ptr<mfem::Mesh> &mesh, const IoData &iodata)
 {
   const auto &sub = iodata.solver.substructuring;
-  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->model_file.empty() ||
-      !RegionElementsOnly(*mesh, sub->region_attributes))
+  if (!sub || !sub->Online() || !RegionElementsOnly(*mesh, sub->region_attributes))
   {
     return;
   }

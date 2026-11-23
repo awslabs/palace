@@ -5,16 +5,28 @@
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <limits>
 #include <stdexcept>
 #include <fmt/format.h>
 #include "utils/communication.hpp"
+#include "utils/iodata.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/outputfile.hpp"
 
 namespace palace::substructuring
 {
+
+std::string SaveModelPath(const IoData &iodata)
+{
+  const auto &sub = iodata.solver.substructuring;
+  if (!sub || sub->Online() || !sub->save_model)
+  {
+    return {};
+  }
+  return (std::filesystem::path(iodata.problem.output) / "environment.model").string();
+}
 
 namespace
 {
@@ -115,7 +127,7 @@ void ModelFile::Create(const std::string &path, MPI_Comm comm)
   ApplyOnRootFilesystem(comm, fmt::format("Writing the substructuring model \"{}\"", path),
                         [&]()
                         {
-                          internal::WriteFile(
+                          internal::ReplaceFile(
                               path,
                               [](std::ostream &f)
                               {

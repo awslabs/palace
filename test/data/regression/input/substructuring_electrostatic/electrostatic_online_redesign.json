@@ -1,6 +1,6 @@
 {
   "Problem": { "Type": "Electrostatic", "Output": "postpro/online_region" },
-  "Model": { "Mesh": "environment_model_redesign.mesh", "L0": 1.0 },
+  "Model": { "Mesh": "region_redesign.mesh", "L0": 1.0 },
   "Domains": { "Materials": [
     { "Attributes": [1], "Permittivity": 1.0 },
     { "Attributes": [2], "Permittivity": 10.0 } ] },
@@ -9,5 +9,5 @@
     { "Index": 2, "Attributes": [2] } ] },
   "Solver": { "Order": 2,
     "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] },
-      "Mode": "Online", "ModelFile": "environment_model.bin" } }
+      "ModelFile": "postpro/base/environment.model" } }
 }

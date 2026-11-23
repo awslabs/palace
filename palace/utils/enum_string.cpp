@@ -112,9 +112,6 @@ PALACE_ENUM_STRING_DEFINE(MultigridCoarsening,
                           {{MultigridCoarsening::LINEAR, "Linear"},
                            {MultigridCoarsening::LOGARITHMIC, "Logarithmic"}})
 
-PALACE_ENUM_STRING_DEFINE(SubstructuringMode, {{SubstructuringMode::OFFLINE, "Offline"},
-                                               {SubstructuringMode::ONLINE, "Online"}})
-
 PALACE_ENUM_STRING_DEFINE(PreconditionerSide, {{PreconditionerSide::DEFAULT, "Default"},
                                                {PreconditionerSide::RIGHT, "Right"},
                                                {PreconditionerSide::LEFT, "Left"}})

@@ -232,6 +232,14 @@ std::vector<std::array<double, 6>> AttributeMoments(mfem::ParMesh &mesh,
                                                     const std::vector<int> &attributes,
                                                     const std::vector<char> &mark = {});
 
+// Add an element of volume (or area) v and center c to moments of AttributeMoments.
+void AddMoments(std::array<double, 6> &m, double v, const mfem::Vector &c);
+
+// Whether two moments of AttributeMoments agree within the relative tolerance in what a
+// refinement of their elements keeps: their volumes and first moments.
+bool RefinedMomentsMatch(const std::array<double, 6> &a, const std::array<double, 6> &b,
+                         double tol);
+
 // The boundary attributes of the boundary elements next to an element with one of the given
 // domain attributes (on either side, for an interior boundary), sorted. Collective.
 std::vector<int> BoundaryAttributesNextTo(mfem::ParMesh &mesh,
@@ -246,15 +254,17 @@ BoundaryAttributeMoments(mfem::ParMesh &mesh, const std::vector<int> &bdr_attrib
                          const std::vector<int> &attributes);
 
 // A hash of the configuration of a substructured problem on its environment: the problem
-// type, the order and quadrature of the solver, the cracking of the mesh, and the entries
-// of the materials on the given domain attributes and of the boundaries (but
-// postprocessing) on the given boundary attributes, which are the entries listing one of
-// them (in a list whose key ends in "Attributes", also in their "Elements", and in groups
-// of entries), with these lists cut to them. Lists and entries are sorted, so that their
-// order in the configuration does not matter. Without the excitations, which are matched to
-// the modes of a model by their own fingerprints, the hash leaves out the indices of the
-// entries and the sources (surface currents and flux loops): it is the configuration the
-// operator of the environment depends on.
+// type, the length unit, the order and quadrature of the solver, the cracking of the mesh,
+// and the entries of the materials on the given domain attributes and of the boundaries
+// (but postprocessing) on the given boundary attributes, which are the entries listing one
+// of them (in a list whose key ends in "Attributes", also in their "Elements", and in
+// groups of entries), with these lists cut to them. The entries are taken as parsed where
+// they can be written in several ways (the tensors of the materials, the numbers, and the
+// aliases of "PEC" and "PMC"), and lists and entries are sorted, so that their order in the
+// configuration does not matter. Without the excitations, which are matched to the modes of
+// a model by their own fingerprints, the hash leaves out the indices of the entries and the
+// sources (surface currents and flux loops): it is the configuration the operator of the
+// environment depends on.
 std::uint64_t EnvironmentConfigHash(const nlohmann::json &config,
                                     const std::vector<int> &attributes,
                                     const std::vector<int> &bdr_attributes,
@@ -265,14 +275,14 @@ std::uint64_t EnvironmentConfigHash(const nlohmann::json &config,
 inline constexpr const char *kEnvironmentDiffers =
     "The environment differs from the one the saved substructuring model was condensed "
     "from (environment mesh, materials, boundary conditions, order or problem type "
-    "changed): rerun in \"Offline\" mode to condense it again!";
+    "changed): rerun offline (without \"ModelFile\") to condense it again!";
 inline constexpr const char *kEnvironmentMeshDiffers =
     "The environment differs from the one the saved substructuring model was condensed "
-    "from: its mesh changed. Rerun in \"Offline\" mode to condense it again!";
+    "from: its mesh changed. Rerun offline (without \"ModelFile\") to condense it again!";
 inline constexpr const char *kEnvironmentConfigDiffers =
     "The environment differs from the one the saved substructuring model was condensed "
     "from: its attributes, materials, boundary conditions or discretization changed. Rerun "
-    "in \"Offline\" mode to condense it again!";
+    "offline (without \"ModelFile\") to condense it again!";
 
 // The message of excitations of the environment which differ from those of a saved
 // substructuring model, on the mesh of the region (the full mesh computes their modes).
@@ -306,10 +316,11 @@ struct EnvironmentRecord
   static std::optional<EnvironmentRecord> Deserialize(const std::vector<char> &bytes);
 
   // Online, check that the mesh holds the environment within the relative tolerance of the
-  // moments: all its elements and their boundaries, or the elements written in the mesh of
+  // moments: all its elements and their boundaries (those the configuration names by their
+  // attributes, the others in the order of theirs), or the elements written in the mesh of
   // the region (that mesh, or a re-meshing of its region, which is not refined again).
   // Returns whether it is the mesh of the region. Collective.
-  bool CheckMesh(mfem::ParMesh &mesh, double tol) const;
+  bool CheckMesh(mfem::ParMesh &mesh, const nlohmann::json &config, double tol) const;
 
   // Online, check that the environment attributes of the run are those of the record (on
   // the mesh of the region, some of them), and that the configuration on it is unchanged.

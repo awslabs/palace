@@ -187,7 +187,7 @@ SubstructuringSolver::Impl::ReadOnlineHead(const IoData &iodata, bool magnetosta
                                            MPI_Comm comm)
 {
   const auto &sub = iodata.solver.substructuring;
-  if (!sub || sub->mode != SubstructuringMode::ONLINE || sub->model_file.empty())
+  if (!sub || !sub->Online())
   {
     return {};
   }
@@ -198,18 +198,20 @@ SubstructuringSolver::Impl::ReadOnlineHead(const IoData &iodata, bool magnetosta
     saved = ReadSavedHead(model, comm);
   }
   MFEM_VERIFY(saved.version >= 0, "Cannot read the saved substructuring model \""
-                                      << model << "\" (run in \"Offline\" mode first)!");
+                                      << model
+                                      << "\" (run offline first, without \"ModelFile\")!");
   MFEM_VERIFY(saved.version > 0, "\"" << model
                                       << "\" is not a saved substructuring model: run "
-                                         "in \"Offline\" mode to write one!");
+                                         "offline (without \"ModelFile\") to write one!");
   MFEM_VERIFY(saved.version == kModelVersion,
               "The saved substructuring model \""
                   << model
-                  << "\" was written by another version of Palace: rerun in "
-                     "\"Offline\" mode!");
+                  << "\" was written by another version of Palace: rerun offline "
+                     "(without \"ModelFile\")!");
   MFEM_VERIFY(saved.width > 0, "The saved substructuring model \""
                                    << model
-                                   << "\" is incomplete: rerun in \"Offline\" mode!");
+                                   << "\" is incomplete: rerun offline (without "
+                                      "\"ModelFile\")!");
   MFEM_VERIFY((saved.sig_type == 1) != magnetostatic,
               "The saved substructuring model \""
                   << model << "\" is "
@@ -227,7 +229,8 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   : iodata(iodata), mesh(*mesh_.back()), parent(mesh.Get()),
     magnetostatic(iodata.problem.type == ProblemType::MAGNETOSTATIC),
     saved(ReadOnlineHead(iodata, magnetostatic, parent.GetComm())),
-    region_only(saved.width > 0 && saved.environment.CheckMesh(parent, kFingerprintTol)),
+    region_only(saved.width > 0 && saved.environment.CheckMesh(
+                                       parent, *iodata.resolved_config, kFingerprintTol)),
     laplace_op(magnetostatic ? nullptr : MakeLaplaceOperator(iodata, mesh_, region_only)),
     curlcurl_op(magnetostatic ? MakeCurlCurlOperator(iodata, mesh_, region_only) : nullptr),
     parent_space(magnetostatic ? curlcurl_op->GetNDSpace() : laplace_op->GetH1Space()),
@@ -251,9 +254,28 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
               "The substructuring \"Region\" holds every domain attribute of the mesh: the "
               "environment is empty!");
   CheckSubstructuringAttributes(parent, sub.region_attributes, env_attributes);
+  // A cracked boundary across the interface doubles its DOFs there, which are matched to a
+  // saved model by their positions (see MatchSignatureBasis): its copies must be apart.
+  if (iodata.model.crack_displ_factor == 0.0 &&
+      (sub.Online() || !substructuring::SaveModelPath(iodata).empty()))
+  {
+    const auto region_bdr = BoundaryAttributesNextTo(parent, sub.region_attributes),
+               env_bdr = BoundaryAttributesNextTo(parent, env_attributes);
+    for (int a : iodata.boundaries.cracked_attributes)
+    {
+      MFEM_VERIFY(!std::ranges::binary_search(region_bdr, a) ||
+                      !std::ranges::binary_search(env_bdr, a),
+                  "Cracked boundary attribute "
+                      << a
+                      << " crosses the substructuring interface, whose DOFs a saved model "
+                         "matches by their positions: its copies there need a positive "
+                         "\"CrackDisplacementFactor\"!");
+    }
+  }
   if (magnetostatic)
   {
     SetUpBrokenSpace();
+    has_london = curlcurl_op->GetMaterialOp().HasLondonDepth();
   }
   nt = SolutionSpace().GetTrueVSize();
   for (int a : sub.region_attributes)
@@ -284,6 +306,11 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
       ess_bdr = 0;
       for (int a : term.attributes)
       {
+        // On the mesh of the region, those of the environment are not in the mesh.
+        MFEM_VERIFY(parent.bdr_attributes.Find(a) >= 0 ||
+                        (region_only &&
+                         std::ranges::binary_search(saved.environment.bdr_attributes, a)),
+                    "Unknown terminal boundary attribute " << a << "!");
         if (a >= 1 && a <= maxb)
         {
           ess_bdr[a - 1] = 1;
@@ -417,16 +444,14 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     CheckSheets();
     if (!saved.sheet_sides.empty())
     {
-      bool same = std::abs(gamma_sheet_sides[0] - saved.sheet_sides[0]) < 0.5;
-      for (int j = 1; j < 4; j++)
-      {
-        same = same && std::abs(gamma_sheet_sides[j] - saved.sheet_sides[j]) <=
-                           kFingerprintTol * std::max(1.0, saved.sheet_sides[0]);
-      }
-      MFEM_VERIFY(same, "The sheet faces on the interface are not on the same sides as in "
-                        "the saved substructuring model: a face belongs to the side of its "
-                        "neighbor with the lower attribute, and the attributes next to the "
-                        "interface changed. Keep them, or rerun in \"Offline\" mode!");
+      std::array<double, 6> sides;
+      std::ranges::copy(saved.sheet_sides, sides.begin());
+      MFEM_VERIFY(RefinedMomentsMatch(gamma_sheet_sides, sides, kFingerprintTol),
+                  "The sheet faces on the interface are not on the same sides as in "
+                  "the saved substructuring model: a face belongs to the side of its "
+                  "neighbor with the lower attribute, and the attributes next to the "
+                  "interface changed. Keep them, or rerun offline (without "
+                  "\"ModelFile\")!");
     }
     mag_eps = model_eps;
     if (!(mag_eps > 0.0))
@@ -435,7 +460,9 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
       mesh::GetAxisAlignedBoundingBox(parent, bbmin, bbmax);
       bbmax -= bbmin;
       const double L = bbmax.Max();
-      mag_eps = (has_sheets ? kMagRegularizationSheets : kMagRegularization) / (L * L);
+      mag_eps =
+          ((has_sheets || has_london) ? kMagRegularizationSheets : kMagRegularization) /
+          (L * L);
     }
   }
   AssembleRegion();
@@ -515,19 +542,24 @@ void SubstructuringSolver::Impl::SetUpClosure()
   }
   closure_G_abs = AbsRows(*G, {});
 
-  // The conductor DOFs of the ND space: those of the PEC boundaries and of the sheets (the
-  // rows of the sheet mass on both sides with a nonzero diagonal), and the connected
-  // conductors: the components of the graph of |G_C|^T |G_C|, G_C the rows of G on them.
+  // The conductor DOFs of the ND space: those of the PEC boundaries, of the sheets and of
+  // the London domains (the rows of the sheet and London masses with a nonzero diagonal),
+  // and the connected conductors: the components of the graph of |G_C|^T |G_C|, G_C the
+  // rows of G on them.
   const int n = SolutionSpace().GetTrueVSize();
   std::vector<bool> on(n, false);
   for (int t : dbc_tdofs)
   {
     on[t] = true;
   }
-  if (has_sheets)
+  for (const auto *M : {has_sheets ? &Msheet() : nullptr, Mlondon()})
   {
+    if (!M)
+    {
+      continue;
+    }
     Vector d;
-    Msheet().GetDiag(d);
+    M->GetDiag(d);
     const double *h_d = d.HostRead();
     for (int t = 0; t < n; t++)
     {
@@ -794,8 +826,9 @@ void SubstructuringSolver::CondenseEnvironment()
   // Online with a saved model: load S_E (and the model's sections); otherwise materialize
   // S_E, and save it when a path is set.
   const auto &subcfg = *impl->iodata.solver.substructuring;
-  const bool online = (subcfg.mode == SubstructuringMode::ONLINE);
-  const std::string &model_path = subcfg.model_file;
+  const bool online = subcfg.Online();
+  const std::string model_path =
+      online ? subcfg.model_file : substructuring::SaveModelPath(impl->iodata);
   if (!online && !model_path.empty())
   {
     // Fail before the condensation if the model cannot be written (an existing one is
@@ -808,7 +841,8 @@ void SubstructuringSolver::CondenseEnvironment()
   MFEM_VERIFY(
       model_path.empty() || !impl->InterfaceSplit() || !impl->parent.Nonconforming(),
       "A saved substructuring model with \"TwoSided\" superconductor films crossing "
-      "the interface needs a conforming mesh!");
+      "the interface needs a conforming mesh"
+          << (online ? "!" : " (with \"SaveModel\": false, no model is saved)!"));
   bool loaded = false;
   if (online && !model_path.empty())
   {
@@ -1219,6 +1253,8 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     }
     const std::vector<Vector> u = SolveSourceBatch(b);
     std::vector<Vector> d(u), Md(n, Vector(nt));
+    std::vector<double> london(n, 0.0);
+    Vector Ld(nt);
     for (int j = 0; j < n; j++)
     {
       if (src[j].HasA())
@@ -1229,6 +1265,11 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       if (impl->has_sheets)
       {
         impl->Msheet().Mult(d[j], Md[j]);
+      }
+      if (const auto *L = kinetic ? impl->Mlondon() : nullptr)
+      {
+        L->Mult(d[j], Ld);
+        london[j] = d[j] * Ld;
       }
     }
     // The kinetic and current terms, the source works b_k^T u_k and the functionals,
@@ -1247,7 +1288,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       {
         loc[nn + n + l * n + i] = *fun->l[l] * u[i];
       }
-      loc[nk + i] = d[i] * Md[i];
+      loc[nk + i] = (d[i] * Md[i]) + london[i];
     }
     MPI_Allreduce(MPI_IN_PLACE, loc.data(), static_cast<int>(loc.size()), MPI_DOUBLE,
                   MPI_SUM, comm);
@@ -1309,10 +1350,9 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       }
     }
     impl->ComputeSourceModes(req_ids, req_src);
-    const auto &subcfg = *impl->iodata.solver.substructuring;
-    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.model_file.empty())
+    if (const auto path = substructuring::SaveModelPath(impl->iodata); !path.empty())
     {
-      impl->AppendSourceModes(subcfg.model_file);
+      impl->AppendSourceModes(path);
     }
   }
   const int K = static_cast<int>(impl->src_ids.size());
@@ -1381,9 +1421,11 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   }
 
   // Per source, on the region elements' DOFs: u_j, K_R u_j, d_j = u_j - a_j, M_sheet^R d_j
-  // and the region part of J_j; on Gamma: u_j and S^K u_j. Full fields only for the saved
-  // ones (and all of them for region_fields).
+  // and the region part of J_j; on Gamma: u_j and S^K u_j; and the London kinetic energy
+  // d_j^T M_London^R d_j. Full fields only for the saved ones (and all of them for
+  // region_fields).
   std::vector<Vector> uc(n), Kuc(n), dc(n), Mdc(n), Jc(n), ug(n), Sug(n);
+  std::vector<double> london(n, 0.0);
   if (fields)
   {
     fields->clear();
@@ -1393,7 +1435,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
     region_fields->clear();
   }
   {
-    Vector Ku(nt), Su(nt), d(nt), Md(nt), JR(nt);
+    Vector Ku(nt), Su(nt), d(nt), Md(nt), Ld(nt), JR(nt);
     for (int j = 0; j < n; j++)
     {
       Vector u = impl->RegionField(x[j]);
@@ -1409,6 +1451,11 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
       if (impl->M_sheet_region)
       {
         impl->M_sheet_region->Mult(d, Md);
+      }
+      if (kinetic && impl->M_london_region)
+      {
+        impl->M_london_region->Mult(d, Ld);
+        london[j] = d * Ld;
       }
       JR = 0.0;
       if (src[j].HasJ())
@@ -1482,14 +1529,14 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   }
   if (kinetic)
   {
-    // (u_k - a_k)^T M_sheet^R (u_k - a_k) in the region, and in the environment u_k,G^T
+    // (u_k - a_k)^T M_kin^R (u_k - a_k) in the region, and in the environment u_k,G^T
     // S^Kin u_k,G + 2 u_k,G^T h^kin_k + c^kin_kk.
     kinetic->assign(n, 0.0);
     Vector u(nt), Qu(nt), Qug;
     u = 0.0;
     for (int k = 0; k < n; k++)
     {
-      double e = dc[k] * Mdc[k];
+      double e = (dc[k] * Mdc[k]) + london[k];
       if (impl->mat_dtn_Kin)
       {
         u.SetSubVector(gm, ug[k]);  // S^Kin reads the interface entries only
@@ -1568,10 +1615,9 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
       }
     }
     impl->ComputeModes(req_ids, req_lifts);
-    const auto &subcfg = *impl->iodata.solver.substructuring;
-    if (subcfg.mode != SubstructuringMode::ONLINE && !subcfg.model_file.empty())
+    if (const auto path = substructuring::SaveModelPath(impl->iodata); !path.empty())
     {
-      impl->AppendModes(subcfg.model_file);
+      impl->AppendModes(path);
     }
   }
   const int K = static_cast<int>(impl->mode_ids.size());

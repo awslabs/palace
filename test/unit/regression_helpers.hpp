@@ -35,7 +35,9 @@ enum class SolverOverridePolicy
   // Empty global means "no override; honour the case JSON".
   UseGlobalOverride,
   // Ignore the global and inject "Default" for this case.
-  ForceDefault
+  ForceDefault,
+  // Ignore the global and honour the case JSON.
+  KeepCase
 };
 
 // Options controlling a single regression case.

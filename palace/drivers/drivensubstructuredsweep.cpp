@@ -17,6 +17,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/interpolator.hpp"
 #include "fem/substructure.hpp"
+#include "fem/substructuremodel.hpp"
 #include "linalg/vector.hpp"
 #include "models/drivensubstructure.hpp"
 #include "models/environmentoperator.hpp"
@@ -101,7 +102,7 @@ ComplexVector VoltageFunctional(SpaceOperator &space_op, int idx,
     e = 0.0;
     if (own)
     {
-      e(static_cast<int>(i)) = 1.0;
+      e.HostReadWrite()[static_cast<int>(i)] = 1.0;
     }
     E.Real().SetFromTrueDofs(e);
     const std::complex<double> V = port.GetVoltage(E);
@@ -143,7 +144,7 @@ private:
   const std::vector<double> &omega_sample;
   const config::SubstructuringData &sub;
   const bool adaptive;
-  const std::string &model_path;
+  const std::string model_path;
   const bool save;
   MPI_Comm comm;
   const bool root;
@@ -158,7 +159,7 @@ private:
   std::vector<const ComplexVector *> rhs_ptr;
   // The lumped ports of the environment (for a model).
   std::map<int, std::vector<char>> port_dofs;
-  std::vector<int> env_ports;
+  std::vector<int> env_ports, env_port_attributes;
   // A restart continues the sweep in its order, all excitations at a frequency before the
   // next one: "Restart" - 1 results are written.
   std::size_t first_freq = 0, first_ex = 0;
@@ -203,8 +204,9 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
                                                    bool adaptive_sweep)
   : iodata(iodata), space_op(space_op), port_excitations(space_op.GetPortExcitations()),
     omega_sample(iodata.solver.driven.sample_f), sub(*iodata.solver.substructuring),
-    adaptive(adaptive_sweep), model_path(sub.model_file), save(!model_path.empty()),
-    comm(space_op.GetComm()), root(Mpi::Root(comm)), Curl(space_op.GetCurlMatrix()),
+    adaptive(adaptive_sweep), model_path(substructuring::SaveModelPath(iodata)),
+    save(!model_path.empty()), comm(space_op.GetComm()), root(Mpi::Root(comm)),
+    Curl(space_op.GetCurlMatrix()),
     unit_GHz(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
              (2 * std::numbers::pi)),
     nt(static_cast<int>(Curl.Width()))
@@ -213,6 +215,9 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
       space_op, sub.region_attributes, sub.environment_attributes, false, nullptr, false,
       sub.direct_solver, iodata.solver.linear.sym_factorization);
   nG = ds->InterfaceSize();
+  MFEM_VERIFY(nG > 0, "The substructuring interface holds no unknowns, as of a region "
+                      "enclosed by PEC: the region does not couple to the environment, so "
+                      "solve it without \"Substructuring\"!");
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   for (const auto &[idx, spec] : port_excitations)
   {
@@ -228,7 +233,7 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
   }
   if (save || adaptive)
   {
-    env_ports = EnvironmentPorts(iodata, *ds, port_dofs);
+    env_ports = EnvironmentPorts(iodata, *ds, port_dofs, env_port_attributes);
   }
   const std::size_t restart = iodata.solver.driven.restart - 1;
   first_freq = restart / n;
@@ -267,6 +272,7 @@ void DrivenSubstructuredSweep::SetUpModel()
     }
   }
   model.ports = env_ports;
+  model.port_attributes = env_port_attributes;
   model.region_bdr_attributes =
       BoundaryAttributesInRegion(space_op.GetMesh().Get(), sub.region_attributes);
   model.length_scale = iodata.model.Lc;
@@ -580,9 +586,23 @@ void DrivenSubstructuredSweep::SampleEnvironment()
              model.omega.size(), errors.back(), tol, memory, memory_size);
   const bool converged = (memory >= memory_size);
   const double error = errors.back();
-  // Passivity between the samples (Im S_E positive semidefinite), tested by Cholesky
-  // factorizations: a violation beyond the tolerance adds a sample where it is largest.
-  double passivity = 0.0;  // the least eigenvalue of the violations, relative (0: none)
+  // Passivity between the samples, tested by Cholesky factorizations: the least eigenvalue
+  // of Im S_E at a midpoint is to be no lower than at the samples beside it, which is zero
+  // for a passive environment and can be negative for one that is not, as with a
+  // second-order absorbing boundary. A violation beyond the tolerance adds a sample where
+  // it is largest.
+  double passivity = 0.0;               // the least violation, relative (0: none)
+  std::map<double, double> at_samples;  // the least eigenvalue at a sample, at most 0
+  auto sample_passivity = [&](double omega)
+  {
+    auto [it, added] = at_samples.try_emplace(omega, 0.0);
+    if (added)
+    {
+      const auto x = fit.Evaluate(omega);
+      it->second = std::min(0.0, DrivenSubstructureModel::Passivity(x.data(), nG));
+    }
+    return it->second;
+  };
   while (true)
   {
     double at = 0.0;
@@ -597,7 +617,8 @@ void DrivenSubstructuredSweep::SampleEnvironment()
         const auto x = fit.Evaluate(mid);
         if (!DrivenSubstructureModel::Passive(x.data(), nG, tol))
         {
-          const double p = DrivenSubstructureModel::Passivity(x.data(), nG);
+          const double p = DrivenSubstructureModel::Passivity(x.data(), nG) -
+                           std::min(sample_passivity(z[j]), sample_passivity(z[j + 1]));
           if (p < passivity)
           {
             passivity = p;
@@ -613,21 +634,21 @@ void DrivenSubstructuredSweep::SampleEnvironment()
       break;
     }
     errors.push_back(sample(at));
-    Mpi::Print(" Passivity sample: ω = {:.6e} GHz (least eigenvalue of Im S_E / ‖S_E‖ = "
-               "{:.3e}), error = {:.3e}\n",
+    Mpi::Print(" Passivity sample: ω = {:.6e} GHz (least eigenvalue of Im S_E / ‖S_E‖ "
+               "{:.3e} below its samples'), error = {:.3e}\n",
                at * unit_GHz, passivity, errors.back());
   }
   if (passivity < -tol)
   {
     Mpi::Warning("The rational environment model is not passive between its samples "
-                 "(least eigenvalue of Im S_E / ‖S_E‖ = {:.3e}): raise "
+                 "(least eigenvalue of Im S_E / ‖S_E‖ {:.3e} below the samples'): raise "
                  "\"AdaptiveMaxSamples\"!\n",
                  passivity);
   }
   else
   {
     Mpi::Print(" Passive between the samples: least eigenvalue of Im S_E / ‖S_E‖ above "
-               "-{:.3e}\n",
+               "the samples' less {:.3e}\n",
                tol);
   }
   utils::PrettyPrint(model.omega, unit_GHz, " Sampled frequencies (GHz):");

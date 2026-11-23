@@ -31,7 +31,7 @@ struct DirectSchurBlocks
   const std::vector<T> &ii_val;
   const std::vector<int> &is_ptr, &is_col;
   const std::vector<T> &is_val;
-  const std::vector<int> &ss_slots;
+  const std::vector<long long> &ss_slots;
   const std::vector<T> &ss_val;
 };
 
@@ -284,7 +284,7 @@ private:
       for (std::size_t k = 0; k < A.ss_slots.size(); k++)
       {
         srow[A.ss_slots[k] % n_schur].push_back(
-            {A.ss_slots[k] / n_schur, -1 - static_cast<int>(k)});
+            {static_cast<int>(A.ss_slots[k] / n_schur), -1 - static_cast<int>(k)});
       }
       for (std::size_t k = 0; k < all.size() / 2; k++)
       {
@@ -572,12 +572,13 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
   std::vector<std::pair<std::pair<int, long long>, int>> ii, is;
   for (int p = 0; p < nrecv; p++)
   {
-    const int kind = static_cast<int>(ridx[3 * p]);
-    const long long a = ridx[3 * p + 1], b = ridx[3 * p + 2];
+    const std::size_t t = 3 * static_cast<std::size_t>(p);
+    const int kind = static_cast<int>(ridx[t]);
+    const long long a = ridx[t + 1], b = ridx[t + 2];
     recv_kind[p] = kind;
     if (kind == kSS)
     {
-      recv_slot[p] = static_cast<int>(a + static_cast<long long>(n_schur) * b);
+      recv_slot[p] = a + static_cast<long long>(n_schur) * b;
       ss_slots.push_back(recv_slot[p]);
     }
     else
@@ -600,7 +601,7 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
             static_cast<typename std::decay_t<decltype(col)>::value_type>(ij.second));
         ptr[ij.first + 1]++;
       }
-      recv_slot[p] = static_cast<int>(col.size()) - 1;
+      recv_slot[p] = static_cast<long long>(col.size()) - 1;
     }
     for (int i = 0; i < n_int; i++)
     {

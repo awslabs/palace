@@ -56,7 +56,6 @@ PALACE_JSON_SERIALIZE_ENUM(Excitation)
 PALACE_JSON_SERIALIZE_ENUM(LinearSolver)
 PALACE_JSON_SERIALIZE_ENUM(KrylovSolver)
 PALACE_JSON_SERIALIZE_ENUM(MultigridCoarsening)
-PALACE_JSON_SERIALIZE_ENUM(SubstructuringMode)
 PALACE_JSON_SERIALIZE_ENUM(PreconditionerSide)
 PALACE_JSON_SERIALIZE_ENUM(SymbolicFactorization)
 PALACE_JSON_SERIALIZE_ENUM(SparseCompression)
@@ -1804,8 +1803,8 @@ SubstructuringData::SubstructuringData(const json &substructuring)
     environment_attributes =
         substructuring.at("Environment").at("Attributes").get<std::vector<int>>();
   }
-  mode = substructuring.value("Mode", mode);
   model_file = substructuring.value("ModelFile", model_file);
+  save_model = substructuring.value("SaveModel", save_model);
 }
 
 SolverData::SolverData(const json &solver)

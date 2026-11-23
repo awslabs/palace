@@ -49,8 +49,7 @@ namespace
 // The sweep of a substructured region, for its messages: online, or offline adaptive.
 const char *RegionSweep(const IoData &iodata)
 {
-  return (iodata.solver.substructuring->mode == SubstructuringMode::ONLINE) ? "Online"
-                                                                            : "Adaptive";
+  return iodata.solver.substructuring->Online() ? "Online" : "Adaptive";
 }
 
 // The postprocessing of a sweep: that of the configuration or, for a substructured region,
@@ -138,8 +137,7 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Main frequency sweep loop. Online, the region is solved against the environment of the
   // saved model.
-  if (const auto &sub = iodata.solver.substructuring;
-      sub && sub->mode == SubstructuringMode::ONLINE)
+  if (const auto &sub = iodata.solver.substructuring; sub && sub->Online())
   {
     EnvironmentOperator env(iodata, space_op);
     space_op.SetEnvironment(env);
@@ -278,6 +276,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     {
       A.reset();
       A2.reset();
+      P.reset();
       P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                             -omega * omega + 0.0i, omega);
       A = space_op.GetSystemOperator(omega, *P);

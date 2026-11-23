@@ -56,42 +56,43 @@ region and the environment are given by domain attributes, which together must c
 "Substructuring":
 {
   "Region": { "Attributes": [1, 2] },
-  "Environment": { "Attributes": [10, 11] },
-  "Mode": "Offline",
-  "ModelFile": "postpro/environment.model"
+  "Environment": { "Attributes": [10, 11] }
 }
 ```
 
-  - `"Mode": "Offline"` condenses the environment and, if `"ModelFile"` is set, writes the
-    environment model to that file.
-  - `"Mode": "Online"` loads the model from `"ModelFile"` and solves only the region. The region
-    may be re-meshed between runs, as long as the environment and the interface are unchanged.
+  - A run without `"ModelFile"` is offline: it condenses the environment and saves its model as
+    `environment.model` in
+    [`config["Problem"]["Output"]`](../config/reference.md#config-problem-output) (none with
+    `"SaveModel": false`).
+  - A run with `"ModelFile"`, the path of a saved model, is online: it loads the model and solves
+    only the region. The region may be re-meshed between runs, as long as the environment and the
+    interface are unchanged.
 
-An `"Offline"` run that saves a model on a conforming mesh (not one from adaptive refinement) also
-writes a mesh of the region next to it (`<model>_region.mesh` for `"ModelFile": "<model>.model"`),
-with the few environment elements along the boundary conditions of the environment that reach the
-interface and, in magnetostatics, at the surface currents of the environment and at the flux loops
-whose film or hole reaches the region or the interface (with these films whole and, if these
-elements reach a `"TwoSided"` film where it crosses the interface, the environment along every such
-crossing) and next to the films on the interface. The flux loops entirely in the environment are
-left out: their excitations and the fluxoids they impose come from the model. An `"Online"` run on
-it (as `"Model"/"Mesh"`, with the configuration otherwise unchanged) reads and partitions the
-region only, and tells it from the full mesh by the environment elements it holds. The environment
-is then that of the model: a configuration that changes it is rejected (an excitation of the
-environment that changed needs the full mesh), and the mesh must hold the environment elements
-written with it; the interface is found from the saved interface DOFs, and the nondimensionalization
-is that of the model. Every excitation with sources in the environment must be in the model, the
-fields are written in the region and on the interface only, and a priori and adaptive refinement
-need the full mesh (the mesh of the region is written refined).
+An offline run that saves a model on a conforming mesh (not one from adaptive refinement) also
+writes a mesh of the region next to it, `environment_region.mesh`, with the few environment elements
+along the boundary conditions of the environment that reach the interface and, in magnetostatics, at
+the surface currents of the environment and at the flux loops whose film or hole reaches the region
+or the interface (with these films whole and, if these elements reach a `"TwoSided"` film where it
+crosses the interface, the environment along every such crossing) and next to the films on the
+interface. The flux loops entirely in the environment are left out: their excitations and the
+fluxoids they impose come from the model. An online run on it (as `"Model"/"Mesh"`, with the
+configuration otherwise unchanged) reads and partitions the region only, and tells it from the full
+mesh by the environment elements it holds. The environment is then that of the model: a
+configuration that changes it is rejected (an excitation of the environment that changed needs the
+full mesh, and in driven problems a new offline run), and the mesh must hold the environment
+elements written with it; the interface is found from the saved interface DOFs, and the
+nondimensionalization is that of the model. Every excitation with sources in the environment must be
+in the model, the fields are written in the region and on the interface only, and a priori and
+adaptive refinement need the full mesh (the mesh of the region is written refined).
 A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
 
 The offline run also writes the interface, the faces between the region and the environment, for
-a mesher to mesh a redesigned region against: a Gmsh 2.2 mesh (`<model>_interface.msh`) in the
-mesh's length units, at its geometric order (2 at most), with a `$PalaceInterface` section of its
-format version, its geometric and discretization orders and the mesh's length unit in m. An
-`"Online"` run also takes a mesh of the region alone, with the interface's faces as boundary
+a mesher to mesh a redesigned region against: a Gmsh 2.2 mesh (`environment_interface.msh`, next to
+the model) in the mesh's length units, at its geometric order (2 at most), with a `$PalaceInterface`
+section of its format version, its geometric and discretization orders and the mesh's length unit
+in m. An online run also takes a mesh of the region alone, with the interface's faces as boundary
 elements: *Palace* adds the environment elements of the model's mesh of the region (next to the
 model), which share its vertices and nodes on the interface. An interface which differs from the
 model's is rejected at a point where it does.
@@ -108,7 +109,11 @@ so that the participation ratios are those of the whole model: the energies of t
 region and the probes in it or on the interface (`config["Domains"]["Postprocessing"]`, a probe on
 the interface with the field of the region), and the `"SurfaceFlux"` and `"Dielectric"` entries of
 `config["Boundaries"]["Postprocessing"]` on surfaces in it. The others are left out with a warning,
-and `"FarField"` is rejected. Field output follows `"Solver"/"Electrostatic"/"Save"` and
+and `"FarField"` is rejected. In magnetostatics, the fields keep the regularization of the solves
+(see the [reference](../reference.md#Substructuring)): without superconducting sheets or domains,
+the quantities from them, such as the energies of the domains, the probes and the fluxes, are within
+about ``10^{-4}`` of a regular simulation, while the inductance matrix, from energies stationary in
+the regularization, agrees to its square. Field output follows `"Solver"/"Electrostatic"/"Save"` and
 `"Solver"/"Magnetostatic"/"Save"`, in the formats of `config["Problem"]["OutputFormats"]`; the
 environment part of a saved field is recovered only when fields are written.
 
@@ -121,13 +126,15 @@ in a coarsely meshed part of the domain (substrate or vacuum away from the metal
 one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense
 (``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``), and each process holds its rows, except
 with the STRUMPACK partial factorization, which gives it whole to one process (two copies while the
-environment is condensed). One process holds the whole mesh to write the mesh of the region. The
-[transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
-the position of their centroids.
+environment is condensed). A driven model holds one per frequency or sample, complex, by its lower
+triangle (see [Driven problems](#Driven-problems)). One process holds the whole mesh to write the
+mesh of the region. The [transmon example](@ref substructuring-transmon-example) retags the elements
+of an existing mesh by the position of their centroids.
 
 ### Adaptive mesh refinement
 
-The environment is condensed once, so its mesh resolution is fixed in the saved model. Meshes
+In electrostatics and magnetostatics (driven substructuring refines no mesh), the environment is
+condensed once, so its mesh resolution is fixed in the saved model. Meshes
 from layout tools are often coarse and meant to be refined by
 [adaptive mesh refinement](../reference.md#Error-estimation-and-adaptive-mesh-refinement-(AMR))
 (AMR), so the refinement is done in two steps:
@@ -135,21 +142,21 @@ from layout tools are often coarse and meant to be refined by
  1. Refine the full model before condensing it: run the simulation without
     `"Substructuring"`, with AMR and
     [`config["Model"]["Refinement"]["SaveAdaptMesh"]`](../config/reference.md#config-model-refinement)
-    set to `true`, then run the `"Offline"` condensation with the saved mesh as
+    set to `true`, then condense the environment offline with the saved mesh as
     `config["Model"]["Mesh"]`. The refined elements keep the region and environment
     attributes.
- 2. Refine the region only in `"Online"` runs, for example after a redesign: with
+ 2. Refine the region only in online runs, for example after a redesign: with
     `config["Model"]["Refinement"]["MaxIts"]` greater than zero, the error indicators are
     computed in the region and the environment is left as condensed. This requires
     nonconforming refinement without a level constraint (`"Nonconformal": true`,
     `"MaxNCLevels": 0`), so that the refinement does not spread into the environment, and the
     full mesh.
 
-Adaptive refinement in an `"Offline"` run is rejected (use step 1). The indicators are those of
+Adaptive refinement in an offline run is rejected (use step 1). The indicators are those of
 the regular simulation's estimator (the gradient flux in electrostatics, the curl flux in
 magnetostatics), with the flux recovery restricted to the region, so that the unknown
 environment field does not affect them near the interface, and normalized as there by the energy
-of the field in the volume (without the kinetic energy of the London sheets).
+of the field in the volume (without the kinetic energy of the London sheets and domains).
 
 ### Solvers
 
@@ -224,13 +231,13 @@ in the environment, or on both sides, and wave ports inside either side, away fr
 (their modal terms border that side's factorization); the outputs are those of a regular simulation
 (port S-parameters, voltages and currents, domain energies and fields).
 
-With `"ModelFile"`, an offline sweep also saves, per frequency, ``\bm{S}_E(\omega)``, the
-condensation of the environment's sources onto the interface, and the condensed voltages of the
-environment's lumped ports and wave port overlaps. An `"Online"` sweep at saved frequencies (any
-subset of them, matched by value) then factors only the region, which may be redesigned (materials,
-re-meshing) and run on a different number of processes, as long as the environment and the
-interface are unchanged and the excitations with sources in the environment are among the model's.
-The online field is known in the region and on the interface only:
+An offline sweep also saves, per frequency, ``\bm{S}_E(\omega)``, the condensation of the
+environment's sources onto the interface, and the condensed voltages of the environment's lumped
+ports and wave port overlaps (unless `"SaveModel": false`). An online sweep at saved frequencies
+(any subset of them, matched by value) then factors only the region, which may be redesigned
+(materials, re-meshing) and run on a different number of processes, as long as the environment and
+the interface are unchanged and the excitations with sources in the environment are among the
+model's. The online field is known in the region and on the interface only:
 
   - S-parameters of all ports, voltages and currents of the lumped ports, and the energies of
     lumped elements, are those of a regular simulation;
@@ -284,15 +291,17 @@ voltage of a lumped port, would depend on both sides.
     that the superbuild and the Spack package patch in, else with one solve per interface
     unknown). SuperLU_DIST, whose condensation goes wrong through a resonance, is not used
     offline. An offline exact sweep factors the region with the Schur complement of the
-    environment as one sparse system, by STRUMPACK, MUMPS or SuperLU_DIST (preferred in this
-    order). Online, and once an offline adaptive sweep has sampled the environment, GMRES
-    solves the region, preconditioned by the region's own Schur complement onto the interface
-    with the environment's added, a dense matrix factored across the processes by ScaLAPACK
-    (which MUMPS and STRUMPACK build with; without it, on one process). The region's Schur
-    complement is STRUMPACK's, gathered on one process, for interfaces of up to 10,000
-    unknowns, else MUMPS's, distributed (or, without them, from SuperLU_DIST's solves).
-    Near a resonance of the region with the interface held fixed, GMRES takes a few more
-    iterations. A sparse direct solver that
+    environment as one sparse system, by STRUMPACK or MUMPS (preferred in this order). Online,
+    and once an offline adaptive sweep has sampled the environment, FGMRES solves the region,
+    preconditioned by the region's own Schur complement onto the interface with the
+    environment's added, a dense matrix factored across the processes by ScaLAPACK (which MUMPS
+    and STRUMPACK build with; without it, on one process). The region's Schur complement is
+    STRUMPACK's, gathered on one process, for interfaces of up to 10,000 unknowns, else MUMPS's,
+    distributed (or, without them, from SuperLU_DIST's solves). Near a resonance of the region
+    with the interface held fixed, where this preconditioner is nearly singular, FGMRES takes a
+    few more iterations (it is used whatever
+    [`config["Solver"]["Linear"]["KSPType"]`](../config/reference.md#config-solver-linear-ksptype)
+    names, as GMRES loses digits there). A sparse direct solver that
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names
     is used for all of them instead.
     Floquet ports and periodic boundaries (which make the system non-symmetric), frequency-dependent
@@ -386,14 +395,15 @@ python3 remesh_region.py --model mesh/qubit_lattice_substructuring.msh2 \
 palace qubit_lattice_redesign.json  # reuses the saved model
 ```
 
-The offline run also writes the mesh of the region, `postpro/qubit_lattice_environment_region.mesh`,
-on which the online runs read only the region (10,205 of the mesh's 249,307 elements). With
-`--region-mesh`, the re-meshing script writes the redesign in the same way:
+The offline run also writes the mesh of the region,
+`postpro/qubit_lattice_offline/environment_region.mesh`, on which the online runs read only the
+region (10,205 of the mesh's 249,307 elements). With `--region-mesh`, the re-meshing script writes
+the redesign in the same way:
 
 ```bash
 python3 remesh_region.py --model mesh/qubit_lattice_substructuring.msh2 \
     --design mesh/qubit_lattice_redesign_labeled.msh2 \
-    --region-mesh postpro/qubit_lattice_environment_region.mesh \
+    --region-mesh postpro/qubit_lattice_offline/environment_region.mesh \
     --output mesh/qubit_lattice_redesign_region.msh2
 palace qubit_lattice_online_region.json    # the original region, on the mesh of the region
 palace qubit_lattice_redesign_region.json  # the redesign, on its mesh of the region

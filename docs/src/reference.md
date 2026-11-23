@@ -1081,20 +1081,22 @@ matched by the index of its excitation and a fingerprint of its environment part
 In electrostatics, ``\bm{K} = \bm{A}`` and the terminal excitations are Dirichlet lifts
 ``\bm{x}_k`` (unit potentials). With ``\bm{t}_k = \bm{A}^E\bm{x}_k`` and
 ``\bm{w}_k = \bm{A}_{EE}^{-1}\bm{t}_{k,E}``, a terminal loads the region solve with
-``\bm{g}_k = (\bm{t}_k - \bm{A}^E\bm{w}_k)_\Gamma``, and the environment's energy is
+``-\bm{g}_k``, ``\bm{g}_k = (\bm{t}_k - \bm{A}^E\bm{w}_k)_\Gamma``, and the environment's
+energy is
 ``[\bm{u}_\Gamma;\,\bm{V}]^T[\bm{S}_E,\,\bm{G};\,\bm{G}^T,\,\bm{C}^{mode}][\bm{u}_\Gamma;\,\bm{V}]``
 for the terminal potentials ``\bm{V}``, which gives the Maxwell capacitance matrix of
 [Electrostatic Simulations](#Electrostatic-Simulations) exactly.
 
-In magnetostatics, ``\bm{L} = \bm{K} + \bm{M}_{sheet}``, the curl-curl operator and the London
-terms of the superconducting sheets, is singular: its null space holds the gradients of the
-functions constant on each connected conductor (the `"PEC"` boundaries and the sheets). The
-solves use ``\bm{A} = \bm{L} + \varepsilon\bm{D}``, with ``\bm{D}`` the mass matrix weighted by
-``\mu_r^{-1}`` and scaled by ``1/L'^2``, ``L'`` the extent of the mesh in units of
-[`config["Model"]["Lc"]`](config/reference.md#config-model), so that ``\varepsilon\bm{D}`` scales
-as the curl-curl operator and the results depend on neither ``\mu_r`` nor ``L_c``; the energies
-use ``\bm{L}``, with ``\bm{S}^K = \bm{Z}^T\bm{L}^E\bm{Z}``. A surface current
-``\bm{J}_k``, with ``\bm{u}_k = \bm{A}^{-1}\bm{J}_k``, has the energies
+In magnetostatics, ``\bm{L} = \bm{K} + \bm{M}_{sheet}``, the curl-curl operator (with the London
+mass of the London domains) and the London terms of the superconducting sheets, is singular: its
+null space holds the gradients of the functions constant on each connected conductor (the
+`"PEC"` boundaries, the sheets and the London domains). The solves use
+``\bm{A} = \bm{L} + \varepsilon\bm{D}``, with ``\bm{D}`` the mass matrix weighted by
+``\mu_r^{-1}`` off the London domains and scaled by ``1/L'^2``, ``L'`` the extent of the mesh in
+units of [`config["Model"]["Lc"]`](config/reference.md#config-model), so that
+``\varepsilon\bm{D}`` scales as the curl-curl operator and the results depend on neither
+``\mu_r`` nor ``L_c``; the energies use ``\bm{L}``, with ``\bm{S}^K = \bm{Z}^T\bm{L}^E\bm{Z}``. A
+surface current ``\bm{J}_k``, with ``\bm{u}_k = \bm{A}^{-1}\bm{J}_k``, has the energies
 
 ```math
 \mathcal{E}_{ij} = \bm{J}_i^T\bm{u}_j + \bm{J}_j^T\bm{u}_i - \bm{u}_i^T\bm{L}\bm{u}_j ,
@@ -1104,13 +1106,18 @@ stationary in ``\varepsilon``, so their error is ``O(\varepsilon^2)``, provided 
 closes: ``\bm{G}^T\bm{J}_k``, ``\bm{G}`` the discrete gradient, vanishes at the nodes off the
 conductors and sums to zero over each conductor. A current that does not close is rejected. The
 part that the quadrature of an excitation leaves incompatible is amplified by
-``1/\varepsilon``, so ``\varepsilon = 10^{-3}`` without sheets, and twice the regularization
-energy ``\bm{J}^T\bm{u} - \bm{u}^T\bm{L}\bm{u}`` bounds the error. A flux loop ``k`` with the
-fluxoid generator ``\bm{a}_k`` drives ``\bm{M}_{sheet}\bm{a}_k``, which is orthogonal to the
-null space, with the London energies
+``1/\varepsilon``, and twice the regularization energy
+``\bm{J}^T\bm{u} - \bm{u}^T\bm{L}\bm{u}`` bounds the error. A flux loop ``k`` with the fluxoid
+generator ``\bm{a}_k`` drives ``\bm{M}_{sheet}\bm{a}_k``, which is orthogonal to the null space,
+with the London energies
 ``\bm{u}_i^T\bm{K}\bm{u}_j + (\bm{u}_i - \bm{a}_i)^T\bm{M}_{sheet}(\bm{u}_j - \bm{a}_j)`` of the
-regular solver, linear in ``\varepsilon``: with sheets, ``\varepsilon = 10^{-7}``. The modes of
-a source ``\bm{b}_k`` with the environment part ``\bm{b}^E_k`` are, with
+regular solver, also stationary in ``\varepsilon``. The kinetic energies of the sheets and the
+London domains, and with them the energies in the volume, are linear in ``\varepsilon``, so
+``\varepsilon = 10^{-7}`` with them and ``10^{-3}`` without. With ``\mathcal{G}_{ij}`` the sum of
+``\bm{u}_i^T\bm{K}\bm{u}_j + (\bm{u}_i - \bm{a}_i)^T\bm{M}_{sheet}(\bm{u}_j - \bm{a}_j)`` and
+``-\bm{J}_i^T\bm{u}_j - \bm{J}_j^T\bm{u}_i``, the London energy of a flux loop and
+``-\mathcal{E}_{ij}`` of a surface current, the modes of ``\mathcal{G}`` for a source
+``\bm{b}_k`` with the environment part ``\bm{b}^E_k`` are, with
 ``\bm{W}_k = \bm{A}_{EE}^{-1}\bm{b}^E_k``,
 
 ```math

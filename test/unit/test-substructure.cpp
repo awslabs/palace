@@ -134,7 +134,7 @@ TEST_CASE("Configuration hash of the environment", "[substructure][Serial]")
           {"DonorAttributes": [6], "ReceiverAttributes": [7], "Translation": [0, 1, 0]}]},
       "Postprocessing": {"SurfaceFlux": [{"Index": 1, "Attributes": [5], "Type": "Magnetic"}]}},
     "Solver": {"Order": 2, "QuadratureOrderExtra": 0,
-               "Substructuring": {"Mode": "Offline", "ModelFile": "model.bin"}}})");
+               "Substructuring": {"SaveModel": true}}})");
   const std::vector<int> attrs = {3, 2}, bdr = {9, 8, 5, 4};
   for (const bool excitations : {false, true})
   {
@@ -175,11 +175,26 @@ TEST_CASE("Configuration hash of the environment", "[substructure][Serial]")
           c["Problem"]["Output"] = "online";
           c["Model"]["Mesh"] = "region.mesh";
           c["Model"]["Refinement"]["UniformLevels"] = 1;
-          c["Solver"]["Substructuring"]["Mode"] = "Online";
+          c["Solver"]["Substructuring"] = {{"ModelFile", "postpro/environment.model"}};
         }));
     CHECK_FALSE(differs(
         [](json &c)
         { c["Boundaries"]["Periodic"]["BoundaryPairs"][1]["Translation"] = {0, 2, 0}; }));
+    // As parsed: a material, a number and a boundary written another way.
+    CHECK_FALSE(differs([](json &c) { c["Domains"]["Materials"][0]["Permeability"] = 2; }));
+    CHECK_FALSE(differs(
+        [](json &c) { c["Domains"]["Materials"][0]["Permeability"] = {2.0, 2.0, 2.0}; }));
+    CHECK_FALSE(differs(
+        [](json &c)
+        {
+          c["Domains"]["Materials"][0]["MaterialAxes"] = {{0, 1, 0}, {1, 0, 0}, {0, 0, -1}};
+        }));
+    CHECK_FALSE(differs(
+        [](json &c)
+        {
+          c["Boundaries"]["Ground"] = c["Boundaries"]["PEC"];
+          c["Boundaries"].erase("PEC");
+        }));
     // On the environment.
     CHECK(differs(
         [](json &c)
@@ -196,6 +211,16 @@ TEST_CASE("Configuration hash of the environment", "[substructure][Serial]")
     CHECK(differs([](json &c) { c["Solver"]["Order"] = 3; }));
     CHECK(differs([](json &c) { c["Solver"]["QuadratureOrderExtra"] = 1; }));
     CHECK(differs([](json &c) { c["Model"]["CrackInternalBoundaryElements"] = true; }));
+    CHECK(differs([](json &c) { c["Model"]["L0"] = 1.0e-5; }));
+    // The polarity of a wave port, signal then ground, is ordered.
+    auto polarity = [&](int signal, int ground)
+    {
+      json config = base;
+      config["Boundaries"]["WavePort"] = {
+          {{"Index", 3}, {"Attributes", {9}}, {"PolarityAttributes", {signal, ground}}}};
+      return EnvironmentConfigHash(config, attrs, bdr, excitations);
+    };
+    CHECK(polarity(4, 5) != polarity(5, 4));
     CHECK(differs([](json &c) { c["Problem"]["Type"] = "Electrostatic"; }));
     // The excitations.
     CHECK(differs([](json &c) { c["Boundaries"]["FluxLoop"][0]["Index"] = 3; }) ==
@@ -283,7 +308,7 @@ TEST_CASE("Environment records are those of any partition",
   // The full mesh is told from the mesh of the region, and the record tells whether the
   // excitations of the environment are its own (a flux loop added next to it changes them,
   // not its configuration).
-  CHECK_FALSE(r.CheckMesh(mesh, 1.0e-9));
+  CHECK_FALSE(r.CheckMesh(mesh, config, 1.0e-9));
   CHECK(r.CheckConfig(config, {2}, false));
   auto excited = config;
   excited["Boundaries"]["FluxLoop"] = {{{"Index", 1},
@@ -477,11 +502,13 @@ TEST_CASE("An interface DOF without counterpart is told by its point",
                        &saved_matched);
   CHECK(saved_matched == std::vector<char>{0, 1});
   auto message = [&](const std::vector<double> &current)
-  { return InterfaceDiffersMessage(current, 3, saved, 3, 10.0, "postpro/model.bin"); };
+  {
+    return InterfaceDiffersMessage(current, 3, saved, 3, 10.0, "postpro/environment.model");
+  };
   using Catch::Matchers::ContainsSubstring;
   CHECK_THAT(message({0.5, -0.2, 0.0, 0.1, 0.2, 0.4}),
              ContainsSubstring("at (1, 2, 3)") &&
-                 ContainsSubstring("postpro/model_interface.msh"));
+                 ContainsSubstring("postpro/environment_interface.msh"));
   CHECK_THAT(message({0.5, -0.2, 0.0, 0.1, 0.2, 0.3, 0.7, 0.8, 0.9}),
              ContainsSubstring("at (7, 8, 9)"));
   CHECK_THAT(message({0.1, 0.2, 0.3, 0.5, -0.2, 0.0}),
@@ -609,14 +636,16 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
         e(jl) = 1.0;
       }
       A->Mult(e, Ae);
+      const double *ae = Ae.HostRead();
       for (int i = 0; i < nt; i++)
       {
-        M[static_cast<std::size_t>(j) * n + index[i]] = Ae(i);
+        M[static_cast<std::size_t>(j) * n + index[i]] = ae[i];
       }
     }
+    const double *bh = bt->HostRead();
     for (int i = 0; i < nt; i++)
     {
-      b[index[i]] = (*bt)(i);
+      b[index[i]] = bh[i];
     }
     MPI_Allreduce(MPI_IN_PLACE, b.data(), n, MPI_DOUBLE, MPI_SUM, Mpi::World());
     MPI_Allreduce(MPI_IN_PLACE, M.data(), n * n, MPI_DOUBLE, MPI_SUM, Mpi::World());

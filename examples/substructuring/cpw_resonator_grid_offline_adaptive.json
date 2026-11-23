@@ -166,9 +166,7 @@
           10,
           11
         ]
-      },
-      "Mode": "Offline",
-      "ModelFile": "postpro/cpw_resonator_grid_environment_adaptive.model"
+      }
     }
   }
 }

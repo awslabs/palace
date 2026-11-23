@@ -1337,12 +1337,13 @@ public:
   std::vector<int> region_attributes = {};
   std::vector<int> environment_attributes = {};  // empty: those not in the region
 
-  // Offline condenses the environment now; Online loads a previously saved model and solves
-  // only the region.
-  SubstructuringMode mode = SubstructuringMode::OFFLINE;
-
-  // Optional path for the serialized environment DtN model (offline/online reuse).
+  // A saved model of the environment: a run with one is online, solving the region against
+  // it. A run without one condenses the environment (offline) and, with save_model, saves
+  // its model in the output directory (see substructuring::SaveModelPath).
   std::string model_file = "";
+  bool save_model = true;
+
+  bool Online() const { return !model_file.empty(); }
 
   // The sparse direct solver of the factorizations: config["Solver"]["Linear"]["Type"] as
   // given (set by IoData before it resolves the default), DEFAULT for Palace's preference.
