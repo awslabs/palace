@@ -1191,12 +1191,14 @@ json SurfaceResponseFiles::Cpw3dLegacyConfig(CrackPolicy crack_policy) const
   ApplyCrackPolicy(config_3d, crack_policy);  // explicit crack policy
   // The three-dimensional sections below exercise the legacy per-interface-group
   // classification (parametric matching with tolerances, interpolation brackets, plan-view
-  // masks), kept behind PatchConstruction = "Legacy"; the Features-driven construction
+  // masks), kept behind PatchConstruction = "Legacy" (a developer option since the v1 cut:
+  // these fixtures set "Developer": true); the Features-driven construction
   // (the default) is tested in its own section with a signature-keyed library.
   config_3d["Solver"]["Electrostatic"]["ResponseCorrection"] = {
       {"Library", library_3d_path.string()},
       {"TargetInterfaces", {1, 2, 3}},
       {"UnmatchedPolicy", "Error"},
+      {"Developer", true},
       {"PatchConstruction", "Legacy"}};
   return config_3d;
 }
@@ -1227,6 +1229,7 @@ json SurfaceResponseFiles::IslandConfig(CrackPolicy crack_policy) const
            {{"Library", concave_library_3d_path.string()},
             {"TargetInterfaces", {4}},
             {"UnmatchedPolicy", "Error"},
+            {"Developer", true},
             {"PatchConstruction", "Legacy"}}}}}}}};
   ApplyCrackPolicy(island_config, crack_policy);
   return island_config;
@@ -1253,6 +1256,7 @@ json SurfaceResponseFiles::ConvexMaxwellIslandConfig(CrackPolicy crack_policy) c
                                              {{"Library", convex_library_3d_path.string()},
                                               {"TargetInterfaces", {4}},
                                               {"UnmatchedPolicy", "Error"},
+                                              {"Developer", true},
                                               {"PatchConstruction", "Legacy"}}}};
   return convex_maxwell_island_config;
 }

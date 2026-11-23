@@ -15,6 +15,10 @@ library and the target interfaces. Nothing here depends on a particular device.
         --ground 5 6 7 --terminal 9 --sa 8 --library lib.json --output cfg.json \\
         [--ms 5 6 7 9] [--ma ...] [--uniform-levels 1] [--no-crack] [--l0 1e-6] [--radius 1.9]
         [--crack-policy legacy|default]   # Model.CrackInternalBoundaryElements true | omitted
+                                          # (true over the Ground / Terminal sheets of a correction
+                                          # run is a parked developer option of the v1 cut: the
+                                          # legacy policy, the coupon tools' default, writes
+                                          # "Developer": true with it; developer_form.py)
         [--plane 114@0,0,1 --plane 10,17,25,119,126@0,0,-1]   # per metal plane: MS + MA targets
                                                              # with their own EdgeFrameNormal
                                                              # (flip-chip: the top chip faces down)
@@ -23,7 +27,9 @@ library and the target interfaces. Nothing here depends on a particular device.
 import argparse
 import json
 import os
+import sys
 
+from . import developer_form
 from .crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy
 
 # Decision 88(1) (2026-09-26; was 2.1 um by decision 82(4)): the default matching radius of
@@ -130,6 +136,9 @@ def preflight_config(
         model["CrackInternalBoundaryElements"] = False
     else:
         apply_crack_policy(model, crack_policy)
+    correction = {"Library": os.path.abspath(library), "TargetInterfaces": targets, "UnmatchedPolicy": "Warn"}
+    if model.get("CrackInternalBoundaryElements") is True:
+        correction = developer_form.with_switch(correction)
     return {
         "Problem": {"Type": "Electrostatic", "Verbose": 1, "Output": os.path.abspath(output_directory), "OutputFormats": {"Paraview": False, "GridFunction": False}},
         "Model": model,
@@ -144,7 +153,7 @@ def preflight_config(
             "Order": order,
             "Electrostatic": {
                 "Save": 0,
-                "ResponseCorrection": {"Library": os.path.abspath(library), "TargetInterfaces": targets, "UnmatchedPolicy": "Warn"},
+                "ResponseCorrection": correction,
             },
             "Linear": {"Type": "BoomerAMG", "KSPType": "CG", "Tol": 1.0e-8, "MaxIts": 100},
         },
@@ -208,6 +217,8 @@ def main(argv=None):
     with open(output, "w") as target:
         json.dump(config, target, indent=2)
         target.write("\n")
+    developer = config["Solver"]["Electrostatic"]["ResponseCorrection"].get(developer_form.DEVELOPER_KEY, False)
+    print(f"preflight_config.py: the {developer_form.form_name(developer)}", file=sys.stderr)
     print(output)
 
 

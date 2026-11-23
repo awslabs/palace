@@ -10,7 +10,18 @@ from pathlib import Path
 IDENTIFICATION_TOOLS = Path(__file__).resolve().parents[2] / "surface_response_identification"
 if str(IDENTIFICATION_TOOLS) not in sys.path:
     sys.path.insert(0, str(IDENTIFICATION_TOOLS))
-from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
+from crack_policy import add_crack_policy_argument, apply_crack_policy  # noqa: E402
+import developer_form  # noqa: E402
+
+# The v1 default path (decision 2379 (3); CUT-PLAN step 5a; developer_form.py): by default this device-run writer
+# writes the V1 FORM: the verification protocol's thin-corrected block less the parked options, uncracked along the
+# perfect conductors (Palace refuses the global crack key there without the developer switch); --developer writes the
+# RECORDED DEVELOPER FORM (the protocol's recorded block with its default of record "CorrectionMode": "Both" and
+# "Developer": true, on the records' cracked mesh, crack policy legacy); --crack-policy legacy needs --developer.
+# crack_policy.py (fingerprinted into the coupon cache keys) and the coupon generators keep their legacy default. The
+# corner protocol's bars were set on the recorded form: values from the v1 form are not comparable with records made
+# before this cut until the benchmark's collocated twins are read.
+DEVICE_RUN_CRACK_POLICY = developer_form.V1_CRACK_POLICY
 
 
 # Defaults of the prototype process; a library with a Fabrication record (the version-2 coupon
@@ -97,7 +108,8 @@ def config(
     radius,
     edge_elements_per_radius,
     process=(INTERFACES, SUBSTRATE_PERMITTIVITY),
-    crack_policy=CRACK_POLICY_DEFAULT,
+    crack_policy=DEVICE_RUN_CRACK_POLICY,
+    developer=False,
 ):
     refinement = 0 if fabricated else edge_elements_per_radius
     layers, substrate_permittivity = process
@@ -143,13 +155,16 @@ def config(
         # the potential at the knots and does not represent the coupons' trace basis (corner-basis
         # fix 2026-09-29: the square control's MA fixed-trace / self-consistent spread of 55 points
         # came from the collocated lift of the corner patches).
-        solver["Electrostatic"]["ResponseCorrection"] = {
+        recorded = {
             "Library": str(library),
             "TargetInterfaces": [1, 2, 3],
             "UnmatchedPolicy": "Error",
             "TraceCoupling": "SurfaceMortar",
             "MortarOversampling": 2,
         }
+        solver["Electrostatic"]["ResponseCorrection"] = (
+            developer_form.developer_block(recorded) if developer else developer_form.v1_block(recorded)
+        )
     return {
         "Problem": {
             "Type": "Electrostatic",
@@ -189,7 +204,13 @@ def main():
     parser.add_argument("--amr-iterations", type=int, default=0)
     parser.add_argument("--edge-elements-per-radius", type=int, default=1)
     add_crack_policy_argument(parser)
+    developer_form.add_developer_argument(parser)
+    parser.set_defaults(crack_policy=None)  # the form's crack policy
     args = parser.parse_args()
+    try:
+        args.crack_policy = developer_form.device_run_crack_policy(args.crack_policy, args.developer)
+    except ValueError as error:
+        parser.error(str(error))
     if args.order < 1:
         parser.error("--order must be positive")
     if args.amr_iterations < 0:
@@ -225,10 +246,12 @@ def main():
             args.edge_elements_per_radius,
             process,
             crack_policy=args.crack_policy,
+            developer=args.developer,
         )
         path = output / f"{name}.json"
         path.write_text(json.dumps(data, indent=2) + "\n")
         print(path)
+    print(f"prepare_validation.py: the {developer_form.form_name(args.developer)}", file=sys.stderr)
 
 
 if __name__ == "__main__":

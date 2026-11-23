@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <numeric>
@@ -272,6 +273,58 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm)
       {
         interior_crack_attrs.insert(attr);
       }
+    }
+  }
+  // The deprecated global crack key in a surface-response correction run (decision 2379
+  // (3); CUT-PLAN step 5a): accepted where the interior metal it cracks is impedance (Ls)
+  // sheets (the same mesh as "Crack": true on each of them; its legacy split of the sheet
+  // impedance over the two faces is unchanged), refused where it would crack an interior
+  // perfect conductor (PEC / Ground, Terminal, PrescribedPotential), which the correction
+  // never cracks, unless the developer switch is on.
+  if (iodata.model.crack_bdr_elements.value_or(false))
+  {
+    auto *correction = iodata.solver.electrostatic.response_correction
+                           ? &*iodata.solver.electrostatic.response_correction
+                           : (iodata.solver.surface_response_correction
+                                  ? &*iodata.solver.surface_response_correction
+                                  : nullptr);
+    std::set<int> conductors;
+    if (correction)
+    {
+      std::set<int> perfect(iodata.boundaries.pec.attributes.begin(),
+                            iodata.boundaries.pec.attributes.end());
+      for (const auto &[idx, data] : iodata.boundaries.terminal)
+      {
+        perfect.insert(data.attributes.begin(), data.attributes.end());
+      }
+      for (const auto &[idx, data] : iodata.boundaries.prescribed_potential)
+      {
+        perfect.insert(data.attributes.begin(), data.attributes.end());
+        perfect.insert(data.terminal_attributes.begin(), data.terminal_attributes.end());
+      }
+      std::set_intersection(interior_crack_attrs.begin(), interior_crack_attrs.end(),
+                            perfect.begin(), perfect.end(),
+                            std::inserter(conductors, conductors.begin()));
+    }
+    MFEM_VERIFY(
+        conductors.empty() || correction->developer,
+        "config[\"Model\"][\"CrackInternalBoundaryElements\"] = true would crack the "
+        "interior perfect-conductor boundaries with attributes "
+            << fmt::format("{}", fmt::join(conductors, ", "))
+            << " (PEC, Ground, Terminal or PrescribedPotential) in a surface-response "
+               "correction run, and the correction does not crack perfect conductors! "
+               "Remove the key: an interior Ls sheet is cracked with \"Crack\": true on "
+               "its config[\"Boundaries\"][\"Impedance\"] entry (the key stays accepted "
+               "where the interior metal it cracks is such sheets); or set "
+               "\"Developer\": true in the response-correction block to crack them.");
+    if (!conductors.empty())
+    {
+      const std::string option =
+          fmt::format("\"CrackInternalBoundaryElements\": true on the perfect "
+                      "conductors {}",
+                      fmt::join(conductors, ", "));
+      correction->developer_options.push_back(option);
+      Mpi::Print("\nDEVELOPER OPTIONS (mesh): {}\n", option);
     }
   }
   MFEM_VERIFY(interior_crack_attrs.empty() || conforming,

@@ -1242,11 +1242,22 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(
       automatic.response_correction->patch_construction ==
       config::ElectrostaticSolverData::ResponseCorrectionData::PatchConstruction::FEATURES);
+  // The legacy patch builder is a parked developer option (CUT-PLAN step 5a); an explicit
+  // Features needs no switch.
   auto legacy_construction = automatic_correction;
   legacy_construction["PatchConstruction"] = "Legacy";
+  CHECK_THROWS_WITH(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", legacy_construction}}),
+      Catch::Matchers::ContainsSubstring(
+          "\"PatchConstruction\": \"Legacy\" is a parked developer option"));
+  legacy_construction["Developer"] = true;
   CHECK(config::ElectrostaticSolverData(json{{"ResponseCorrection", legacy_construction}})
             .response_correction->patch_construction ==
         config::ElectrostaticSolverData::ResponseCorrectionData::PatchConstruction::LEGACY);
+  auto features_construction = automatic_correction;
+  features_construction["PatchConstruction"] = "Features";
+  CHECK(config::ElectrostaticSolverData(json{{"ResponseCorrection", features_construction}})
+            .response_correction->developer_options.empty());
   auto invalid_construction = automatic_correction;
   invalid_construction["PatchConstruction"] = "Groups";
   CHECK_THROWS(

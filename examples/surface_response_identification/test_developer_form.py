@@ -46,6 +46,17 @@ class DeveloperFormTest(unittest.TestCase):
         self.assertEqual(F.form_name(False), "v1 form")
         self.assertEqual(F.form_name(True), "recorded developer form")
 
+    def test_device_run_crack_policy_per_form(self):
+        self.assertEqual(F.device_run_crack_policy(None, False), "default")
+        self.assertEqual(F.device_run_crack_policy(None, True), "legacy")
+        self.assertEqual(F.device_run_crack_policy("default", True), "default")
+        with self.assertRaises(ValueError):
+            F.device_run_crack_policy("legacy", False)
+        cracked = {"Model": {"CrackInternalBoundaryElements": True}, "Solver": {"SurfaceResponseCorrection": {"Library": "l"}}}
+        self.assertEqual(F.parked_config_settings(cracked), ["Model.CrackInternalBoundaryElements true"])
+        del cracked["Solver"]  # no correction run: the key is not parked
+        self.assertEqual(F.parked_config_settings(cracked), [])
+
     def test_parked_options_mirror_palace(self):
         # Un-parking an option deletes its PARKED_OPTIONS entry and its RequireDeveloperOption line in Palace together.
         with open(CONFIGFILE) as source:

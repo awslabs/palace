@@ -11,9 +11,11 @@ name unless the same block sets "Developer": true (configfile.cpp RequireDevelop
 RECORDED block (the settings of its records) and writes one of two forms:
 
   v1 form                  (the default) the recorded block less the parked options it selects: each option's
-                           selecting setting set to its v1 value and the option's own keys dropped (PARKED_OPTIONS).
+                           selecting setting set to its v1 value and the option's own keys dropped (PARKED_OPTIONS);
+                           a device run with a library correction takes the crack policy V1_CRACK_POLICY.
   recorded developer form  (--developer) the recorded block with the defaults of record it relied on stated
-                           (RECORD_DEFAULTS: Palace's defaults before the cut) and "Developer": true appended.
+                           (RECORD_DEFAULTS: Palace's defaults before the cut) and "Developer": true appended, with the
+                           recorded crack policy RECORDED_CRACK_POLICY (the records ran on cracked meshes).
 
 Un-parking one option later is ONE line here: delete its PARKED_OPTIONS entry (with its RequireDeveloperOption line
 in Palace); the v1 form of every writer then keeps that option as recorded. Values from the v1 form are not
@@ -25,6 +27,10 @@ import copy
 DEVELOPER_KEY = "Developer"
 V1_FORM = "v1 form"
 DEVELOPER_FORM = "recorded developer form"
+# The crack policies (crack_policy.py) of a device run with a library correction: the v1 form's (Palace refuses the
+# global crack key over an interior perfect conductor without the switch) and the records'.
+V1_CRACK_POLICY = "default"
+RECORDED_CRACK_POLICY = "legacy"
 # The defaults a recorded block relied on (Palace's before the cut), stated by the recorded developer form.
 RECORD_DEFAULTS = {"CorrectionMode": "Both"}
 
@@ -35,7 +41,10 @@ PARKED_OPTIONS = {
                               ("SolveTol", "TranslationalDomainCorrection"), "PostprocessOnly"),
 }
 # The other parked settings of a block, which no writer selects: (key path, the parked value; None = any value).
-PARKED_SETTINGS = ()
+PARKED_SETTINGS = (
+    (("PatchConstruction",), "Legacy"),
+    (("ConductorConsistency", "Exclusion"), "Sticky"),
+)
 CORRECTION_PATHS = (("Solver", "Electrostatic", "ResponseCorrection"), ("Solver", "SurfaceResponseCorrection"))
 
 
@@ -71,7 +80,8 @@ def parked_block_settings(block):
 
 
 def parked_config_settings(config):
-    """The parked settings of a whole config: those of its correction blocks."""
+    """The parked settings of a whole config: those of its correction blocks and, in a correction run, the global
+    crack key."""
     found = []
     for path in CORRECTION_PATHS:
         block = _node(config, path)
@@ -79,7 +89,21 @@ def parked_config_settings(config):
             found.extend(f"{'.'.join(path)}: {setting}" for setting in parked_block_settings(block))
             if block.get(DEVELOPER_KEY) is not None:
                 found.append(f"{'.'.join(path)}: {DEVELOPER_KEY}")
+    if any(isinstance(_node(config, path), dict) for path in CORRECTION_PATHS):
+        if config.get("Model", {}).get("CrackInternalBoundaryElements") is True:
+            found.append("Model.CrackInternalBoundaryElements true")
     return found
+
+
+def device_run_crack_policy(crack_policy, developer):
+    """The crack policy of a device run with a library correction: `crack_policy` when given, else the form's
+    (V1_CRACK_POLICY; RECORDED_CRACK_POLICY with `developer`); the legacy policy, which cracks the interior perfect
+    conductors, is a parked option there and needs `developer`."""
+    policy = crack_policy or (RECORDED_CRACK_POLICY if developer else V1_CRACK_POLICY)
+    if policy == "legacy" and not developer:
+        raise ValueError("the crack policy legacy cracks the interior perfect conductors, a parked developer option of a "
+                         "library correction run: write the recorded developer form (--developer)")
+    return policy
 
 
 def v1_block(recorded):

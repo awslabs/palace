@@ -2421,6 +2421,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Max
                                   {{"Library", library_3d_path.string()},
                                    {"TargetInterfaces", {1, 2, 3}},
                                    {"UnmatchedPolicy", "Error"},
+                                   {"Developer", true},
                                    {"PatchConstruction", "Legacy"}}}};
   IoData maxwell_iodata_3d(maxwell_config_3d, false);
   auto maxwell_mesh_3d = mesh::ReadMesh(maxwell_iodata_3d, Mpi::World());
@@ -5843,6 +5844,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell is
        {{"Library", rounded_library_3d_path.string()},
         {"TargetInterfaces", {4}},
         {"UnmatchedPolicy", "Error"},
+        {"Developer", true},
         {"PatchConstruction", "Legacy"}}}};
   IoData rounded_maxwell_island_iodata(rounded_maxwell_island_config, false);
   rounded_maxwell_island_iodata.boundaries.cracked_attributes.insert(9);
@@ -6806,6 +6808,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
        {{"Library", slab_top_rounded_library_3d_path.string()},
         {"TargetInterfaces", {4}},
         {"UnmatchedPolicy", "Error"},
+        {"Developer", true},
         {"PatchConstruction", "Legacy"}}}};
   IoData slab_top_maxwell_iodata(slab_top_maxwell_config, false);
   slab_top_maxwell_iodata.boundaries.cracked_attributes.insert(9);
@@ -6924,6 +6927,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                          {{"Library", library.string()},
                           {"TargetInterfaces", {4}},
                           {"UnmatchedPolicy", "Error"},
+                          {"Developer", true},
                           {"PatchConstruction", "Legacy"}}}};
     return config;
   };
@@ -14290,11 +14294,14 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
       json identify = config;
       identify["Model"]["Refinement"] = {{"MaxIts", 0}};
+      // The developer switch: the legacy crack form cracks the interior Ground sheets
+      // (CUT-PLAN step 5a).
       identify["Solver"]["Electrostatic"] = {{"ResponseCorrection",
                                               {{"Library", library_3d_path.string()},
                                                {"TargetInterfaces", {1, 2, 3}},
                                                {"UnmatchedPolicy", "Warn"},
-                                               {"TraceCoupling", "Collocated"}}}};
+                                               {"TraceCoupling", "Collocated"},
+                                               {"Developer", true}}}};
       // Beside the dry run, the LEAF perimeter of the mesh (the post-processing extraction,
       // unchanged by decision 899): its segment count on the saved mesh exceeds the initial
       // mesh's when the AMR refined the perimeter, the premise of the comparison below (the

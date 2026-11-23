@@ -424,7 +424,8 @@ void IoData::CheckConfiguration()
         "config[\"Model\"][\"CrackInternalBoundaryElements\"] is not set in a surface "
         "response library run: the default applies, and interior PEC, Ground, Terminal, "
         "and PrescribedPotential sheets are not cracked! Set the option explicitly (true "
-        "selects the legacy cracked mesh).\n");
+        "selects the legacy cracked mesh; a library correction refuses it on perfect "
+        "conductors without \"Developer\": true).\n");
   }
 
   // Mixed current/flux inductance extraction has one complete-matrix contract: every

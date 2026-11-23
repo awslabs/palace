@@ -1,0 +1,171 @@
+{
+  "Problem": {
+    "Type": "Electrostatic",
+    "Verbose": 2,
+    "Output": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/corner-basis-refinement-20260930/device-check-convex/square-s10-p3/postpro/thin-corrected",
+    "OutputFormats": {
+      "Paraview": false,
+      "GridFunction": false
+    }
+  },
+  "Model": {
+    "Mesh": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/corner-basis-refinement-20260930/device-check-convex/square-s10-p3/meshes/island-thin.msh",
+    "L0": 1e-06,
+    "Refinement": {
+      "Tol": 1e-12,
+      "MaxIts": 3
+    }
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permittivity": 11.45
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [
+            1
+          ]
+        },
+        {
+          "Index": 2,
+          "Attributes": [
+            2
+          ]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "Ground": {
+      "Attributes": [
+        1
+      ]
+    },
+    "Terminal": [
+      {
+        "Index": 1,
+        "Attributes": [
+          2
+        ]
+      }
+    ],
+    "Postprocessing": {
+      "Dielectric": [
+        {
+          "Index": 1,
+          "Attributes": [
+            3
+          ],
+          "Type": "SA",
+          "Thickness": 0.002,
+          "Permittivity": 4.0,
+          "LossTan": 0.002,
+          "LocalizeEdgeEnergy": false,
+          "EdgeExcludeAttributes": [
+            1,
+            7
+          ],
+          "EdgeDistances": [
+            1.9
+          ],
+          "AutomaticEdges": true,
+          "EdgeRefinement": {
+            "Radius": 1.9,
+            "ElementsPerRadius": 1,
+            "OuterRadiusFactor": 1.0,
+            "CoreIndicatorWeight": 0.0
+          }
+        },
+        {
+          "Index": 2,
+          "Attributes": [
+            2
+          ],
+          "Type": "MS",
+          "Thickness": 0.002,
+          "Permittivity": 11.45,
+          "LossTan": 0.0003,
+          "LocalizeEdgeEnergy": false,
+          "EdgeExcludeAttributes": [
+            1,
+            7
+          ],
+          "EdgeDistances": [
+            1.9
+          ],
+          "AutomaticEdges": true,
+          "EdgeRefinement": {
+            "Radius": 1.9,
+            "ElementsPerRadius": 1,
+            "OuterRadiusFactor": 1.0,
+            "CoreIndicatorWeight": 0.0
+          }
+        },
+        {
+          "Index": 3,
+          "Attributes": [
+            2
+          ],
+          "Type": "MA",
+          "Thickness": 0.002,
+          "Permittivity": 10.0,
+          "LossTan": 0.03,
+          "LocalizeEdgeEnergy": false,
+          "EdgeExcludeAttributes": [
+            1,
+            7
+          ],
+          "EdgeDistances": [
+            1.9
+          ],
+          "AutomaticEdges": true,
+          "EdgeRefinement": {
+            "Radius": 1.9,
+            "ElementsPerRadius": 1,
+            "OuterRadiusFactor": 1.0,
+            "CoreIndicatorWeight": 0.0
+          }
+        }
+      ]
+    }
+  },
+  "Solver": {
+    "Order": 3,
+    "Electrostatic": {
+      "Save": 0,
+      "ResponseCorrection": {
+        "Library": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/corner-basis-refinement-20260930/libraries/corner-basis-refinement-R1p9-convex/process-library.json",
+        "TargetInterfaces": [
+          1,
+          2,
+          3
+        ],
+        "UnmatchedPolicy": "Error",
+        "TraceCoupling": "SurfaceMortar",
+        "MortarOversampling": 2
+      }
+    },
+    "Linear": {
+      "Type": "BoomerAMG",
+      "KSPType": "CG",
+      "Tol": 1e-10,
+      "MaxIts": 1000,
+      "EstimatorTol": 1e-06,
+      "EstimatorMaxIts": 500,
+      "EstimatorMG": true
+    }
+  }
+}

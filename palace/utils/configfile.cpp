@@ -2073,6 +2073,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                         (*exclusion == "PerExcitation" || *exclusion == "Sticky"),
                     "Response-correction \"ConductorConsistency.Exclusion\" must be "
                     "\"PerExcitation\" or \"Sticky\"!");
+        if (*exclusion == "Sticky")
+        {
+          // The former sticky exclusion rule: a parked legacy option.
+          RequireDeveloperOption(data,
+                                 "\"ConductorConsistency\": {\"Exclusion\": \"Sticky\"}");
+        }
         data.conductor_consistency_exclusion =
             *exclusion == "Sticky"
                 ? ResponseCorrectionData::ConductorConsistencyExclusion::STICKY
@@ -2445,6 +2451,8 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       }
       else if (patch_construction == "Legacy")
       {
+        // The legacy per-interface-group patch builder: a parked legacy option.
+        RequireDeveloperOption(data, "\"PatchConstruction\": \"Legacy\"");
         data.patch_construction = ResponseCorrectionData::PatchConstruction::LEGACY;
       }
       else

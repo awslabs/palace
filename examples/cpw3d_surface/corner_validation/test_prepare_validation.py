@@ -62,5 +62,42 @@ class PrepareValidationTest(unittest.TestCase):
         self.assertEqual(interfaces["SA"], PREPARE.INTERFACES["SA"])
 
 
+# The record: corner-basis-refinement-20260930/device-check-convex/square-s10-p3/thin-corrected.json (sha256
+# a8d967a8fc6e89b3..., 2026-09-30; copied to testdata/), written with the library's Fabrication layers below.
+RECORD = Path(__file__).resolve().parent / "testdata" / "record-square-s10-p3-thin-corrected.json"
+RECORD_PROCESS = ({"SA": (4.0, 0.002, 0.002), "MS": (11.45, 0.0003, 0.002), "MA": (10.0, 0.03, 0.002)}, 11.45)
+
+
+def record_arguments(record):
+    block = record["Solver"]["Electrostatic"]["ResponseCorrection"]
+    dielectric = record["Boundaries"]["Postprocessing"]["Dielectric"][0]
+    return (Path(record["Problem"]["Output"]), Path(record["Model"]["Mesh"]), record["Solver"]["Order"],
+            record["Model"]["Refinement"]["MaxIts"], False, Path(block["Library"]), dielectric["EdgeDistances"][0],
+            dielectric["EdgeRefinement"]["ElementsPerRadius"], RECORD_PROCESS)
+
+
+class ResponseFormsTest(unittest.TestCase):
+    """The v1 cut (developer_form.py): the default thin-corrected config is the v1 form; --developer the record."""
+
+    def test_default_thin_corrected_config_carries_no_parked_key(self):
+        config = PREPARE.config(*record_arguments(json.loads(RECORD.read_text())))
+        self.assertEqual(PREPARE.developer_form.parked_config_settings(config), [])
+        self.assertNotIn("Developer", config["Solver"]["Electrostatic"]["ResponseCorrection"])
+        self.assertNotIn("CrackInternalBoundaryElements", config["Model"])
+
+    def test_developer_form_is_the_record(self):
+        # The recorded developer form = the record byte for byte plus the keys that state its behaviour on today's
+        # binary: Model.CrackInternalBoundaryElements true (the record's binary cracked an unset key; crack policy
+        # legacy), the default of record "CorrectionMode": "Both" and "Developer": true.
+        text = RECORD.read_text()
+        record = json.loads(text)
+        self.assertEqual(json.dumps(record, indent=2) + "\n", text)
+        config = PREPARE.config(*record_arguments(record), crack_policy="legacy", developer=True)
+        record["Model"]["CrackInternalBoundaryElements"] = True
+        record["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"] = "Both"
+        record["Solver"]["Electrostatic"]["ResponseCorrection"]["Developer"] = True
+        self.assertEqual(json.dumps(config, indent=2) + "\n", json.dumps(record, indent=2) + "\n")
+
+
 if __name__ == "__main__":
     unittest.main()

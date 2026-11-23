@@ -14,6 +14,7 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from surface_response_identification import perimeter as P  # noqa: E402
+from surface_response_identification import developer_form  # noqa: E402
 from surface_response_identification.preflight_config import main, preflight_config  # noqa: E402
 
 LIBRARY = {
@@ -63,12 +64,17 @@ class PreflightConfigTest(unittest.TestCase):
         self.assertEqual(config["Domains"]["Materials"][0]["Permittivity"], 11.7)
         self.assertEqual(config["Problem"]["Type"], "Electrostatic")
         self.assertEqual(config["Model"]["Refinement"]["UniformLevels"], 0)
-        # Decision 1570: the default crack policy (legacy) writes the key explicitly.
+        # Decision 1570: the default crack policy (legacy) writes the key explicitly; over the Ground / Terminal sheets
+        # of a correction run it is a parked option (the v1 cut), so the block carries the developer switch with it.
         self.assertIs(config["Model"]["CrackInternalBoundaryElements"], True)
+        self.assertIs(config["Solver"]["Electrostatic"]["ResponseCorrection"]["Developer"], True)
 
     def test_crack_policy_default_omits_the_key_and_no_crack_overrides_it(self):
         config = preflight_config("m.msh2", ground=[4], terminals=[], sa=[8], library=self.library, output_directory="out", crack_policy="default")
         self.assertNotIn("CrackInternalBoundaryElements", config["Model"])
+        # Without the legacy crack the preflight is the v1 form: no parked key, no switch (developer_form.py).
+        self.assertEqual(developer_form.parked_config_settings(config), [])
+        self.assertNotIn("Developer", config["Solver"]["Electrostatic"]["ResponseCorrection"])
         config = preflight_config("m.msh2", ground=[4], terminals=[], sa=[8], library=self.library, output_directory="out", crack=False, crack_policy="default")
         self.assertIs(config["Model"]["CrackInternalBoundaryElements"], False)
         output = os.path.join(self.directory.name, "cfg", "default.json")

@@ -324,6 +324,11 @@ class ResponseForms(unittest.TestCase):
             config = thin_config(POLYGON_SET, THIN_MANIFEST, "m", "lib", path, "p")
             self.assertEqual(developer_form.parked_config_settings(config), [], path)
             self.assertNotIn("Developer", config["Solver"]["Electrostatic"]["ResponseCorrection"], path)
+            self.assertNotIn("CrackInternalBoundaryElements", config["Model"], path)
+        # The legacy crack policy (the records' cracked mesh) is the developer form's.
+        with self.assertRaises(ValueError):
+            thin_config(POLYGON_SET, THIN_MANIFEST, "m", "lib", "T", "p", crack_policy="legacy")
+        self.assertTrue(thin_config(POLYGON_SET, THIN_MANIFEST, "m", "lib", "T", "p", developer=True)["Model"]["CrackInternalBoundaryElements"])
 
     def test_developer_form_is_the_record(self):
         # The record: stage2-20261004/l2-writer/configs/new-c9cca860/osc003-O1-thin-P4.json (sha256 930d8780889b45cf...,
@@ -343,7 +348,7 @@ class ResponseForms(unittest.TestCase):
         block = record["Solver"]["Electrostatic"]["ResponseCorrection"]
         config = thin_config(polygon_set, manifest, record["Model"]["Mesh"], block["Library"], "P4", record["Problem"]["Output"],
                              radius=record["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"][0],
-                             crack_policy="legacy", developer=True)
+                             developer=True)
         record["Model"]["Refinement"]["MaxSizePredicted"] = True
         record["Model"]["CrackInternalBoundaryElements"] = True
         block["Developer"] = True

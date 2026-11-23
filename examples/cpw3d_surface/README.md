@@ -117,7 +117,11 @@ python3 examples/cpw3d_surface/prepare_maxwell_validation.py \
   --length 50
 ```
 
-Use `--length 200` to prepare the endpoint-sensitivity pair.
+Use `--length 200` to prepare the endpoint-sensitivity pair. The configurations are the v1
+form by default (uncracked along the perfect conductors, no parked key); `--developer` writes
+the recorded developer form (the records' cracked mesh with `"Developer": true`). Values from
+the v1 form are not comparable with records made before this cut until the benchmark's
+collocated twins are read.
 
 Run the three generated configurations and compare them:
 
