@@ -31,7 +31,7 @@ class SpaceOperator;
 // the grid of the environment (EnvironmentOperator::Grid), by an LU factorization. A solve
 // condenses onto Γ, solves there and expands. It is exact but for rounding, except near a
 // resonance of the region with Γ held fixed, where the region's interior, factored alone,
-// is nearly singular: it is used within a Krylov solver with the system operator (see
+// is nearly singular: it is used within FGMRES with the system operator (see
 // MakeDrivenKspSolver), which corrects that in a few iterations.
 //
 class RegionSolver : public Solver<ComplexOperator>
@@ -65,7 +65,7 @@ private:
 };
 
 // The linear solver of a driven sweep: that of the configuration or, for a substructured
-// region, the Krylov solver of the configuration with the RegionSolver.
+// region, FGMRES with the RegionSolver (and the tolerances of the configuration).
 std::unique_ptr<ComplexKspSolver> MakeDrivenKspSolver(const IoData &iodata,
                                                       SpaceOperator &space_op);
 

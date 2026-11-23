@@ -5063,6 +5063,63 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       Catch::Matchers::ContainsSubstring("The substructuring interface holds no unknowns"));
 }
 
+#if defined(MFEM_USE_SUPERLU)
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring solves the region at its resonance",
+                 "[substructure][Serial][Parallel]")
+{
+  // The box of substructuring_driven_box, lossless and with its port in the environment
+  // only, 1e-9 above the lowest resonance of the region with Γ held fixed (24.98910134246
+  // GHz, of an eigenmode run of the region with PEC on Γ), where the RegionSolver is nearly
+  // singular: on the mesh of the region, with SuperLU_DIST, the sweep gives the S of a
+  // regular sweep, factored, to 1e-10 (GMRES, rather than FGMRES, loses about 1e-8 of it).
+  const auto dir = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
+                   "substructuring_driven_box";
+  const auto model = temp_dir / "postpro_Offline" / "environment.model";
+  auto run = [&](const std::string &mode, const std::function<void(json &)> &edit)
+  {
+    std::ifstream fi(dir / "driven_offline.json");
+    json config = json::parse(fi, nullptr, true, true);
+    config["Model"]["Mesh"] = (dir / "mesh" / "box.mesh").string();
+    config["Problem"]["Output"] = (temp_dir / ("postpro_" + mode)).string();
+    config["Domains"]["Materials"][0] = {{"Attributes", {1}}, {"Permittivity", 4.5}};
+    config["Boundaries"]["LumpedPort"].erase(1);
+    config["Solver"]["Driven"] = {
+        {"MinFreq", 24.989101367449}, {"MaxFreq", 24.989101367449}, {"FreqStep", 1.0}};
+    edit(config);
+    IoData iodata(config, false);
+    MPI_Comm comm = Mpi::World();
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    palace::Run(iodata, comm, 1);
+  };
+  run("Offline", [](json &) {});
+  run("Online",
+      [&](json &config)
+      {
+        config["Model"]["Mesh"] = RegionMeshPath(model.string());
+        config["Solver"]["Substructuring"]["ModelFile"] = model.string();
+        config["Solver"]["Linear"]["Type"] = "SuperLU";
+      });
+  run("Regular",
+      [](json &config)
+      {
+        config["Solver"].erase("Substructuring");
+        config["Solver"]["Linear"]["Type"] = "SuperLU";
+        config["Solver"]["Linear"]["MGMaxLevels"] = 1;
+        config["Solver"]["Linear"]["ComplexCoarseSolve"] = true;
+      });
+  const auto online = ReadCsv(temp_dir / "postpro_Online" / "port-S.csv");
+  const auto regular = ReadCsv(temp_dir / "postpro_Regular" / "port-S.csv");
+  REQUIRE(online.second.size() == 1);
+  REQUIRE(regular.second.size() == 1);
+  for (std::size_t c : {1, 2})
+  {
+    CHECK(online.second[0][c] == Catch::Approx(regular.second[0][c]).epsilon(1.0e-10));
+  }
+}
+#endif
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring checks the environment against the model",
                  "[substructure][Serial][Parallel][Long]")

@@ -196,8 +196,14 @@ std::unique_ptr<ComplexKspSolver> MakeDrivenKspSolver(const IoData &iodata,
 {
   if (auto *env = space_op.GetEnvironment())
   {
+    // FGMRES, whose solution combines the preconditioned vectors of its residual: near a
+    // resonance of the region, where the RegionSolver is nearly singular, GMRES applies it
+    // to a combination of its basis, which loses digits.
+    config::LinearSolverData linear = iodata.solver.linear;
+    linear.krylov_solver = KrylovSolver::FGMRES;
+    linear.pc_side = PreconditionerSide::DEFAULT;
     return std::make_unique<ComplexKspSolver>(
-        iodata.solver.linear, iodata.problem.verbose, space_op.GetComm(),
+        linear, iodata.problem.verbose, space_op.GetComm(),
         std::make_unique<RegionSolver>(iodata, space_op, *env));
   }
   return std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
