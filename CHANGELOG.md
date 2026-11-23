@@ -15,6 +15,16 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Bug Fixes
+
+  - Fixed the abort "Incident Floquet mode is evanescent or not found!" when measuring the
+    S-parameters of a Floquet port which is not excited and whose specular (0,0) order is
+    below cutoff, for example in total internal reflection. Such a port only terminates the
+    model and needs no incident wave: it reports the orders which carry power, if any.
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features
