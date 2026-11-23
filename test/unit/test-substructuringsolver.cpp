@@ -3329,9 +3329,10 @@ TEST_CASE("SpaceOperator assembly restricted to region and environment",
     }
     fes.GetProlongationMatrix()->MultTranspose(m, mt);
     marks[side].SetSize(mt.Size());
+    const double *t = mt.HostRead();
     for (int i = 0; i < mt.Size(); i++)
     {
-      marks[side][i] = (mt(i) > 0.0);
+      marks[side][i] = (t[i] > 0.0);
     }
   }
 
@@ -5554,7 +5555,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
       x = 0.0;
       if (idx[j] >= tstart && idx[j] < tstart + nt)
       {
-        x(static_cast<int>(idx[j] - tstart)) = 1.0;
+        x.HostReadWrite()[idx[j] - tstart] = 1.0;
       }
       yr = 0.0;
       yi = 0.0;
@@ -5562,10 +5563,10 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
       add(C.get(), {0.0, omega});
       add(M.get(), -omega * omega);
       add(A2.get(), 1.0);
-      MPI_Gatherv(yr.GetData(), nt, MPI_DOUBLE, full.GetData(), cnt.data(), disp.data(),
+      MPI_Gatherv(yr.HostRead(), nt, MPI_DOUBLE, full.HostWrite(), cnt.data(), disp.data(),
                   MPI_DOUBLE, 0, comm);
-      MPI_Gatherv(yi.GetData(), nt, MPI_DOUBLE, full_i.GetData(), cnt.data(), disp.data(),
-                  MPI_DOUBLE, 0, comm);
+      MPI_Gatherv(yi.HostRead(), nt, MPI_DOUBLE, full_i.HostWrite(), cnt.data(),
+                  disp.data(), MPI_DOUBLE, 0, comm);
       for (int i = 0; root && i < n; i++)
       {
         A[static_cast<std::size_t>(j) * n + i] = {full(idx[i]), full_i(idx[i])};
@@ -5734,10 +5735,12 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
       for (int k = 0; k < 3; k++)
       {
         double dmax[2] = {0.0, 0.0};
+        const double *xr = u_online[k].Real().HostRead(),
+                     *xi = u_online[k].Imag().HostRead();
+        const double *yr = u[k].Real().HostRead(), *yi = u[k].Imag().HostRead();
         for (int i = 0; i < nt; i++)
         {
-          const std::complex<double> x(u_online[k].Real()(i), u_online[k].Imag()(i)),
-              y(u[k].Real()(i), u[k].Imag()(i));
+          const std::complex<double> x(xr[i], xi[i]), y(yr[i], yi[i]);
           if (ds.EnvironmentInterior()[i])
           {
             dmax[1] = std::max(dmax[1], std::abs(x));

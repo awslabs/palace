@@ -102,7 +102,7 @@ ComplexVector VoltageFunctional(SpaceOperator &space_op, int idx,
     e = 0.0;
     if (own)
     {
-      e(static_cast<int>(i)) = 1.0;
+      e.HostReadWrite()[static_cast<int>(i)] = 1.0;
     }
     E.Real().SetFromTrueDofs(e);
     const std::complex<double> V = port.GetVoltage(E);

@@ -978,6 +978,7 @@ std::vector<int> DrivenSubstructure::InterfaceBoundaryAttributes(
   const int amax = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   std::vector<int> found(amax + 1, 0);
   mfem::Array<int> dofs;
+  const double *h_g = g.HostRead();
   for (int be = 0; be < mesh.GetNBE(); be++)
   {
     const int a = mesh.GetBdrAttribute(be);
@@ -989,7 +990,7 @@ std::vector<int> DrivenSubstructure::InterfaceBoundaryAttributes(
     bool all = true, any = false;
     for (int d : dofs)
     {
-      const double v = g((d >= 0) ? d : -1 - d);
+      const double v = h_g[(d >= 0) ? d : -1 - d];
       all = all && v > 0.5;
       any = any || v > 1.5;
     }
