@@ -65,6 +65,15 @@ public:
   // The rank of the process at (pr, pc).
   int Rank(int pr, int pc) const { return pr * npcol + pc; }
 
+  // The rank of the process holding entry (g, h), and the index of the entry in its local
+  // part (on that process).
+  int Owner(int g, int h) const { return Rank((g / mb) % nprow, (h / mb) % npcol); }
+  std::size_t LocalIndex(int g, int h) const
+  {
+    return static_cast<std::size_t>((g / (mb * nprow)) * mb + g % mb) +
+           static_cast<std::size_t>(LeadingDim()) * ((h / (mb * npcol)) * mb + h % mb);
+  }
+
   // The local parts of an n x n matrix on rank 0 (column-major, or row-major), which it
   // sends to each process of the grid in turn. Collective.
   std::vector<std::complex<double>>

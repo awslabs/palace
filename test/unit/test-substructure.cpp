@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -12,6 +13,7 @@
 #include <memory>
 #include <numeric>
 #include <random>
+#include <type_traits>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -22,6 +24,7 @@
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
 #include "fixtures.hpp"
+#include "linalg/blockcyclic.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
 
@@ -711,6 +714,129 @@ TEST_CASE("Eliminated rows without a stored diagonal become identity rows",
     CAPTURE(i);
     CHECK(yy[i] == expected[i]);
   }
+}
+
+namespace
+{
+
+// The redistribution of the lower triangle of a symmetric n x n matrix S, each process
+// holding its share, through a signed permutation of its DOFs (S_cur(g, h) = s_g s_h
+// S(p_g, p_h), or S without it), onto the rows of a block of DOFs on each process and onto
+// a block cyclic grid of all of them, against S_cur on every process.
+template <typename T>
+void CheckTriangleRedistribution(int n, bool mapped)
+{
+  MPI_Comm comm = Mpi::World();
+  const int nranks = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  auto value = [](int a, int b)
+  {
+    const int i = std::max(a, b), j = std::min(a, b);
+    if constexpr (std::is_same_v<T, double>)
+    {
+      return std::sin(1.0 + i + 3.1 * j);
+    }
+    else
+    {
+      return T(std::sin(1.0 + i + 3.1 * j), std::cos(0.5 * i - 2.0 * j));
+    }
+  };
+  std::vector<int> perm(n);
+  std::iota(perm.begin(), perm.end(), 0);
+  std::mt19937 rng(7);
+  std::shuffle(perm.begin(), perm.end(), rng);
+  std::vector<int> saved(n);
+  std::vector<std::vector<std::pair<int, double>>> to;
+  if (mapped)
+  {
+    to.resize(n);
+    for (int a = 0; a < n; a++)
+    {
+      to[a] = {{perm[a], (a % 3 == 0) ? -1.0 : 1.0}};
+      saved[perm[a]] = a;
+    }
+  }
+  auto expected = [&](int g, int h)
+  {
+    if (!mapped)
+    {
+      return value(g, h);
+    }
+    const int a = saved[g], b = saved[h];
+    return ((a % 3 == 0) ? -1.0 : 1.0) * ((b % 3 == 0) ? -1.0 : 1.0) * value(a, b);
+  };
+  auto read = [&](long long e, long long m, T *x)
+  {
+    long long b = 0;
+    while (substructuring::TriangleColumnStart(n, b + 1) <= e)
+    {
+      b++;
+    }
+    long long a = b + (e - substructuring::TriangleColumnStart(n, b));
+    for (long long k = 0; k < m; k++)
+    {
+      x[k] = value(static_cast<int>(a), static_cast<int>(b));
+      if (++a == n)
+      {
+        a = ++b;
+      }
+    }
+  };
+
+  // The rows [n r / p, n (r + 1) / p) on process r.
+  auto first = [&](int r)
+  { return static_cast<int>(static_cast<long long>(n) * r / nranks); };
+  std::vector<T> rows(static_cast<std::size_t>(first(rank + 1) - first(rank)) * n, T(0.0));
+  substructuring::RedistributeTriangle<T>(
+      comm, n, read, to,
+      [&](int g, int)
+      {
+        int q = 0;
+        while (first(q + 1) <= g)
+        {
+          q++;
+        }
+        return q;
+      },
+      [&](int g, int h) { return static_cast<std::size_t>(g - first(rank)) * n + h; },
+      rows);
+  double err = 0.0;
+  for (int g = first(rank); g < first(rank + 1); g++)
+  {
+    for (int h = 0; h < n; h++)
+    {
+      err = std::max(err, std::abs(rows[static_cast<std::size_t>(g - first(rank)) * n + h] -
+                                   expected(g, h)));
+    }
+  }
+
+  // The grid of all processes, in blocks of 4.
+  const BlockCyclicGrid grid(comm, n, nranks, 4);
+  std::vector<T> local(grid.LocalSize(), T(0.0));
+  substructuring::RedistributeTriangle<T>(
+      comm, n, read, to, [&](int g, int h) { return grid.Owner(g, h); },
+      [&](int g, int h) { return grid.LocalIndex(g, h); }, local);
+  for (int jl = 0; jl < grid.LocalCols(); jl++)
+  {
+    for (int il = 0; il < grid.LocalRows(); il++)
+    {
+      const int g = grid.GlobalRow(il), h = grid.GlobalCol(jl);
+      err = std::max(err, std::abs(local[grid.LocalIndex(g, h)] - expected(g, h)));
+    }
+  }
+  Mpi::GlobalMax(1, &err, comm);
+  CHECK(err == 0.0);
+}
+
+}  // namespace
+
+TEST_CASE("Saved lower triangles are redistributed onto rows and process grids",
+          "[substructure][Serial][Parallel]")
+{
+  const int n = GENERATE(1, 2, 37);
+  const bool mapped = GENERATE(false, true);
+  CAPTURE(n, mapped);
+  CheckTriangleRedistribution<double>(n, mapped);
+  CheckTriangleRedistribution<std::complex<double>>(n, mapped);
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "Records of a substructuring model file",
