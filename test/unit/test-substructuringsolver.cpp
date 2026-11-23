@@ -4907,7 +4907,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "[substructure][Serial][Parallel][Long]")
 {
   // A second-order absorbing boundary makes Im S_E indefinite at the samples themselves:
-  // the rational model is passive between them if no less so than at them, so that the
+  // between them, the rational model is tested against the samples beside it, and the
   // sampling stops at its tolerance, without passivity samples or a warning.
   const auto dir = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
                    "substructuring_driven";

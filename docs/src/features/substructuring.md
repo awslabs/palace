@@ -125,8 +125,8 @@ of an existing mesh by the position of their centroids.
 ### Adaptive mesh refinement
 
 In electrostatics and magnetostatics (driven substructuring refines no mesh), the environment is
-condensed once, so its mesh resolution is fixed in the saved model. Meshes
-from layout tools are often coarse and meant to be refined by
+condensed once, so its mesh resolution is fixed in the saved model. Meshes from layout tools are
+often coarse and meant to be refined by
 [adaptive mesh refinement](../reference.md#Error-estimation-and-adaptive-mesh-refinement-(AMR))
 (AMR), so the refinement is done in two steps:
 
