@@ -24,6 +24,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     divided by the zero l1 norm of a coarse-level row. Added a hypre patch for
     [hypre-space/hypre#1676](https://github.com/hypre-space/hypre/pull/1676), which leaves
     such rows unchanged.
+    [PR 1284](https://github.com/awslabs/palace/pull/1284).
 
 ## [0.20.0] - 2026-11-23
 
