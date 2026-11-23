@@ -879,6 +879,7 @@ void CeedParaViewDataCollection::Save()
   }
   pvd_restarted = true;
   std::ostringstream dataset;
+  dataset.precision(std::numeric_limits<double>::max_digits10);
   dataset << "<DataSet timestep=\"" << GetTime() << "\" group=\"\" part=\"" << 0
           << "\" file=\"" << GeneratePVTUPath() + "/" + GeneratePVTUFileName("data")
           << "\" name=\"mesh\"/>\n";
