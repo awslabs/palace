@@ -1325,7 +1325,10 @@ each `Patches` entry places that model in the global mesh. `Origin`, `AxisU`, an
 `AxisV` map the coupon coordinates into the global frame. For a one-edge coupon,
 `AxisU` points from metal into the gap and `AxisV` points from the process side toward
 vacuum. The fabricated and thin response matrices must use the contour ordering in
-`BasisPoints`, followed by any explicitly documented conductor-state coefficients.
+`BasisPoints`, followed by any explicitly documented conductor-state coefficients. This
+hand-placed form (`Models` and `Patches`, or the one-model `FabricatedMatrix` / `Edges`
+syntax) is a developer option: it needs `"Developer": true` in the block, since the
+default correction places its models from the `Library`.
 
 For repeated use of one fabrication process, `Library` replaces the explicit `Models`
 and `Patches` lists:
@@ -1394,7 +1397,8 @@ set aside from it (parked) are refused by name at set-up unless the same block s
 `"Developer": true`: `CorrectionMode` `SelfConsistent` and `Both`, and `SolveTol` and
 `TranslationalDomainCorrection`, which configure the self-consistent solve only; the
 legacy options `PatchConstruction` `Legacy` and `ConductorConsistency.Exclusion` `Sticky`;
-and the global crack key where it would crack an interior perfect conductor (see the
+the alternatives `TraceCoupling` `SurfaceMortar`, `MortarOversampling` and the hand-placed
+form without `Library`; and the global crack key where it would crack an interior perfect conductor (see the
 [mesh cracking](#Mesh-cracking-and-the-thin-metal-postprocessing) above). With the
 switch the run prints one line `DEVELOPER OPTIONS: <the parked options in use>` and
 `palace.json` records the same list as `SurfaceResponse.Developer`; every other default is
@@ -1430,8 +1434,9 @@ until those are available, use the converged fixed-trace/fixed-flux estimates ra
 silently disabling translational physics.
 
 `TraceCoupling` selects the map from the global field into coupon coefficients.
-`Collocated` preserves the historical point evaluation. The experimental
-`SurfaceMortar` option uses a piecewise-linear L2 projection around each translational
+`Collocated` (the default path) preserves the historical point evaluation. The
+experimental `SurfaceMortar` option (a developer option, with `MortarOversampling`: both
+need `"Developer": true`) uses a piecewise-linear L2 projection around each translational
 coupon contour and over a finite longitudinal matching-surface strip: the patch's
 longitudinal cell, the interval of its edge portion that its quadrature point integrates
 (the cells of a portion tile it), sampled in slices at the contour resolution and averaged,

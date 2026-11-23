@@ -599,6 +599,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   IoData iodata(config, false);
@@ -1016,6 +1017,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   IoData iodata(config, false);
@@ -1367,6 +1369,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   IoData iodata(config, false);
@@ -2985,6 +2988,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         correction.erase("PatchConstruction");
         correction["Library"] = library.string();
         correction["UnmatchedPolicy"] = "Warn";
+        correction["Developer"] = true;
         correction["TraceCoupling"] = "SurfaceMortar";
         correction["DomainBoundary"] = {{"Mirror", "Natural"}};
         config["Problem"]["Output"] = (temp.temp_dir / name).string();
@@ -4549,6 +4553,7 @@ json LateDomainBoundaryNotchConfig(const test::SurfaceResponseFiles &files, doub
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   config["Problem"]["Output"] =

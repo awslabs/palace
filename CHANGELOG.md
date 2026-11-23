@@ -412,8 +412,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     correction run where it would crack an interior perfect conductor (PEC, Ground,
     Terminal, PrescribedPotential; refused at mesh load, naming the per-sheet `"Crack"`);
     the key stays accepted where the interior metal it cracks is impedance (Ls) sheets.
-    The device-run writers of the examples default to `--crack-policy default`. Nothing
-    is removed. SchemaVer 4-6-0
+    The device-run writers of the examples default to `--crack-policy default`. The
+    alternatives need the switch: `"TraceCoupling": "SurfaceMortar"`,
+    `"MortarOversampling"` and the hand-placed form (a block without `"Library"`).
+    Nothing is removed. SchemaVer 4-6-0
 
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous

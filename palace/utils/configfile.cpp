@@ -2037,12 +2037,19 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
     }
     else if (trace_coupling == "SurfaceMortar")
     {
+      // The mortar trace coupling: a parked alternative (CUT-PLAN step 5b).
+      RequireDeveloperOption(data, "\"TraceCoupling\": \"SurfaceMortar\"");
       data.trace_coupling = ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR;
     }
     else
     {
       MFEM_ABORT("Response-correction \"TraceCoupling\" must be \"Collocated\" or "
                  "\"SurfaceMortar\"!");
+    }
+    if (correction.contains("MortarOversampling"))
+    {
+      // The quadrature of the mortar coupling alone.
+      RequireDeveloperOption(data, "\"MortarOversampling\"");
     }
     data.mortar_oversampling =
         correction.value("MortarOversampling", data.mortar_oversampling);
@@ -2482,6 +2489,11 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       response_correction = std::move(data);
       return;
     }
+
+    // The hand-placed form (explicit models and patches instead of the library): a parked
+    // alternative (CUT-PLAN step 5b).
+    RequireDeveloperOption(data,
+                           "without \"Library\" (the hand-placed models and patches)");
 
     auto ParseModel = [](const json &model, int default_idx)
     {

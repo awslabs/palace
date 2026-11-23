@@ -666,6 +666,7 @@ TEST_CASE_METHOD(
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   auto Build = [&](const json &run_config, std::vector<std::unique_ptr<Mesh>> &meshes)
@@ -900,6 +901,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   IoData iodata(config, false);
@@ -1027,6 +1029,7 @@ TEST_CASE_METHOD(
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   correction["Diagnostics"] = {{"ExclusionEnergy", true}};
@@ -2069,6 +2072,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     auto &island_correction = island["Solver"]["Electrostatic"]["ResponseCorrection"];
     island_correction.erase("PatchConstruction");
     island_correction["Library"] = library_path.string();
+    island_correction["Developer"] = true;
     island_correction["TraceCoupling"] = "SurfaceMortar";
     island_correction["MortarOversampling"] = 2;
     // A rejected feature is unmatched (raw): the run's UnmatchedPolicy applies to it as to

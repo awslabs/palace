@@ -3382,7 +3382,7 @@
         },
         "ResponseCorrection": {
           "type": "object",
-          "description": "Apply a global thin-metal Schur-complement correction using matched fabricated- and thin-coupon response matrices. The legacy one-model syntax remains supported for explicit 2D placement. A fabrication-process `Library` automatically selects one-edge or coupled multi-edge coupons in 2D and integrates them along extracted physical metal edges in 3D. Standard output remains the raw thin-metal result, while surface response matrices enable `surface-Q-corrected.csv`.",
+          "description": "Apply a global thin-metal Schur-complement correction using matched fabricated- and thin-coupon response matrices. The legacy one-model syntax and the explicit `Models` / `Patches` form remain supported for hand-placed models as a developer option (they need `\"Developer\": true`). A fabrication-process `Library` automatically selects one-edge or coupled multi-edge coupons in 2D and integrates them along extracted physical metal edges in 3D. Standard output remains the raw thin-metal result, while surface response matrices enable `surface-Q-corrected.csv`.",
           "additionalProperties": false,
           "oneOf": [
             {
@@ -3627,7 +3627,7 @@
             },
             "Developer": {
               "type": "boolean",
-              "description": "The developer switch of the correction. The default correction is post-processing only, with the fabrication-process `Library`; the options set aside from it (parked) are refused by name unless this key is true: `CorrectionMode` `SelfConsistent` / `Both`, `SolveTol`, `TranslationalDomainCorrection`; the legacy options `PatchConstruction` `Legacy` and `ConductorConsistency.Exclusion` `Sticky`; and `Model.CrackInternalBoundaryElements` `true` where it would crack an interior perfect conductor. With it, the run prints one line `DEVELOPER OPTIONS: <the parked options in use>`, `palace.json` records the same list as `SurfaceResponse.Developer`, and the parked fixed-flux and self-consistent columns of the corrected tables are written (without it their values are computed but not written).",
+              "description": "The developer switch of the correction. The default correction is post-processing only, with the fabrication-process `Library`; the options set aside from it (parked) are refused by name unless this key is true: `CorrectionMode` `SelfConsistent` / `Both`, `SolveTol`, `TranslationalDomainCorrection`; the legacy options `PatchConstruction` `Legacy` and `ConductorConsistency.Exclusion` `Sticky`; the alternatives `TraceCoupling` `SurfaceMortar`, `MortarOversampling` and the hand-placed form without `Library`; and `Model.CrackInternalBoundaryElements` `true` where it would crack an interior perfect conductor. With it, the run prints one line `DEVELOPER OPTIONS: <the parked options in use>`, `palace.json` records the same list as `SurfaceResponse.Developer`, and the parked fixed-flux and self-consistent columns of the corrected tables are written (without it their values are computed but not written).",
               "default": false
             },
             "CorrectionMode": {
@@ -3662,14 +3662,14 @@
                 "Collocated",
                 "SurfaceMortar"
               ],
-              "description": "Map the global field into coupon trace coefficients by historical point collocation or by an L2 matching-surface mortar projection. SurfaceMortar applies to electrostatic translational families and single-conductor spatial/corner models with closed contour rings. Multi-conductor open spatial traces and Maxwell H(curl) mortars remain under development.",
+              "description": "Map the global field into coupon trace coefficients by historical point collocation or by an L2 matching-surface mortar projection. SurfaceMortar applies to electrostatic translational families and single-conductor spatial/corner models with closed contour rings. Multi-conductor open spatial traces and Maxwell H(curl) mortars remain under development. `SurfaceMortar` is a developer option (needs `\"Developer\": true`); `Collocated` is the default path.",
               "default": "Collocated"
             },
             "MortarOversampling": {
               "type": "integer",
               "minimum": 1,
               "maximum": 8,
-              "description": "Quadrature refinement factor relative to the local finite-element mesh size for SurfaceMortar trace coupling.",
+              "description": "Quadrature refinement factor relative to the local finite-element mesh size for SurfaceMortar trace coupling. A developer option (the mortar coupling only): needs `\"Developer\": true`.",
               "default": 2
             },
             "PatchEnergy": {

@@ -526,6 +526,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   // The lead reaches the wall x = 1 obliquely: under the mirror rule (boundary-cut DESIGN
@@ -768,6 +769,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   correction["DomainBoundary"] = {{"Mirror", "Off"}};
@@ -1115,6 +1117,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   IoData iodata(config, false);
@@ -1373,6 +1376,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   // The lead reaches the wall x = 1: the mirror is off (its own tests above and in
