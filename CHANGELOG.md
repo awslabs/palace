@@ -414,7 +414,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the key stays accepted where the interior metal it cracks is impedance (Ls) sheets.
     The device-run writers of the examples default to `--crack-policy default`. The
     alternatives need the switch: `"TraceCoupling": "SurfaceMortar"`,
-    `"MortarOversampling"` and the hand-placed form (a block without `"Library"`).
+    `"MortarOversampling"` and the hand-placed form (a block without `"Library"`). The
+    library's magnetic (kinetic) leaves are read only with the switch (by default with
+    it; without it the run is that of `"Magnetic": false`, byte-identical to a library
+    without leaves); `"Magnetic": true`, `"AllowElectricOnlyFallback": true` and
+    `"ConductorConsistency": {"ControlStateAnchorSetbackOverR"}` need it.
     Nothing is removed. SchemaVer 4-6-0
 
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue

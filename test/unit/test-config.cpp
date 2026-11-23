@@ -1225,6 +1225,47 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(automatic.response_correction->solve_tol == 1.0e-6);
   CHECK_FALSE(automatic.response_correction->developer);
   CHECK(automatic.response_correction->developer_options.empty());
+  {
+    // The magnetic (kinetic) leaves are a parked candidate (CUT-PLAN step 5c): never read
+    // without the developer switch, read by default with it; "Magnetic": true,
+    // "AllowElectricOnlyFallback": true and the magnetic chain trace's control need the
+    // switch; "Magnetic": false and "AllowElectricOnlyFallback": false do not.
+    CHECK_FALSE(automatic.response_correction->magnetic_leaves);
+    auto developer = automatic_correction;
+    developer["Developer"] = true;
+    CHECK(config::ElectrostaticSolverData(json{{"ResponseCorrection", developer}})
+              .response_correction->magnetic_leaves);
+    for (const auto &[key, value, message] :
+         std::vector<std::tuple<std::string, json, std::string>>{
+             {"Magnetic", true, "\"Magnetic\": true is a parked developer option"},
+             {"AllowElectricOnlyFallback", true,
+              "\"AllowElectricOnlyFallback\": true is a parked developer option"},
+             {"ConductorConsistency",
+              {{"RecordOnly", true}, {"ControlStateAnchorSetbackOverR", 0.5}},
+              "{\"ControlStateAnchorSetbackOverR\"} is a parked developer option"}})
+    {
+      INFO(key);
+      auto parked = automatic_correction;
+      parked[key] = value;
+      if (key == "ConductorConsistency")
+      {
+        parked["CorrectionMode"] = "PostprocessOnly";
+      }
+      CHECK_THROWS_WITH(
+          config::ElectrostaticSolverData(json{{"ResponseCorrection", parked}}),
+          Catch::Matchers::ContainsSubstring(message));
+      parked["Developer"] = true;
+      CHECK_NOTHROW(config::ElectrostaticSolverData(json{{"ResponseCorrection", parked}}));
+    }
+    for (const char *key : {"Magnetic", "AllowElectricOnlyFallback"})
+    {
+      auto off = automatic_correction;
+      off[key] = false;
+      const config::ElectrostaticSolverData data(json{{"ResponseCorrection", off}});
+      CHECK_FALSE(data.response_correction->magnetic_leaves);
+      CHECK(data.response_correction->developer_options.empty());
+    }
+  }
   CHECK(automatic.response_correction->correction_mode == CorrectionMode::POSTPROCESS_ONLY);
   {
     // SolveTol configures the self-consistent solve alone: a parked key.
