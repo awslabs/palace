@@ -276,6 +276,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     {
       A.reset();
       A2.reset();
+      P.reset();
       P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                             -omega * omega + 0.0i, omega);
       A = space_op.GetSystemOperator(omega, *P);
