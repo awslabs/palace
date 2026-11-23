@@ -53,6 +53,19 @@ private:
   const bool pc_coarse_real;  // Coarse-level solver is applied to the real-valued Br + Bi
   const bool pml_subdomain;   // Provide the PML true DOFs for the PML subdomain correction
 
+  // Threshold of the PML stretch magnitude for the multigrid smoother masks (see
+  // GetPreconditionerMatrix).
+  const double pml_smoother_threshold;
+
+  // PML subdomain true DOFs and smoother masks (true DOFs of the primary and auxiliary
+  // spaces at each multigrid level), selected at the first construction of the
+  // preconditioner: a frequency-dependent stretch is evaluated at the first frequency, so
+  // that the sizes of the factored PML subdomain matrices do not change.
+  bool pml_dofs_selected = false;
+  std::vector<int> pml_subdomain_tdofs;
+  std::vector<std::vector<int>> pml_smoother_masks, pml_aux_smoother_masks;
+  void SelectPMLTrueDofs(std::complex<double> omega);
+
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
 
