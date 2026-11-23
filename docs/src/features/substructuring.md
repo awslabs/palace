@@ -97,7 +97,11 @@ participation ratios are those of the whole model: the energies of the domains o
 probes in it or on the interface (`config["Domains"]["Postprocessing"]`, a probe on the interface
 with the field of the region), and the `"SurfaceFlux"` and `"Dielectric"` entries of
 `config["Boundaries"]["Postprocessing"]` on surfaces in it. The others are left out with a warning,
-and `"FarField"` is rejected. Field output follows `"Solver"/"Electrostatic"/"Save"` and
+and `"FarField"` is rejected. In magnetostatics, the fields keep the regularization of the solves
+(see the [reference](../reference.md#Substructuring)): without superconducting sheets or domains,
+the quantities from them, such as the energies of the domains, the probes and the fluxes, are within
+about ``10^{-4}`` of a regular simulation, while the inductance matrix, from energies stationary in
+the regularization, agrees to its square. Field output follows `"Solver"/"Electrostatic"/"Save"` and
 `"Solver"/"Magnetostatic"/"Save"`, in the formats of `config["Problem"]["OutputFormats"]`; the
 environment part of a saved field is recovered only when fields are written.
 
