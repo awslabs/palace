@@ -79,6 +79,27 @@ std::unique_ptr<mfem::HypreParMatrix> AbsRows(const mfem::HypreParMatrix &A,
   return B;
 }
 
+// Whether each row of a square matrix has a nonzero diagonal entry. A mass on part of the
+// mesh has empty rows, for which GetDiag reads the first entry of another row.
+std::vector<bool> NonzeroDiagonal(const mfem::HypreParMatrix &A)
+{
+  A.HostRead();
+  hypre_ParCSRMatrix *h = A;
+  const hypre_CSRMatrix *diag = hypre_ParCSRMatrixDiag(h);
+  const HYPRE_Int *I = hypre_CSRMatrixI(diag), *J = hypre_CSRMatrixJ(diag);
+  const HYPRE_Real *data = hypre_CSRMatrixData(diag);
+  std::vector<bool> nonzero(hypre_CSRMatrixNumRows(diag), false);
+  for (int i = 0; i < hypre_CSRMatrixNumRows(diag); i++)
+  {
+    for (int k = I[i]; k < I[i + 1]; k++)
+    {
+      nonzero[i] = nonzero[i] || (J[k] == i && data[k] != 0.0);
+    }
+  }
+  A.HypreRead();
+  return nonzero;
+}
+
 // The connected components of the graph of the nonzero entries of a symmetric matrix,
 // among its rows with a nonzero diagonal entry: each such row is labeled by the least
 // global row of its component, the others by -1. Labels propagate along the local rows
@@ -557,12 +578,10 @@ void SubstructuringSolver::Impl::SetUpClosure()
     {
       continue;
     }
-    Vector d;
-    M->GetDiag(d);
-    const double *h_d = d.HostRead();
+    const std::vector<bool> nonzero = NonzeroDiagonal(*M);
     for (int t = 0; t < n; t++)
     {
-      on[t] = on[t] || (h_d[t] != 0.0);
+      on[t] = on[t] || nonzero[t];
     }
   }
   {
