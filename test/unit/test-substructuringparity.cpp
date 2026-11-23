@@ -279,9 +279,10 @@ Vector RandomVector(int n, const mfem::Array<int> &zero, unsigned seed)
   {
     xx[i] = dist(gen);
   }
-  for (int i : zero)
+  const int *z = zero.HostRead();
+  for (int k = 0; k < zero.Size(); k++)
   {
-    xx[i] = 0.0;
+    xx[z[k]] = 0.0;
   }
   x.UseDevice(true);
   return x;

@@ -355,9 +355,10 @@ mfem::Vector SubstructuringSolver::Impl::EnvSource(const Source &src,
       }
     }
   }
+  const int *h_dbc = dbc_tdofs.HostRead();
   for (int d = 0; d < dbc_tdofs.Size(); d++)
   {
-    bb[dbc_tdofs[d]] = 0.0;
+    bb[h_dbc[d]] = 0.0;
   }
   double loc[3] = {b.Normlinf(), CachedFingerprintField(0) * b,
                    CachedFingerprintField(1) * b},

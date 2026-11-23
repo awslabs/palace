@@ -641,14 +641,16 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
         e(jl) = 1.0;
       }
       A->Mult(e, Ae);
+      const double *ae = Ae.HostRead();
       for (int i = 0; i < nt; i++)
       {
-        M[static_cast<std::size_t>(j) * n + index[i]] = Ae(i);
+        M[static_cast<std::size_t>(j) * n + index[i]] = ae[i];
       }
     }
+    const double *bh = bt->HostRead();
     for (int i = 0; i < nt; i++)
     {
-      b[index[i]] = (*bt)(i);
+      b[index[i]] = bh[i];
     }
     MPI_Allreduce(MPI_IN_PLACE, b.data(), n, MPI_DOUBLE, MPI_SUM, Mpi::World());
     MPI_Allreduce(MPI_IN_PLACE, M.data(), n * n, MPI_DOUBLE, MPI_SUM, Mpi::World());

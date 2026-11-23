@@ -478,11 +478,12 @@ TEST_CASE("SubstructuringSolver reproduces full-domain electrostatics",
     // Compare the full reconstructed field (region + recovered environment) to the monolith
     // on all true DOFs.
     double num = 0.0, den = 0.0;
+    const double *h_u = u.HostRead(), *h_full = u_full.HostRead();
     for (int i = 0; i < pfes.GetTrueVSize(); i++)
     {
-      double e = u(i) - u_full(i);
+      double e = h_u[i] - h_full[i];
       num += e * e;
-      den += u_full(i) * u_full(i);
+      den += h_full[i] * h_full[i];
     }
     double gnum = 0.0, gden = 0.0;
     MPI_Allreduce(&num, &gnum, 1, MPI_DOUBLE, MPI_SUM, Mpi::World());
@@ -1427,10 +1428,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     f.Assemble();
     Vector J(pfes.GetTrueVSize());
     f.ParallelAssemble(J);
-    for (int i : pec_tdofs)
-    {
-      J(i) = 0.0;
-    }
+    J.SetSubVector(pec_tdofs, 0.0);
     return std::vector<Vector>{J};
   };
 
@@ -2578,10 +2576,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
     Vector full;
     g.GetTrueDofs(full);
     a[k] = 0.0;
-    for (int i : sheet_tdofs)
-    {
-      a[k](i) = full(i);
-    }
+    Vector on_sheets;
+    full.GetSubVector(sheet_tdofs, on_sheets);
+    a[k].SetSubVector(sheet_tdofs, on_sheets);
   }
 
   SubstructuringSolver ss(iodata, mesh);
@@ -2639,10 +2636,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "SubstructuringSolver London sheet
   pcg.SetPreconditioner(ams);
   auto solve = [&](Vector rhs)
   {
-    for (int i : pec_tdofs)
-    {
-      rhs(i) = 0.0;
-    }
+    rhs.SetSubVector(pec_tdofs, 0.0);
     Vector x(rhs.Size());
     x = 0.0;
     pcg.Mult(rhs, x);
@@ -2878,10 +2872,7 @@ void CheckSurfaceCurrentEnergies(const std::filesystem::path &temp_dir, int orde
     f.AddBoundaryIntegrator(new VectorFEBoundaryLFIntegrator(c), sheet_marker);
     f.Assemble();
     f.ParallelAssemble(J[k]);
-    for (int i : pec_tdofs)
-    {
-      J[k](i) = 0.0;
-    }
+    J[k].SetSubVector(pec_tdofs, 0.0);
   }
   const std::vector<Vector> J12 = {J[0], J[1]}, J123 = {J[0], J[1], J[2]};
 
@@ -3070,10 +3061,9 @@ void CheckSurfaceCurrentEnergies(const std::filesystem::path &temp_dir, int orde
       g.ProjectCoefficient(c);
       g.GetTrueDofs(full);
       a = 0.0;
-      for (int i : sheet_tdofs)
-      {
-        a(i) = full(i);
-      }
+      Vector on_sheets;
+      full.GetSubVector(sheet_tdofs, on_sheets);
+      a.SetSubVector(sheet_tdofs, on_sheets);
     }
     auto Ms = [&]()
     {
@@ -3449,11 +3439,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   const ErrorIndicator ind0 = on0.RegionErrorIndicator(region_fields, half_diagonal(C0));
   CHECK_FALSE(on0.EnvironmentFactored());
   REQUIRE(ind0.Local().Size() == pm0.GetNE());
+  const double *h_ind0 = ind0.Local().HostRead();
   double env_max = 0.0, reg_max = 0.0;
   for (int e = 0; e < pm0.GetNE(); e++)
   {
     (pm0.GetAttribute(e) == 2 ? env_max : reg_max) =
-        std::max(pm0.GetAttribute(e) == 2 ? env_max : reg_max, ind0.Local()(e));
+        std::max(pm0.GetAttribute(e) == 2 ? env_max : reg_max, h_ind0[e]);
   }
   MPI_Allreduce(MPI_IN_PLACE, &env_max, 1, MPI_DOUBLE, MPI_MAX, pm0.GetComm());
   MPI_Allreduce(MPI_IN_PLACE, &reg_max, 1, MPI_DOUBLE, MPI_MAX, pm0.GetComm());
@@ -3466,7 +3457,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mfem::Array<int> marked;
   for (int e = 0; e < pm0.GetNE(); e++)
   {
-    if (ind0.Local()(e) >= 0.3 * reg_max)
+    if (h_ind0[e] >= 0.3 * reg_max)
     {
       marked.Append(e);
     }
@@ -3601,11 +3592,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   double e0 = 0.0;
   const ErrorIndicator ind0 = solve(mesh0, e0);
   REQUIRE(ind0.Local().Size() == pm0.GetNE());
+  const double *h_ind0 = ind0.Local().HostRead();
   double env_max = 0.0, reg_max = 0.0;
   for (int e = 0; e < pm0.GetNE(); e++)
   {
     double &m = (pm0.GetAttribute(e) == 2) ? env_max : reg_max;
-    m = std::max(m, ind0.Local()(e));
+    m = std::max(m, h_ind0[e]);
   }
   Mpi::GlobalMax(1, &env_max, pm0.GetComm());
   Mpi::GlobalMax(1, &reg_max, pm0.GetComm());
@@ -3618,7 +3610,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mfem::Array<int> marked;
   for (int e = 0; e < pm0.GetNE(); e++)
   {
-    if (ind0.Local()(e) >= 0.3 * reg_max)
+    if (h_ind0[e] >= 0.3 * reg_max)
     {
       marked.Append(e);
     }
@@ -3745,6 +3737,7 @@ TEST_CASE("SubstructuringSolver region error indicators across sheets",
   double err = 0.0, scale = 0.0;
   int matched = 0;
   mfem::Vector c, rc;
+  const double *h_ind = ind.Local().HostRead(), *h_ref = ref.Local().HostRead();
   for (int e = 0; e < pm.GetNE(); e++)
   {
     if (pm.GetAttribute(e) != 1)
@@ -3758,8 +3751,8 @@ TEST_CASE("SubstructuringSolver region error indicators across sheets",
       rc -= c;
       if (rc.Normlinf() < 1.0e-12)
       {
-        err = std::max(err, std::abs(ind.Local()(e) - ref.Local()(r)));
-        scale = std::max(scale, std::abs(ref.Local()(r)));
+        err = std::max(err, std::abs(h_ind[e] - h_ref[r]));
+        scale = std::max(scale, std::abs(h_ref[r]));
         matched++;
         break;
       }
@@ -3893,11 +3886,12 @@ TEST_CASE("SubstructuringSolver region error indicators",
   const auto &rm = rmesh[0]->Get();
   const auto &pm = mesh.back()->Get();
   double err = 0.0, scale = 0.0, env = 0.0, unmatched = 0.0;
+  const double *h_ind = ind.Local().HostRead(), *h_ref = ref.Local().HostRead();
   for (int e = 0; e < pm.GetNE(); e++)
   {
     if (pm.GetAttribute(e) != 1)
     {
-      env = std::max(env, std::abs(ind.Local()(e)));
+      env = std::max(env, std::abs(h_ind[e]));
       continue;
     }
     const auto c = center(pm, e);
@@ -3912,8 +3906,8 @@ TEST_CASE("SubstructuringSolver region error indicators",
       unmatched += 1.0;
       continue;
     }
-    err = std::max(err, std::abs(ind.Local()(e) - ref.Local()(match)));
-    scale = std::max(scale, ref.Local()(match));
+    err = std::max(err, std::abs(h_ind[e] - h_ref[match]));
+    scale = std::max(scale, h_ref[match]);
   }
   Mpi::GlobalMax(1, &err, Mpi::World());
   Mpi::GlobalMax(1, &scale, Mpi::World());
