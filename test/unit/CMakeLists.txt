@@ -71,6 +71,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schursolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-smoother.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-solver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-spaceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-substructure.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-substructuringparity.cpp
