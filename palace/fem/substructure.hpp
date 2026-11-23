@@ -221,15 +221,17 @@ BoundaryAttributeMoments(mfem::ParMesh &mesh, const std::vector<int> &bdr_attrib
                          const std::vector<int> &attributes);
 
 // A hash of the configuration of a substructured problem on its environment: the problem
-// type, the order and quadrature of the solver, the cracking of the mesh, and the entries
-// of the materials on the given domain attributes and of the boundaries (but
-// postprocessing) on the given boundary attributes, which are the entries listing one of
-// them (in a list whose key ends in "Attributes", also in their "Elements", and in groups
-// of entries), with these lists cut to them. Lists and entries are sorted, so that their
-// order in the configuration does not matter. Without the excitations, which are matched to
-// the modes of a model by their own fingerprints, the hash leaves out the indices of the
-// entries and the sources (surface currents and flux loops): it is the configuration the
-// operator of the environment depends on.
+// type, the length unit, the order and quadrature of the solver, the cracking of the mesh,
+// and the entries of the materials on the given domain attributes and of the boundaries
+// (but postprocessing) on the given boundary attributes, which are the entries listing one
+// of them (in a list whose key ends in "Attributes", also in their "Elements", and in
+// groups of entries), with these lists cut to them. The entries are taken as parsed where
+// they can be written in several ways (the tensors of the materials, the numbers, and the
+// aliases of "PEC" and "PMC"), and lists and entries are sorted, so that their order in the
+// configuration does not matter. Without the excitations, which are matched to the modes of
+// a model by their own fingerprints, the hash leaves out the indices of the entries and the
+// sources (surface currents and flux loops): it is the configuration the operator of the
+// environment depends on.
 std::uint64_t EnvironmentConfigHash(const nlohmann::json &config,
                                     const std::vector<int> &attributes,
                                     const std::vector<int> &bdr_attributes,
@@ -281,10 +283,11 @@ struct EnvironmentRecord
   static std::optional<EnvironmentRecord> Deserialize(const std::vector<char> &bytes);
 
   // Online, check that the mesh holds the environment within the relative tolerance of the
-  // moments: all its elements and their boundaries, or the elements written in the mesh of
+  // moments: all its elements and their boundaries (those the configuration names by their
+  // attributes, the others in the order of theirs), or the elements written in the mesh of
   // the region (that mesh, or a re-meshing of its region, which is not refined again).
   // Returns whether it is the mesh of the region. Collective.
-  bool CheckMesh(mfem::ParMesh &mesh, double tol) const;
+  bool CheckMesh(mfem::ParMesh &mesh, const nlohmann::json &config, double tol) const;
 
   // Online, check that the environment attributes of the run are those of the record (on
   // the mesh of the region, some of them), and that the configuration on it is unchanged

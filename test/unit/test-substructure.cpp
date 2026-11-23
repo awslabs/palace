@@ -176,6 +176,21 @@ TEST_CASE("Configuration hash of the environment", "[substructure][Serial]")
     CHECK_FALSE(differs(
         [](json &c)
         { c["Boundaries"]["Periodic"]["BoundaryPairs"][1]["Translation"] = {0, 2, 0}; }));
+    // As parsed: a material, a number and a boundary written another way.
+    CHECK_FALSE(differs([](json &c) { c["Domains"]["Materials"][0]["Permeability"] = 2; }));
+    CHECK_FALSE(differs(
+        [](json &c) { c["Domains"]["Materials"][0]["Permeability"] = {2.0, 2.0, 2.0}; }));
+    CHECK_FALSE(differs(
+        [](json &c)
+        {
+          c["Domains"]["Materials"][0]["MaterialAxes"] = {{0, 1, 0}, {1, 0, 0}, {0, 0, -1}};
+        }));
+    CHECK_FALSE(differs(
+        [](json &c)
+        {
+          c["Boundaries"]["Ground"] = c["Boundaries"]["PEC"];
+          c["Boundaries"].erase("PEC");
+        }));
     // On the environment.
     CHECK(differs(
         [](json &c)
@@ -192,6 +207,16 @@ TEST_CASE("Configuration hash of the environment", "[substructure][Serial]")
     CHECK(differs([](json &c) { c["Solver"]["Order"] = 3; }));
     CHECK(differs([](json &c) { c["Solver"]["QuadratureOrderExtra"] = 1; }));
     CHECK(differs([](json &c) { c["Model"]["CrackInternalBoundaryElements"] = true; }));
+    CHECK(differs([](json &c) { c["Model"]["L0"] = 1.0e-5; }));
+    // The polarity of a wave port, signal then ground, is ordered.
+    auto polarity = [&](int signal, int ground)
+    {
+      json config = base;
+      config["Boundaries"]["WavePort"] = {
+          {{"Index", 3}, {"Attributes", {9}}, {"PolarityAttributes", {signal, ground}}}};
+      return EnvironmentConfigHash(config, attrs, bdr, excitations);
+    };
+    CHECK(polarity(4, 5) != polarity(5, 4));
     CHECK(differs([](json &c) { c["Problem"]["Type"] = "Electrostatic"; }));
     // The excitations.
     CHECK(differs([](json &c) { c["Boundaries"]["FluxLoop"][0]["Index"] = 3; }) ==
@@ -347,7 +372,7 @@ TEST_CASE("Environment records are those of any partition",
   // The full mesh is told from the mesh of the region, and the record tells whether the
   // excitations of the environment are its own (a flux loop added next to it changes them,
   // not its configuration).
-  CHECK_FALSE(r.CheckMesh(mesh, 1.0e-9));
+  CHECK_FALSE(r.CheckMesh(mesh, config, 1.0e-9));
   CHECK(r.CheckConfig(config, {2}, false));
   auto excited = config;
   excited["Boundaries"]["FluxLoop"] = {{{"Index", 1},

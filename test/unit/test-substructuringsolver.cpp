@@ -1180,6 +1180,83 @@ TEST_CASE_METHOD(
                     Catch::Matchers::ContainsSubstring("its mesh changed"));
 }
 
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "SubstructuringSolver saved model takes a boundary attribute of the region",
+    "[substructure][Serial][Parallel]")
+{
+  // Palace adds boundary elements on the interface, numbered from the largest boundary
+  // attribute of the mesh: an attribute added to the region renumbers them, and the model
+  // compares the boundary attributes the configuration names only. Online, the grounded
+  // faces y = 0 of the region take the new attribute 4.
+  const std::string model_path =
+      (temp_dir / "substruct_added" / "environment.model").string();
+  auto write_mesh = [&](bool added)
+  {
+    mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+    mfem::Vector c;
+    for (int e = 0; e < serial.GetNE(); e++)
+    {
+      serial.GetElementCenter(e, c);
+      serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+    }
+    for (int b = 0; b < serial.GetNBE(); b++)
+    {
+      mfem::Array<int> vtx;
+      serial.GetBdrElementVertices(b, vtx);
+      double xc[2] = {0.0, 0.0};
+      for (int v : vtx)
+      {
+        xc[0] += serial.GetVertex(v)[0] / vtx.Size();
+        xc[1] += serial.GetVertex(v)[1] / vtx.Size();
+      }
+      serial.SetBdrAttribute(b, (xc[0] < 1e-9)                           ? 1
+                                : (xc[0] > 1.0 - 1e-9)                   ? 2
+                                : (added && xc[1] < 1e-9 && xc[0] < 0.5) ? 4
+                                                                         : 3);
+    }
+    serial.SetAttributes();
+    const auto path = temp_dir / (added ? "added.mesh" : "base.mesh");
+    if (Mpi::Root(Mpi::World()))
+    {
+      serial.Save(path.string());
+    }
+    Mpi::Barrier(Mpi::World());
+    return path.string();
+  };
+  auto capacitance = [&](const std::string &mode, const std::string &mesh_path,
+                         const std::vector<int> &ground)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", mesh_path}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}}, {"Permittivity", 1.0}},
+            {{"Attributes", {2}}, {"Permittivity", 10.0}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", ground}}},
+          {"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
+    IoData iodata(config, false);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, 2});
+  };
+  const mfem::DenseMatrix C_off = capacitance("Offline", write_mesh(false), {3});
+  mfem::DenseMatrix C_on;
+  REQUIRE_NOTHROW(C_on = capacitance("Online", write_mesh(true), {3, 4}));
+  C_on -= C_off;
+  CHECK(C_on.MaxMaxNorm() <= 1.0e-10 * C_off.MaxMaxNorm());
+}
+
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "SubstructuringSolver saved model of another problem or order",
                  "[substructure][Serial][Parallel]")
@@ -1567,9 +1644,11 @@ TEST_CASE_METHOD(
   // x = 1) has no DOFs: the model must hold it (the terminal would otherwise give a zero
   // row of C). A renamed one is an excitation of the environment which differs from the
   // model's, and so is one of a model without its terminal modes: both need the full mesh.
+  // An attribute in neither the mesh nor the environment of the model is unknown.
   const std::string model_path =
       (temp_dir / "substruct_terminals" / "environment.model").string();
-  auto make_config = [&](const std::string &mode, int env_index)
+  auto make_config =
+      [&](const std::string &mode, int env_index, const std::vector<int> &attrs = {1})
   {
     json config = {
         {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -1578,7 +1657,7 @@ TEST_CASE_METHOD(
         {"Boundaries",
          {{"Ground", {{"Attributes", {3}}}},
           {"Terminal",
-           {{{"Index", 1}, {"Attributes", {1}}},
+           {{{"Index", 1}, {"Attributes", attrs}},
             {{"Index", env_index}, {"Attributes", {2}}}}}}},
         {"Solver",
          {{"Order", 1},
@@ -1599,6 +1678,9 @@ TEST_CASE_METHOD(
   mfem::Mesh serial(RegionMeshPath(model_path).c_str());
   auto region = [&]() { return std::make_unique<mfem::ParMesh>(Mpi::World(), serial); };
   CHECK(capacitance(make_config("Online", 2), region(), 2)(1, 1) > 0.0);
+  CHECK_THROWS_WITH(
+      capacitance(make_config("Online", 2, {1, 99}), region(), 2),
+      Catch::Matchers::ContainsSubstring("Unknown terminal boundary attribute 99"));
   CHECK_THROWS_WITH(
       capacitance(make_config("Online", 5), region(), 5),
       Catch::Matchers::ContainsSubstring("The excitations of the environment differ"));

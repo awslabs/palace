@@ -229,7 +229,8 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   : iodata(iodata), mesh(*mesh_.back()), parent(mesh.Get()),
     magnetostatic(iodata.problem.type == ProblemType::MAGNETOSTATIC),
     saved(ReadOnlineHead(iodata, magnetostatic, parent.GetComm())),
-    region_only(saved.width > 0 && saved.environment.CheckMesh(parent, kFingerprintTol)),
+    region_only(saved.width > 0 && saved.environment.CheckMesh(
+                                       parent, *iodata.resolved_config, kFingerprintTol)),
     laplace_op(magnetostatic ? nullptr : MakeLaplaceOperator(iodata, mesh_, region_only)),
     curlcurl_op(magnetostatic ? MakeCurlCurlOperator(iodata, mesh_, region_only) : nullptr),
     parent_space(magnetostatic ? curlcurl_op->GetNDSpace() : laplace_op->GetH1Space()),
@@ -287,6 +288,11 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
       ess_bdr = 0;
       for (int a : term.attributes)
       {
+        // On the mesh of the region, those of the environment are not in the mesh.
+        MFEM_VERIFY(parent.bdr_attributes.Find(a) >= 0 ||
+                        (region_only &&
+                         std::ranges::binary_search(saved.environment.bdr_attributes, a)),
+                    "Unknown terminal boundary attribute " << a << "!");
         if (a >= 1 && a <= maxb)
         {
           ess_bdr[a - 1] = 1;
