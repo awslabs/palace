@@ -1168,7 +1168,8 @@ public:
   // near-degenerate basis modes. The lowest frequency should sit well below the sweep band,
   // so that its anchor is the quasistatic (inductive-limit) response of the port; each
   // other frequency adds the screened response of the port at that imaginary frequency to
-  // the basis. 0 (default) selects 1/10 of the lowest sweep sample frequency.
+  // the basis. A 0 (default) is replaced on input by one tenth of the lowest sweep
+  // frequency.
   std::vector<double> adaptive_circuit_synthesis_anchor_freq = {0.0};
 
   DrivenSolverData() = default;

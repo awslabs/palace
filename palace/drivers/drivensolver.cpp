@@ -348,11 +348,8 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     }
     if (prom_op.NumSynthesisAnchorPorts() > 0)
     {
-      // Screening frequencies in ascending order, where 0 selects one tenth of the lowest
-      // sweep sample (sample_f is sorted ascending on input).
-      const auto nu = RomOperator::GetAnchorScreeningFrequencies(
-          iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq,
-          omega_sample.front());
+      // Screening frequencies in ascending order.
+      const auto &nu = iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq;
       std::vector<double> nu_GHz;
       for (auto nu_k : nu)
       {

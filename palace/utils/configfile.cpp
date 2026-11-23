@@ -1901,6 +1901,14 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   }
 
   MFEM_VERIFY(!sample_f.empty(), "No sample frequency samples specified in \"Driven\"!");
+
+  // The default screening frequency of the anchor solves, 0, is one tenth of the lowest
+  // sweep frequency, which may repeat a listed one.
+  for (auto &f : adaptive_circuit_synthesis_anchor_freq)
+  {
+    f = (f == 0.0) ? sample_f.front() / 10.0 : f;
+  }
+  deduplicate(adaptive_circuit_synthesis_anchor_freq);
 }
 
 EigenSolverData::EigenSolverData(const json &eigenmode)

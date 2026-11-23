@@ -1298,22 +1298,6 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
   }
 }
 
-std::vector<double>
-RomOperator::GetAnchorScreeningFrequencies(const std::vector<double> &nu, double omega_min)
-{
-  std::vector<double> nu_s(nu);
-  for (auto &nu_k : nu_s)
-  {
-    if (nu_k <= 0.0)
-    {
-      nu_k = 0.1 * omega_min;
-    }
-  }
-  std::ranges::sort(nu_s);
-  nu_s.erase(std::unique(nu_s.begin(), nu_s.end()), nu_s.end());
-  return nu_s;
-}
-
 void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double> &nu)
 {
   MFEM_VERIFY(!nu.empty() && nu.front() > 0.0 &&

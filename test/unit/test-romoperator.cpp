@@ -5726,10 +5726,9 @@ TEST_CASE("RomOperator-Synthesis-AnchorWithPMLRejected", "[romoperator][Serial]"
 }
 
 // "AdaptiveCircuitSynthesisAnchorFreq" is a screening frequency or a list of them, parsed
-// in ascending order, with 0 for the default frequency. An empty list, a negative frequency
-// and a repeated one are rejected, by the schema and by the parser. The screening
-// frequencies of the anchor solves replace 0 by one tenth of the lowest sweep frequency and
-// drop a repeat of it.
+// in ascending order, with 0 for the default frequency, one tenth of the lowest sweep
+// frequency, which drops a repeat of it. An empty list, a negative frequency and a
+// repeated one are rejected, by the schema and by the parser.
 TEST_CASE("RomOperator-Synthesis-AnchorFreqList", "[romoperator][Serial]")
 {
   auto MakeConfig = [](const json &anchor_freq)
@@ -5769,7 +5768,12 @@ TEST_CASE("RomOperator-Synthesis-AnchorFreqList", "[romoperator][Serial]")
     CHECK(ValidateConfig(config).empty());
     IoData iodata(config, false);
     CHECK(iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq ==
-          std::vector<double>{0.0, 30.0, 300.0});
+          std::vector<double>{0.2, 30.0, 300.0});
+  }
+  {
+    IoData iodata(MakeConfig(json::array({0.0, 0.2})), false);
+    CHECK(iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq ==
+          std::vector<double>{0.2});
   }
   for (const auto &anchor_freq :
        {json::array(), json::array({-1.0}), json::array({30.0, 0.0, 30.0})})
@@ -5780,11 +5784,6 @@ TEST_CASE("RomOperator-Synthesis-AnchorFreqList", "[romoperator][Serial]")
         (IoData{MakeConfig(anchor_freq), false}),
         Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesisAnchorFreq"));
   }
-
-  CHECK(RomOperator::GetAnchorScreeningFrequencies({30.0, 0.0, 3.0}, 2.0) ==
-        std::vector<double>{0.2, 3.0, 30.0});
-  CHECK(RomOperator::GetAnchorScreeningFrequencies({0.0, 0.2}, 2.0) ==
-        std::vector<double>{0.2});
 }
 
 // The anchor column solves the screened system (K + ν²M) x = b_p. In the reduced basis,
@@ -5995,9 +5994,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-Synthesis-AnchorFrequ
   IoData iodata(setup_json, false);
   auto mesh_io = LoadScaleParMesh2(iodata, world_comm);
   SpaceOperator space_op(iodata, mesh_io);
-  const auto nu = RomOperator::GetAnchorScreeningFrequencies(
-      iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq,
-      iodata.solver.driven.sample_f.front());
+  const auto &nu = iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq;
   REQUIRE(nu.size() == 3);
   auto BuildPROM = [&](const std::vector<double> &nu_s)
   {

@@ -689,13 +689,6 @@ public:
     AddLumpedPortAnchorModesForSynthesis(std::vector<double>{nu});
   }
 
-  // The screening frequencies of the anchor solves for the configured ones
-  // (config["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"], nondimensional), in
-  // ascending order and distinct, where 0 selects one tenth of the lowest sweep frequency
-  // omega_min.
-  static std::vector<double> GetAnchorScreeningFrequencies(const std::vector<double> &nu,
-                                                           double omega_min);
-
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as
