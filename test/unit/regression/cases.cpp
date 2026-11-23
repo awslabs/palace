@@ -15,6 +15,7 @@
 #include <complex>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <map>
@@ -1664,6 +1665,46 @@ palace::test::CustomCheck TestOfflineRunReproduced(const std::string &offline,
   };
 }
 
+// The check, and that the fields of the online run saved as grid functions are those of the
+// offline run, on the same mesh and processes.
+palace::test::CustomCheck TestFieldsReproduced(const std::string &offline,
+                                               const std::vector<std::string> &fields,
+                                               const palace::test::CustomCheck &check)
+{
+  return [=](palace::Table &actual, palace::Table &reference,
+             const std::filesystem::path &actual_path)
+  {
+    check(actual, reference, actual_path);
+    const auto dir = actual_path.parent_path();
+    for (const auto &field : fields)
+    {
+      double diff = 0.0, scale = 0.0;
+      int ranks = 0;
+      for (;; ranks++)
+      {
+        std::string rank = std::to_string(ranks);
+        rank = std::string(6 - rank.size(), '0') + rank;
+        const auto on = dir / "gridfunction" / "magnetostatic",
+                   off = dir.parent_path() / offline / "gridfunction" / "magnetostatic";
+        if (!std::filesystem::is_regular_file(on / ("mesh." + rank)))
+        {
+          break;
+        }
+        mfem::Mesh mesh((on / ("mesh." + rank)).string().c_str());
+        std::ifstream on_file(on / (field + ".gf." + rank)),
+            off_file(off / (field + ".gf." + rank));
+        mfem::GridFunction x(&mesh, on_file), y(&mesh, off_file);
+        scale = std::max(scale, y.Normlinf());
+        y -= x;
+        diff = std::max(diff, y.Normlinf());
+      }
+      CAPTURE(field, ranks, diff, scale);
+      CHECK(ranks > 0);
+      CHECK(diff <= 1.0e-10 * scale);
+    }
+  };
+}
+
 // The check, and that the mesh of the region next to the model (in the staging directory)
 // lacks the boundary attributes left_out and holds those kept.
 palace::test::CustomCheck TestRegionMeshLeavesOut(const std::string &mesh,
@@ -2425,6 +2466,25 @@ TEST_CASE("substructuring_magnetostatic_two_films_online",
   palace::test::RunRegressionCase("substructuring_magnetostatic",
                                   "magnetostatic_two_films_online.json", "two_films_online",
                                   opts);
+}
+
+// The same with the fields of both excitations saved: that of the flux loop of the
+// environment, whose excitation is the model's, has its own drive.
+TEST_CASE("substructuring_magnetostatic_two_films_fields",
+          "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-19;
+  opts.paraview_fields = false;
+  opts.gridfunction_fields = true;  // Solver.Magnetostatic.Save = 2
+  opts.setup_config = "magnetostatic_two_films_fields.json";
+  opts.custom_checks["terminal-M.csv"] =
+      TestFieldsReproduced("two_films_fields", {"B_000001", "B_000002"},
+                           TestOfflineRunReproduced("two_films_fields", opts));
+  palace::test::RunRegressionCase("substructuring_magnetostatic",
+                                  "magnetostatic_two_films_fields_online.json",
+                                  "two_films_fields_online", opts);
 }
 
 // The same with the flux of the loop of the environment changed: its excitation is then
