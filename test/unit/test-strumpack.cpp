@@ -165,8 +165,13 @@ TEST_CASE("StrumpackSolver unsymmetric sparsity pattern", "[strumpack][Serial][P
   CAPTURE(process_as_node);
   ScopedEnvironmentVariable group("STRUMPACK_SHARED_PERM_GROUP",
                                   process_as_node ? "1" : nullptr);
+
+  // With and without the selective inversion of the distributed fronts, which has no
+  // effect on one process or when STRUMPACK is built without that option.
+  const bool selective_inversion = GENERATE(false, true);
+  CAPTURE(selective_inversion);
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
-                            0.0, 0, 0, false, 0);
+                            0.0, 0, 0, false, selective_inversion, 0);
   strumpack.SetOperator(A);
   x = 0.0;
   strumpack.Mult(b, x);
@@ -280,7 +285,7 @@ TEST_CASE("StrumpackSolver BLR compression of an indefinite matrix",
   // tolerance. With the defect it was 0.23 on 2 processes, 0.44 on 4 and 0.46 on 8, and at
   // least 0.045 on 2 to 8 processes.
   StrumpackSolver strumpack(comm, SymbolicFactorization::DEFAULT, SparseCompression::BLR,
-                            1.0e-9, 0, 0, false, 0);
+                            1.0e-9, 0, 0, false, false, 0);
   strumpack.SetOperator(A);
   x = 0.0;
   strumpack.Mult(b, x);
@@ -303,9 +308,9 @@ TEST_CASE("StrumpackSolver proportional mapping", "[strumpack][Serial][Parallel]
   };
   MPI_Comm comm = Mpi::World();
   const Probe by_factor_size(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
-                             0.0, 0, 0, false, 0);
+                             0.0, 0, 0, false, false, 0);
   const Probe by_operations(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
-                            0.0, 0, 0, false, 0, false);
+                            0.0, 0, 0, false, false, 0, false);
   CHECK(by_factor_size.Mapping() == strumpack::ProportionalMapping::FACTOR_MEMORY);
   CHECK(by_operations.Mapping() == strumpack::ProportionalMapping::FLOPS);
 }

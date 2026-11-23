@@ -30,10 +30,10 @@ namespace palace
 //
 // STRUMPACK sparse direct solver for complex-valued operators in complex arithmetic. Its
 // factors need about 40% less memory than those of the equivalent real-valued system of
-// twice the size used by MfemWrapperSolver. The compression options and the node-shared
-// permutation are those of StrumpackSolver, and small entries are dropped as described for
-// ComplexLocalCSR. The integer type is HYPRE_BigInt, as for StrumpackSolver
-// (mfem::STRUMPACKSolver).
+// twice the size used by MfemWrapperSolver. The compression options, the node-shared
+// permutation and the selective inversion of the distributed fronts are those of
+// StrumpackSolver, and small entries are dropped as described for ComplexLocalCSR. The
+// integer type is HYPRE_BigInt, as for StrumpackSolver (mfem::STRUMPACKSolver).
 //
 class StrumpackComplexSolver : public Solver<ComplexOperator>
 {
@@ -43,7 +43,7 @@ private:
   SparseCompression compression;
   double lr_tol;
   int butterfly_l, lossy_prec;
-  bool drop_small_entries, reorder_reuse;
+  bool drop_small_entries, reorder_reuse, selective_inversion;
   int print;
   std::unique_ptr<strumpack::SparseSolverMPIDist<std::complex<double>, HYPRE_BigInt>>
       solver;
@@ -57,7 +57,7 @@ public:
   StrumpackComplexSolver(MPI_Comm comm, SymbolicFactorization reorder,
                          SparseCompression compression, double lr_tol, int butterfly_l,
                          int lossy_prec, bool drop_small_entries, bool reorder_reuse,
-                         int print);
+                         bool selective_inversion, int print);
   ~StrumpackComplexSolver() override;
 
   // Access the underlying solver (after SetOperator).

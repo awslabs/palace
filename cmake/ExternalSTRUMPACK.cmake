@@ -354,6 +354,14 @@ list(APPEND STRUMPACK_PATCH_FILES
 list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr174.diff"
 )
+# Add an option, off by default, to replace the triangular factors of the fronts
+# distributed over several processes by their inverses after each factorization (selective
+# inversion), so that the solves use matrix products instead of distributed triangular
+# solves (https://github.com/pghysels/STRUMPACK/pull/173), without its test, which needs
+# test infrastructure added after STRUMPACK 8.1.0
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr173.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack
