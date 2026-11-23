@@ -11,7 +11,13 @@ from pathlib import Path
 IDENTIFICATION_TOOLS = Path(__file__).resolve().parents[1] / "surface_response_identification"
 if str(IDENTIFICATION_TOOLS) not in sys.path:
     sys.path.insert(0, str(IDENTIFICATION_TOOLS))
-from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
+from crack_policy import add_crack_policy_argument, apply_crack_policy  # noqa: E402
+
+# The v1 default path (decision 2379 (3); CUT-PLAN step 5a): a device run with a library correction is not cracked
+# along its perfect conductors (Palace refuses the global crack key there without the developer switch), so this
+# device-run writer omits the key by default; --crack-policy legacy stays available. crack_policy.py (fingerprinted
+# into the coupon cache keys) and the coupon generators keep their legacy default.
+DEVICE_RUN_CRACK_POLICY = "default"
 
 
 THIN_INTERFACES = (
@@ -58,7 +64,7 @@ def base_config(
     order,
     problem,
     eigenmode_target,
-    crack_policy=CRACK_POLICY_DEFAULT,
+    crack_policy=DEVICE_RUN_CRACK_POLICY,
 ):
     eigenmode = problem == "eigenmode"
     port_attributes = (7, 8) if fabricated else (5, 6)
@@ -168,6 +174,7 @@ def main():
         default=Path(__file__).resolve().parent / "mesh",
     )
     add_crack_policy_argument(parser)
+    parser.set_defaults(crack_policy=DEVICE_RUN_CRACK_POLICY)
     args = parser.parse_args()
     if args.order < 1:
         parser.error("--order must be positive")

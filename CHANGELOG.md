@@ -406,8 +406,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `surface-Q-corrected.csv` (Maxwell 8 of 33; electrostatic 6 per interface and 2
     totals), the `corrected` matrices of `terminal-*-corrected.csv`, the self-consistent
     columns of `surface-response-confidence.csv` and
-    `SurfaceResponse.TerminalCapacitance.SelfConsistent`. Nothing is removed.
-    SchemaVer 4-6-0
+    `SurfaceResponse.TerminalCapacitance.SelfConsistent`. The legacy options need the
+    switch too: `"PatchConstruction": "Legacy"`, `"ConductorConsistency": {"Exclusion":
+    "Sticky"}`, and `config["Model"]["CrackInternalBoundaryElements"] = true` in a
+    correction run where it would crack an interior perfect conductor (PEC, Ground,
+    Terminal, PrescribedPotential; refused at mesh load, naming the per-sheet `"Crack"`);
+    the key stays accepted where the interior metal it cracks is impedance (Ls) sheets.
+    The device-run writers of the examples default to `--crack-policy default`. Nothing
+    is removed. SchemaVer 4-6-0
 
   - With adaptive mesh refinement on nonconforming meshes, the SLEPc Krylov-Schur eigenvalue
     solves of later adaptation iterations can start from the eigenvectors of the previous

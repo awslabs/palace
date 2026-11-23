@@ -170,6 +170,7 @@ json MaxwellCpw3dConfig(const test::SurfaceResponseFiles &files, const fs::path 
                        {{"Library", library.string()},
                         {"TargetInterfaces", {1, 2, 3}},
                         {"UnmatchedPolicy", "Error"},
+                        {"Developer", true},
                         {"PatchConstruction", "Legacy"}}}};
   return config;
 }
@@ -1064,6 +1065,7 @@ TEST_CASE_METHOD(
   auto Run = [&](const std::string &exclusion, bool x_first)
   {
     json config = StubMaxwellConfig(*this, library);
+    config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
     config["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"]["Exclusion"] =
         exclusion;
     std::vector<std::unique_ptr<Mesh>> meshes;

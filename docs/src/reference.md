@@ -1021,9 +1021,20 @@ mesh that is solved: a cracked mesh may be refined next to the crack where the d
 requires it (`config["Model"]["RefineCrackElements"]`, default `true`), so cracked and
 uncracked runs from one input mesh are in general not on the same mesh.
 
+In a correction run (a response-correction block of either solver family) the deprecated
+global key set to `true` stays accepted where the interior metal it cracks is impedance
+(Ls) sheets: it then cracks the same sheets as `"Crack": true` on each of them (and splits
+their sheet impedance over the two faces, as before). Where it would crack an interior
+perfect conductor (PEC or `Ground`, `Terminal`, `PrescribedPotential`) the run stops at
+mesh load with a message naming those attributes and the per-sheet `"Crack"`, since the
+correction never cracks perfect conductors; with `"Developer": true` in the correction
+block it cracks them as before and the run lists the option (`DEVELOPER OPTIONS (mesh)`).
+
 The coupon generators and library-build tools under `examples/` write the key explicitly:
 `--crack-policy legacy`, their default in this version, writes
 `CrackInternalBoundaryElements: true`, and `--crack-policy default` omits the key. The
+device-run writers (`prepare_maxwell_validation.py`, `corner_validation/prepare_*.py`)
+default to `--crack-policy default`. The
 policy is part of their cache keys and of the qualification records, so a coupon solved
 under one policy is not reused for a build under the other, and a model qualified against
 a reference made under the other policy is labelled as such; a reference without a
@@ -1351,7 +1362,8 @@ classification: `Features` (the default) consumes the geometry identification's 
 (`Identification.Features` of the preflight manifest): every feature matched by signature
 becomes its patches, an unmatched feature is omitted alone (never an interface group), and
 excluded segments are never corrected. `Legacy` keeps the former per-interface-group
-classification for comparison only. The geometry-only preflight
+classification for comparison only (a developer option: it needs `"Developer": true`).
+The geometry-only preflight
 (`--surface-response-preflight`) is also the patch dry run: it writes
 `surface-response-patches.csv` next to the manifest with the feature id, model, segment
 portion and weights of every patch without any field solve. The dry run holds the placed
@@ -1380,7 +1392,10 @@ and raw AMR estimator remain unchanged in every mode.
 correction is post-processing only, with the fabrication-process `Library`; the options
 set aside from it (parked) are refused by name at set-up unless the same block sets
 `"Developer": true`: `CorrectionMode` `SelfConsistent` and `Both`, and `SolveTol` and
-`TranslationalDomainCorrection`, which configure the self-consistent solve only. With the
+`TranslationalDomainCorrection`, which configure the self-consistent solve only; the
+legacy options `PatchConstruction` `Legacy` and `ConductorConsistency.Exclusion` `Sticky`;
+and the global crack key where it would crack an interior perfect conductor (see the
+[mesh cracking](#Mesh-cracking-and-the-thin-metal-postprocessing) above). With the
 switch the run prints one line `DEVELOPER OPTIONS: <the parked options in use>` and
 `palace.json` records the same list as `SurfaceResponse.Developer`; every other default is
 unchanged, so a developer run that also states `"CorrectionMode": "Both"` is the run of
@@ -1965,8 +1980,9 @@ zero). `"ConductorConsistency": {"Exclusion": ...}` sets where: `"PerExcitation"
 default) excludes it at the excitation whose own test fails and there only (an eigenmode, a
 driven port excitation at one frequency, an electrostatic terminal): every patch is tested
 again at every excitation, so an excitation's result does not depend on the order of the
-excitations; `"Sticky"` (the rule of results made before this setting existed) excludes it
-at that and every later excitation and does not test it again. Run-level outputs (the
+excitations; `"Sticky"` (the rule of results made before this setting existed; a
+developer option that needs `"Developer": true`) excludes it at that and every later
+excitation and does not test it again. Run-level outputs (the
 `ModelCatalog` `PatchWeight`, `Count`, `ClaimLength`, `CellLength`, `RawPortions` and the
 electrostatic corrected capacitance matrices) take the patches excluded at one or more
 excitations, which are the same on both rules. `surface-response-patches.csv` depends on

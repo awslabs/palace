@@ -102,7 +102,7 @@
         },
         "CrackInternalBoundaryElements": {
           "type": "boolean",
-          "description": "Duplicate nodes along interior boundaries to decouple the elements on either side (\"crack\" the mesh). If not specified, the mesh is cracked along interior boundaries with boundary conditions which apply to each side separately, [PMC](@ref config-boundaries-pmc) (or [ZeroCharge](@ref config-boundaries-zerocharge)) and [Absorbing](@ref config-boundaries-absorbing) boundaries, and along [Impedance](@ref config-boundaries-impedance), [RationalImpedance](@ref config-boundaries-rationalimpedance), and [Conductivity](@ref config-boundaries-conductivity) boundaries with `\"Crack\": true`. If `true`, the mesh is cracked along all interior boundaries with boundary conditions except for lumped ports, with the surface impedance of impedance boundaries split between their two faces (the behavior of previous versions). If `false`, the mesh is never cracked, which is an error for boundaries with `\"Crack\": true`. Deprecated: the error estimate for adaptive mesh refinement no longer requires cracking the mesh, and cracking is a per-boundary modeling choice for impedance, rational impedance, and conductivity boundaries.",
+          "description": "Duplicate nodes along interior boundaries to decouple the elements on either side (\"crack\" the mesh). If not specified, the mesh is cracked along interior boundaries with boundary conditions which apply to each side separately, [PMC](@ref config-boundaries-pmc) (or [ZeroCharge](@ref config-boundaries-zerocharge)) and [Absorbing](@ref config-boundaries-absorbing) boundaries, and along [Impedance](@ref config-boundaries-impedance), [RationalImpedance](@ref config-boundaries-rationalimpedance), and [Conductivity](@ref config-boundaries-conductivity) boundaries with `\"Crack\": true`. If `true`, the mesh is cracked along all interior boundaries with boundary conditions except for lumped ports, with the surface impedance of impedance boundaries split between their two faces (the behavior of previous versions). If `false`, the mesh is never cracked, which is an error for boundaries with `\"Crack\": true`. Deprecated: the error estimate for adaptive mesh refinement no longer requires cracking the mesh, and cracking is a per-boundary modeling choice for impedance, rational impedance, and conductivity boundaries. In a surface-response correction run `true` is accepted where the interior metal it cracks is impedance (Ls) sheets (the same mesh as `\"Crack\": true` on each of them) and refused where it would crack an interior perfect conductor (PEC, Ground, Terminal, PrescribedPotential) unless the correction block sets `\"Developer\": true`.",
           "x-palace-advanced": true,
           "x-palace-deprecated": true
         },
@@ -3575,7 +3575,7 @@
                 "Features",
                 "Legacy"
               ],
-              "description": "Three-dimensional automatic patch construction. `Features` builds the patches from the geometry identification's feature list (every matched feature becomes its patches, an unmatched feature is omitted alone, excluded segments are never corrected); `Legacy` keeps the former per-interface-group classification for comparison.",
+              "description": "Three-dimensional automatic patch construction. `Features` builds the patches from the geometry identification's feature list (every matched feature becomes its patches, an unmatched feature is omitted alone, excluded segments are never corrected); `Legacy` keeps the former per-interface-group classification for comparison (a developer option: needs `\"Developer\": true`).",
               "default": "Features"
             },
             "SpatialSupport": {
@@ -3627,7 +3627,7 @@
             },
             "Developer": {
               "type": "boolean",
-              "description": "The developer switch of the correction. The default correction is post-processing only, with the fabrication-process `Library`; the options set aside from it (parked) are refused by name unless this key is true: `CorrectionMode` `SelfConsistent` / `Both`, `SolveTol`, `TranslationalDomainCorrection`. With it, the run prints one line `DEVELOPER OPTIONS: <the parked options in use>`, `palace.json` records the same list as `SurfaceResponse.Developer`, and the parked fixed-flux and self-consistent columns of the corrected tables are written (without it their values are computed but not written).",
+              "description": "The developer switch of the correction. The default correction is post-processing only, with the fabrication-process `Library`; the options set aside from it (parked) are refused by name unless this key is true: `CorrectionMode` `SelfConsistent` / `Both`, `SolveTol`, `TranslationalDomainCorrection`; the legacy options `PatchConstruction` `Legacy` and `ConductorConsistency.Exclusion` `Sticky`; and `Model.CrackInternalBoundaryElements` `true` where it would crack an interior perfect conductor. With it, the run prints one line `DEVELOPER OPTIONS: <the parked options in use>`, `palace.json` records the same list as `SurfaceResponse.Developer`, and the parked fixed-flux and self-consistent columns of the corrected tables are written (without it their values are computed but not written).",
               "default": false
             },
             "CorrectionMode": {
@@ -3778,7 +3778,7 @@
                 "Exclusion": {
                   "type": "string",
                   "enum": ["PerExcitation", "Sticky"],
-                  "description": "Where an exclusion acts. PerExcitation: at the excitation (eigenmode, driven port excitation and frequency, electrostatic terminal) whose own test fails, and there only; every patch is tested at every excitation, so the result of an excitation does not depend on the order of the excitations. Sticky: the legacy rule (weight 0 from the excluding excitation on; an excluded patch is not tested again), for comparisons with results made before PerExcitation existed.",
+                  "description": "Where an exclusion acts. PerExcitation: at the excitation (eigenmode, driven port excitation and frequency, electrostatic terminal) whose own test fails, and there only; every patch is tested at every excitation, so the result of an excitation does not depend on the order of the excitations. Sticky: the legacy rule (weight 0 from the excluding excitation on; an excluded patch is not tested again), for comparisons with results made before PerExcitation existed (a developer option: needs `\"Developer\": true`).",
                   "default": "PerExcitation"
                 },
                 "ControlStateAnchorSetbackOverR": {

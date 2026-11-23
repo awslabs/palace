@@ -569,6 +569,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         GENERATE(std::string("PerExcitation"), std::string("Sticky"));
     INFO("exclusion: " << exclusion);
     json rule_config = config;
+    rule_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Developer"] = true;
     rule_config["Solver"]["Electrostatic"]["ResponseCorrection"]["ConductorConsistency"]
                ["Exclusion"] = exclusion;
     IoData rule_iodata(rule_config, false);
@@ -795,6 +796,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     auto Run = [&](const std::string &exclusion, bool fail_first)
     {
       json rule_config = config;
+      rule_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Developer"] = true;
       rule_config["Solver"]["Electrostatic"]["ResponseCorrection"]["ConductorConsistency"]
                  ["Exclusion"] = exclusion;
       IoData rule_iodata(rule_config, false);
