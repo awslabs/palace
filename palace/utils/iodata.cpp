@@ -517,6 +517,20 @@ void IoData::CheckConfiguration()
     WarnPermittivityModelDefects();
   }
 
+  // The anchor solves are part of adaptive driven circuit synthesis.
+  if (problem.type != ProblemType::DRIVEN || !solver.driven.adaptive_circuit_synthesis)
+  {
+    for (const auto &[idx, data] : boundaries.lumpedport)
+    {
+      if (data.synthesis_anchor)
+      {
+        Mpi::Warning("\"SynthesisAnchor\" of lumped port {:d} has no effect without "
+                     "adaptive driven circuit synthesis (\"AdaptiveCircuitSynthesis\")!\n",
+                     idx);
+      }
+    }
+  }
+
   // The quasistatic anchor solves of circuit synthesis need the static limit of the model,
   // which the stretch of a PML region does not have.
   if (!domains.pml.empty())

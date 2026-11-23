@@ -1733,6 +1733,11 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     adaptive_circuit_synthesis_anchor_freq = it->is_array()
                                                  ? it->get<std::vector<double>>()
                                                  : std::vector<double>{it->get<double>()};
+    if (!adaptive_circuit_synthesis)
+    {
+      Mpi::Warning("\"AdaptiveCircuitSynthesisAnchorFreq\" has no effect without "
+                   "\"AdaptiveCircuitSynthesis\"!\n");
+    }
   }
   {
     auto &anchor_freq = adaptive_circuit_synthesis_anchor_freq;
