@@ -145,8 +145,10 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
 // Sparse direct solver for the PML subdomain correction of the geometric multigrid
 // preconditioner: the solver specified by the "Type" option if it is a sparse direct
 // solver, otherwise the default sparse direct solver. The PML subdomain matrix is always
-// factored in complex form, and is symmetric (but indefinite) unless the system matrix is
-// not. The factorization is never compressed or in mixed precision, and the accuracy of
+// complex-valued, and is symmetric (but indefinite) unless the system matrix is not.
+// SuperLU_DIST, STRUMPACK, and MUMPS factor it in complex arithmetic (cuDSS as the
+// equivalent real-valued system of twice the size). The factorization is exact (never
+// compressed, in mixed precision, or with small entries dropped), and the accuracy of
 // SuperLU_DIST factorizations is checked (its static pivoting can be unstable for this
 // indefinite matrix, in which case tiny pivot replacement and iterative refinement are
 // used): approximate solves can lead the (left-preconditioned) Krylov solver to converge to
@@ -172,41 +174,45 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
                "or MUMPS!");
 #endif
   }
-  auto linear_pml = linear;
-  linear_pml.complex_coarse_solve = true;
-  linear_pml.strumpack_compression_type = SparseCompression::NONE;
-  const auto sym =
+  [[maybe_unused]] const auto sym =
       (pc_mat_sym == MatrixSymmetry::UNSYMMETRIC) ? pc_mat_sym : MatrixSymmetry::SYMMETRIC;
-  const int print = verbose - 1;
+  [[maybe_unused]] constexpr bool drop_small_entries = false;
+  [[maybe_unused]] const int print = verbose - 1;
   std::unique_ptr<Solver<ComplexOperator>> pc;
   switch (type)
   {
     case LinearSolver::SUPERLU:
 #if defined(MFEM_USE_SUPERLU)
-      pc = MakeWrapperSolver<ComplexOperator, SuperLUSolver>(
-          linear_pml, comm, linear.sym_factorization, linear.superlu_3d,
-          linear.reorder_reuse, print, true);
+      // On a 2D process grid, for the accuracy check of the factorization.
+      pc = std::make_unique<SuperLUComplexSolver>(comm, linear.sym_factorization, false,
+                                                  drop_small_entries, linear.reorder_reuse,
+                                                  print, true);
 #endif
       break;
     case LinearSolver::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
-      pc = MakeWrapperSolver<ComplexOperator, StrumpackSolver>(
-          linear_pml, comm, linear.sym_factorization, linear_pml.strumpack_compression_type,
-          linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+      pc = std::make_unique<StrumpackComplexSolver>(
+          comm, linear.sym_factorization, SparseCompression::NONE, linear.strumpack_lr_tol,
+          linear.strumpack_butterfly_l, linear.strumpack_lossy_precision,
+          drop_small_entries, linear.reorder_reuse, print);
 #endif
       break;
     case LinearSolver::MUMPS:
 #if defined(MFEM_USE_MUMPS)
-      pc = MakeWrapperSolver<ComplexOperator, MumpsSolver>(linear_pml, comm, sym,
-                                                           linear.sym_factorization, 0.0,
-                                                           linear.reorder_reuse, print);
+      pc = std::make_unique<MumpsComplexSolver>(comm, sym, linear.sym_factorization, 0.0,
+                                                drop_small_entries, linear.reorder_reuse,
+                                                print);
 #endif
       break;
     case LinearSolver::CUDSS:
 #if defined(MFEM_USE_CUDSS)
-      pc = MakeWrapperSolver<ComplexOperator, CuDSSSolver>(
-          linear_pml, comm, sym, linear.sym_factorization, linear.reorder_reuse, print);
+      {
+        auto linear_pml = linear;
+        linear_pml.complex_coarse_solve = true;
+        linear_pml.drop_small_entries = drop_small_entries;
+        pc = MakeWrapperSolver<ComplexOperator, CuDSSSolver>(
+            linear_pml, comm, sym, linear.sym_factorization, linear.reorder_reuse, print);
+      }
 #endif
       break;
     default:

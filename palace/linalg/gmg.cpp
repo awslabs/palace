@@ -4,6 +4,7 @@
 #include "gmg.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/chebyshev.hpp"
@@ -239,6 +240,13 @@ void GeometricMultigridSolver<OperType>::SetUpSubdomainCorrection(
                             row_starts, col_starts);
     subdomain_S.reset(St.Transpose());
 
+    // Print the size of the subdomain before its factorization, which dominates the memory
+    // of the preconditioner when the subdomain is a significant fraction of the domain (and
+    // flush the output, in case the factorization runs out of memory).
+    Mpi::Print(" Subdomain correction: {:d} unknowns ({:.1f}% of the finest level)\n",
+               n_glob, 100.0 * static_cast<double>(n_glob) / static_cast<double>(n_fine));
+    std::fflush(stdout);
+
     // Subdomain operator A_S = Sᵀ A S.
     std::unique_ptr<Operator> Ar_S, Ai_S;
     if (hAr)
@@ -252,14 +260,16 @@ void GeometricMultigridSolver<OperType>::SetUpSubdomainCorrection(
     hAr.reset();
     hAi.reset();
     ComplexWrapperOperator A_S(std::move(Ar_S), std::move(Ai_S));
-    subdomain_solver->SetOperator(A_S);
+    {
+      // The complex arithmetic sparse direct solvers factor the matrix here, during the
+      // setup of the preconditioner: count its time and memory with the subdomain solves.
+      BlockTimer bt(Timer::KSP_SUBDOMAIN_SOLVE, use_timer);
+      subdomain_solver->SetOperator(A_S);
+    }
     subdomain_r.SetSize(subdomain_S->Width());
     subdomain_x.SetSize(subdomain_S->Width());
     subdomain_r.UseDevice(true);
     subdomain_x.UseDevice(true);
-
-    Mpi::Print(" Subdomain correction: {:d} unknowns ({:.1f}% of the finest level)\n",
-               n_glob, 100.0 * static_cast<double>(n_glob) / static_cast<double>(n_fine));
   }
 }
 
