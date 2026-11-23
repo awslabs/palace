@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-0-0",
+  "$id": "urn:palace:schema:6-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3307,6 +3307,11 @@
           "description": "Number of butterfly levels for STRUMPACK HODLR compression.",
           "minimum": 0,
           "default": 1,
+          "x-palace-advanced": true
+        },
+        "STRUMPACKSelectiveInversion": {
+          "type": "boolean",
+          "description": "Invert the triangular factors of the STRUMPACK fronts which are distributed over several processes (selective inversion), so that the solves use matrix products there instead of distributed triangular solves: each solve is faster on many processes, and each factorization is slower and needs more memory. If omitted, Palace enables this for eigenmode and transient simulations, where a factorization serves many solves, and disables it otherwise. Has no effect with `\"Type\": \"STRUMPACK-MP\"`, and is never used by the eigenvalue solver of boundary mode simulations and wave ports.",
           "x-palace-advanced": true
         },
         "SuperLU3DCommunicator": {

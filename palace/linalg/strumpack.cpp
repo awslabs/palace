@@ -80,7 +80,8 @@ template void ConfigureStrumpackCompression(strumpack::SPOptions<std::complex<do
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     MPI_Comm comm, SymbolicFactorization reorder, SparseCompression compression,
-    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse, int print)
+    double lr_tol, int butterfly_l, int lossy_prec, bool reorder_reuse,
+    bool selective_inversion, int print)
   : StrumpackSolverType(comm), comm(comm)
 {
   // Configure the solver.
@@ -131,6 +132,17 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   else
   {
     EnableStrumpackSharedPermutation(this->solver_->options());
+  }
+
+  // Selective inversion of the distributed fronts. Never for the mixed precision solver:
+  // the inverted factors of its single precision factorization would not be accurate
+  // enough with the condition number limit which Palace sets.
+  if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKSolver>)
+  {
+    if (selective_inversion)
+    {
+      EnableStrumpackSelectiveInversion(this->solver_->options());
+    }
   }
   // if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   // {

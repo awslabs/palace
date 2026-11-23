@@ -15,6 +15,18 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Performance Improvements
+
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#173](https://github.com/pghysels/STRUMPACK/pull/173), selective
+    inversion: the solves with the fronts distributed over several processes use products
+    with inverted triangular factors instead of distributed triangular solves, for a slower
+    factorization. The new `config["Solver"]["Linear"]["STRUMPACKSelectiveInversion"]` is
+    on by default for eigenmode and transient simulations, where a factorization serves
+    many solves. SchemaVer 6-1-0 [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features

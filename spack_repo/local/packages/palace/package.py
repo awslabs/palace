@@ -201,10 +201,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # https://github.com/pghysels/STRUMPACK/pull/171, which lower the memory of the
     # distributed solver, of the source changes of the STRUMPACK commits 3f30760d and
     # 668cd1b8 by the STRUMPACK maintainer, which fix the pivoting of the distributed BLR
-    # fronts (to be removed with the next STRUMPACK release), and of the source changes of
+    # fronts (to be removed with the next STRUMPACK release), of the source changes of
     # https://github.com/pghysels/STRUMPACK/pull/174, which add the option to store the
-    # permutation of the distributed solver once per node. Kept off the `with` blocks so
-    # the Palace variants are not folded into the patch condition.
+    # permutation of the distributed solver once per node, and of the source changes of
+    # https://github.com/pghysels/STRUMPACK/pull/173, which add the option to invert the
+    # triangular factors of the distributed fronts (selective inversion). Kept off the
+    # `with` blocks so the Palace variants are not folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -254,6 +256,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "10662658723d4d16f672c9d9f50540dc8dd732c9/extern/patch/STRUMPACK/"
                 "strumpack_pr174.diff",
                 sha256="9637614a092f57a708ca773a28f8271f8845662e03af5af45376c8ced3b95735",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "940f258125c88a5c3e61496ce412fac08ed03f2d/extern/patch/STRUMPACK/"
+                "strumpack_pr173.diff",
+                sha256="b1c059fd008af16e53f036bdcc9ea14b3d33b79b3a05ad06f12175b46b2e6d06",
                 when="@8.1.0",
             ),
         ],

@@ -39,6 +39,34 @@ inline void EnableStrumpackSharedPermutation(strumpack::SPOptions<ScalarType> &o
   }
 }
 
+// Enable the STRUMPACK option which replaces the triangular factors of the fronts
+// distributed over several processes by their inverses after each factorization (selective
+// inversion). The solves with these fronts then use matrix products, which need a constant
+// number of messages, instead of distributed triangular solves: each solve gets faster on
+// many processes, and each factorization slower. STRUMPACK inverts the factors T of a front
+// only if their condition number || |T⁻¹| |T| ||_∞ is at most a limit, as a solve with the
+// inverted factors can lose backward accuracy up to about that factor, and keeps the
+// triangular solves in the other fronts. Palace sets the limit to 1e8 instead of the
+// STRUMPACK default of 1e3: on the eigenmode problems this was measured on, 1e8 inverts
+// every front where 1e3 keeps the triangular solves in the largest ones, where most of the
+// solve time is spent, and on a nearly singular low-frequency driven problem the results
+// were accurate to 2e-7 with limits of 1e8 and 1e10 and wrong with 1e12. The compressed
+// fronts are not changed, and STRUMPACK ignores the option when built with SLATE. As for
+// the shared permutation, this does nothing with a STRUMPACK which lacks the option.
+template <typename ScalarType>
+inline void EnableStrumpackSelectiveInversion(strumpack::SPOptions<ScalarType> &opts)
+{
+  constexpr double max_cond = 1.0e8;
+  if constexpr (requires {
+                  opts.enable_selective_inversion();
+                  opts.set_selective_inversion_max_cond(max_cond);
+                })
+  {
+    opts.enable_selective_inversion();
+    opts.set_selective_inversion_max_cond(max_cond);
+  }
+}
+
 //
 // A wrapper for the STRUMPACK direct solver package.
 //
@@ -51,7 +79,8 @@ private:
 public:
   StrumpackSolverBase(MPI_Comm comm, SymbolicFactorization reorder,
                       SparseCompression compression, double lr_tol, int butterfly_l,
-                      int lossy_prec, bool reorder_reuse, int print);
+                      int lossy_prec, bool reorder_reuse, bool selective_inversion,
+                      int print);
 
   StrumpackSolverBase(const IoData &iodata, MPI_Comm comm, int print)
     : StrumpackSolverBase(comm, iodata.solver.linear.sym_factorization,
@@ -59,7 +88,8 @@ public:
                           iodata.solver.linear.strumpack_lr_tol,
                           iodata.solver.linear.strumpack_butterfly_l,
                           iodata.solver.linear.strumpack_lossy_precision,
-                          iodata.solver.linear.reorder_reuse, print)
+                          iodata.solver.linear.reorder_reuse,
+                          iodata.solver.linear.strumpack_selective_inversion > 0, print)
   {
   }
 

@@ -820,6 +820,15 @@ void IoData::CheckConfiguration()
       solver.linear.pc_mat_shifted = 0;
     }
   }
+  if (solver.linear.strumpack_selective_inversion < 0)
+  {
+    // The inverses add to the time of each factorization and save time in each solve with
+    // it, so default true only for eigenmode and transient problems, where a factorization
+    // serves hundreds to thousands of solves, not for the Krylov solve of one frequency or
+    // source. The boundary mode and wave port solver never uses it (see ModeEigenSolver).
+    solver.linear.strumpack_selective_inversion =
+        (problem.type == ProblemType::EIGENMODE || problem.type == ProblemType::TRANSIENT);
+  }
   // Magnetostatic superconducting domains, with a London depth.
   const bool london_domains =
       problem.type == ProblemType::MAGNETOSTATIC &&

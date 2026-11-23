@@ -156,21 +156,34 @@ TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]"
   // that on several processes the root broadcasts the permutation to the other node leaders
   // as on several nodes. STRUMPACK reads the variable on every process at each reordering,
   // so it is set before the solvers are constructed and restored after they are destroyed.
+  // With and without the selective inversion of the distributed fronts, against a
+  // real-valued solver without it.
   MPI_Comm comm = Mpi::World();
   const bool unsymmetric = GENERATE(false, true);
   const bool reorder_reuse = GENERATE(true, false);
   const bool process_as_node = GENERATE(false, true);
-  CAPTURE(unsymmetric, reorder_reuse, process_as_node);
+  const bool selective_inversion = GENERATE(false, true);
+  CAPTURE(unsymmetric, reorder_reuse, process_as_node, selective_inversion);
   ScopedEnvironmentVariable group("STRUMPACK_SHARED_PERM_GROUP",
                                   process_as_node ? "1" : nullptr);
   StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
                                 SparseCompression::NONE, 0.0, 0, 0, false, reorder_reuse,
-                                0);
+                                selective_inversion, 0);
   MfemWrapperSolver<ComplexOperator> ref(
       std::make_unique<StrumpackSolver>(comm, SymbolicFactorization::DEFAULT,
-                                        SparseCompression::NONE, 0.0, 0, 0, true, 0),
+                                        SparseCompression::NONE, 0.0, 0, 0, true, false, 0),
       true, true, false, true);
   TestComplexDirectSolver(solver, ref, 1.0e-11, unsymmetric);
+
+  // The last STRUMPACK solver object has the option as requested, when STRUMPACK is built
+  // with it (the solver creates a new object when the reordering is not reused).
+  [&](const auto &opts)
+  {
+    if constexpr (requires { opts.selective_inversion(); })
+    {
+      CHECK(opts.selective_inversion() == selective_inversion);
+    }
+  }(solver.GetSolver().options());
 }
 
 TEST_CASE("STRUMPACK complex arithmetic solver with compression",
@@ -213,7 +226,7 @@ TEST_CASE("STRUMPACK complex arithmetic solver with compression",
     const double norm_b = linalg::Norml2(comm, b);
     {
       StrumpackComplexSolver ref(comm, SymbolicFactorization::DEFAULT,
-                                 SparseCompression::NONE, 0.0, 0, 0, false, true, 0);
+                                 SparseCompression::NONE, 0.0, 0, 0, false, true, false, 0);
       ref.SetOperator(*A);
       ref.Mult(b, x_ref);
     }
@@ -221,7 +234,7 @@ TEST_CASE("STRUMPACK complex arithmetic solver with compression",
     {
       INFO("compression " << static_cast<int>(type) << ", lossy precision " << lossy_prec);
       StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT, type, 1.0e-6, 1,
-                                    lossy_prec, false, true, 0);
+                                    lossy_prec, false, true, false, 0);
       GmresSolver<ComplexOperator> gmres(comm, 0);
       gmres.SetRelTol(1.0e-10);
       gmres.SetMaxIter(max_it);
@@ -326,7 +339,7 @@ TEST_CASE("STRUMPACK complex arithmetic solver unsymmetric sparsity pattern",
   }
   A.Mult(x_ex, b);
   StrumpackComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
-                                SparseCompression::NONE, 0.0, 0, 0, false, true, 0);
+                                SparseCompression::NONE, 0.0, 0, 0, false, true, false, 0);
   for (int k = 0; k < 2; k++)
   {
     // Factorization, and refactorization reusing the reordering.
@@ -867,7 +880,7 @@ TEST_CASE("Complex arithmetic solvers drop small entries",
     {
       return std::make_unique<StrumpackComplexSolver>(comm, SymbolicFactorization::DEFAULT,
                                                       SparseCompression::NONE, 0.0, 0, 0,
-                                                      drop_small_entries, true, 0);
+                                                      drop_small_entries, true, false, 0);
     }
 #endif
 #if defined(MFEM_USE_SUPERLU)
