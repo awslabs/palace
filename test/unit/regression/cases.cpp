@@ -2374,6 +2374,7 @@ TEST_CASE("substructuring_electrostatic_redesign", "[Serial][Parallel][GPU][Regr
   opts.rtol = 1.0e-6;
   opts.atol = 1.0e-19;
   opts.paraview_fields = false;
+  opts.stage = "online_redesign";
   opts.setup_config = "electrostatic.json";
   opts.after_setup = [](const std::filesystem::path &dir)
   { WriteMeshOfRedesign(dir, "mesh/cube.msh", "postpro/base", {1}); };
@@ -3113,6 +3114,7 @@ TEST_CASE("substructuring_driven_redesign", "[Serial][Parallel][GPU][Regression]
   opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
+  opts.stage = "online_redesign";
   opts.setup_config = "driven_offline.json";
   opts.after_setup = [](const std::filesystem::path &dir)
   { WriteMeshOfRedesign(dir, "mesh/sheet_square.msh", "postpro/offline", {1}); };
@@ -3187,6 +3189,7 @@ TEST_CASE("substructuring_driven_box_redesign", "[Serial][Parallel][GPU][Regress
   opts.atol = 1.0e-22;
   opts.linear_solver_policy = force_default_solver;
   opts.paraview_fields = false;
+  opts.stage = "online_redesign";
   opts.setup_config = "driven_offline.json";
   opts.after_setup = [](const std::filesystem::path &dir)
   { WriteMeshOfRedesign(dir, "mesh/box.mesh", "postpro/offline", {1}); };
