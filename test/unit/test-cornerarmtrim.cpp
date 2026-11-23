@@ -1648,6 +1648,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction.erase("PatchConstruction");
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   correction["DomainBoundary"] = {{"Mirror", "Off"}};
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
@@ -1953,6 +1954,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction.erase("PatchConstruction");
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
   const fs::path full_dir = temp.temp_dir / "uncovered-full";
@@ -2229,6 +2231,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                                {{"Library", edge_library_path.string()},
                                 {"TargetInterfaces", {4}},
                                 {"UnmatchedPolicy", "Warn"},
+                                {"Developer", true},
                                 {"CorrectionMode", "Both"}}}};
   IoData iodata(maxwell_config, false);
   iodata.boundaries.cracked_attributes.insert(9);
@@ -2518,6 +2521,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                        {{"Library", edge_library_path.string()},
                         {"TargetInterfaces", {4}},
                         {"UnmatchedPolicy", "Warn"},
+                        {"Developer", true},
                         {"CorrectionMode", "Both"},
                         {"Diagnostics", {{"UncoveredFeatureEnergy", true}}}}}};
   IoData iodata(config, false);
@@ -2889,6 +2893,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                        {{"Library", edge_library_path.string()},
                         {"TargetInterfaces", {4}},
                         {"UnmatchedPolicy", "Warn"},
+                        {"Developer", true},
                         {"CorrectionMode", "Both"}}}};
   IoData iodata(config, false);
   iodata.boundaries.cracked_attributes.insert(9);
@@ -3201,6 +3206,7 @@ TEST_CASE_METHOD(
                        {{"Library", edge_library_path.string()},
                         {"TargetInterfaces", {4}},
                         {"UnmatchedPolicy", "Warn"},
+                        {"Developer", true},
                         {"CorrectionMode", "Both"}}}};
   IoData iodata(config, false);
   iodata.boundaries.cracked_attributes.insert(9);
@@ -3627,6 +3633,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                                {{"Library", edge_library_path.string()},
                                 {"TargetInterfaces", {4}},
                                 {"UnmatchedPolicy", "Warn"},
+                                {"Developer", true},
                                 {"CorrectionMode", "Both"}}}};
   IoData iodata(maxwell_config, false);
   iodata.boundaries.cracked_attributes.insert(9);

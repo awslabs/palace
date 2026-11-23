@@ -492,6 +492,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   UseDefaultConstruction(
       correction, WriteDefaultConstructionLibrary(convex_library_3d_path, temp.temp_dir),
       true);
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   correction["PatchEnergy"] = true;
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
@@ -632,6 +633,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   UseDefaultConstruction(
       config["Solver"]["SurfaceResponseCorrection"],
       WriteDefaultConstructionLibrary(convex_library_3d_path, temp.temp_dir), false);
+  config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
   config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
   config["Solver"]["SurfaceResponseCorrection"]["PatchEnergy"] = true;
   // The two lowest modes of the 1 m PEC box (as the staged / unstaged case: with N 1 an

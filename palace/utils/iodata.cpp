@@ -955,6 +955,32 @@ void IoData::CheckConfiguration()
   fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
   fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
   fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
+
+  // The v1 default path (decisions 2377 / 2379): a correction block with the developer
+  // switch names the parked options it selects, in one line (palace.json records the same
+  // list as SurfaceResponse.Developer); the keys of a parked option the block does not
+  // select are named in one warning.
+  for (const auto *response :
+       {solver.electrostatic.response_correction
+            ? &*solver.electrostatic.response_correction
+            : nullptr,
+        solver.surface_response_correction ? &*solver.surface_response_correction
+                                           : nullptr})
+  {
+    if (response && response->developer)
+    {
+      Mpi::Print("\nDEVELOPER OPTIONS: {}\n",
+                 response->developer_options.empty()
+                     ? std::string("none")
+                     : fmt::format("{}", fmt::join(response->developer_options, ", ")));
+    }
+    if (response && !response->ignored_keys.empty())
+    {
+      Mpi::Warning("Response-correction keys ignored: {} (each configures only that "
+                   "part of the correction, which this block does not select).\n",
+                   fmt::join(response->ignored_keys, ", "));
+    }
+  }
 }
 
 void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)

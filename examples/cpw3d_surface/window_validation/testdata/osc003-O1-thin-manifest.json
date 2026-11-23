@@ -1,0 +1,79 @@
+{
+ "Attributes": {
+  "exterior_boundary": 2002,
+  "gap_L1": 2004,
+  "ground_L1": 2014,
+  "substrate_l1": 3003,
+  "trace_9_L1": 3101,
+  "vacuum": 3000
+ },
+ "Box": {
+  "X": [
+   -7100.0,
+   -6850.0
+  ],
+  "Y": [
+   -1600.0,
+   -1400.0
+  ],
+  "Z": [
+   -525.0,
+   1000.0
+  ]
+ },
+ "Bumps": 0,
+ "Bytes": 1493028,
+ "Chip": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/window-extraction-20261002/extraction/chips/osc003.json",
+ "GmshVersion": "4.15.2-git",
+ "Groups": {
+  "exterior_boundary": {
+   "Attribute": 2002,
+   "Dimension": 2,
+   "Elements": 2948
+  },
+  "gap_L1": {
+   "Attribute": 2004,
+   "Dimension": 2,
+   "Elements": 2115
+  },
+  "ground_L1": {
+   "Attribute": 2014,
+   "Dimension": 2,
+   "Elements": 916
+  },
+  "substrate_l1": {
+   "Attribute": 3003,
+   "Dimension": 3,
+   "Elements": 12774
+  },
+  "trace_9_L1": {
+   "Attribute": 3101,
+   "Dimension": 2,
+   "Elements": 914
+  },
+  "vacuum": {
+   "Attribute": 3000,
+   "Dimension": 3,
+   "Elements": 14496
+  }
+ },
+ "MeshSize": {
+  "Far": 40.0,
+  "Fine": 4.0
+ },
+ "Nodes": 5494,
+ "Output": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/final-e1-20261002/thinmesh/meshes/osc003-O1-thin.msh2",
+ "Planes": [
+  {
+   "Facing": "up",
+   "Name": "L1",
+   "SurfaceZ": 0.0
+  }
+ ],
+ "Recipe": "thin sheets at the planes, void bump columns with a metal shell, order 1, MSH 2.2 binary",
+ "SHA256": "87cb08f76f908914d787b22744e7c60d9bef0eb7cf38fb0826cefc46dbc3f735",
+ "Terminals": [
+  "trace_9"
+ ],
+ "Window": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/window-extraction-20261002/polygons/osc003-O1.json"
+}

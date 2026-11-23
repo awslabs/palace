@@ -15,13 +15,30 @@ tubes of Radius 0.2 and ElementsPerRadius 3 (the blocks transmon_surface_amr.jso
 until P4 S4-a) grow the device mesh by ~3.5x per pass over 35 mm of metal edge (138k -> 18.3M
 elements after four of about nine passes, measured 2026-09-23), so they are never applied
 implicitly.
+
+FORMS (the v1 cut; developer_form.py): by default the response-correction block is the V1 FORM,
+post-processing only (no self-consistent solve: ``--correction-mode SelfConsistent`` / ``Both``,
+SolveTol and TranslationalDomainCorrection are parked); ``--developer`` writes the RECORDED
+DEVELOPER FORM (the recorded settings: ``--correction-mode`` Both by default, SolveTol 1e-6,
+TranslationalDomainCorrection FixedTrace, with "Developer": true). A parked flag without
+``--developer`` is refused. Values from the v1 form are not comparable with records made before
+this cut until the benchmark's collocated twins are read.
 """
 
 import argparse
 import json
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+IDENTIFICATION = ROOT.parent / "surface_response_identification"
+if str(IDENTIFICATION) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION))
+import developer_form  # noqa: E402
+
+# The recorded settings of the response-correction block (the recorded prism-library device runs):
+# the developer form writes them, the v1 form less the parked options.
+RECORDED_CORRECTION_MODE = "Both"
 
 # Refinement block of the recorded prism-library device runs (config-p5-exact-amr*.json).
 PRISM_ERA_REFINEMENT = {
@@ -84,7 +101,8 @@ def main():
     parser.add_argument(
         "--correction-mode",
         choices=("PostprocessOnly", "SelfConsistent", "Both"),
-        default="Both",
+        help=f"the response-correction mode (the v1 form: PostprocessOnly; the recorded form: "
+             f"{RECORDED_CORRECTION_MODE}; SelfConsistent and Both need --developer)",
     )
     parser.add_argument(
         "--trace-coupling",
@@ -109,7 +127,13 @@ def main():
         "--edge-refinement", nargs=2, type=float, metavar=("RADIUS_UM", "ELEMENTS_PER_RADIUS"),
         help="opt-in geometry-driven tube refinement of every target interface (see the module docstring)",
     )
+    developer_form.add_developer_argument(parser)
     args = parser.parse_args()
+    # A parked flag needs --developer (the flags alone are judged, in a block with a Library).
+    flags = {"Library": "", "CorrectionMode": args.correction_mode}
+    parked = developer_form.parked_block_settings({k: v for k, v in flags.items() if v is not None})
+    if parked and not args.developer:
+        parser.error(f"{parked} select a parked developer option: add --developer")
     if args.order <= 0 or args.substrate_permittivity <= 0.0:
         parser.error("order and substrate permittivity must be positive")
     if args.amr_max_its < 0 or args.amr_tol <= 0.0 or args.amr_max_size < 0:
@@ -159,16 +183,16 @@ def main():
         "Order": args.order,
         "Electrostatic": {
             "Save": 1,
-            "ResponseCorrection": {
+            "ResponseCorrection": (developer_form.developer_block if args.developer else developer_form.v1_block)({
                 "Library": str(args.library.expanduser().resolve()),
                 "TargetInterfaces": [1, 2, 3],
                 "UnmatchedPolicy": "Error",
-                "CorrectionMode": args.correction_mode,
+                "CorrectionMode": args.correction_mode or RECORDED_CORRECTION_MODE,
                 "TranslationalDomainCorrection": "FixedTrace",
                 "TraceCoupling": args.trace_coupling,
                 "MortarOversampling": args.mortar_oversampling,
                 "SolveTol": 1.0e-6,
-            },
+            }),
         },
         "Linear": {
             "Type": "BoomerAMG",
@@ -182,6 +206,7 @@ def main():
     output = args.output.expanduser().resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(config, indent=2) + "\n")
+    print(f"prepare_surface_response_electrostatic.py: the {developer_form.form_name(args.developer)}", file=sys.stderr)
     print(output)
 
 

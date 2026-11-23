@@ -11,6 +11,8 @@ import unittest
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name("prepare_surface_response_electrostatic.py")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "surface_response_identification"))
+import developer_form  # noqa: E402
 EXAMPLE = Path(__file__).with_name("transmon_surface_amr.json")
 # The example has no EdgeRefinement block since its tube default changed (S4-a item (6)), so the
 # test writes its own --source: the example with one EdgeRefinement block per dielectric, which
@@ -58,6 +60,37 @@ class PrepareSurfaceResponseElectrostaticTest(unittest.TestCase):
         self.assertEqual(config["Solver"]["Order"], 3)
         correction = config["Solver"]["Electrostatic"]["ResponseCorrection"]
         self.assertEqual((correction["TraceCoupling"], correction["MortarOversampling"]), ("Collocated", 2))
+        # The v1 form (the default; the v1 cut): post-processing only, no parked key.
+        self.assertEqual(correction["CorrectionMode"], "PostprocessOnly")
+        self.assertEqual(developer_form.parked_config_settings(config), [])
+        self.assertNotIn("Developer", correction)
+        self.assertIn("the v1 form", result.stderr)
+
+    def test_developer_form_is_the_record(self):
+        # The record: the prism-library device run transmon_final_library_device_20260830/
+        # config-p5-exact-amr11-full-mortar-over2-4r8g.json (cluster /data/home/simlap; 2026-09-08), whose block is
+        # (in its own key order) Library, TargetInterfaces [1, 2, 3], UnmatchedPolicy Error, CorrectionMode Both,
+        # SolveTol 1e-06, TraceCoupling SurfaceMortar, MortarOversampling 2, TranslationalDomainCorrection FixedTrace.
+        # This writer (written after that run) orders the keys its own way: the recorded developer form carries the
+        # record's settings and "Developer": true last.
+        recorded = {"TargetInterfaces": [1, 2, 3], "UnmatchedPolicy": "Error", "CorrectionMode": "Both", "SolveTol": 1e-06,
+                    "TraceCoupling": "SurfaceMortar", "MortarOversampling": 2, "TranslationalDomainCorrection": "FixedTrace"}
+        result, config = prepare("--developer", "--trace-coupling", "SurfaceMortar")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        correction = config["Solver"]["Electrostatic"]["ResponseCorrection"]
+        self.assertEqual({k: v for k, v in correction.items() if k not in ("Library", "Developer")}, recorded)
+        self.assertEqual(list(correction)[-1], "Developer")
+        self.assertIs(correction["Developer"], True)
+        self.assertIn("the recorded developer form", result.stderr)
+
+    def test_parked_flags_need_the_developer_switch(self):
+        for mode in ("SelfConsistent", "Both"):
+            result, _ = prepare("--correction-mode", mode)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--developer", result.stderr)
+            result, config = prepare("--correction-mode", mode, "--developer")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(config["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"], mode)
 
     def test_amr_writes_the_recorded_prism_era_refinement_block(self):
         result, config = prepare("--order", "5", "--amr-max-its", "10", "--amr-max-size", "120000000", "--save-adapt-mesh",

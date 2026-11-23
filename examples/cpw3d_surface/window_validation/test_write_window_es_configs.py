@@ -18,6 +18,10 @@ import unittest
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from write_window_es_configs import LAYERS, fabricated_config, main, terminal_labels, thin_config  # noqa: E402
+# developer_form.py is on the path through write_window_es_configs (surface_response_identification).
+import developer_form  # noqa: E402
+
+TESTDATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testdata")
 
 SQUARE = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]]
 POLYGON_SET = {
@@ -173,8 +177,15 @@ class ThinConfigTest(unittest.TestCase):
         response = config["Solver"]["Electrostatic"]["ResponseCorrection"]
         self.assertEqual(response["Library"], "/lib/process-library.json")
         self.assertEqual(response["TargetInterfaces"], [1, 2, 3, 4, 5])
-        self.assertEqual((response["TraceCoupling"], response["MortarOversampling"], response["SolveTol"], response["CorrectionMode"], response["TranslationalDomainCorrection"], response["PatchConstruction"]),
-                         ("SurfaceMortar", 2, 1.0e-6, "Both", "FixedTrace", "Features"))
+        # The v1 form (the default): the protocol path's settings less the parked options.
+        self.assertEqual(list(response), ["Library", "TargetInterfaces", "UnmatchedPolicy", "CorrectionMode", "TraceCoupling", "MortarOversampling", "PatchConstruction"])
+        self.assertEqual((response["TraceCoupling"], response["MortarOversampling"], response["CorrectionMode"], response["PatchConstruction"]),
+                         ("SurfaceMortar", 2, "PostprocessOnly", "Features"))
+        developer = thin_config(POLYGON_SET, THIN_MANIFEST, "/m/thin.msh2", "/lib/process-library.json", "T", "/m/postpro", developer=True)
+        response = developer["Solver"]["Electrostatic"]["ResponseCorrection"]
+        self.assertEqual((response["TraceCoupling"], response["MortarOversampling"], response["SolveTol"], response["CorrectionMode"], response["TranslationalDomainCorrection"], response["PatchConstruction"],
+                          response["Developer"]), ("SurfaceMortar", 2, 1.0e-6, "Both", "FixedTrace", "Features", True))
+        self.assertEqual(list(response)[-1], "Developer")
         self.assertEqual(config["Solver"]["Electrostatic"]["Save"], 1)
         self.assertEqual(config["Solver"]["Linear"], {"Type": "BoomerAMG", "KSPType": "CG", "Tol": 1.0e-10, "MaxIts": 1000, "EstimatorTol": 0.1, "EstimatorMG": True})
 
@@ -303,6 +314,40 @@ class MainTest(unittest.TestCase):
             # The library's MatchingRadius is authoritative for the edge patches.
             self.assertEqual(config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"], [2.5])
             self.assertEqual(config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"], paths["lib.json"])
+
+
+class ResponseForms(unittest.TestCase):
+    """The v1 cut (developer_form.py): the default thin config is the v1 form; --developer the recorded form."""
+
+    def test_default_thin_config_carries_no_parked_key(self):
+        for path in ("T", "P4", "preflight"):
+            config = thin_config(POLYGON_SET, THIN_MANIFEST, "m", "lib", path, "p")
+            self.assertEqual(developer_form.parked_config_settings(config), [], path)
+            self.assertNotIn("Developer", config["Solver"]["Electrostatic"]["ResponseCorrection"], path)
+
+    def test_developer_form_is_the_record(self):
+        # The record: stage2-20261004/l2-writer/configs/new-c9cca860/osc003-O1-thin-P4.json (sha256 930d8780889b45cf...,
+        # written 2026-10-04 by this writer from window-extraction-20261002/polygons/osc003-O1.json and
+        # final-e1-20261002/thinmesh/meshes/osc003-O1-thin.json, copied to testdata/). The recorded developer form is
+        # the record byte for byte plus the keys that state its behaviour on today's binary: Refinement.MaxSizePredicted
+        # true (ruling 1637 (c): the writer states it since 2026-11-13), Model.CrackInternalBoundaryElements true (the
+        # record's binary cracked an unset key; crack policy legacy, decision 1570) and "Developer": true.
+        with open(os.path.join(TESTDATA, "record-osc003-O1-thin-P4.json")) as source:
+            text = source.read()
+        record = json.loads(text)
+        self.assertEqual(json.dumps(record, indent=2) + "\n", text)
+        with open(os.path.join(TESTDATA, "osc003-O1-polygon-set.json")) as source:
+            polygon_set = json.load(source)
+        with open(os.path.join(TESTDATA, "osc003-O1-thin-manifest.json")) as source:
+            manifest = json.load(source)
+        block = record["Solver"]["Electrostatic"]["ResponseCorrection"]
+        config = thin_config(polygon_set, manifest, record["Model"]["Mesh"], block["Library"], "P4", record["Problem"]["Output"],
+                             radius=record["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"][0],
+                             crack_policy="legacy", developer=True)
+        record["Model"]["Refinement"]["MaxSizePredicted"] = True
+        record["Model"]["CrackInternalBoundaryElements"] = True
+        block["Developer"] = True
+        self.assertEqual(json.dumps(config, indent=2) + "\n", json.dumps(record, indent=2) + "\n")
 
 
 if __name__ == "__main__":

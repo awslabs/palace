@@ -1887,6 +1887,19 @@ void VerifyImpedanceMetalRuleCoveragePolicy(
       "Solver.SurfaceResponseCorrection, or remove \"ImpedanceMetalRule\"!");
 }
 
+void RequireDeveloperOption(ElectrostaticSolverData::ResponseCorrectionData &data,
+                            const std::string &option)
+{
+  MFEM_VERIFY(
+      data.developer,
+      "Response-correction "
+          << option
+          << " is a parked developer option (the correction is post-processing "
+             "only by default, with the fabrication-process library); set "
+             "\"Developer\": true in the same response-correction block to use it!");
+  data.developer_options.push_back(option);
+}
+
 ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
 {
   n_post = electrostatic.value("Save", n_post);
@@ -1956,17 +1969,27 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
   {
     const auto &correction = *it;
     ResponseCorrectionData data;
-    const std::string correction_mode = correction.value("CorrectionMode", "Both");
+    // The developer switch first: every parked option below is checked against it.
+    if (auto developer = correction.find("Developer"); developer != correction.end())
+    {
+      MFEM_VERIFY(developer->is_boolean(),
+                  "Response-correction \"Developer\" must be a boolean!");
+      data.developer = developer->get<bool>();
+    }
+    const std::string correction_mode =
+        correction.value("CorrectionMode", "PostprocessOnly");
     if (correction_mode == "PostprocessOnly")
     {
       data.correction_mode = ResponseCorrectionData::CorrectionMode::POSTPROCESS_ONLY;
     }
     else if (correction_mode == "SelfConsistent")
     {
+      RequireDeveloperOption(data, "\"CorrectionMode\": \"SelfConsistent\"");
       data.correction_mode = ResponseCorrectionData::CorrectionMode::SELF_CONSISTENT;
     }
     else if (correction_mode == "Both")
     {
+      RequireDeveloperOption(data, "\"CorrectionMode\": \"Both\"");
       data.correction_mode = ResponseCorrectionData::CorrectionMode::BOTH;
     }
     else
@@ -1974,30 +1997,47 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       MFEM_ABORT("Electrostatic response-correction \"CorrectionMode\" must be "
                  "\"PostprocessOnly\", \"SelfConsistent\", or \"Both\"!");
     }
-    data.solve_tol = correction.value("SolveTol", data.solve_tol);
-    MFEM_VERIFY(std::isfinite(data.solve_tol) && data.solve_tol > 0.0,
-                "Electrostatic response-correction \"SolveTol\" must be positive!");
-    const std::string translational_domain_correction =
-        correction.value("TranslationalDomainCorrection", "FixedTrace");
-    if (translational_domain_correction == "Disabled")
+    // The two keys of the self-consistent solve alone (its tolerance; its domain coupling)
+    // follow the parked option they belong to: read with it, ignored (IoData warns once)
+    // without it, so that un-parking the solve un-parks them.
+    if (data.correction_mode == ResponseCorrectionData::CorrectionMode::POSTPROCESS_ONLY)
     {
-      data.translational_domain_correction =
-          ResponseCorrectionData::TranslationalDomainCorrection::DISABLED;
-    }
-    else if (translational_domain_correction == "FixedTrace")
-    {
-      data.translational_domain_correction =
-          ResponseCorrectionData::TranslationalDomainCorrection::FIXED_TRACE;
-    }
-    else if (translational_domain_correction == "FixedFlux")
-    {
-      data.translational_domain_correction =
-          ResponseCorrectionData::TranslationalDomainCorrection::FIXED_FLUX;
+      for (const char *key : {"SolveTol", "TranslationalDomainCorrection"})
+      {
+        if (correction.contains(key))
+        {
+          data.ignored_keys.push_back(
+              fmt::format("\"{}\" (no self-consistent solve)", key));
+        }
+      }
     }
     else
     {
-      MFEM_ABORT("Electrostatic response-correction \"TranslationalDomainCorrection\" "
-                 "must be \"Disabled\", \"FixedTrace\", or \"FixedFlux\"!");
+      data.solve_tol = correction.value("SolveTol", data.solve_tol);
+      MFEM_VERIFY(std::isfinite(data.solve_tol) && data.solve_tol > 0.0,
+                  "Electrostatic response-correction \"SolveTol\" must be positive!");
+      const std::string translational_domain_correction =
+          correction.value("TranslationalDomainCorrection", "FixedTrace");
+      if (translational_domain_correction == "Disabled")
+      {
+        data.translational_domain_correction =
+            ResponseCorrectionData::TranslationalDomainCorrection::DISABLED;
+      }
+      else if (translational_domain_correction == "FixedTrace")
+      {
+        data.translational_domain_correction =
+            ResponseCorrectionData::TranslationalDomainCorrection::FIXED_TRACE;
+      }
+      else if (translational_domain_correction == "FixedFlux")
+      {
+        data.translational_domain_correction =
+            ResponseCorrectionData::TranslationalDomainCorrection::FIXED_FLUX;
+      }
+      else
+      {
+        MFEM_ABORT("Electrostatic response-correction \"TranslationalDomainCorrection\" "
+                   "must be \"Disabled\", \"FixedTrace\", or \"FixedFlux\"!");
+      }
     }
     const std::string trace_coupling = correction.value("TraceCoupling", "Collocated");
     if (trace_coupling == "Collocated")

@@ -1533,6 +1533,11 @@ TEST_CASE_METHOD(
   // fabricated surface-energy evaluation.
   auto disabled_translational_config_2d = parallel_cluster_config_2d;
   disabled_translational_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
+                                  ["Developer"] = true;
+  // TranslationalDomainCorrection is a key of the self-consistent solve: read with it.
+  disabled_translational_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
+                                  ["CorrectionMode"] = "Both";
+  disabled_translational_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
                                   ["TranslationalDomainCorrection"] = "Disabled";
   IoData disabled_translational_iodata_2d(disabled_translational_config_2d, false);
   disabled_translational_iodata_2d.boundaries.cracked_attributes.insert(9);
@@ -1555,6 +1560,11 @@ TEST_CASE_METHOD(
                 1.0e-12));
 
   auto fixed_flux_translational_config_2d = parallel_cluster_config_2d;
+  fixed_flux_translational_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
+                                    ["Developer"] = true;
+  // TranslationalDomainCorrection is a key of the self-consistent solve: read with it.
+  fixed_flux_translational_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
+                                    ["CorrectionMode"] = "Both";
   fixed_flux_translational_config_2d["Solver"]["Electrostatic"]["ResponseCorrection"]
                                     ["TranslationalDomainCorrection"] = "FixedFlux";
   IoData fixed_flux_translational_iodata_2d(fixed_flux_translational_config_2d, false);
@@ -14121,6 +14131,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     // The same solver tolerances in both runs, tight enough for the 1e-8 energy bar under
     // a different partition of the same mesh (the producer's rebalanced one, the
     // follow-on's fresh one).
+    correction["Developer"] = true;
     correction["SolveTol"] = 1.0e-13;
     config["Solver"]["Linear"] = {{"Tol", 1.0e-13}, {"MaxIts", 400}};
     ProduceAndFollow(config, "adaptid-islands", spatial_mesh->GetGlobalNE(),
@@ -15564,6 +15575,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction.erase("PatchConstruction");  // Features (the default)
   // The same (tight) solver tolerances in both runs: the 1e-8 energy bar under a different
   // partition of the same mesh (the producer's rebalanced one, the follow-on's fresh one).
+  // The case compares every row of the uncovered-energy table, the self-consistent rows
+  // too: CorrectionMode Both (the default before the v1 cut; PostprocessOnly leaves those
+  // rows nan).
+  correction["Developer"] = true;
+  correction["CorrectionMode"] = "Both";
   correction["SolveTol"] = 1.0e-13;
   config["Solver"]["Linear"] = {{"Tol", 1.0e-13}, {"MaxIts", 500}};
   config["Problem"]["Output"] = producer_dir.string();
