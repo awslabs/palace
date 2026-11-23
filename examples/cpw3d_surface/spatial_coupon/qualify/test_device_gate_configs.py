@@ -310,6 +310,29 @@ class MaxwellFormGateRecord(unittest.TestCase):
             self.assertEqual((gate["Probed"], gate["Count"], gate["Excluded"]), (6, 0, 0))
             self.assertEqual(gate["Tolerance"], sq.GATE_MAX_RATIO)
 
+    def test_the_records_file_of_a_default_v1_run(self):
+        """The v1 cut (CUT-PLAN step 6): palace.json keeps the gate block without its Records, which Palace writes to
+        conductor-consistency/ of the output (or Diagnostics.Directory); gate_solve_record reads them there, and a solve
+        whose records are nowhere still fails closed."""
+        records = [maxwell_record(self.MODEL, r, f) for f, r in ((5.2, 2.2e-7), (5.7, 6.3e-7))]
+        with tempfile.TemporaryDirectory() as tmp:
+            for directory, resolved in (("conductor-consistency", {}), ("diag", {"SurfaceResponseCorrection": {"Diagnostics": {"Directory": "diag"}}})):
+                path = self.palace_json(tmp, f"c0-{directory}", records, 0, 4)
+                meta = json.loads(path.read_text())
+                moved = meta["SurfaceResponse"]["Diagnostics"]["ConductorConsistency"].pop("Records")
+                path.write_text(json.dumps(meta))
+                (path.parent / "config_resolved.json").write_text(json.dumps({"Solver": dict(resolved, Order=4)}))
+                records_path = path.parent / directory / sq.CONDUCTOR_CONSISTENCY_RECORDS_FILE
+                records_path.parent.mkdir()
+                records_path.write_text(json.dumps({"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {"Records": moved}}}}))
+                gate = sq.resolution_aware_gate([sq.gate_solve_record(path)], self.MODEL)
+                self.assertTrue(gate["Passed"], directory)
+                self.assertEqual(gate["Probed"], 2)
+                records_path.unlink()
+                gate = sq.resolution_aware_gate([sq.gate_solve_record(path)], self.MODEL)
+                self.assertFalse(gate["Passed"])
+                self.assertIn("no conductor-consistency record", gate["Solves"][0]["Reason"])
+
     def test_a_maxwell_ratio_over_the_bar_at_one_frequency_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             records = [maxwell_record(self.MODEL, 2.2e-7, 5.2), maxwell_record(self.MODEL, 3.0e-4, 5.7)]

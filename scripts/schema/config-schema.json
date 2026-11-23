@@ -3715,8 +3715,8 @@
                 "ConductorConsistencyRecords": {
                   "type": "string",
                   "enum": ["Metadata", "Directory"],
-                  "description": "Where the `Records` array of `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and excitation) is written. `Metadata` (default): `palace.json`. `Directory` (requires `Directory`): `surface-response-conductor-consistency-records.json` in that directory, the array at the same key path and in the same text; `palace.json` lacks only that member (`TestedPatches` = the record count and the gate summary stay).",
-                  "default": "Metadata"
+                  "description": "Where the `Records` array of `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and excitation) is written. `Directory` (default): `surface-response-conductor-consistency-records.json` in the `Directory` above, else in the sub-directory `conductor-consistency` of the output directory, the array at the same key path and in the same text; `palace.json` lacks only that member (`TestedPatches` = the record count and the gate summary stay). `Metadata`: `palace.json` (the default before schema 4-6-0; a chip's records make `palace.json` GBs).",
+                  "default": "Directory"
                 }
               }
             },

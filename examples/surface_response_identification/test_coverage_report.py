@@ -1184,6 +1184,25 @@ class TestFixRoundRecordRows(unittest.TestCase):
         self.assertEqual(locations["Excluded:NonManifold"][0]["portions"], 4.0)
         self.assertFalse(cr.exclusion_energy_rows(self.tmp)["present"])
 
+    def test_conductor_summary_reads_the_records_file_by_default(self):
+        # The v1 cut (CUT-PLAN step 6): palace.json keeps the block without its Records, which Palace writes to
+        # conductor-consistency/ of the output (or Diagnostics.Directory); the summary reads them there.
+        palace = {"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {"Count": 0, "TestedPatches": 2}}}}
+        records = [{"RecordOnly": True, "Maxwell": True, "FloorApplied": True}, {"SelfConsistentPreGate": True}]
+        post = os.path.join(self.tmp, "v1post")
+        path = os.path.join(post, "conductor-consistency", cr.CONDUCTOR_CONSISTENCY_RECORDS_FILE)
+        os.makedirs(os.path.dirname(path))
+        with open(path, "w") as target:
+            json.dump({"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {"Records": records}}}}, target)
+        cc = cr.conductor_consistency_summary(palace, post)
+        self.assertEqual((cc["record_only"], cc["maxwell"], cc["floor_applied"], cc["pre_gate_records"], cc["records_source"]),
+                         (1, True, 1, 1, path))
+        config = {"Solver": {"SurfaceResponseCorrection": {"Diagnostics": {"Directory": "diag"}}}}
+        cc = cr.conductor_consistency_summary(palace, post, config)
+        self.assertEqual((cc["record_only"], cc["maxwell"]), (0, False))
+        self.assertEqual(cc["records_source"], f"not found ({os.path.join(post, 'diag', cr.CONDUCTOR_CONSISTENCY_RECORDS_FILE)})")
+        self.assertIsNone(cr.conductor_consistency_summary(palace)["records_source"])
+
     def test_conductor_summary_and_near_pairs_join(self):
         palace = {"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {
             "Count": 1, "TestedPatches": 5, "UnprobedModels": ["m-x"],

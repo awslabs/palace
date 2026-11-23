@@ -1689,7 +1689,12 @@ TEST_CASE("Config surface-response Diagnostics.Directory and ConductorConsistenc
       json{{"ResponseCorrection", automatic_correction}});
   REQUIRE(defaults.response_correction);
   CHECK(defaults.response_correction->diagnostics_directory.empty());
-  CHECK(defaults.response_correction->conductor_consistency_records == Records::METADATA);
+  // The v1 default (CUT-PLAN step 6): the records leave palace.json for their file.
+  CHECK(defaults.response_correction->conductor_consistency_records == Records::DIRECTORY);
+  auto metadata = automatic_correction;
+  metadata["Diagnostics"] = {{"ConductorConsistencyRecords", "Metadata"}};
+  CHECK(config::ElectrostaticSolverData(json{{"ResponseCorrection", metadata}})
+            .response_correction->conductor_consistency_records == Records::METADATA);
 
   auto moved = automatic_correction;
   moved["Diagnostics"] = {{"Directory", "diagnostics"},
@@ -1710,7 +1715,7 @@ TEST_CASE("Config surface-response Diagnostics.Directory and ConductorConsistenc
   const config::ElectrostaticSolverData only(json{{"ResponseCorrection", directory_only}});
   REQUIRE(only.response_correction);
   CHECK(only.response_correction->diagnostics_directory == "heavy.tables_1");
-  CHECK(only.response_correction->conductor_consistency_records == Records::METADATA);
+  CHECK(only.response_correction->conductor_consistency_records == Records::DIRECTORY);
 
   for (const auto *name :
        {"", "a/b", "..", ".", ".hidden", "-dash", "iteration1", "iterations", "with space"})
@@ -1727,11 +1732,14 @@ TEST_CASE("Config surface-response Diagnostics.Directory and ConductorConsistenc
   CHECK_THROWS_WITH(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", not_a_string}}),
       Catch::Matchers::ContainsSubstring("Diagnostics.Directory"));
+  // "Directory" without Diagnostics.Directory: the default directory (the v1 cut).
   auto records_without_directory = automatic_correction;
   records_without_directory["Diagnostics"] = {{"ConductorConsistencyRecords", "Directory"}};
-  CHECK_THROWS_WITH(config::ElectrostaticSolverData(
-                        json{{"ResponseCorrection", records_without_directory}}),
-                    Catch::Matchers::ContainsSubstring("requires"));
+  const config::ElectrostaticSolverData records_only(
+      json{{"ResponseCorrection", records_without_directory}});
+  CHECK(records_only.response_correction->diagnostics_directory.empty());
+  CHECK(records_only.response_correction->conductor_consistency_records ==
+        Records::DIRECTORY);
   auto invalid_records = automatic_correction;
   invalid_records["Diagnostics"] = {{"Directory", "diagnostics"},
                                     {"ConductorConsistencyRecords", "palace.json"}};

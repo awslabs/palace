@@ -900,10 +900,28 @@ def command_traces(args):
     return 0
 
 
+# Where Palace writes the conductor-consistency Records by default (the v1 cut, CUT-PLAN step 6:
+# Diagnostics.ConductorConsistencyRecords "Directory"): <postpro>/<Diagnostics.Directory, else conductor-consistency>/ this
+# file, the array at palace.json's key path; palace.json keeps the rest of the block ("Metadata" keeps the Records there).
+CONDUCTOR_CONSISTENCY_RECORDS_FILE = "surface-response-conductor-consistency-records.json"
+CONDUCTOR_CONSISTENCY_RECORDS_DIRECTORY = "conductor-consistency"
+
+
+def conductor_consistency_records_path(postpro, resolved=None):
+    """The records file of a solve's postpro directory (`resolved`: its config_resolved.json, for Diagnostics.Directory)."""
+    solver = (resolved or {}).get("Solver") or {}
+    directory = CONDUCTOR_CONSISTENCY_RECORDS_DIRECTORY
+    for block in (((solver.get("Electrostatic") or {}).get("ResponseCorrection")), solver.get("SurfaceResponseCorrection")):
+        if isinstance(block, dict) and ((block.get("Diagnostics") or {}).get("Directory")):
+            directory = block["Diagnostics"]["Directory"]
+    return Path(postpro) / directory / CONDUCTOR_CONSISTENCY_RECORDS_FILE
+
+
 def gate_solve_record(path):
     """{Diagnostics, Order, Source} of one device solve: palace.json (or the preflight
-    manifest) with its ConductorConsistency record; the Order from the sibling
-    config_resolved.json when present."""
+    manifest) with its ConductorConsistency record (the Records from palace.json, else from
+    the records file beside it: conductor_consistency_records_path); the Order from the
+    sibling config_resolved.json when present."""
     path = Path(path)
     source = json.loads(path.read_text())
     diagnostics = source.get("SurfaceResponse", {}).get("Diagnostics", {}).get("ConductorConsistency")
@@ -912,9 +930,16 @@ def gate_solve_record(path):
     if diagnostics is None:
         raise SpatialQualificationError(f"{path} carries no ConductorConsistency record")
     order = None
-    resolved = path.parent / "config_resolved.json"
-    if resolved.is_file():
-        order = json.loads(resolved.read_text()).get("Solver", {}).get("Order")
+    resolved_path = path.parent / "config_resolved.json"
+    resolved = json.loads(resolved_path.read_text()) if resolved_path.is_file() else None
+    if resolved is not None:
+        order = resolved.get("Solver", {}).get("Order")
+    if "Records" not in diagnostics:
+        records_path = conductor_consistency_records_path(path.parent, resolved)
+        if records_path.is_file():
+            records = json.loads(records_path.read_text())
+            diagnostics = dict(diagnostics, Records=records.get("SurfaceResponse", {}).get("Diagnostics", {})
+                               .get("ConductorConsistency", {}).get("Records", []))
     return {"Diagnostics": diagnostics, "Order": order, "Source": str(path)}
 
 

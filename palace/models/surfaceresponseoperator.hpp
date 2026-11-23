@@ -2241,6 +2241,11 @@ public:
   }
   static constexpr const char *kConductorConsistencyRecordsFile =
       "surface-response-conductor-consistency-records.json";
+  // The records file's sub-directory of the output directory when Diagnostics.Directory is
+  // unset (Diagnostics.ConductorConsistencyRecords "Directory", the default; CUT-PLAN step
+  // 6).
+  static constexpr const char *kConductorConsistencyRecordsDirectory =
+      "conductor-consistency";
   const std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
   GetIdentificationExclusionPortions() const

@@ -1950,11 +1950,18 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     test::RunElectrostatic(run);
     return dir;
   };
-  const fs::path off_dir = Run("diagdir-off", json());
-  const fs::path dir_dir = Run("diagdir-dir", {{"Directory", "diagnostics"}});
+  // The records in palace.json ("Metadata", the default before the v1 cut) for the two
+  // reference runs; the v1 default (the key unset: "Directory" without
+  // Diagnostics.Directory, CUT-PLAN step 6) puts them in conductor-consistency/.
+  const fs::path off_dir =
+      Run("diagdir-off", {{"ConductorConsistencyRecords", "Metadata"}});
+  const fs::path dir_dir =
+      Run("diagdir-dir",
+          {{"Directory", "diagnostics"}, {"ConductorConsistencyRecords", "Metadata"}});
   const fs::path records_dir =
       Run("diagdir-records",
           {{"Directory", "diagnostics"}, {"ConductorConsistencyRecords", "Directory"}});
+  const fs::path default_dir = Run("diagdir-default", json());
   Mpi::Barrier(Mpi::World());
   if (!Mpi::Root(Mpi::World()))
   {
@@ -2083,6 +2090,34 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
             .at("Diagnostics")
             .at("ConductorConsistency")
             .at("Records") == off_gate.at("Records"));
+
+  // The v1 default: every table at the top level as in the reference run, the records file
+  // (the same bytes as the one above) in conductor-consistency/, and palace.json without
+  // the Records member (the count and the gate summary stay).
+  {
+    std::set<std::string> expected_top = off;
+    expected_top.insert(SurfaceResponseOperator::kConductorConsistencyRecordsDirectory);
+    CHECK(Entries(default_dir) == expected_top);
+    const fs::path directory =
+        default_dir / SurfaceResponseOperator::kConductorConsistencyRecordsDirectory;
+    REQUIRE(fs::is_directory(directory));
+    CHECK(Entries(directory) ==
+          std::set<std::string>{SurfaceResponseOperator::kConductorConsistencyRecordsFile});
+    CHECK(test::ReadFile(directory /
+                         SurfaceResponseOperator::kConductorConsistencyRecordsFile) ==
+          text);
+    for (const auto &name : off)
+    {
+      INFO(name);
+      if (name != "palace.json")
+      {
+        CHECK(test::ReadFile(default_dir / name) == test::ReadFile(off_dir / name));
+      }
+    }
+    json expected = off_record;
+    expected["Diagnostics"]["ConductorConsistency"].erase("Records");
+    CHECK(SurfaceResponse(default_dir) == expected);
+  }
 #endif
 }
 

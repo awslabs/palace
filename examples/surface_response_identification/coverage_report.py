@@ -1401,19 +1401,48 @@ def indicator_falls(postpro):
     return norms[-1] < norms[0]
 
 
-def conductor_consistency_summary(palace):
+# Where Palace writes the conductor-consistency Records by default (the v1 cut, CUT-PLAN step 6:
+# Diagnostics.ConductorConsistencyRecords "Directory"): <postpro>/<Diagnostics.Directory, else conductor-consistency>/ this
+# file, the array at palace.json's key path; palace.json keeps the rest of the block ("Metadata" keeps the Records there).
+CONDUCTOR_CONSISTENCY_RECORDS_FILE = "surface-response-conductor-consistency-records.json"
+CONDUCTOR_CONSISTENCY_RECORDS_DIRECTORY = "conductor-consistency"
+
+
+def conductor_consistency_records_path(postpro, config=None):
+    """The records file of a run's postpro directory (`config`: its config_resolved.json, for Diagnostics.Directory)."""
+    solver = (config or {}).get("Solver") or {}
+    directory = CONDUCTOR_CONSISTENCY_RECORDS_DIRECTORY
+    for block in (((solver.get("Electrostatic") or {}).get("ResponseCorrection")), solver.get("SurfaceResponseCorrection")):
+        if isinstance(block, dict) and ((block.get("Diagnostics") or {}).get("Directory")):
+            directory = block["Diagnostics"]["Directory"]
+    return os.path.join(postpro, directory, CONDUCTOR_CONSISTENCY_RECORDS_FILE)
+
+
+def conductor_consistency_summary(palace, postpro=None, config=None):
     """palace.json SurfaceResponse.Diagnostics.ConductorConsistency -> the counts the report names (decisions 1064 / 1082):
     excluded patches, the floor-applied count (the FloorAppliedPatches leaf, else the Records' FloorApplied flags), the
-    SelfConsistentPreGate records (eigen), the UnprobedModels list; empty when the run wrote no block."""
+    SelfConsistentPreGate records (eigen), the UnprobedModels list; empty when the run wrote no block. The Records are
+    palace.json's, else (`postpro` given) the records file's (conductor_consistency_records_path); `records_source` names
+    where they were read, or that they were not found."""
     block = (((palace or {}).get("SurfaceResponse") or {}).get("Diagnostics") or {}).get("ConductorConsistency") or {}
+    records_source = "palace.json" if "Records" in block else None
     records = block.get("Records") or []
+    if block and records_source is None and postpro is not None:
+        path = conductor_consistency_records_path(postpro, config)
+        if os.path.isfile(path):
+            records = ((((read_json(path).get("SurfaceResponse") or {}).get("Diagnostics") or {}).get("ConductorConsistency") or {})
+                       .get("Records") or [])
+            records_source = path
+        else:
+            records_source = f"not found ({path})"
     floor = block.get("FloorAppliedPatches")
     if floor is None:
         floor = sum(1 for r in records if r.get("FloorApplied"))
     return {"present": bool(block), "excluded": int(block.get("Count") or 0), "tested": block.get("TestedPatches"),
             "floor_applied": int(floor or 0), "pre_gate_records": sum(1 for r in records if r.get("SelfConsistentPreGate")),
             "record_only": sum(1 for r in records if r.get("RecordOnly")),
-            "unprobed_models": list(block.get("UnprobedModels") or []), "maxwell": any(r.get("Maxwell") for r in records)}
+            "unprobed_models": list(block.get("UnprobedModels") or []), "maxwell": any(r.get("Maxwell") for r in records),
+            "records_source": records_source}
 
 
 def near_pairs_rows(manifest_pairs, near_pairs_record):
@@ -1788,7 +1817,7 @@ def build_report(postpro, manifest_path, bands=None, discovery_path=None, ladder
     flags = maxwell_flags(postpro, config, energies, port_form) if kind == "Maxwell" else {}
     if kind == "Maxwell":
         flags["indicator_falls"] = indicator_falls(ladder_dir or postpro)
-    conductor = conductor_consistency_summary(palace)
+    conductor = conductor_consistency_summary(palace, postpro, config)
     near_pairs = near_pairs_rows(lengths["geometric_near_pairs"], read_json(near_pairs_path) if near_pairs_path else None)
     residuals = named_residuals(kind, energy, lengths, lad["types"], flags, reference_order, ma_reading == "sharp",
                                loaded["models"], conductor, near_pairs)
@@ -2053,7 +2082,8 @@ def render_markdown(report):
     cc = A.get("conductor_consistency") or {}
     if cc.get("present"):
         lines.append(f"ConductorConsistency (palace.json): tested {cc.get('tested')}, excluded {cc.get('excluded')}, FloorAppliedPatches {cc.get('floor_applied')}, "
-                     f"SelfConsistentPreGate records {cc.get('pre_gate_records')}, UnprobedModels {cc.get('unprobed_models')}")
+                     f"SelfConsistentPreGate records {cc.get('pre_gate_records')}, UnprobedModels {cc.get('unprobed_models')}, "
+                     f"Records from {cc.get('records_source')}")
     if A.get("fallback_locations"):
         lines.append("GeometryFallbacks: " + "; ".join(f"{f['Class']} ({f['What']}) at {f['ExampleOrigin']} {f.get('Length', 0.0):.2f} um"
                                                       for f in A["fallback_locations"]))

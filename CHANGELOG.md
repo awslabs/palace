@@ -430,7 +430,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     read; listed as `DEVELOPER OPTIONS (library)` with the switch; a coupon of a law the
     device does not carry is never matched and not refused), `"Crack": true` on a
     `Conductivity` or `RationalImpedance` boundary of a correction run, and
-    `"ConductorConsistency": {"ControlFlipProbePiece"}`. Nothing is removed.
+    `"ConductorConsistency": {"ControlFlipProbePiece"}`. And the conductor-consistency
+    records leave `palace.json` by default: `"Diagnostics": {"ConductorConsistencyRecords"}`
+    defaults to `"Directory"` (was `"Metadata"`), which no longer requires
+    `Diagnostics.Directory` (without it the file is written to `conductor-consistency/` of
+    the output); `palace.json` keeps the count and the gate summary, and the readers of the
+    examples (`spatial_qualification.py`'s gate, `coverage_report.py`) read the Records from
+    that file where `palace.json` lacks them. Nothing is removed.
     SchemaVer 4-6-0
 
   - The config writers of the examples write the v1 form by default: the recorded settings

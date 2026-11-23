@@ -1874,17 +1874,19 @@ public:
 
     // Diagnostics.ConductorConsistencyRecords (decision 1685): where the Records array of
     // SurfaceResponse.Diagnostics.ConductorConsistency (one entry per tested patch and
-    // excitation) goes. METADATA (default): palace.json, as before. DIRECTORY: the file
-    // surface-response-conductor-consistency-records.json in Diagnostics.Directory, with
-    // the array at the same key path and in the same text; palace.json then lacks only that
-    // member (TestedPatches, the record count, and the gate's summary stay).
+    // excitation) goes. DIRECTORY (the default since the v1 cut, CUT-PLAN step 6: a chip's
+    // records would make palace.json GBs): the file
+    // surface-response-conductor-consistency-records.json in Diagnostics.Directory, else in
+    // the directory conductor-consistency/ of the output, with the array at the same key
+    // path and in the same text; palace.json then lacks only that member (TestedPatches,
+    // the record count, and the gate's summary stay). METADATA: palace.json, as before.
     enum class ConductorConsistencyRecordsOutput
     {
       METADATA,
       DIRECTORY
     };
     ConductorConsistencyRecordsOutput conductor_consistency_records =
-        ConductorConsistencyRecordsOutput::METADATA;
+        ConductorConsistencyRecordsOutput::DIRECTORY;
 
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
