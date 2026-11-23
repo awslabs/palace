@@ -4,11 +4,13 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <numbers>
 #include <set>
 #include <string>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -279,6 +281,73 @@ std::unique_ptr<Mesh> MakeInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_
   smesh.Finalize();
   smesh.SetAttributes();
   smesh.EnsureNodes();
+  if (Mpi::Size(comm) > smesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
+  auto pmesh = std::make_unique<mfem::ParMesh>(comm, smesh);
+  return std::make_unique<Mesh>(std::move(pmesh));
+}
+
+// Build a 2D or 3D mesh with two material regions (attribute 1 below the midplane of the
+// last coordinate, vacuum; attribute 2 above, dielectric), interior boundary elements on
+// the material interface (attribute 7), and interior boundary elements on the x = 0.5 plane
+// (attribute 8), which separate elements of the same material on both of their sides.
+// Optionally refine the x < 0.5 half nonconformally, so that the interior boundaries have
+// faces with a coarse neighbor.
+std::unique_ptr<Mesh> MakeInterfaceSheetMesh(MPI_Comm comm, int dim,
+                                             mfem::Element::Type elem_type, bool nc)
+{
+  mfem::Mesh smesh = (dim == 3) ? mfem::Mesh::MakeCartesian3D(2, 2, 2, elem_type)
+                                : mfem::Mesh::MakeCartesian2D(2, 2, elem_type, false);
+  for (int e = 0; e < smesh.GetNE(); e++)
+  {
+    mfem::Vector center(dim);
+    smesh.GetElementCenter(e, center);
+    smesh.SetAttribute(e, (center(dim - 1) < 0.5) ? 1 : 2);
+  }
+  for (int f = 0; f < smesh.GetNumFaces(); f++)
+  {
+    int e1, e2;
+    smesh.GetFaceElements(f, &e1, &e2);
+    if (e1 < 0 || e2 < 0)
+    {
+      continue;
+    }
+    mfem::Array<int> verts;
+    smesh.GetFaceVertices(f, verts);
+    bool on_sheet = true;
+    for (int v : verts)
+    {
+      on_sheet = on_sheet && std::abs(smesh.GetVertex(v)[0] - 0.5) < 1.0e-12;
+    }
+    const bool on_interface = (smesh.GetAttribute(e1) != smesh.GetAttribute(e2));
+    if (on_interface || on_sheet)
+    {
+      auto *face_elem = smesh.GetFace(f)->Duplicate(&smesh);
+      face_elem->SetAttribute(on_interface ? 7 : 8);
+      smesh.AddBdrElement(face_elem);
+    }
+  }
+  smesh.FinalizeTopology();
+  smesh.Finalize();
+  smesh.SetAttributes();
+  smesh.EnsureNodes();
+  if (nc)
+  {
+    smesh.EnsureNCMesh(true);
+    mfem::Array<int> refs;
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      mfem::Vector center(dim);
+      smesh.GetElementCenter(e, center);
+      if (center(0) < 0.5)
+      {
+        refs.Append(e);
+      }
+    }
+    smesh.GeneralRefinement(refs, 1);
+  }
   if (Mpi::Size(comm) > smesh.GetNE())
   {
     SKIP("Mesh has fewer elements than processes");
@@ -1176,6 +1245,279 @@ TEST_CASE("InterfaceDielectricCoefficient sides of a frequency-dependent materia
   REQUIRE(energy > 0.0);
   CHECK(RefSurfaceCoefficientIntegral(pmesh, summed, marker) ==
         Catch::Approx(energy).epsilon(1.0e-14));
+}
+
+TEST_CASE("SurfacePostOperator Interface Dielectric Energy Matrices",
+          "[surfacefunctional][Serial][Parallel]")
+{
+  // The energy matrices of SurfacePostOperator::GetInterfaceElectricFieldEnergyMatrices
+  // must be the bilinear forms of the interface energy functional
+  // (GetInterfaceElectricFieldEnergy, libCEED) to roundoff: on the diagonal, for complex
+  // combinations of the fields, for all interface types and evaluation sides (single
+  // side, averaged, summed on boundaries separating the fields on their two sides), with
+  // face neighbor (ghost) sides in parallel, and on nonconformal interfaces.
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto dim = GENERATE(2, 3);
+  auto simplex = GENERATE(true, false);
+  auto order = GENERATE(1, 2);
+  auto nc = GENERATE(false, true);
+  auto sum_sides = GENERATE(false, true);
+  // Default memory budget (one pass), or one boundary element per pass.
+  auto memory_budget = GENERATE(std::size_t(1) << 27, std::size_t(1));
+  CAPTURE(dim, simplex, order, nc, sum_sides, memory_budget);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  const auto elem_type =
+      (dim == 3) ? (simplex ? mfem::Element::TETRAHEDRON : mfem::Element::HEXAHEDRON)
+                 : (simplex ? mfem::Element::TRIANGLE : mfem::Element::QUADRILATERAL);
+  auto mesh = MakeInterfaceSheetMesh(comm, dim, elem_type, nc);
+
+  // Vacuum below, an anisotropic dielectric above (exercises the substrate permittivity of
+  // the MS integrand).
+  config::MaterialData vacuum, dielectric;
+  vacuum.attributes = {1};
+  dielectric.attributes = {2};
+  dielectric.epsilon_r.s[0] = 11.7;
+  dielectric.epsilon_r.s[1] = 3.2;
+  dielectric.epsilon_r.s[2] = 5.1;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::H1_FECollection h1_fec(order, dim);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), h1_fespace(*mesh, &h1_fec);
+
+  // Every interface type on the material interface (7), on the sheet with the same material
+  // on both sides (8), and on exterior boundaries on the vacuum (1) and dielectric (top)
+  // sides.
+  const int top = (dim == 3) ? 6 : 3;
+  config::BoundaryPostData postpro;
+  int num_interfaces = 0;
+  for (const auto &attrs : std::vector<std::vector<int>>{{7}, {8}, {1, top}, {7, 8, top}})
+  {
+    for (auto type : {InterfaceDielectric::DEFAULT, InterfaceDielectric::MA,
+                      InterfaceDielectric::MS, InterfaceDielectric::SA})
+    {
+      config::InterfaceDielectricData data;
+      data.type = type;
+      data.t = 2.0e-3;
+      data.epsilon_r = 10.0;
+      data.tandelta = 1.0e-3;
+      data.attributes = attrs;
+      postpro.dielectric.emplace(++num_interfaces, data);
+    }
+  }
+  const std::vector<int> sheets = sum_sides ? std::vector<int>{7, 8} : std::vector<int>{};
+  SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, h1_fespace.Get(),
+                                   nd_fespace.Get(), sheets);
+
+  // Smooth fields projected onto the H(curl) space.
+  std::vector<std::function<void(const mfem::Vector &, mfem::Vector &)>> f = {
+      [](const mfem::Vector &x, mfem::Vector &v)
+      {
+        v = 0.0;
+        v(0) = std::sin(x(1)) + x(0) * x(0);
+        v(1) = std::cos(x(0)) + x(1);
+        if (v.Size() > 2)
+        {
+          v(2) = x(0) * x(1) + 1.0;
+        }
+      },
+      [](const mfem::Vector &x, mfem::Vector &v)
+      {
+        v = 0.0;
+        v(0) = x(1) * x(1) - 0.5;
+        v(1) = std::sin(2.0 * x(0)) - x(0) * x(1);
+        if (v.Size() > 2)
+        {
+          v(2) = std::cos(x(1)) + x(2);
+        }
+      },
+      [](const mfem::Vector &x, mfem::Vector &v)
+      {
+        v = 0.0;
+        v(0) = 1.0 + x(x.Size() - 1);
+        v(1) = -2.0 * x(0) + std::exp(x(1));
+        if (v.Size() > 2)
+        {
+          v(2) = std::sin(3.0 * x(2)) - x(0);
+        }
+      }};
+  const int n = static_cast<int>(f.size());
+  std::vector<std::unique_ptr<GridFunction>> fields;
+  for (int k = 0; k < n; k++)
+  {
+    auto &E = *fields.emplace_back(std::make_unique<GridFunction>(nd_fespace));
+    mfem::VectorFunctionCoefficient coeff(dim, f[k]);
+    E.Real().ProjectCoefficient(coeff);
+  }
+  const auto energy = surf_post_op.GetInterfaceElectricFieldEnergyMatrices(
+      n, [&fields](int k) -> mfem::ParGridFunction & { return fields[k]->Real(); },
+      memory_budget);
+  REQUIRE(energy.size() == static_cast<std::size_t>(num_interfaces));
+
+  // A complex combination of the fields.
+  const std::vector<std::complex<double>> z = {{0.7, -0.2}, {-1.3, 0.4}, {0.25, 1.1}};
+  GridFunction Ez(nd_fespace, true);
+  Ez = 0.0;
+  Eigen::VectorXcd zv(n);
+  for (int k = 0; k < n; k++)
+  {
+    Ez.Real().Add(z[k].real(), fields[k]->Real());
+    Ez.Imag().Add(z[k].imag(), fields[k]->Real());
+    zv(k) = z[k];
+  }
+
+  auto Close = [](double val, double ref)
+  {
+    CAPTURE(val, ref);
+    if (std::abs(ref) > 0.0)
+    {
+      CHECK(val == Catch::Approx(ref).epsilon(1.0e-11));
+    }
+    else
+    {
+      CHECK(std::abs(val) < 1.0e-14);
+    }
+  };
+  int num_nonzero = 0;
+  for (const auto &[idx, B] : energy)
+  {
+    CAPTURE(idx);
+    REQUIRE(B.rows() == n);
+    REQUIRE(B.cols() == n);
+    CHECK((B - B.transpose()).norm() == 0.0);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(B);
+    CHECK(eig.eigenvalues().minCoeff() >= -1.0e-14 * std::max(1.0, B.norm()));
+    for (int k = 0; k < n; k++)
+    {
+      Close(B(k, k),
+            surf_post_op.GetInterfaceElectricFieldEnergy(idx, *fields[k], fixture_omega));
+    }
+    // The time-averaged energy of the complex field as a peak phasor.
+    Close(0.5 * (zv.adjoint() * B * zv)(0).real(),
+          surf_post_op.GetInterfaceElectricFieldEnergy(idx, Ez, fixture_omega));
+    num_nonzero += (B.norm() > 0.0);
+  }
+  CHECK(num_nonzero > 0);
+}
+
+TEST_CASE("SurfacePostOperator Interface Dielectric Energy Matrices with a Debye material",
+          "[surfacefunctional][Serial][Parallel]")
+{
+  // A Debye material with ε∞ = μ = 1 above the interface has the light speed of vacuum, but
+  // is not vacuum (MaterialOperator::IsVacuum): the energy matrices evaluate the same sides
+  // as the interface energy at a frequency ω. Their MS integrand uses the high-frequency
+  // permittivity ε∞ = 1 of the substrate, where the interface energy uses |ε(iω)|, so that
+  // the MS energies differ by exactly |ε(iω)|².
+  MPI_Comm comm = MPI_COMM_WORLD;
+  auto dim = GENERATE(2, 3);
+  auto sum_sides = GENERATE(false, true);
+  constexpr int order = 2;
+  CAPTURE(dim, sum_sides);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  auto mesh = MakeInterfaceSheetMesh(
+      comm, dim, (dim == 3) ? mfem::Element::HEXAHEDRON : mfem::Element::QUADRILATERAL,
+      false);
+  config::MaterialData vacuum, debye;
+  vacuum.attributes = {1};
+  debye.attributes = {2};
+  debye.permittivity_terms.push_back(config::DebyeData{1.0, 0.1});
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, debye}, periodic, ProblemType::DRIVEN, *mesh);
+  REQUIRE(!mat_op.IsVacuum(2));
+  REQUIRE(mat_op.GetLightSpeedMax(2) >= 1.0 - 1.0e-6);
+  mfem::ND_FECollection nd_fec(order, dim);
+  mfem::H1_FECollection h1_fec(order, dim);
+  FiniteElementSpace nd_fespace(*mesh, &nd_fec), h1_fespace(*mesh, &h1_fec);
+
+  const int top = (dim == 3) ? 6 : 3;
+  config::BoundaryPostData postpro;
+  int num_interfaces = 0;
+  for (const auto &attrs : std::vector<std::vector<int>>{{7}, {8}, {1, top}})
+  {
+    for (auto type : {InterfaceDielectric::DEFAULT, InterfaceDielectric::MA,
+                      InterfaceDielectric::MS, InterfaceDielectric::SA})
+    {
+      config::InterfaceDielectricData data;
+      data.type = type;
+      data.t = 2.0e-3;
+      data.epsilon_r = 10.0;
+      data.attributes = attrs;
+      postpro.dielectric.emplace(++num_interfaces, data);
+    }
+  }
+  const std::vector<int> sheets = sum_sides ? std::vector<int>{7, 8} : std::vector<int>{};
+  SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, h1_fespace.Get(),
+                                   nd_fespace.Get(), sheets);
+
+  // Smooth fields with normal and tangential components on every interface.
+  std::vector<std::function<void(const mfem::Vector &, mfem::Vector &)>> f = {
+      [](const mfem::Vector &x, mfem::Vector &v)
+      {
+        v = 0.0;
+        v(0) = std::sin(x(1)) + x(0) * x(0);
+        v(1) = std::cos(x(0)) + x(1);
+        if (v.Size() > 2)
+        {
+          v(2) = x(0) * x(1) + 1.0;
+        }
+      },
+      [](const mfem::Vector &x, mfem::Vector &v)
+      {
+        v = 0.0;
+        v(0) = x(1) * x(1) - 0.5;
+        v(1) = std::sin(2.0 * x(0)) - x(0) * x(1);
+        if (v.Size() > 2)
+        {
+          v(2) = std::cos(x(1)) + x(2);
+        }
+      }};
+  const int n = static_cast<int>(f.size());
+  std::vector<std::unique_ptr<GridFunction>> fields;
+  for (int k = 0; k < n; k++)
+  {
+    auto &E = *fields.emplace_back(std::make_unique<GridFunction>(nd_fespace));
+    mfem::VectorFunctionCoefficient coeff(dim, f[k]);
+    E.Real().ProjectCoefficient(coeff);
+  }
+  const auto energy = surf_post_op.GetInterfaceElectricFieldEnergyMatrices(
+      n, [&fields](int k) -> mfem::ParGridFunction & { return fields[k]->Real(); });
+  REQUIRE(energy.size() == static_cast<std::size_t>(num_interfaces));
+
+  const double omega = 0.7;
+  const int m = mat_op.GetFrequencyDependentPermittivityModelMaterial(2);
+  REQUIRE(m >= 0);
+  const double eps2 = std::norm(mat_op.EvaluateFrequencyDependentPermittivity(
+      static_cast<std::size_t>(m), {0.0, omega}));
+  REQUIRE(eps2 > 2.0);
+  int num_nonzero = 0;
+  for (const auto &[idx, B] : energy)
+  {
+    CAPTURE(idx);
+    const double scale =
+        (postpro.dielectric.at(idx).type == InterfaceDielectric::MS) ? eps2 : 1.0;
+    for (int k = 0; k < n; k++)
+    {
+      const double ref =
+          surf_post_op.GetInterfaceElectricFieldEnergy(idx, *fields[k], omega);
+      CAPTURE(k, B(k, k), ref);
+      if (ref > 0.0)
+      {
+        CHECK(scale * B(k, k) == Catch::Approx(ref).epsilon(1.0e-11));
+      }
+      else
+      {
+        CHECK(std::abs(B(k, k)) < 1.0e-14);
+      }
+    }
+    num_nonzero += (B.norm() > 0.0);
+  }
+  CHECK(num_nonzero > 0);
 }
 
 TEST_CASE("SurfaceFunctional 2D nonconformal mapped subfaces",

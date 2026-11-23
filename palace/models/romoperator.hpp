@@ -6,6 +6,7 @@
 
 #include <complex>
 #include <cstddef>
+#include <functional>
 #include <limits>
 #include <map>
 #include <memory>
@@ -424,6 +425,9 @@ protected:
     double rel_err_polynomial = 0.0;  // residual of α-only fit on dense grid
     double rel_err_augmented = 0.0;   // residual after AAA augmentation (Augmented only)
   };
+  // Port-row scaling D of the synthesized matrices over the basis nodes (orth_R(j, j) on
+  // the port rows, one elsewhere), as applied by CalculateNormalizedPROMMatrices.
+  Eigen::VectorXd GetSynthesisPortScaling() const;
 
   // Helper function that normalizes PROM matrices so that they correspond to proper
   // admittance matrices on the ports. Also does unit conversion to physical (input) units.
@@ -715,8 +719,24 @@ public:
   // parameter points.
   double FindMaxError(int excitation_idx) const;
 
-  // Print PROM matrices to file include in input (SI) units.
-  void PrintPROMMatrices(const Units &units, const fs::path &post_dir) const;
+  // Interface dielectric energy forms projected onto the PROM basis, for the export of the
+  // interface capacitance matrices rom-interface-<index>-C.csv by PrintPROMMatrices: for
+  // each interface index, the n × n matrix Vᵀ B V of the interface energy bilinear form
+  // B (B(e, e) the interface energy of the real field e, see
+  // PostOperator::GetInterfaceElectricFieldEnergyMatrices), and optionally a direct
+  // evaluation of the time-averaged interface energies of a complex field given by the
+  // true dofs of its peak phasor at a frequency ω, for checking the matrices on the
+  // synthesized eigenvectors.
+  struct InterfaceEnergyForms
+  {
+    std::map<int, Eigen::MatrixXd> B;
+    std::function<std::map<int, double>(const ComplexVector &, double)> energy;
+  };
+
+  // Print PROM matrices to file include in input (SI) units, with the interface
+  // capacitance matrices of the given interface energy forms (if any).
+  void PrintPROMMatrices(const Units &units, const fs::path &post_dir,
+                         const InterfaceEnergyForms *interface_forms = nullptr) const;
 
   // Compute eigenvalue estimates of the synthesized L⁻¹/R⁻¹/C system via the companion
   // linearization (in s = iω) of the quadratic pencil (L⁻¹ + iωR⁻¹ − ω²C)v = 0. Returns
