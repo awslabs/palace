@@ -609,39 +609,21 @@ SurfacePostOperator::GetInterfaceAmplitudeMaps(const InterfaceDielectricData &da
     const int attr = mesh.GetBdrAttribute(i);
 
     // Evaluation sides, selected once per boundary element from the attached element
-    // attributes: side 0 = FET.Elem1 or FET.Elem2, and optionally side 1 = FET.Elem2. A
-    // frequency-dependent material is not vacuum (MaterialOperator::IsVacuum).
+    // attributes (GetInterfaceDielectricSides): side 0 = FET.Elem1 or FET.Elem2, and
+    // optionally side 1 = FET.Elem2.
     BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
     const bool has_elem2 = (FET.Elem2 != nullptr);
-    std::array<int, 2> side_elem = {-1, -1};  // 1 for FET.Elem1, 2 for FET.Elem2
-    if (data.type == InterfaceDielectric::DEFAULT)
+    const auto sides = GetInterfaceDielectricSides(
+        data.type, mat_op, FET.Elem1->Attribute, has_elem2 ? FET.Elem2->Attribute : 0,
+        has_elem2 && attr <= data.sum_sides_marker.Size() &&
+            data.sum_sides_marker[attr - 1]);
+    if (!sides.first)
     {
-      side_elem = {1, has_elem2 ? 2 : -1};
+      continue;  // Neither side qualifies: no contribution
     }
-    else
-    {
-      const bool vacuum_side = (data.type != InterfaceDielectric::MS);
-      auto OnSide = [&](int elem_attr)
-      { return mat_op.IsVacuum(elem_attr) == vacuum_side; };
-      const bool use_elem1 = OnSide(FET.Elem1->Attribute);
-      const bool use_elem2 = has_elem2 && OnSide(FET.Elem2->Attribute);
-      if (use_elem1)
-      {
-        side_elem = {1, use_elem2 ? 2 : -1};
-      }
-      else if (use_elem2)
-      {
-        side_elem = {2, -1};
-      }
-      else
-      {
-        continue;  // Neither side qualifies: no contribution
-      }
-    }
-    const bool two_sided = (side_elem[1] > 0);
-    const bool sum_sides = two_sided && data.type != InterfaceDielectric::SA &&
-                           attr <= data.sum_sides_marker.Size() &&
-                           data.sum_sides_marker[attr - 1];
+    const std::array<int, 2> side_elem = {sides.first, sides.second ? sides.second : -1};
+    const bool two_sided = (sides.second > 0);
+    const bool sum_sides = sides.sum;
     const int num_sides = two_sided ? 2 : 1;
     const int amp_per_point = sum_sides ? 2 * num_amp : num_amp;
     const double side_scale = (two_sided && !sum_sides) ? 0.5 : 1.0;  // Averaged sides
