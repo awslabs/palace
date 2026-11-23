@@ -215,6 +215,9 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
       space_op, sub.region_attributes, sub.environment_attributes, false, nullptr, false,
       sub.direct_solver, iodata.solver.linear.sym_factorization);
   nG = ds->InterfaceSize();
+  MFEM_VERIFY(nG > 0, "The substructuring interface holds no unknowns, as of a region "
+                      "enclosed by PEC: the region does not couple to the environment, so "
+                      "solve it without \"Substructuring\"!");
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   for (const auto &[idx, spec] : port_excitations)
   {

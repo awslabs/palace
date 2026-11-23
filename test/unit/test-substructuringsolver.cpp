@@ -5040,6 +5040,17 @@ TEST_CASE_METHOD(
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring stops on an interface without unknowns",
+                 "[substructure][Serial][Parallel]")
+{
+  // PEC on Γ encloses the region, which does not couple to the environment.
+  CHECK_THROWS_WITH(
+      RunDrivenBox(temp_dir, "Offline", [](json &config)
+                   { config["Boundaries"]["PEC"]["Attributes"] = {3, 4}; }),
+      Catch::Matchers::ContainsSubstring("The substructuring interface holds no unknowns"));
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring checks the environment against the model",
                  "[substructure][Serial][Parallel][Long]")
 {
