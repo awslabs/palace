@@ -1691,9 +1691,11 @@ public:
     // PsdRefusalRatio) always continues electric-only by name; a library without magnetic
     // leaves never reads this key.
     bool allow_electric_only_fallback = false;
-    // Magnetic (default true; decision 1229 Q1 (i)): false = the library's magnetic leaves
-    // are NOT read for this run, so the electric-only self-consistent result of the SAME
-    // library can be reproduced (bitwise with the leaf-less library: no new column / file).
+    // Magnetic (decision 1229 Q1 (i)): false = the library's magnetic leaves are NOT read
+    // for this run, so the electric-only self-consistent result of the SAME library can be
+    // reproduced (bitwise with the leaf-less library: no new column / file). The parser's
+    // default is the developer switch (CUT-PLAN step 5c: without it the leaves are never
+    // read); "Magnetic": true needs the switch.
     bool magnetic_leaves = true;
     // MagneticRules of the library (Version 3, top level; written by
     // attach_magnetic_leaves.py from the Phase-0 calibration, SUPERVISOR AMENDMENT 1202 /

@@ -45,6 +45,9 @@ PARKED_OPTIONS = {
 PARKED_SETTINGS = (
     (("PatchConstruction",), "Legacy"),
     (("ConductorConsistency", "Exclusion"), "Sticky"),
+    (("AllowElectricOnlyFallback",), True),
+    (("Magnetic",), True),
+    (("ConductorConsistency", "ControlStateAnchorSetbackOverR"), None),
 )
 CORRECTION_PATHS = (("Solver", "Electrostatic", "ResponseCorrection"), ("Solver", "SurfaceResponseCorrection"))
 

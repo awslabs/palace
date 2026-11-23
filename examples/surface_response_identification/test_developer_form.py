@@ -52,6 +52,15 @@ class DeveloperFormTest(unittest.TestCase):
         self.assertEqual(F.form_name(False), "v1 form")
         self.assertEqual(F.form_name(True), "recorded developer form")
 
+    def test_other_parked_settings_of_a_block(self):
+        block = {"Library": "l", "Magnetic": True, "AllowElectricOnlyFallback": True,
+                 "ConductorConsistency": {"ControlStateAnchorSetbackOverR": 0.5}}
+        self.assertEqual(F.parked_block_settings(block), ["AllowElectricOnlyFallback True", "Magnetic True",
+                                                          "ConductorConsistency.ControlStateAnchorSetbackOverR"])
+        self.assertEqual(F.parked_block_settings({"Library": "l", "Magnetic": False}), [])
+        with self.assertRaises(ValueError):
+            F.v1_block(block)
+
     def test_device_run_crack_policy_per_form(self):
         self.assertEqual(F.device_run_crack_policy(None, False), "default")
         self.assertEqual(F.device_run_crack_policy(None, True), "legacy")

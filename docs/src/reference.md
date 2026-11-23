@@ -1407,7 +1407,9 @@ block without it they are not read and are named in one warning, `keys ignored`)
 legacy options `PatchConstruction` `Legacy` and `ConductorConsistency.Exclusion` `Sticky`;
 the alternatives `TraceCoupling` `SurfaceMortar` (its quadrature key `MortarOversampling`
 is not read without it, as the keys of the self-consistent solve) and the hand-placed form
-without `Library`; and the global crack key where it would crack an interior perfect conductor (see the
+without `Library`; the magnetic leaves (`Magnetic` `true`, `AllowElectricOnlyFallback`
+`true`, `ConductorConsistency.ControlStateAnchorSetbackOverR`; without the switch the
+leaves are not read); and the global crack key where it would crack an interior perfect conductor (see the
 [mesh cracking](#Mesh-cracking-and-the-thin-metal-postprocessing) above). With the
 switch the run prints one line `DEVELOPER OPTIONS: <the parked options in use>` and
 `palace.json` records the same list as `SurfaceResponse.Developer`; every other default is
@@ -1492,12 +1494,14 @@ missing cluster signatures, and unbracketed pair separations are unsupported. Wi
 correction for the complete interface group, avoiding a partial correction. `Error`
 instead terminates the run.
 
-`Magnetic` (default `true`) reads the library's optional magnetic (inductive) leaves on the
-Maxwell path (the section *The magnetic (inductive) defect of finite-thickness metal*
-below); `false` runs the same library electric-only, byte-identical to the library without
-leaves. `AllowElectricOnlyFallback` (default `false`) lets a model whose magnetic leaf is
-refused by rule r1 / r2 / r3 continue electric-only by name instead of aborting the run.
-Both are ignored by a library without leaves.
+`Magnetic` reads the library's optional magnetic (inductive) leaves on the Maxwell path
+(the section *The magnetic (inductive) defect of finite-thickness metal* below); `false`
+runs the same library electric-only, byte-identical to the library without leaves. The
+leaves are a developer option: without `"Developer": true` they are never read (the run
+is that of `false`) and `"Magnetic": true` is refused; with the switch the default is
+`true`. `AllowElectricOnlyFallback` (default `false`; `true` needs the switch) lets a model
+whose magnetic leaf is refused by rule r1 / r2 / r3 continue electric-only by name instead
+of aborting the run. Both are ignored by a library without leaves.
 The self-consistent eigenmode solve (`CorrectionMode` `SelfConsistent` or `Both`) with
 loaded magnetic leaves is refused under `Solver.Eigenmode.NonlinearType: "SLP"` (wave ports
 or absorbing boundaries): no case exercises the magnetic defect beside the exact A2 term;

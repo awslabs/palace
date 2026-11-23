@@ -2070,9 +2070,20 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       data.ignored_keys.push_back("\"MortarOversampling\" (no surface-mortar coupling)");
     }
     data.patch_energy = correction.value("PatchEnergy", data.patch_energy);
+    // The magnetic (kinetic) leaves of the library are a parked candidate (CUT-PLAN step
+    // 5c): read only with the developer switch (by default with it, as before), never
+    // without it (the run of a library without leaves, byte for byte).
     data.allow_electric_only_fallback =
         correction.value("AllowElectricOnlyFallback", data.allow_electric_only_fallback);
-    data.magnetic_leaves = correction.value("Magnetic", data.magnetic_leaves);
+    if (data.allow_electric_only_fallback)
+    {
+      RequireDeveloperOption(data, "\"AllowElectricOnlyFallback\": true");
+    }
+    data.magnetic_leaves = correction.value("Magnetic", data.developer);
+    if (correction.contains("Magnetic") && data.magnetic_leaves)
+    {
+      RequireDeveloperOption(data, "\"Magnetic\": true");
+    }
     if (auto gate = correction.find("ConductorConsistency"); gate != correction.end())
     {
       MFEM_VERIFY(gate->is_object(),
@@ -2134,6 +2145,9 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       }
       if (gate->contains("ControlStateAnchorSetbackOverR"))
       {
+        // A control of the magnetic chain trace alone: parked with the leaves.
+        RequireDeveloperOption(
+            data, "\"ConductorConsistency\": {\"ControlStateAnchorSetbackOverR\"}");
         // Decision 1302: a diagnostic CONTROL admitted only with RecordOnly true on a
         // PostprocessOnly run.
         data.control_state_anchor_setback_over_r =

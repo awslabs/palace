@@ -420,7 +420,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the preflight writer's `legacy` default writes `"Developer": true` with it. The
     alternatives need the switch: `"TraceCoupling": "SurfaceMortar"` (its quadrature key
     `"MortarOversampling"` is not read without it, and named in the `keys ignored`
-    warning) and the hand-placed form (a block without `"Library"`).
+    warning) and the hand-placed form (a block without `"Library"`). The
+    library's magnetic (kinetic) leaves are read only with the switch (by default with
+    it; without it the run is that of `"Magnetic": false`, byte-identical to a library
+    without leaves); `"Magnetic": true`, `"AllowElectricOnlyFallback": true` and
+    `"ConductorConsistency": {"ControlStateAnchorSetbackOverR"}` need it.
     Nothing is removed. SchemaVer 4-6-0
 
   - The config writers of the examples write the v1 form by default: the recorded settings
