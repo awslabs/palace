@@ -72,6 +72,14 @@ class DeveloperFormTest(unittest.TestCase):
         del cracked["Solver"]  # no correction run: the key is not parked
         self.assertEqual(F.parked_config_settings(cracked), [])
 
+    def test_parked_laws_and_problems_of_a_correction_run(self):
+        config = {"Problem": {"Type": "BoundaryMode"}, "Boundaries": {"Conductivity": [{"Attributes": [1], "Crack": True}],
+                                                                      "RationalImpedance": [{"Attributes": [2]}]},
+                  "Solver": {"SurfaceResponseCorrection": {"Library": "l", "ConductorConsistency": {"ControlFlipProbePiece": []}}}}
+        self.assertEqual(F.parked_config_settings(config), [
+            "Solver.SurfaceResponseCorrection: ConductorConsistency.ControlFlipProbePiece",
+            "Boundaries.Conductivity Crack true", "Problem.Type BoundaryMode"])
+
     def test_parked_options_mirror_palace(self):
         # Un-parking an option deletes its PARKED_OPTIONS entry and its RequireDeveloperOption line in Palace together.
         with open(CONFIGFILE) as source:

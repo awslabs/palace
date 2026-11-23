@@ -1602,8 +1602,9 @@ public:
 
     // The parked options this block selects, in the order the parser met them (with the
     // switch on): printed in one log line and recorded in palace.json as
-    // SurfaceResponse.Developer.
-    std::vector<std::string> developer_options;
+    // SurfaceResponse.Developer. Mutable: the mesh load and the library read append the
+    // options they meet (DEVELOPER OPTIONS (mesh) / (library)).
+    mutable std::vector<std::string> developer_options;
 
     // The keys of a parked option the block states without selecting the option (SolveTol
     // or TranslationalDomainCorrection without a self-consistent solve, MortarOversampling

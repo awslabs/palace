@@ -167,7 +167,9 @@ file. These include:
     sets `"Developer": true` (see the developer switch in
     [the thin-metal response correction](../reference.md#Self-consistent-thin-metal-response-correction)).
     PEC, conductivity, impedance, and rational-impedance boundaries require coupons with matching
-    boundary-law metadata. See
+    boundary-law metadata; the default path serves PEC and impedance (Ls) sheets, while
+    conductivity and rational-impedance coupons and the boundary-mode correction are developer
+    options. See
     [Maxwell response correction](../reference.md#Maxwell-response-correction)
     for the supported geometry and confidence limits.
     Every corrected run also reports an edge-resolution census of the trace contour

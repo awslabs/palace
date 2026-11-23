@@ -424,8 +424,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     library's magnetic (kinetic) leaves are read only with the switch (by default with
     it; without it the run is that of `"Magnetic": false`, byte-identical to a library
     without leaves); `"Magnetic": true`, `"AllowElectricOnlyFallback": true` and
-    `"ConductorConsistency": {"ControlStateAnchorSetbackOverR"}` need it.
-    Nothing is removed. SchemaVer 4-6-0
+    `"ConductorConsistency": {"ControlStateAnchorSetbackOverR"}` need it. So do the
+    two-dimensional boundary-mode correction, the conductivity or rational-impedance
+    coupons of a library where the device carries that law (refused when the library is
+    read; listed as `DEVELOPER OPTIONS (library)` with the switch; a coupon of a law the
+    device does not carry is never matched and not refused), `"Crack": true` on a
+    `Conductivity` or `RationalImpedance` boundary of a correction run, and
+    `"ConductorConsistency": {"ControlFlipProbePiece"}`. Nothing is removed.
+    SchemaVer 4-6-0
 
   - The config writers of the examples write the v1 form by default: the recorded settings
     less the parked options (`developer_form.py`); `--developer` writes the recorded

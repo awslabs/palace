@@ -1266,6 +1266,20 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
       CHECK(data.response_correction->developer_options.empty());
     }
   }
+  {
+    // The gate's falsification control is parked (CUT-PLAN step 5d): refused by name
+    // without the developer switch, admitted (with RecordOnly true) with it.
+    auto parked = automatic_correction;
+    parked["CorrectionMode"] = "PostprocessOnly";
+    parked["ConductorConsistency"] = {
+        {"RecordOnly", true},
+        {"ControlFlipProbePiece", {{{"Model", "m"}, {"Edge", 0}, {"Piece", 2}}}}};
+    CHECK_THROWS_WITH(config::ElectrostaticSolverData(json{{"ResponseCorrection", parked}}),
+                      Catch::Matchers::ContainsSubstring(
+                          "{\"ControlFlipProbePiece\"} is a parked developer option"));
+    parked["Developer"] = true;
+    CHECK_NOTHROW(config::ElectrostaticSolverData(json{{"ResponseCorrection", parked}}));
+  }
   CHECK(automatic.response_correction->correction_mode == CorrectionMode::POSTPROCESS_ONLY);
   {
     // SolveTol configures the self-consistent solve alone: without it the key is not read
@@ -1583,6 +1597,12 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   boundary_mode_config["Problem"]["Type"] = "BoundaryMode";
   boundary_mode_config["Solver"].erase("Eigenmode");
   boundary_mode_config["Solver"]["BoundaryMode"] = {{"Freq", 5.0}};
+  // The 2D boundary-mode correction is a parked developer option (CUT-PLAN step 5d).
+  CHECK_THROWS_WITH(IoData(boundary_mode_config, false),
+                    Catch::Matchers::ContainsSubstring(
+                        "on a BoundaryMode problem (the 2D boundary-mode correction) is a "
+                        "parked developer option"));
+  boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
   CHECK_NOTHROW(IoData(boundary_mode_config, false));
   boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] =
       "PostprocessOnly";
@@ -1590,11 +1610,27 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] =
       "SelfConsistent";
   CHECK_THROWS_WITH(IoData(boundary_mode_config, false),
-                    Catch::Matchers::ContainsSubstring("is a parked developer option"));
-  boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
-  CHECK_THROWS_WITH(IoData(boundary_mode_config, false),
                     Catch::Matchers::ContainsSubstring(
                         "Boundary mode does not support SurfaceResponseCorrection"));
+  {
+    // A cracked sheet of a metal law other than the perfect conductor and the Ls sheet in a
+    // correction run is a parked developer option (CUT-PLAN step 5d); uncracked it is not
+    // (the correction leaves it uncorrected, as its coverage counts).
+    auto conductivity_config = maxwell_config;
+    conductivity_config["Boundaries"]["Conductivity"] = {
+        {{"Attributes", {2}}, {"Conductivity", 5.8e7}}};
+    CHECK_NOTHROW(IoData(conductivity_config, false));
+    conductivity_config["Boundaries"]["Conductivity"][0]["Crack"] = true;
+    CHECK_THROWS_WITH(IoData(conductivity_config, false),
+                      Catch::Matchers::ContainsSubstring(
+                          "with \"Crack\": true on a Conductivity or RationalImpedance "
+                          "boundary is a parked developer option"));
+    conductivity_config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
+    const IoData developer(conductivity_config, false);
+    CHECK(developer.solver.surface_response_correction->developer_options ==
+          std::vector<std::string>{
+              "with \"Crack\": true on a Conductivity or RationalImpedance boundary"});
+  }
   // OI-MAXWELL-TRANSLATIONAL-MODE-INERT (decisions 1237 / 1260): the Maxwell path never
   // reads TranslationalDomainCorrection, so only the default FixedTrace is accepted (an
   // explicit FixedTrace parses; Disabled / FixedFlux are refused by name).

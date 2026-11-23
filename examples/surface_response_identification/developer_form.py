@@ -48,6 +48,7 @@ PARKED_SETTINGS = (
     (("AllowElectricOnlyFallback",), True),
     (("Magnetic",), True),
     (("ConductorConsistency", "ControlStateAnchorSetbackOverR"), None),
+    (("ConductorConsistency", "ControlFlipProbePiece"), None),
 )
 CORRECTION_PATHS = (("Solver", "Electrostatic", "ResponseCorrection"), ("Solver", "SurfaceResponseCorrection"))
 
@@ -87,7 +88,7 @@ def parked_block_settings(block):
 
 def parked_config_settings(config):
     """The parked settings of a whole config: those of its correction blocks and, in a correction run, the global
-    crack key."""
+    crack key, "Crack": true on a Conductivity / RationalImpedance boundary and a BoundaryMode problem."""
     found = []
     for path in CORRECTION_PATHS:
         block = _node(config, path)
@@ -98,6 +99,11 @@ def parked_config_settings(config):
     if any(isinstance(_node(config, path), dict) for path in CORRECTION_PATHS):
         if config.get("Model", {}).get("CrackInternalBoundaryElements") is True:
             found.append("Model.CrackInternalBoundaryElements true")
+        for law in ("Conductivity", "RationalImpedance"):
+            if any(entry.get("Crack") for entry in config.get("Boundaries", {}).get(law, [])):
+                found.append(f"Boundaries.{law} Crack true")
+        if config.get("Problem", {}).get("Type") == "BoundaryMode":
+            found.append("Problem.Type BoundaryMode")
     return found
 
 

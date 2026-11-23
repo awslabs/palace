@@ -1407,7 +1407,13 @@ block without it they are not read and are named in one warning, `keys ignored`)
 legacy options `PatchConstruction` `Legacy` and `ConductorConsistency.Exclusion` `Sticky`;
 the alternatives `TraceCoupling` `SurfaceMortar` (its quadrature key `MortarOversampling`
 is not read without it, as the keys of the self-consistent solve) and the hand-placed form
-without `Library`; the magnetic leaves (`Magnetic` `true`, `AllowElectricOnlyFallback`
+without `Library`; the two-dimensional boundary-mode correction, the conductivity or
+rational-impedance coupons of a library where the device carries a boundary of that law
+(refused when the library is read, listed as `DEVELOPER OPTIONS (library)` with the
+switch; a coupon is matched only to a boundary of its own law, so a coupon of a law the
+device does not carry is not refused) and
+`"Crack": true` on a `Conductivity` or `RationalImpedance` boundary of a correction run;
+`ConductorConsistency.ControlFlipProbePiece`; the magnetic leaves (`Magnetic` `true`, `AllowElectricOnlyFallback`
 `true`, `ConductorConsistency.ControlStateAnchorSetbackOverR`; without the switch the
 leaves are not read); and the global crack key where it would crack an interior perfect conductor (see the
 [mesh cracking](#Mesh-cracking-and-the-thin-metal-postprocessing) above). With the
@@ -2487,10 +2493,11 @@ values are computed in both cases; only the columns are left out. The same
 `CorrectionMode` semantics apply as for electrostatics, with the same default
 `PostprocessOnly` and the same developer switch. `PostprocessOnly` avoids corrected KSP,
 PROM, and eigenmode solves; `SelfConsistent` skips raw-field fixed-trace/fixed-flux
-evaluation; `Both` computes all correction families available to the problem type. Boundary mode has
-no self-consistent corrected eigensolver: it accepts `PostprocessOnly` and `Both`, where
-`Both` means all available boundary-mode correction paths, and rejects
-`SelfConsistent`.
+evaluation; `Both` computes all correction families available to the problem type. The
+two-dimensional boundary-mode correction is a developer option (it needs
+`"Developer": true`). Boundary mode has no self-consistent corrected eigensolver: it accepts
+`PostprocessOnly` and `Both`, where `Both` means all available boundary-mode correction
+paths, and rejects `SelfConsistent`.
 
 In 3D, Palace maps the selected coupon contour into the plane transverse to the physical
 edge at every longitudinal edge quadrature point. A corner coupon instead maps its full
@@ -3006,8 +3013,9 @@ form and its leaves are printed at configuration and recorded (`palace.json`
 ConductorConsistency.ControlFlipProbePiece: [{Model, Edge, Piece}]` (NOT a
 modelling option) relabels the local piece of one model edge's probes at the probe
 construction so that the gate's discrimination of a one-label mis-mapping is MEASURED on a
-device; it is admitted only with `RecordOnly: true`, refused when it applies to no probe,
-printed and recorded as a CONTROL; a run of record never carries it. THE STATE-ANCHOR
+device; it is admitted only with `RecordOnly: true` and `"Developer": true`, refused when
+it applies to no probe, printed and recorded as a CONTROL; a run of record never carries
+it. THE STATE-ANCHOR
 SETBACK OF THE TERM (R-MAG-17; the mx-sc-magnetic Phase 3 measurement: with the chain's
 conductor-path anchor lines starting at the EDGE anchors, the magnetic states carry a
 state-side edge error of ``+0.06..+0.08`` pt of the fixed-trace shift on the (ii) stub): the

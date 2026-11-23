@@ -1197,6 +1197,62 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-m
                                                           conductivity_boundary_mode_op);
   CHECK(preflight_conductivity_response.GetPatchCount() ==
         conductivity_boundary_mode_response.GetPatchCount());
+  {
+    // A conductivity coupon is a parked developer option (CUT-PLAN step 5d): without the
+    // switch the automatic builder refuses the library by name. (The configuration's own
+    // refusal of the boundary-mode correction is bypassed to reach the builder's.)
+    IoData no_switch(preflight_conductivity_config, false);
+    no_switch.boundaries.cracked_attributes.insert(9);
+    no_switch.boundaries.cracked_attributes.insert(10);
+    no_switch.solver.surface_response_correction->developer = false;
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(no_switch, conductivity_boundary_mode_op),
+        Catch::Matchers::ContainsSubstring(
+            "is a conductivity or rational-impedance coupon, a parked developer option"));
+  }
+  {
+    // With the switch the coupons of a law the device carries are listed once (CUT-PLAN
+    // step 5d): the DEVELOPER OPTIONS (library) entry of SurfaceResponse.Developer.
+    const auto &options =
+        preflight_conductivity_iodata.solver.surface_response_correction->developer_options;
+    CHECK(std::count_if(options.begin(), options.end(),
+                        [](const std::string &option)
+                        {
+                          return option.rfind(
+                                     "the conductivity or rational-impedance coupons ",
+                                     0) == 0;
+                        }) == 1);
+  }
+  {
+    // A coupon of a law the device does not carry is never matched (a coupon matches only
+    // a boundary of its own law): on the perfect-conductor device a library that also
+    // carries a conductivity coupon runs without the switch, as the library without it.
+    const auto mixed_library_path = temp.temp_dir / "fabrication-process-mixed-laws.json";
+    if (Mpi::Root(Mpi::World()))
+    {
+      std::ifstream input(library_path);
+      REQUIRE(input);
+      auto mixed_library = json::parse(input);
+      auto conductivity_model = mixed_library["Models"][0];
+      conductivity_model["Name"] =
+          conductivity_model["Name"].get<std::string>() + "-conductivity";
+      conductivity_model["BoundaryCondition"] = conductivity_requirement_law;
+      mixed_library["Models"].push_back(conductivity_model);
+      std::ofstream output(mixed_library_path);
+      output << mixed_library.dump(2) << "\n";
+    }
+    Mpi::Barrier(Mpi::World());
+    auto mixed_config = automatic_config;
+    mixed_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
+        mixed_library_path.string();
+    IoData mixed_iodata(mixed_config, false);
+    mixed_iodata.boundaries.cracked_attributes.insert(9);
+    mixed_iodata.boundaries.cracked_attributes.insert(10);
+    REQUIRE_FALSE(mixed_iodata.solver.electrostatic.response_correction->developer);
+    SurfaceResponseOperator mixed_response(mixed_iodata, automatic_laplace);
+    CHECK(mixed_response.GetPatchCount() == automatic_response.GetPatchCount());
+    CHECK(mixed_iodata.solver.electrostatic.response_correction->developer_options.empty());
+  }
 
   auto rational_boundary_mode_config = boundary_mode_config;
   rational_boundary_mode_config["Boundaries"].erase("PEC");
@@ -1215,6 +1271,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator boundary-m
       rational_boundary_mode_iodata, automatic_meshes, rational_boundary_mode_material);
   SurfaceResponseOperator rational_boundary_mode_response(rational_boundary_mode_iodata,
                                                           rational_boundary_mode_op);
+  {
+    // A rational-impedance coupon: the same refusal without the switch (CUT-PLAN step 5d).
+    IoData no_switch(rational_boundary_mode_config, false);
+    no_switch.boundaries.cracked_attributes.insert(9);
+    no_switch.boundaries.cracked_attributes.insert(10);
+    no_switch.solver.surface_response_correction->developer = false;
+    CHECK_THROWS_WITH(
+        SurfaceResponseOperator(no_switch, rational_boundary_mode_op),
+        Catch::Matchers::ContainsSubstring(
+            "is a conductivity or rational-impedance coupon, a parked developer option"));
+  }
   GridFunction rational_boundary_mode_field(rational_boundary_mode_op.GetNDSpace(), true);
   rational_boundary_mode_field.Real().ProjectCoefficient(boundary_mode_normal_coefficient);
   rational_boundary_mode_field.Imag() = 0.0;
@@ -1473,7 +1540,8 @@ TEST_CASE_METHOD(
       {"BoundaryMode", {{"Freq", 5.0}}},
       {"SurfaceResponseCorrection",
        {{"Library", parallel_cluster_library_2d_path.string()},
-        {"UnmatchedPolicy", "Error"}}}};
+        {"UnmatchedPolicy", "Error"},
+        {"Developer", true}}}};
   IoData parallel_cluster_boundary_iodata_2d(parallel_cluster_boundary_config_2d, false);
   parallel_cluster_boundary_iodata_2d.boundaries.cracked_attributes.insert(9);
   parallel_cluster_boundary_iodata_2d.boundaries.cracked_attributes.insert(10);
