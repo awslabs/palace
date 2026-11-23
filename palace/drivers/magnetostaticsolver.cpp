@@ -108,6 +108,9 @@ std::pair<ErrorIndicator, long long int> MagnetostaticSolver::SolveSubstructured
     const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   BlockTimer bt(Timer::CONSTRUCT);
+  // The interface of a model is matched by the signatures of its Nédélec DOFs, in 3D.
+  MFEM_VERIFY(mesh.back()->Dimension() == 3,
+              "Magnetostatic substructuring requires a 3D mesh!");
   SubstructuringSolver sub(iodata, mesh);
   SaveMetadata(sub.GetFESpaces());
   const SurfaceFluxOperator surf_flux_op(iodata);  // all the flux loops

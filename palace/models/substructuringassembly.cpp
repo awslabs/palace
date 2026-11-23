@@ -4,6 +4,7 @@
 #include "substructuringsolverimpl.hpp"
 
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <set>
 #include <utility>
@@ -701,6 +702,13 @@ std::unique_ptr<mfem::HypreParMatrix>
 SubstructuringSolver::Impl::AssembleDenseInterface() const
 {
   const int nG = nG_global, nloc = gamma_nloc;
+  // The rows of a hypre matrix are offset by int.
+  const long long entries = static_cast<long long>(nloc) * nG;
+  MFEM_VERIFY(entries <= std::numeric_limits<int>::max(),
+              "The substructuring interface puts "
+                  << entries
+                  << " entries of S_E on one process, more than 2^31 - 1: run on more "
+                     "processes!");
   const std::vector<HYPRE_BigInt> g2t = InterfaceTrueDofs();
   std::vector<int> I(nt + 1, 0);
   std::vector<HYPRE_BigInt> J;
