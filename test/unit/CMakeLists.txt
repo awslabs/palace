@@ -57,6 +57,8 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-meshio.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-driven.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-driven-analytic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-magnetostatic.cpp
@@ -97,6 +99,7 @@ if(PALACE_WITH_ENZYME)
   # Clang plugin (ClangEnzymeFlags) applies only here, not to the rest of unit-tests.
   add_library(enzyme-unit-tests OBJECT
     ${CMAKE_CURRENT_SOURCE_DIR}/test-enzyme.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-driven-enzyme.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-enzyme.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-magnetostatic-enzyme.cpp
   )

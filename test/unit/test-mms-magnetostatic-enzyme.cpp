@@ -43,6 +43,16 @@ void CheckPointwiseAgreement(const MmsCase &enzyme, const MmsCase &analytic,
   }
 }
 
+}  // namespace
+
+// Enzyme backend: the manufactured fields and the cases generated from them, the
+// counterparts of analytic::PolynomialCase() and analytic::TrigCase(). File-local, since
+// only this file (compiled only with Enzyme) uses them.
+namespace enzyme
+{
+namespace
+{
+
 // These vector potentials are the only problem-specific mathematical expressions in the
 // Enzyme backend. The flux density B = ∇×A is generated from them.
 MmsCoordinates PolynomialPotential(const MmsCoordinates &x)
@@ -88,6 +98,7 @@ const MmsCase &TrigCase()
 }
 
 }  // namespace
+}  // namespace enzyme
 }  // namespace palace::testing::mms::magnetostatic
 
 using namespace palace::testing::mms::magnetostatic;
@@ -97,8 +108,8 @@ TEST_CASE("Magnetostatic MMS Enzyme quantities match the analytic cases",
 {
   const std::vector<std::array<double, 3>> points = {
       {0.17, 0.23, 0.31}, {0.38, 0.41, 0.62}, {0.73, 0.14, 0.87}};
-  CheckPointwiseAgreement(PolynomialCase(), analytic::PolynomialCase(), points);
-  CheckPointwiseAgreement(TrigCase(), analytic::TrigCase(), points);
+  CheckPointwiseAgreement(enzyme::PolynomialCase(), analytic::PolynomialCase(), points);
+  CheckPointwiseAgreement(enzyme::TrigCase(), analytic::TrigCase(), points);
 }
 
 TEST_CASE("Magnetostatic MMS Enzyme reproduces the analytic errors",
@@ -107,5 +118,5 @@ TEST_CASE("Magnetostatic MMS Enzyme reproduces the analytic errors",
   // Run the full solve with Enzyme-generated and hand-derived data; errors must agree. A
   // trigonometric potential keeps the Enzyme derivatives from being exact, unlike a
   // low-degree polynomial.
-  CheckBackendAgreement(TrigCase(), analytic::TrigCase());
+  CheckBackendAgreement(enzyme::TrigCase(), analytic::TrigCase());
 }
