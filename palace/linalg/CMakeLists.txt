@@ -16,6 +16,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/complexcsr.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/cudss.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/densematrix.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/directschur.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/distrelaxation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/divfree.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/errorestimator.cpp
@@ -34,13 +35,13 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/rap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/schurfactory.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/schursolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/slepc.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/spectralnorm.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpackcomplex.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/strumpackschur.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlucomplex.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp

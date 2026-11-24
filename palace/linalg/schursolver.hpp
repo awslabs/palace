@@ -4,7 +4,6 @@
 #ifndef PALACE_LINALG_SCHUR_SOLVER_HPP
 #define PALACE_LINALG_SCHUR_SOLVER_HPP
 
-#include <functional>
 #include <type_traits>
 #include <vector>
 #include <mfem.hpp>
@@ -17,9 +16,9 @@ namespace palace
 //
 // A sparse symmetric matrix A = [A_II, A_IS; A_SI, A_SS] factored for its Schur complement
 // S = A_SS - A_SI A_II^-1 A_IS onto some of its variables (the Schur variables), and for
-// solves with its internal block A_II. A partial factorization (MumpsSchurSolver,
-// StrumpackSchurSolver) gives S directly; BackSolveSchurSolver forms it from one solve
-// with A_II per Schur variable.
+// solves with its internal block A_II. A partial factorization (MumpsSchurSolverT, and
+// DirectSchurSolverT with STRUMPACK's Schur complement interface) gives S directly;
+// DirectSchurSolverT otherwise forms it from one solve with A_II per Schur variable.
 //
 template <typename T>
 class SchurSolver
@@ -36,9 +35,8 @@ public:
   virtual std::vector<T> ReleaseSchurRows() = 0;
 
   // Internal solves for a batch of vectors (collective): y_k solves A_II on the internal
-  // variables, with 0 on the Schur variables. On rows of A in neither block, y_k is
-  // unspecified (0 for BackSolveSchurSolver, x_k on the identity rows of the partial
-  // factorizations). y_k may alias x_k.
+  // variables, with 0 on the Schur variables, and on the entries of the vectors outside the
+  // rows of A. y_k may alias x_k.
   virtual void SolveInternal(const std::vector<const VecType *> &X,
                              const std::vector<VecType *> &Y) = 0;
 
@@ -149,47 +147,6 @@ public:
   // rank 0 (n_schur x |X|, column-major): x_I = A_II^-1 (b_I - A_IS u_S) and x_S = u_S
   // (collective).
   virtual void Expand(const std::vector<T> &u, const std::vector<VecType *> &X) = 0;
-};
-
-//
-// The Schur complement from solves with A_II, one per Schur variable, in batches, by a
-// given solver of the internal problem (a factorization of A_II, or an iterative solver),
-// whose variables are the internal ones: the other rows of A are not used.
-//
-class BackSolveSchurSolver : public SchurSolver<double>
-{
-public:
-  // Solves A_II y_k = x_k on the internal variables for a batch, with y_k = 0 elsewhere
-  // (x_k there is not used). y_k may alias x_k.
-  using InternalSolver = std::function<void(const std::vector<const mfem::Vector *> &,
-                                            const std::vector<mfem::Vector *> &)>;
-
-  // A is referenced (not copied). schur_vars: the global (0-based) rows of the Schur
-  // variables, in the order of their rows and columns in S (replicated). block: the number
-  // of solves in a batch.
-  BackSolveSchurSolver(const mfem::HypreParMatrix &A,
-                       const std::vector<HYPRE_BigInt> &schur_vars, InternalSolver solve,
-                       int block);
-
-  std::vector<double> ReleaseSchurRows() override;
-
-  void SolveInternal(const std::vector<const mfem::Vector *> &X,
-                     const std::vector<mfem::Vector *> &Y) override;
-
-  void Condense(const std::vector<const mfem::Vector *> &X,
-                std::vector<double> &g) override;
-
-private:
-  // The condensations of a batch (at most block vectors) in the rows of the Schur variables
-  // of this rank (|Rows()| x |X|, column-major), by the internal solves Y (which may alias
-  // X) and a product with A. Collective.
-  std::vector<double> CondenseBatch(const std::vector<const mfem::Vector *> &X,
-                                    const std::vector<mfem::Vector *> &Y) const;
-
-  const mfem::HypreParMatrix &A;
-  InternalSolver solve;
-  int n_schur, block;
-  SchurRowGather rows;
 };
 
 }  // namespace palace

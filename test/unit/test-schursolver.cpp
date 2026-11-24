@@ -10,9 +10,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/generators/catch_generators_range.hpp>
+#include "linalg/directschur.hpp"
+#include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/schursolver.hpp"
-#include "linalg/strumpackschur.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -142,51 +143,28 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   mfem::MultAtB(A_IS, Y, AtY);
   S_ref.Add(-1.0, AtY);
 
-  // An exact internal solver for the back-solves.
-  auto internal_solve =
-      [&](const std::vector<const mfem::Vector *> &X, const std::vector<mfem::Vector *> &Yv)
-  {
-    for (std::size_t k = 0; k < X.size(); k++)
-    {
-      const mfem::Vector x = Gather(*X[k], n, row0, comm);
-      mfem::Vector b(ni), y(ni);
-      for (int i = 0; i < ni; i++)
-      {
-        b(i) = x(internal[i]);
-      }
-      A_II_inv.Mult(b, y);
-      mfem::Vector full(n);
-      full = 0.0;
-      for (int i = 0; i < ni; i++)
-      {
-        full(internal[i]) = y(i);
-      }
-      Yv[k]->SetSize(n_loc);
-      for (int i = 0; i < n_loc; i++)
-      {
-        (*Yv[k])(i) = full(static_cast<int>(row0) + i);
-      }
-    }
-  };
-
-  std::vector<std::string> backends = {"back-solves"};
+  // MUMPS factors A_elim, and DirectSchurSolver the system of A without the other rows: by
+  // STRUMPACK's partial factorization (or with one solve per Schur variable without its
+  // Schur complement interface), and with the solves of SuperLU_DIST.
+  std::vector<std::string> backends;
 #if defined(MFEM_USE_MUMPS)
   backends.push_back("MUMPS");
   backends.push_back("MUMPS, blocks of 4");
 #endif
-#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+#if defined(MFEM_USE_STRUMPACK)
   backends.push_back("STRUMPACK");
 #endif
+#if defined(MFEM_USE_SUPERLU)
+  backends.push_back("SuperLU_DIST");
+#endif
+  if (backends.empty())
+  {
+    return;
+  }
   const std::string backend = GENERATE_COPY(from_range(backends));
   CAPTURE(backend, ns);
   auto make = [&]() -> std::unique_ptr<SchurSolver<double>>
   {
-    if (backend == "back-solves")
-    {
-      // Batches of 4: the last one is partial.
-      REQUIRE(ns % 4 != 0);
-      return std::make_unique<BackSolveSchurSolver>(*A, schur_vars, internal_solve, 4);
-    }
 #if defined(MFEM_USE_MUMPS)
     if (backend == "MUMPS")
     {
@@ -199,13 +177,18 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
                                                 SymbolicFactorization::DEFAULT, 4);
     }
 #endif
-#if defined(PALACE_WITH_STRUMPACK_SCHUR)
-    if (backend == "STRUMPACK")
+    std::vector<char> keep(n_loc);
+    for (int i = 0; i < n_loc; i++)
     {
-      return std::make_unique<StrumpackSchurSolver>(A_elim, schur_vars);
+      keep[i] = !other[row0 + i];
     }
-#endif
-    return nullptr;
+    SideSystem side({A.get()}, keep);
+    return std::make_unique<DirectSchurSolver>(
+        comm, side.n_glob, static_cast<int>(side.rows.size()),
+        DirectSchurSolver::Coo{std::move(side.irn), std::move(side.jcn),
+                               std::move(side.parts[0])},
+        side.Indices(schur_vars), side.rows,
+        (backend == "STRUMPACK") ? LinearSolver::STRUMPACK : LinearSolver::SUPERLU);
   };
 
   // The rows of the Schur complement of the Schur variables of each rank, in the order of
@@ -235,7 +218,7 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   }
 
   // Two internal solves in place: A_II^-1 b on the internal variables, 0 on the Schur ones
-  // (on the other rows, 0 for the back-solves and b for the partial factorizations).
+  // (on the other rows, b for MUMPS's factorization of A_elim, 0 for DirectSchurSolver's).
   std::vector<mfem::Vector> x(2, mfem::Vector(n_loc));
   for (int i = 0; i < n_loc; i++)
   {

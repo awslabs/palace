@@ -24,9 +24,9 @@
 #include "linalg/mumpsschur.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/schurfactory.hpp"
 #include "linalg/schursolver.hpp"
 #include "linalg/strumpack.hpp"
-#include "linalg/strumpackschur.hpp"
 #include "linalg/superlu.hpp"
 #include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
@@ -40,43 +40,6 @@ namespace palace
 
 namespace substructuring
 {
-
-// Sparse direct solver for the environment and region factorizations: the one
-// config["Solver"]["Linear"]["Type"] names, else STRUMPACK, MUMPS or SuperLU_DIST, in this
-// order of preference among those Palace is built with.
-inline LinearSolver DirectSolverType(const IoData &iodata)
-{
-  const LinearSolver type = iodata.solver.substructuring->direct_solver;
-  switch (type)
-  {
-    case LinearSolver::STRUMPACK:
-    case LinearSolver::MUMPS:
-    case LinearSolver::SUPERLU:
-      return type;
-    default:
-      break;
-  }
-#if defined(MFEM_USE_STRUMPACK)
-  return LinearSolver::STRUMPACK;
-#elif defined(MFEM_USE_MUMPS)
-  return LinearSolver::MUMPS;
-#else
-  return LinearSolver::SUPERLU;
-#endif
-}
-
-inline const char *DirectSolverName(const IoData &iodata)
-{
-  switch (DirectSolverType(iodata))
-  {
-    case LinearSolver::STRUMPACK:
-      return "STRUMPACK";
-    case LinearSolver::MUMPS:
-      return "MUMPS";
-    default:
-      return "SuperLU_DIST";
-  }
-}
 
 #if defined(MFEM_USE_MUMPS)
 // MUMPS factorization of a symmetric operator (MumpsSchurSolver without Schur variables:
@@ -113,7 +76,8 @@ private:
 inline std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata,
                                                       [[maybe_unused]] MPI_Comm comm)
 {
-  switch (DirectSolverType(iodata))
+  switch (
+      DirectSolverFor(iodata.solver.substructuring->direct_solver, Factorization::SYSTEM))
   {
 #if defined(MFEM_USE_STRUMPACK)
     case LinearSolver::STRUMPACK:
@@ -134,43 +98,7 @@ inline std::unique_ptr<mfem::Solver> MakeDirectSolver(const IoData &iodata,
     default:
       break;
   }
-  MFEM_ABORT("Substructuring needs the sparse direct solver \""
-             << DirectSolverName(iodata) << "\", which Palace is not built with!");
-  return nullptr;
-}
-
-// The partial factorization of the environment, whose Schur complement then needs no
-// solves: by MUMPS or else by STRUMPACK with its Schur complement interface, or only by the
-// one config["Solver"]["Linear"]["Type"] names (none for SuperLU_DIST). Null without one,
-// else name is set to its solver. MUMPS compresses the fronts at round-off (block
-// low-rank), faster than full rank at no loss of accuracy.
-inline constexpr double kEnvBlrTol = 1.0e-14;
-inline std::unique_ptr<SchurSolver<double>>
-MakePartialFactorization(const IoData &iodata,
-                         [[maybe_unused]] const mfem::HypreParMatrix &A,
-                         [[maybe_unused]] const std::vector<HYPRE_BigInt> &schur_vars,
-                         [[maybe_unused]] std::string &name)
-{
-  const LinearSolver type = iodata.solver.substructuring->direct_solver;
-  [[maybe_unused]] const bool any =
-      (type != LinearSolver::STRUMPACK && type != LinearSolver::MUMPS &&
-       type != LinearSolver::SUPERLU);
-#if defined(MFEM_USE_MUMPS)
-  if (any || type == LinearSolver::MUMPS)
-  {
-    name = "MUMPS";
-    return std::make_unique<MumpsSchurSolver>(A, schur_vars, kEnvBlrTol, false, true,
-                                              iodata.solver.linear.sym_factorization);
-  }
-#endif
-#if defined(PALACE_WITH_STRUMPACK_SCHUR)
-  if (any || type == LinearSolver::STRUMPACK)
-  {
-    name = "STRUMPACK";
-    return std::make_unique<StrumpackSchurSolver>(A, schur_vars,
-                                                  iodata.solver.linear.sym_factorization);
-  }
-#endif
+  MFEM_ABORT("Substructuring needs a sparse direct solver!");
   return nullptr;
 }
 
@@ -388,19 +316,15 @@ struct SubstructuringSolver::Impl
   // Local true DOFs: region-free (the region solve), of region elements (where the region
   // operators act), and interface.
   mfem::Array<int> rf_idx, rc_idx, gamma_idx;
-  std::unique_ptr<mfem::HypreParMatrix> env_A_ee_parent;  // parent-space A_EE (eliminated)
-  std::unique_ptr<substructuring::BlockedDirectSolver> env_lu_parent;  // its direct factor
-  // The environment with Gamma as the Schur variables, which gives S_E and every
-  // environment interior solve: a partial factorization by the solver env_partial names
-  // (MaterializePartial), or else solves with A_EE (EnsureEnv).
-  std::unique_ptr<SchurSolver<double>> env_schur;
-  std::string env_partial;
+  // The environment's side (its interior and Gamma) with Gamma as the Schur variables,
+  // which gives S_E and every environment interior solve, and how it is factored.
+  std::unique_ptr<SchurFactorization<double>> env_schur;
+  std::string env_factorization;
   // Block size of the batched multi-RHS environment solves.
   static constexpr int kMaterializeBlock = substructuring::BlockedDirectSolver::kMaxBlock;
   // Relative tolerance of the fingerprint checks of a saved model: the fingerprints are
   // sums over elements, which the partition changes by rounding only.
   static constexpr double kFingerprintTol = 1.0e-9;
-  mfem::Array<int> non_env_int;  // parent true DOFs that are not environment-interior
   // Region energy operator: the solve operator (electrostatics), the volume terms
   // (magnetostatics).
   std::unique_ptr<mfem::HypreParMatrix> A_region_energy;
@@ -620,10 +544,6 @@ struct SubstructuringSolver::Impl
 
   void AppendSourceModes(const std::string &path);
 
-  // The partial factorization (Schur complement on Gamma) of A_env with the DOFs outside
-  // E + Gamma eliminated, when one is built: it is then the environment solver. Collective.
-  void MaterializePartial();
-
   // Global parent true DOFs of the interface, in global interface order (replicated).
   // Collective.
   std::vector<HYPRE_BigInt> InterfaceTrueDofs() const;
@@ -642,8 +562,9 @@ struct SubstructuringSolver::Impl
   // mesh of the region has these faces. Collective.
   std::vector<double> InterfaceSignatures(int width) const;
 
-  // Set up the environment interior solver on first use (an online run with a saved model
-  // needs it only for environment fields).
+  // Factor the environment's side (its interior and Gamma) for its Schur complement onto
+  // Gamma on first use, which then gives every environment interior solve (an online run
+  // with a saved model needs it only for environment fields). Collective.
   void EnsureEnv();
 
   // Recover the environment interior of full fields (region + Dirichlet parts set),
@@ -811,10 +732,6 @@ struct SubstructuringSolver::Impl
   // interface like S_E (dual quantities: x_cur = M^-T x_saved, rows and S^K columns); modes
   // absent here are recomputed on demand.
   void LoadSections(const std::string &path, const SignatureMap &map);
-
-  // Factor A_EE: A_env with the true DOFs outside the environment interior eliminated, on
-  // the parent space. Collective.
-  void FactorEnvironmentInterior();
 
   // Selection matrix E (parent true DOFs x marked DOFs): E(i, k) = 1 for the k-th marked
   // DOF, numbered globally rank by rank in local order (for the interface, as

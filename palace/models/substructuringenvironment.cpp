@@ -5,6 +5,7 @@
 
 #include <cmath>
 #include <span>
+#include "linalg/lowertriangle.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -211,43 +212,40 @@ bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
   return ok;
 }
 
-void SubstructuringSolver::Impl::MaterializePartial()
-{
-  BlockTimer bt(Timer::KSP_SETUP);
-  mfem::Array<int> other;
-  for (int i = 0; i < nt; i++)
-  {
-    if (!is_env_int[i] && !is_gamma[i])
-    {
-      other.Append(i);
-    }
-  }
-  env_schur = substructuring::MakePartialFactorization(
-      iodata, *EliminateToIdentity(Aenv(), other), InterfaceTrueDofs(), env_partial);
-  env_built = (env_schur != nullptr);
-}
-
 void SubstructuringSolver::Impl::EnsureEnv()
 {
   MFEM_VERIFY(!region_only,
               "Substructuring on the mesh of the region cannot solve the environment (an "
               "excitation not in the saved model, or general Dirichlet data): run on the "
               "full mesh!");
-  if (!env_built)
+  if (env_built)
   {
-    BlockTimer bt(Timer::KSP_SETUP);
-    FactorEnvironmentInterior();
-    env_schur = std::make_unique<BackSolveSchurSolver>(
-        Aenv(), InterfaceTrueDofs(),
-        [this](const std::vector<const mfem::Vector *> &X,
-               const std::vector<mfem::Vector *> &Y)
-        {
-          env_lu_parent->Mult(X, Y);  // the factor of [A_EE, 0; 0, I]
-          MaskToEnvInterior(Y);
-        },
-        kMaterializeBlock);
-    env_built = true;
+    return;
   }
+  BlockTimer bt(Timer::KSP_SETUP);
+  // The environment's side, its interior and Gamma, with Gamma as the Schur variables.
+  std::vector<char> keep(nt);
+  for (int i = 0; i < nt; i++)
+  {
+    keep[i] = is_env_int[i] || is_gamma[i];
+  }
+  SideSystem side({&Aenv()}, keep);
+  const LinearSolver type = DirectSolverFor(iodata.solver.substructuring->direct_solver,
+                                            Factorization::SCHUR_COMPLEMENT);
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+  const bool partial = (type != LinearSolver::SUPERLU);
+#else
+  const bool partial = (type == LinearSolver::MUMPS);
+#endif
+  env_factorization = std::string(DirectSolverName(type)) +
+                      (partial ? " partial factorization" : " factorization");
+  const auto gamma = side.Indices(InterfaceTrueDofs());
+  env_schur = MakeSchurFactorization<double>(
+      type, iodata.solver.linear.sym_factorization, parent_fes.GetComm(), side.n_glob,
+      static_cast<int>(side.rows.size()),
+      {std::move(side.irn), std::move(side.jcn), std::move(side.parts[0])}, gamma,
+      side.rows, true, false);
+  env_built = true;
 }
 
 void SubstructuringSolver::Impl::RecoverEnvInterior(std::vector<mfem::Vector> &u,
@@ -538,22 +536,6 @@ void SubstructuringSolver::Impl::ScatterRows(const std::vector<double> &full, in
                row.type, rows.data(), gamma_nloc, row.type, 0, comm);
 }
 
-void SubstructuringSolver::Impl::FactorEnvironmentInterior()
-{
-  non_env_int.SetSize(0);
-  for (int i = 0; i < nt; i++)
-  {
-    if (!is_env_int[i])
-    {
-      non_env_int.Append(i);
-    }
-  }
-  env_A_ee_parent = EliminateToIdentity(Aenv(), non_env_int);
-  env_lu_parent = std::make_unique<substructuring::BlockedDirectSolver>(
-      substructuring::MakeDirectSolver(iodata, parent_fes.GetComm()));
-  env_lu_parent->SetOperator(*env_A_ee_parent);
-}
-
 void SubstructuringSolver::Impl::ApplyAeeInvMulti(
     const std::vector<const mfem::Vector *> &X, const std::vector<mfem::Vector *> &Y) const
 {
@@ -615,43 +597,26 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
       col_to_dof[gamma_global[i] - off] = i;
     }
   }
-  // S_E from the partial factorization when there is one, else from the solves of the
-  // lifts y = A_EE^-1 (A_env e_c)|_E: S_E e_c = (A_env e_c)|_Gamma - (A_env y)|_Gamma. The
-  // energy operator S^K = S_E - P^T D P, for the lift p = e_c - y, takes the condensation
-  // P^T D p onto Gamma (by the forward elimination of a partial factorization), and the
-  // kinetic one S^Kin = P^T M_kin^E P that of M_kin^E p. The first solve of a direct
-  // factor fixes its block size at kMaterializeBlock; the thin couplings are G = A_env
-  // E_Gamma and R = E_Gamma^T A_env. Each rank stores its own rows.
-  const bool partial = !env_partial.empty();
-  if (partial)
-  {
-    S_rows = env_schur->ReleaseSchurRows();
-  }
-  else
-  {
-    S_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
-  }
+  // S_E from the environment's factorization. The energy operator S^K = S_E - P^T D P, for
+  // the lift p = e_c - y with y = A_EE^-1 (A_env e_c)|_E, takes the condensation P^T D p
+  // onto Gamma, and the kinetic one S^Kin = P^T M_kin^E P that of M_kin^E p, in batches of
+  // kMaterializeBlock lifts; the thin coupling is G = A_env E_Gamma. Each rank stores its
+  // own rows.
+  S_rows = env_schur->ReleaseSchurRows();
   std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_gamma);
-  std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&Aenv(), E.get())), R;
-  if (!partial)
-  {
-    std::unique_ptr<mfem::HypreParMatrix> Et(E->Transpose());
-    R.reset(mfem::ParMult(Et.get(), &Aenv()));
-  }
+  std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&Aenv(), E.get()));
   E.reset();
   const int B = kMaterializeBlock;
   const bool kin = EnvKinetic();
   std::vector<Vector> t(B, Vector(nt)), v(kin ? 2 * B : B, Vector(nt));
   std::vector<const mfem::Vector *> X(B), V;
   std::vector<mfem::Vector *> Y(B);
-  Vector ec(nloc), z(nloc);
+  Vector ec(nloc);
   SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
   have_sk = true;
   SKin_rows.assign(kin ? static_cast<std::size_t>(nloc) * nG : 0, 0.0);
   have_skin = kin;
   const mfem::HypreParMatrix &Dm = Denv();
-  // A_GG e_c on the own rows, for S_E from the solves.
-  std::vector<double> agg(partial ? 0 : static_cast<std::size_t>(B) * nloc);
   std::vector<double> gr;
   for (int c0 = 0; c0 < nG; c0 += B)
   {
@@ -667,16 +632,8 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
       {
         ec(c - off) = 1.0;
       }
-      // A_env e_c: its env-interior part is the solve RHS, its Gamma part is A_GG e_c.
+      // A_env e_c, whose env-interior part is the solve RHS.
       G->Mult(ec, t[k]);
-      if (!partial)
-      {
-        const double *tk = t[k].HostRead();
-        for (int r = 0; r < nloc; r++)
-        {
-          agg[static_cast<std::size_t>(k) * nloc + r] = tk[col_to_dof[r]];
-        }
-      }
       X[k] = &t[k];
       Y[k] = &t[k];  // solve in place
     }
@@ -684,16 +641,6 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
     for (int k = 0; k < nb; k++)
     {
       const int c = c0 + k;
-      if (!partial)
-      {
-        R->Mult(t[k], z);  // (A_env y)|_Gamma = A_GE A_EE^-1 A_EG e_c, this rank's rows
-        const double *zz = z.HostRead();
-        for (int r = 0; r < nloc; r++)
-        {
-          S_rows[static_cast<std::size_t>(r) * nG + c] =
-              agg[static_cast<std::size_t>(k) * nloc + r] - zz[r];
-        }
-      }
       // The lift p = e_c - y (t[k] holds y), its regularization load D p and its kinetic
       // load M_kin^E p.
       t[k].Neg();

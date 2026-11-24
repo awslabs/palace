@@ -35,6 +35,7 @@
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/schurfactory.hpp"
 #include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/materialoperator.hpp"
@@ -2523,9 +2524,10 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
           "[substructure][Serial][Parallel]")
 {
   // Solver.Linear.Type names the sparse direct solver of the factorizations, else Palace
-  // prefers STRUMPACK, MUMPS, then SuperLU_DIST. The environment is condensed by the
-  // partial factorization of MUMPS, or else of STRUMPACK with its Schur complement
-  // interface, and otherwise by solves. The capacitance matrix does not depend on it.
+  // prefers STRUMPACK, MUMPS, then SuperLU_DIST for a system, and MUMPS, STRUMPACK, then
+  // SuperLU_DIST for the condensation of the environment (by the partial factorization of
+  // MUMPS, or of STRUMPACK with its Schur complement interface, and otherwise by solves).
+  // The capacitance matrix does not depend on it.
   auto config = [](const std::string &type)
   {
     return json{{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -2557,7 +2559,8 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   types.push_back("SuperLU");
 #endif
 
-  // The solver of each choice, and its partial factorization of a small SPD matrix.
+  // The solver of each choice, and its factorization of a small SPD matrix for a Schur
+  // complement.
   mfem::Mesh serial = mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::QUADRILATERAL);
   mfem::ParMesh pmesh(Mpi::World(), serial);
   mfem::H1_FECollection fec(1, 2);
@@ -2576,22 +2579,37 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   {
     CAPTURE(type);
     IoData iodata(config(type), false);
-    const std::string direct = substructuring::DirectSolverName(iodata);
-    std::string partial;
-    const bool built = (substructuring::MakePartialFactorization(iodata, *A, schur_vars,
-                                                                 partial) != nullptr);
-    std::string direct_ref = (type == "SuperLU") ? "SuperLU_DIST" : type, partial_ref;
-#if defined(PALACE_WITH_STRUMPACK_SCHUR)
-    partial_ref = (type == "Default" || type == "STRUMPACK") ? "STRUMPACK" : "";
-#endif
-#if defined(MFEM_USE_MUMPS)
-    partial_ref = (type == "Default" || type == "MUMPS") ? "MUMPS" : partial_ref;
-#endif
+    const LinearSolver requested = iodata.solver.substructuring->direct_solver;
+    const std::string direct =
+        DirectSolverName(DirectSolverFor(requested, Factorization::SYSTEM));
+    const LinearSolver schur_type =
+        DirectSolverFor(requested, Factorization::SCHUR_COMPLEMENT);
+    std::string direct_ref = (type == "SuperLU") ? "SuperLU_DIST" : type,
+                schur_ref = direct_ref;
     if (type == "Default")
     {
       direct_ref = (types[0] == "SuperLU") ? "SuperLU_DIST" : types[0];
+#if defined(MFEM_USE_MUMPS)
+      schur_ref = "MUMPS";
+#else
+      schur_ref = direct_ref;
+#endif
     }
     CHECK(direct == direct_ref);
+    CHECK(std::string(DirectSolverName(schur_type)) == schur_ref);
+    {
+      SideSystem side({A.get()}, std::vector<char>(A->Height(), 1));
+      const auto schur = MakeSchurFactorization<double>(
+          schur_type, SymbolicFactorization::DEFAULT, Mpi::World(), side.n_glob,
+          static_cast<int>(side.rows.size()),
+          {std::move(side.irn), std::move(side.jcn), std::move(side.parts[0])},
+          side.Indices(schur_vars), side.rows, true, false);
+      CHECK(schur->ReleaseSchurRows().size() ==
+            static_cast<std::size_t>(std::count_if(
+                schur_vars.begin(), schur_vars.end(), [&](HYPRE_BigInt g)
+                { return g >= A->GetRowStarts()[0] && g < A->GetRowStarts()[1]; })) *
+                schur_vars.size());
+    }
     const auto solver = substructuring::MakeDirectSolver(iodata, Mpi::World());
     std::string made;
 #if defined(MFEM_USE_STRUMPACK)
@@ -2604,8 +2622,6 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
     made = dynamic_cast<SuperLUSolver *>(solver.get()) ? "SuperLU_DIST" : made;
 #endif
     CHECK(made == direct_ref);
-    CHECK(built == !partial_ref.empty());
-    CHECK(partial == partial_ref);
   }
 
   // The capacitance of each choice, against a monolith: the grounded boundaries of the

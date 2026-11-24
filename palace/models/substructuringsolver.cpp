@@ -867,16 +867,12 @@ void SubstructuringSolver::CondenseEnvironment()
     impl->LoadModel(model_path, sig_w);
     loaded = true;
   }
-  // S_E from a partial factorization when one is built, else from solves with A_EE (with
-  // S^K materialized, for a magnetostatic model to save).
+  // S_E from the environment's factorization (with S^K materialized, for a magnetostatic
+  // model to save).
   const bool with_sk = impl->EnergyDiffers() && !model_path.empty();
-  if (!loaded && nG > 0)
-  {
-    impl->MaterializePartial();
-  }
   if (!loaded)
   {
-    impl->EnsureEnv();  // no-op after a partial factorization (it is the env solver)
+    impl->EnsureEnv();
     if (with_sk)
     {
       impl->MaterializeWithEnergy();
@@ -915,8 +911,10 @@ void SubstructuringSolver::CondenseEnvironment()
         impl->SKin_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
   }
 
-  const std::string region_solver =
-      fmt::format("{} factorization", substructuring::DirectSolverName(impl->iodata));
+  const std::string region_solver = fmt::format(
+      "{} factorization",
+      DirectSolverName(DirectSolverFor(impl->iodata.solver.substructuring->direct_solver,
+                                       Factorization::SYSTEM)));
 
   // Summary: the sizes, and how the environment was condensed and the region is solved.
   std::string env_solver;
@@ -926,15 +924,7 @@ void SubstructuringSolver::CondenseEnvironment()
   }
   else
   {
-    if (!impl->env_partial.empty())
-    {
-      env_solver = fmt::format("{} partial factorization", impl->env_partial);
-    }
-    else
-    {
-      env_solver =
-          fmt::format("{} factorization", substructuring::DirectSolverName(impl->iodata));
-    }
+    env_solver = impl->env_factorization;
     if (!model_path.empty())
     {
       env_solver += fmt::format(", saved to {}", model_path);
