@@ -6,19 +6,35 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 #include <span>
+#include <string>
 #include <fmt/ranges.h>
 #include "fem/fespace.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
 
 namespace palace
 {
 
+namespace
+{
+
+// The local dof of a signed vector dof index.
+inline int LocalDof(int d)
+{
+  return (d >= 0) ? d : -1 - d;
+}
+
+}  // namespace
+
 PlaneWaveOperator::PlaneWaveOperator(const std::map<int, config::PlaneWaveData> &plane_wave,
-                                     const Units &units, const mfem::ParMesh &mesh)
+                                     const Units &units, const mfem::ParMesh &mesh,
+                                     bool print)
+  : print(print)
 {
   MFEM_VERIFY(plane_wave.empty() || mesh.SpaceDimension() == 3,
               "Plane wave excitations require a 3D mesh!");
@@ -58,7 +74,7 @@ PlaneWaveOperator::PlaneWaveOperator(const std::map<int, config::PlaneWaveData> 
     sources.emplace(idx, std::move(src));
   }
 
-  if (sources.empty())
+  if (sources.empty() || !print)
   {
     return;
   }
@@ -108,6 +124,15 @@ PlaneWaveOperator::GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fes
   {
     return it->second;
   }
+  // Plane waves with the same total-field region share the marker.
+  for (const auto &[other, tmark] : tf_markers)
+  {
+    if (other != idx && tmark.Size() == nd_fespace.GetTrueVSize() &&
+        sources.at(other).attr_marker == sources.at(idx).attr_marker)
+    {
+      return tmark;
+    }
+  }
   // Mark the local dofs of the elements in the total-field region, then combine the marks
   // of the processes sharing each dof with a boolean OR and restrict to the true dofs, as
   // for essential dofs: a true dof belongs to the closure of the region if any element of
@@ -129,8 +154,11 @@ PlaneWaveOperator::GetTotalFieldMarker(int idx, const FiniteElementSpace &nd_fes
     n_tf += (tb[i] != 0);
   }
   Mpi::GlobalSum(1, &n_tf, fes.GetComm());
-  Mpi::Print(" Plane wave {:d}: {:d} total-field unknowns (of {:d})\n", idx, n_tf,
-             fes.GlobalTrueVSize());
+  if (print)
+  {
+    Mpi::Print(" Plane wave {:d}: {:d} total-field unknowns (of {:d})\n", idx, n_tf,
+               fes.GlobalTrueVSize());
+  }
   return tmark;
 }
 
@@ -245,10 +273,13 @@ bool PlaneWaveOperator::GetIncidentField(int idx, double omega,
         "reciprocal lattice vector",
         idx, rel, kf(0), kf(1), kf(2), k(0), k(1), k(2));
     MFEM_VERIFY(rel <= 1.0e-2, msg << "!");
-    Mpi::Warning(fes.GetComm(),
-                 "{}; the source leaks into the scattered field at the level "
-                 "of this jump.",
-                 msg);
+    if (warned_interpolated.insert(idx).second)
+    {
+      Mpi::Warning(fes.GetComm(),
+                   "{}; the source leaks into the scattered field at the level "
+                   "of this jump (warned once, at the first frequency where it occurs).",
+                   msg);
+    }
   }
   return true;
 }
@@ -311,62 +342,209 @@ void PlaneWaveOperator::GetIncidentField(int idx, double omega,
   }
 }
 
-void PlaneWaveOperator::GetLayer(int idx, const FiniteElementSpace &nd_fespace,
-                                 mfem::Array<int> &tdofs, mfem::Array<int> &elements) const
+void PlaneWaveOperator::GetCoupling(int idx, const FiniteElementSpace &nd_fespace,
+                                    mfem::Array<int> &l_c,
+                                    mfem::Array<int> *coupling_elements) const
 {
-  // Mark the local dofs of the elements outside of the total-field region with a dof of
-  // its closure, combine the marks of all processes, and restrict them to the true dofs.
+  // The system matrix couples the true dofs of the closure of the total-field region (the
+  // marker m) and the others through the elements whose local dofs depend on both, with the
+  // prolongation P from the true dofs to the local dofs: on a nonconforming mesh, also
+  // through the constraints of hanging faces and edges. The local dofs which depend on
+  // marked or on unmarked true dofs are |P| m and |P| (1 - m).
   const auto &src = sources.at(idx);
   const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
   const mfem::ParMesh &mesh = *fes.GetParMesh();
-  mfem::Array<int> tf_mark, layer_mark, vdofs, tmark_bool;
-  GetLocalTotalFieldMarker(idx, fes, tf_mark);
-  layer_mark.SetSize(fes.GetVSize());
-  layer_mark = 0;
-  auto Dof = [](int d) { return (d >= 0) ? d : -1 - d; };
+  mfem::HypreParMatrix &P = *fes.Dof_TrueDof_Matrix();
+  const Vector &tmark = GetTotalFieldMarker(idx, nd_fespace);
+  const int nt = fes.GetTrueVSize(), nl = fes.GetVSize();
+  mfem::Array<int> m_t(nt), m_o(nt), l_t(nl), l_o(nl), vdofs;
+  {
+    const auto *m = tmark.HostRead();
+    for (int i = 0; i < nt; i++)
+    {
+      m_t[i] = (m[i] > 0.0);
+      m_o[i] = !m_t[i];
+    }
+  }
+  P.BooleanMult(1, m_t.HostRead(), 0, l_t.HostWrite());
+  P.BooleanMult(1, m_o.HostRead(), 0, l_o.HostWrite());
+  l_c.SetSize(nl);
+  l_c = 0;
+  if (coupling_elements)
+  {
+    coupling_elements->SetSize(0);
+  }
   for (int e = 0; e < mesh.GetNE(); e++)
   {
-    if (src.attr_marker[mesh.GetAttribute(e) - 1])
-    {
-      continue;
-    }
     fes.GetElementVDofs(e, vdofs);
-    bool touches = false;
+    bool has_t = false, has_o = false;
     for (int d : vdofs)
     {
-      touches = touches || tf_mark[Dof(d)];
+      has_t = has_t || l_t[LocalDof(d)];
+      has_o = has_o || l_o[LocalDof(d)];
     }
-    if (touches)
+    if (has_t && has_o)
     {
       for (int d : vdofs)
       {
-        layer_mark[Dof(d)] = 1;
+        l_c[LocalDof(d)] = 1;
+      }
+      if (coupling_elements && !src.attr_marker[mesh.GetAttribute(e) - 1])
+      {
+        coupling_elements->Append(e);
       }
     }
   }
-  fes.Synchronize(layer_mark);
+}
+
+void PlaneWaveOperator::GetLayer(int idx, const FiniteElementSpace &nd_fespace,
+                                 mfem::Array<int> &tdofs, mfem::Array<int> &elements,
+                                 mfem::Array<int> *coupling_elements) const
+{
+  // The layer true dofs are those which the local dofs of the coupling elements depend on,
+  // |P|ᵀ, and the incident field is interpolated on the elements with a local dof which
+  // depends on a layer true dof.
+  const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
+  const mfem::ParMesh &mesh = *fes.GetParMesh();
+  mfem::HypreParMatrix &P = *fes.Dof_TrueDof_Matrix();
+  const int nt = fes.GetTrueVSize(), nl = fes.GetVSize();
+  mfem::Array<int> l_c, t_c(nt), l_i(nl), vdofs;
+  GetCoupling(idx, nd_fespace, l_c, coupling_elements);
+  P.BooleanMultTranspose(1, l_c.HostRead(), 0, t_c.HostWrite());
+  P.BooleanMult(1, t_c.HostRead(), 0, l_i.HostWrite());
+  tdofs.SetSize(0);
+  for (int i = 0; i < nt; i++)
+  {
+    if (t_c[i])
+    {
+      tdofs.Append(i);
+    }
+  }
   elements.SetSize(0);
   for (int e = 0; e < mesh.GetNE(); e++)
   {
     fes.GetElementVDofs(e, vdofs);
     for (int d : vdofs)
     {
-      if (layer_mark[Dof(d)])
+      if (l_i[LocalDof(d)])
       {
         elements.Append(e);
         break;
       }
     }
   }
-  fes.GetRestrictionMatrix()->BooleanMult(layer_mark, tmark_bool);
-  tdofs.SetSize(0);
-  const int *tb = tmark_bool.HostRead();
-  for (int i = 0; i < tmark_bool.Size(); i++)
+}
+
+void PlaneWaveOperator::CheckBoundaries(const config::BoundaryData &boundaries,
+                                        const FiniteElementSpace &nd_fespace) const
+{
+  // The incident field does not satisfy the boundary conditions of the domain, so the
+  // source leaks into the scattered field where a boundary with a condition touches the
+  // layer of elements around the total-field region, crossing its boundary or touching it
+  // from inside or outside. PEC and PMC boundaries are accepted where the incident field
+  // satisfies them, as symmetry planes along the direction of propagation: with the
+  // polarization (PEC) or the magnetic field (PMC) along the normal.
+  if (sources.empty())
   {
-    if (tb[i])
+    return;
+  }
+  const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
+  mfem::ParMesh &mesh = *fes.GetParMesh();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> checked(bdr_attr_max), pec(bdr_attr_max), pmc(bdr_attr_max);
+  checked = 0;
+  pec = 0;
+  pmc = 0;
+  for (auto attr : boundaries.attributes)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
     {
-      tdofs.Append(i);
+      checked[attr - 1] = 1;
     }
+  }
+  for (const auto &pair : boundaries.periodic.boundary_pairs)
+  {
+    for (const auto *attrs : {&pair.donor_attributes, &pair.receiver_attributes})
+    {
+      for (auto attr : *attrs)
+      {
+        if (attr > 0 && attr <= bdr_attr_max)
+        {
+          checked[attr - 1] = 0;
+        }
+      }
+    }
+  }
+  for (auto attr : boundaries.pec.attributes)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
+      pec[attr - 1] = 1;
+    }
+  }
+  for (auto attr : boundaries.pmc.attributes)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
+      pmc[attr - 1] = 1;
+    }
+  }
+  mfem::Array<int> l_c, vdofs;
+  mfem::Vector normal(3), h(3);
+  for (const auto &[idx, src] : sources)
+  {
+    GetCoupling(idx, nd_fespace, l_c);
+    std::vector<int> bad(bdr_attr_max, 0);
+    // The magnetic field of the plane wave is along khat x p.
+    h(0) = src.direction(1) * src.polarization(2) - src.direction(2) * src.polarization(1);
+    h(1) = src.direction(2) * src.polarization(0) - src.direction(0) * src.polarization(2);
+    h(2) = src.direction(0) * src.polarization(1) - src.direction(1) * src.polarization(0);
+    for (int be = 0; be < mesh.GetNBE(); be++)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr <= 0 || attr > bdr_attr_max || !checked[attr - 1])
+      {
+        continue;
+      }
+      fes.GetBdrElementVDofs(be, vdofs);
+      if (std::ranges::none_of(vdofs, [&l_c](int d) { return l_c[LocalDof(d)] != 0; }))
+      {
+        continue;
+      }
+      if (pec[attr - 1] || pmc[attr - 1])
+      {
+        auto &T = *mesh.GetBdrElementTransformation(be);
+        T.SetIntPoint(&mfem::Geometries.GetCenter(T.GetGeometryType()));
+        mfem::CalcOrtho(T.Jacobian(), normal);
+        normal /= normal.Norml2();
+        const mfem::Vector &field = pec[attr - 1] ? src.polarization : h;
+        const double along = std::abs(normal * field) / field.Norml2();
+        if (std::abs(normal * src.direction) <= 1.0e-6 && along >= 1.0 - 1.0e-6)
+        {
+          continue;
+        }
+      }
+      bad[attr - 1] = 1;
+    }
+    Mpi::GlobalMax(bdr_attr_max, bad.data(), mesh.GetComm());
+    std::vector<int> bad_attrs;
+    for (int i = 0; i < bdr_attr_max; i++)
+    {
+      if (bad[i])
+      {
+        bad_attrs.push_back(i + 1);
+      }
+    }
+    MFEM_VERIFY(bad_attrs.empty(),
+                "Plane wave " << idx << ": the boundaries with attributes "
+                              << fmt::format("{}", fmt::join(bad_attrs, ", "))
+                              << " touch the layer of elements around the total-field "
+                                 "region, where the incident field does not satisfy their "
+                                 "boundary condition: the source would leak into the "
+                                 "scattered field! The total-field region and its layer "
+                                 "must be separated from the boundaries, except for PEC "
+                                 "or PMC symmetry planes along the direction of "
+                                 "propagation which the incident field satisfies.");
   }
 }
 
@@ -546,9 +724,61 @@ void PlaneWaveOperator::SetUpBackground(const MaterialOperator &mat_op,
   }
 }
 
-void PlaneWaveOperator::CheckPeriodicity(const config::PeriodicBoundaryData &periodic,
-                                         const std::vector<double> &omega)
+namespace
 {
+
+// The lattice translation of a periodic boundary pair without an explicit translation (as
+// detected from the mesh), for an axis-aligned cell as for Floquet ports: the extent of the
+// mesh along the common normal of the faces of the pair, if they are all normal to the same
+// coordinate axis.
+std::optional<mfem::Vector> AxisAlignedTranslation(mfem::ParMesh &mesh,
+                                                   const config::PeriodicData &pair)
+{
+  int count[4] = {0, 0, 0, 0};  // Faces normal to x, y, z, and to none of them
+  mfem::Vector normal(3);
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    const int attr = mesh.GetBdrAttribute(be);
+    if (std::ranges::find(pair.donor_attributes, attr) == pair.donor_attributes.end() &&
+        std::ranges::find(pair.receiver_attributes, attr) == pair.receiver_attributes.end())
+    {
+      continue;
+    }
+    auto &T = *mesh.GetBdrElementTransformation(be);
+    T.SetIntPoint(&mfem::Geometries.GetCenter(T.GetGeometryType()));
+    mfem::CalcOrtho(T.Jacobian(), normal);
+    normal /= normal.Norml2();
+    int d = 0;
+    for (int i = 1; i < 3; i++)
+    {
+      d = (std::abs(normal(i)) > std::abs(normal(d))) ? i : d;
+    }
+    count[(std::abs(normal(d)) >= 1.0 - 1.0e-6) ? d : 3]++;
+  }
+  Mpi::GlobalSum(4, count, mesh.GetComm());
+  const int n_axes = (count[0] > 0) + (count[1] > 0) + (count[2] > 0);
+  if (count[3] > 0 || n_axes != 1)
+  {
+    return std::nullopt;
+  }
+  const int d = (count[0] > 0) ? 0 : ((count[1] > 0) ? 1 : 2);
+  mfem::Vector bbmin, bbmax;
+  mesh::GetAxisAlignedBoundingBox(
+      mesh, mesh::AttrToMarker(mesh.attributes.Max(), mesh.attributes), false, bbmin,
+      bbmax);
+  mfem::Vector t(3);
+  t = 0.0;
+  t(d) = bbmax(d) - bbmin(d);
+  return t;
+}
+
+}  // namespace
+
+void PlaneWaveOperator::CheckPeriodicity(const config::PeriodicBoundaryData &periodic,
+                                         const std::vector<double> &omega,
+                                         mfem::ParMesh &mesh)
+{
+  periodic_cell = !periodic.boundary_pairs.empty();
   if (sources.empty() || periodic.boundary_pairs.empty())
   {
     return;
@@ -561,9 +791,16 @@ void PlaneWaveOperator::CheckPeriodicity(const config::PeriodicBoundaryData &per
     const auto &T = pair.affine_transform;
     if (std::ranges::none_of(T, [](double t) { return t != 0.0; }))
     {
-      // Detected from the mesh: the translation is not available here, so check the
-      // interpolated field at each frequency instead.
-      check_interpolated = true;
+      // Detected from the mesh: the translation of an axis-aligned cell is its extent, and
+      // otherwise the interpolated field is checked at each frequency instead.
+      if (auto t = AxisAlignedTranslation(mesh, pair))
+      {
+        a.push_back(std::move(*t));
+      }
+      else
+      {
+        check_interpolated = true;
+      }
       continue;
     }
     for (int i = 0; i < 3; i++)
@@ -585,6 +822,9 @@ void PlaneWaveOperator::CheckPeriodicity(const config::PeriodicBoundaryData &per
 
   for (const auto &[idx, src] : sources)
   {
+    // The largest mismatch over the frequencies of the sweep, and its message.
+    double worst = 0.0;
+    std::string worst_msg;
     for (const double w : omega)
     {
       mfem::Vector kf(3);
@@ -627,10 +867,18 @@ void PlaneWaveOperator::CheckPeriodicity(const config::PeriodicBoundaryData &per
             src.kf_scaled ? ", with \"FloquetReferenceFrequency\""
                           : ", up to a reciprocal lattice vector");
         MFEM_VERIFY(mismatch <= 1.0e-2, msg << "!");
-        Mpi::Warning("{}; the source leaks into the scattered field at the level of this "
-                     "mismatch.",
-                     msg);
+        if (mismatch > worst)
+        {
+          worst = mismatch;
+          worst_msg = msg;
+        }
       }
+    }
+    if (worst > 0.0)
+    {
+      Mpi::Warning("{}; the source leaks into the scattered field at the level of this "
+                   "mismatch (the largest over the frequencies of the sweep).",
+                   worst_msg);
     }
   }
 }

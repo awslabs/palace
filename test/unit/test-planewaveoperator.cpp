@@ -7,11 +7,14 @@
 #include <map>
 #include <memory>
 #include <numbers>
+#include <string>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
@@ -384,12 +387,18 @@ TEST_CASE("PlaneWaveOperator Floquet envelope", "[planewaveoperator][Serial][Par
   materials[0].attributes = {1, 2};
 
   // Periodic boundary pairs, with the lattice translations or (when translate is false)
-  // without, as when they are detected from the mesh.
-  auto Pairs = [](bool translate, double rotate = 0.0)
+  // without, as when they are detected from the mesh, with the attributes of their faces
+  // (x = 0 and 1 are 5 and 3, y = 0 and 1 are 2 and 4) when attributes is true.
+  auto Pairs = [](bool translate, double rotate = 0.0, bool attributes = false)
   {
     std::vector<config::PeriodicData> pairs(2);
     for (int p = 0; p < 2; p++)
     {
+      if (attributes)
+      {
+        pairs[p].donor_attributes = {(p == 0) ? 5 : 2};
+        pairs[p].receiver_attributes = {(p == 0) ? 3 : 4};
+      }
       if (!translate)
       {
         continue;
@@ -409,7 +418,8 @@ TEST_CASE("PlaneWaveOperator Floquet envelope", "[planewaveoperator][Serial][Par
   // frequency). With translate, the lattice translations are checked at setup, otherwise
   // the interpolated field is checked at each frequency.
   auto Accepted = [&](double theta, const std::vector<double> &omega, double kf,
-                      double omega_ref = 0.0, bool translate = true, double rotate = 0.0)
+                      double omega_ref = 0.0, bool translate = true, double rotate = 0.0,
+                      bool attributes = false, bool setup_only = false)
   {
     config::PeriodicBoundaryData periodic;
     periodic.wave_vector = {kf, 0.0, 0.0};
@@ -419,12 +429,12 @@ TEST_CASE("PlaneWaveOperator Floquet envelope", "[planewaveoperator][Serial][Par
         {1, MakePlaneWave({1}, {std::sin(theta), 0.0, std::cos(theta)}, {0.0, 1.0, 0.0})}};
     PlaneWaveOperator op(plane_wave, units, mesh.Get());
     op.SetUpBackground(mat_op, nd_fespace);
-    periodic.boundary_pairs = Pairs(translate, rotate);
+    periodic.boundary_pairs = Pairs(translate, rotate, attributes);
     try
     {
-      op.CheckPeriodicity(periodic, omega);
+      op.CheckPeriodicity(periodic, omega, mesh.Get());
       ComplexVector g;
-      for (const double w : omega)
+      for (const double w : (setup_only ? std::vector<double>{} : omega))
       {
         op.GetIncidentField(1, w, nd_fespace, g);
       }
@@ -459,6 +469,62 @@ TEST_CASE("PlaneWaveOperator Floquet envelope", "[planewaveoperator][Serial][Par
 
   // Periodic boundary pairs which are not translations are rejected.
   CHECK_FALSE(Accepted(0.0, {omega}, 0.0, 0.0, true, 0.1));
+
+  // Without translations, the lattice of the axis-aligned cell is taken from the faces of
+  // the pairs and the extent of the mesh, so that the setup already rejects a mismatch;
+  // without their attributes, only the interpolated field shows it.
+  CHECK(Accepted(theta, {omega}, 1.0, 0.0, false, 0.0, true, true));
+  CHECK_FALSE(Accepted(theta, {omega}, 0.0, 0.0, false, 0.0, true, true));
+  CHECK(Accepted(theta, {omega}, 0.0, 0.0, false, 0.0, false, true));
+}
+
+TEST_CASE("PlaneWaveOperator boundaries around the total field",
+          "[planewaveoperator][Serial][Parallel]")
+{
+  // A boundary with a condition which touches the layer of elements around the total-field
+  // region or crosses its boundary is rejected, except a PEC or PMC symmetry plane along
+  // the direction of propagation, with the polarization (PEC) or the magnetic field (PMC)
+  // along its normal. A boundary inside the region which does not reach its boundary is
+  // part of the scatterer. The slab x < 1/3 (attribute 2) touches the face x = 0 (boundary
+  // attribute 5) from inside, and its boundary x = 1/3 crosses the face y = 0 (boundary
+  // attribute 2); the inner cube (attribute 1) of a 6 x 6 x 6 mesh is separated from the
+  // boundaries.
+  Units units(1.0, 1.0);
+  auto Check = [&units](int n, int tf_attr, const std::array<double, 3> &direction,
+                        const std::array<double, 3> &polarization,
+                        const nlohmann::json &bdr)
+  {
+    Mesh mesh(MakeMesh(n));
+    mfem::ND_FECollection nd_fec(1, 3);
+    FiniteElementSpace nd_fespace(mesh, &nd_fec);
+    std::map<int, config::PlaneWaveData> plane_wave = {
+        {1, MakePlaneWave({tf_attr}, direction, polarization)}};
+    PlaneWaveOperator op(plane_wave, units, mesh.Get(), false);
+    op.CheckBoundaries(config::BoundaryData(bdr), nd_fespace);
+  };
+  auto Bdr = [](const char *type, int attr)
+  {
+    nlohmann::json bdr = {{type, {{"Attributes", {attr}}}}};
+    if (std::string(type) == "Absorbing")
+    {
+      bdr[type]["Order"] = 1;
+    }
+    return bdr;
+  };
+  const nlohmann::json all = {
+      {"Absorbing", {{"Attributes", {1, 2, 3, 4, 5, 6}}, {"Order", 1}}}};
+  const std::array<double, 3> x = {1.0, 0.0, 0.0}, y = {0.0, 1.0, 0.0}, z = {0.0, 0.0, 1.0};
+  CHECK_NOTHROW(Check(6, 1, z, x, all));
+  CHECK_THROWS_WITH(Check(3, 1, z, x, all),
+                    Catch::Matchers::ContainsSubstring("touch the layer"));
+  CHECK_NOTHROW(Check(3, 2, z, x, Bdr("Absorbing", 5)));
+  CHECK_THROWS_WITH(Check(3, 2, z, x, Bdr("Absorbing", 2)),
+                    Catch::Matchers::ContainsSubstring("attributes 2"));
+  CHECK_NOTHROW(Check(3, 2, z, y, Bdr("PEC", 2)));
+  CHECK_THROWS(Check(3, 2, z, x, Bdr("PEC", 2)));
+  CHECK_THROWS(Check(3, 2, y, z, Bdr("PEC", 2)));
+  CHECK_NOTHROW(Check(3, 2, z, x, Bdr("PMC", 2)));
+  CHECK_THROWS(Check(3, 2, z, y, Bdr("PMC", 2)));
 }
 
 }  // namespace palace

@@ -29,6 +29,10 @@ private:
   std::pair<ErrorIndicator, long long int>
   Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 
+  // With a plane wave, a nonconforming refinement of part of the layer of elements around
+  // its total-field region degrades the source: the whole layer is refined instead.
+  void AddMarkedElements(Mesh &mesh, mfem::Array<int> &marked_elements) const override;
+
 public:
   using BaseSolver::BaseSolver;
 };

@@ -235,6 +235,18 @@ TEST_CASE("Config Plane Wave", "[config][Serial]")
     CHECK_THROWS_WITH(config::DomainData(repeated),
                       Catch::Matchers::ContainsSubstring("Repeated \"Index\""));
   }
+
+  SECTION("Amplitude must be positive and finite")
+  {
+    for (double amplitude : {0.0, -1.0, std::numeric_limits<double>::infinity(),
+                             std::numeric_limits<double>::quiet_NaN()})
+    {
+      json bad = domains;
+      bad["PlaneWave"][1]["Amplitude"] = amplitude;
+      CHECK_THROWS_WITH(config::DomainData(bad),
+                        Catch::Matchers::ContainsSubstring("\"Amplitude\""));
+    }
+  }
 }
 
 TEST_CASE("Config Interior Boundary Sheets", "[config][Serial]")

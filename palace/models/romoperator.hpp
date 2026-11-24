@@ -321,10 +321,11 @@ protected:
   // frequency-dependent terms of A(ω) must not couple them. Only the dofs of the layer of
   // elements around the region enter, so Vᵀ D_X g = U_Xᵀ g is evaluated from the rows of
   // U_X = D_Xᵀ V of the local layer true dofs, extended as the basis grows, and the
-  // incident field interpolated on the layer only.
+  // incident field interpolated on the layer only. These depend only on the total-field
+  // region, so the plane waves with the same one share them.
   struct PlaneWaveTerm
   {
-    int excitation_idx;
+    std::vector<int> excitations;       // Plane waves (excitation indices) of the term
     const Vector *tf_marker;            // True-dof marker of P_T (not owned)
     mfem::Array<int> tdofs, elements;   // Local layer true dofs and elements
     std::array<Eigen::MatrixXcd, 3> U;  // Rows of U_X on tdofs, for X = K, C, M

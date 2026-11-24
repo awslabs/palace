@@ -858,8 +858,19 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
   {
     const auto &plane_wave_op = space_op.GetPlaneWaveOp();
     const auto &nd_fespace = space_op.GetNDSpace();
+    auto shared = std::ranges::find_if(
+        plane_wave_terms,
+        [&](const PlaneWaveTerm &pw)
+        {
+          return plane_wave_op.GetSource(pw.excitations[0]).attr_marker == src.attr_marker;
+        });
+    if (shared != plane_wave_terms.end())
+    {
+      shared->excitations.push_back(idx);
+      continue;
+    }
     auto &pw = plane_wave_terms.emplace_back();
-    pw.excitation_idx = idx;
+    pw.excitations = {idx};
     pw.tf_marker = &plane_wave_op.GetTotalFieldMarker(idx, nd_fespace);
     plane_wave_op.GetLayer(idx, nd_fespace, pw.tdofs, pw.elements);
     ComplexVector z(r.Size()), y(r.Size());
@@ -1500,6 +1511,12 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
     ComplexVector v(r.Size()), y(r.Size());
     v.UseDevice(true);
     y.UseDevice(true);
+    mfem::Array<bool> in_layer(r.Size());
+    in_layer = false;
+    for (int i = 0; i < pw.tdofs.Size(); i++)
+    {
+      in_layer[pw.tdofs[i]] = true;
+    }
     for (std::size_t x = 0; x < X.size(); x++)
     {
       if (!X[x])
@@ -1518,6 +1535,24 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
         {
           pw.U[x](i, j) = std::complex<double>(yr[pw.tdofs[i]], yi[pw.tdofs[i]]);
         }
+        // The rows outside of the layer must vanish (see PlaneWaveOperator::GetLayer):
+        // they have no contribution at all, so their norm is computed directly (not as a
+        // difference of norms, which is only zero up to roundoff).
+        double norm2[2] = {0.0, 0.0};  // Of D_Xᵀ V[j], everywhere and outside of the layer
+        for (int i = 0; i < y.Size(); i++)
+        {
+          const double yi2 = yr[i] * yr[i] + yi[i] * yi[i];
+          norm2[0] += yi2;
+          norm2[1] += in_layer[i] ? 0.0 : yi2;
+        }
+        Mpi::GlobalSum(2, norm2, space_op.GetComm());
+        MFEM_VERIFY(norm2[1] <= 1.0e-24 * norm2[0],
+                    "Plane wave "
+                        << pw.excitations[0]
+                        << ": the coupling of the total-field region and the "
+                           "rest of the domain has rows outside of the layer of "
+                           "dofs of its excitation (relative norm "
+                        << std::sqrt(norm2[1] / norm2[0]) << ")!");
       }
     }
   }
@@ -1861,7 +1896,7 @@ void RomOperator::SolvePROM(double omega, std::optional<int> only_excitation)
     // only, summed over the processes.
     for (const auto &pw : plane_wave_terms)
     {
-      if (pw.excitation_idx != excitation_idx)
+      if (std::ranges::find(pw.excitations, excitation_idx) == pw.excitations.end())
       {
         continue;
       }
