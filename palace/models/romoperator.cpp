@@ -1658,8 +1658,9 @@ void RomOperator::SolvePROM(double omega)
   if (response_mass)
   {
     // TruncatePROM shrinks the projected response matrices with the basis; an update that
-    // adds no vector after it leaves them at that size.
-    MFEM_ASSERT(response_mass_r.rows() == Kr.rows() &&
+    // adds no vector after it leaves them at that size. Checked in release builds too: one
+    // size compare per solve.
+    MFEM_VERIFY(response_mass_r.rows() == Kr.rows() &&
                     response_mass_r.cols() == Kr.cols() &&
                     (!response_stiffness || (response_stiffness_r.rows() == Kr.rows() &&
                                              response_stiffness_r.cols() == Kr.cols())),
