@@ -186,6 +186,12 @@ public:
 
   void SetWarmStart(bool warm) override { warm_start = warm; }
 
+  // [test only] Print every Ritz value of every restart (see SlepcEPSSolverBase::Solve).
+  bool test_print_ritz = false;
+  PetscInt print_its = -1, print_pos = 0;
+  void SetTestPrintRitz(bool print) override { test_print_ritz = print; }
+  bool FirstRestartMargin() const { return q_region && warm_start; }
+
   // Get the corresponding eigenpair error.
   PetscReal GetError(int i, ErrorType type) const override;
 

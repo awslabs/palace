@@ -317,6 +317,9 @@ public:
   // tolerance. A q_min <= 0.5 disables the restriction. Not all solvers support it.
   virtual void SetMinQualityFactor(double q_min) {}
 
+  // [test only] Print every Ritz value of every restart.
+  virtual void SetTestPrintRitz(bool print) {}
+
   // Solve the eigenvalue problem. Returns the number of converged eigenvalues.
   virtual int Solve() = 0;
 

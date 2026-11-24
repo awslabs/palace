@@ -221,6 +221,49 @@ PetscErrorCode __eps_first_restart_test(EPS eps, PetscScalar eigr, PetscScalar e
   PetscFunctionReturn(PETSC_SUCCESS);
 }
 
+PetscErrorCode __eps_print_ritz_test(EPS eps, PetscScalar eigr, PetscScalar eigi,
+                                     PetscReal res, PetscReal *errest, void *ctx)
+{
+  // [test only] The convergence test of the solve (EPS_CONV_REL, or the first-restart
+  // margin with the region and a warm start), printing every Ritz value: restart, position
+  // in the sorted order, back-transformed (scaled) eigenvalue, |Q|, error estimate, and
+  // whether it is inside the region.
+  auto *solver = static_cast<SlepcEPSSolverBase *>(ctx);
+  PetscFunctionBeginUser;
+  PetscInt its;
+  PetscCall(EPSConvergedRelative(eps, eigr, eigi, res, errest, nullptr));
+  PetscCall(EPSGetIterationNumber(eps, &its));
+  if (solver->FirstRestartMargin() && its == 1)
+  {
+    *errest /= 0.1;
+  }
+  if (its != solver->print_its)
+  {
+    solver->print_its = its;
+    solver->print_pos = 0;
+  }
+  const PetscInt pos = solver->print_pos++;
+  ST st;
+  RG rg;
+  PetscBool trivial;
+  PetscInt inside = 1;
+  PetscScalar re = eigr, im = eigi;
+  PetscCall(EPSGetST(eps, &st));
+  PetscCall(STBackTransform(st, 1, &re, &im));
+  PetscCall(EPSGetRG(eps, &rg));
+  PetscCall(RGIsTrivial(rg, &trivial));
+  if (!trivial)
+  {
+    PetscCall(RGCheckInside(rg, 1, &re, &im, &inside));
+  }
+  const PetscReal q = std::abs(PetscImaginaryPart(re)) /
+                      (2.0 * std::max(std::abs(PetscRealPart(re)), PetscReal(1.0e-300)));
+  Mpi::Print(solver->GetComm(),
+             "  ritz {:d} {:d} {:+.10e}{:+.10e}i Q {:.4e} est {:.4e} in {:d}\n", its, pos,
+             PetscRealPart(re), PetscImaginaryPart(re), q, *errest, inside);
+  PetscFunctionReturn(PETSC_SUCCESS);
+}
+
 }  // namespace
 
 void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min)
@@ -687,7 +730,17 @@ int SlepcEPSSolverBase::Solve()
   PetscInt num_conv;
   Customize();
   const bool test = q_region && warm_start;
-  if (test)
+  if (test_print_ritz)
+  {
+    // [test only] Same convergence test, printing every Ritz value of every restart.
+    print_its = -1;
+    PalacePetscCall(
+        EPSSetConvergenceTestFunction(eps, __eps_print_ritz_test, (void *)this, nullptr));
+    PalacePetscCall(EPSSetTrackAll(eps, PETSC_TRUE));
+    Mpi::Print(GetComm(), " ritz solve warm {:d} region {:d}\n", warm_start ? 1 : 0,
+               q_region ? 1 : 0);
+  }
+  else if (test)
   {
     PalacePetscCall(
         EPSSetConvergenceTestFunction(eps, __eps_first_restart_test, nullptr, nullptr));

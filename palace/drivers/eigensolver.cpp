@@ -553,6 +553,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     eigen->SetMinQualityFactor(iodata.solver.eigenmode.min_q);
   }
 
+  eigen->SetTestPrintRitz(iodata.solver.eigenmode.test_print_ritz);  // [test only]
+
   // If desired, use an M-inner product for orthogonalizing the eigenvalue subspace. The
   // constructed matrix just references the real SPD part of the mass matrix (no copy is
   // performed). Boundary conditions don't need to be eliminated here.

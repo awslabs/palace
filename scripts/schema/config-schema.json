@@ -2696,6 +2696,12 @@
           "default": 0.54,
           "x-palace-advanced": true
         },
+        "TestPrintRitz": {
+          "type": "boolean",
+          "description": "[test only] Print every Ritz value of every Krylov restart with its error estimate.",
+          "default": false,
+          "x-palace-advanced": true
+        },
         "MassOrthogonal": {
           "type": "boolean",
           "description": "Orthogonalize eigenvectors with respect to the mass matrix.",

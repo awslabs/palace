@@ -1045,6 +1045,9 @@ public:
   // only, values <= 0.5 disable the restriction).
   double min_q = 0.54;
 
+  // [test only] Print every Ritz value of every restart, with its error estimate.
+  bool test_print_ritz = false;
+
   // Orthogonalize basis vectors using a mass matrix inner product, instead of generating
   // using a standard ℓ² (Euclidean) norm.
   bool mass_orthog = false;
