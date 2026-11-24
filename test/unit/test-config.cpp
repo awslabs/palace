@@ -2962,7 +2962,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     for (std::size_t i = 0; i < 2; ++i)
     {
       const auto &j_sc = config["Boundaries"]["Superconductor"][i];
-      CHECK(j_sc["TwoSided"] == false);
+      CHECK_FALSE(j_sc.at("TwoSided").get<bool>());
       CHECK(iodata2.boundaries.superconductor[i].two_sided ==
             iodata1.boundaries.superconductor[i].two_sided);
       CHECK(iodata2.boundaries.superconductor[i].Ls ==

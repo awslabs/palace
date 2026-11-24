@@ -388,11 +388,10 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries,
     }
   }
 
-  // Superconductor: JSON array of objects, C++ vector (positional). Only TwoSided has a
-  // schema default worth writing out: PenetrationDepth, Thickness and KineticInductance
-  // default to 0.0, but exactly one of the (PenetrationDepth, Thickness) and
-  // KineticInductance forms is accepted, so writing the zero of the unused form would
-  // make the resolved configuration invalid.
+  // Superconductor: JSON array of objects, C++ vector (positional); CheckConfiguration
+  // appends the films of the flux loops after the declared entries. Of the alternative
+  // (PenetrationDepth, Thickness) and KineticInductance forms, only the one given is
+  // written: a 0.0 for the other would read as a value.
   if (j_boundaries.contains("Superconductor"))
   {
     auto &j_sc = j_boundaries["Superconductor"];
