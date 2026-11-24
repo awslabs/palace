@@ -892,6 +892,11 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, const 
 template <typename VecType>
 void GradFluxErrorEstimator<VecType>::RecoverFlux(const VecType &E, VecType &D) const
 {
+  // D = ε E is recovered with the frequency-independent permittivity (the projector's
+  // static mass); IoData refuses a frequency-dependent one with the keys that recover D.
+  MFEM_VERIFY(!mat_op.HasFrequencyDependentPermittivity(),
+              "The recovered electric flux supports frequency-independent permittivities "
+              "only!");
   MFEM_VERIFY(D.Size() == rt_fespace.GetTrueVSize(),
               "Recovered flux size does not match the flux recovery space (broken across "
               "interior boundaries when there are any, see GetFluxSpace)!");

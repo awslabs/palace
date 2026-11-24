@@ -395,6 +395,46 @@ void IoData::WarnPermittivityModelDefects() const
 
 void IoData::CheckConfiguration()
 {
+  // The surface-response product (the correction, and the interface postprocessing it
+  // builds on: edge, local edge and partitioned energies, the recovered flux, ownership and
+  // regions) integrates Re{ε} on our coefficient path, recovers D = ε E with the static
+  // permittivity, and applies a library made at one static permittivity: a
+  // frequency-dependent "Permittivity" (Palace 0.20.0) is refused with every key of it,
+  // for every problem type, in this version (decision 2383, ruling Q1; v1/PARKED.md).
+  if (const auto fd_material = std::find_if(
+          domains.materials.begin(), domains.materials.end(), [](const auto &material)
+          { return material.HasFrequencyDependentPermittivity(); });
+      fd_material != domains.materials.end())
+  {
+    const auto material = std::distance(domains.materials.begin(), fd_material) + 1;
+    auto Refuse = [material](bool set, const std::string &key)
+    {
+      MFEM_VERIFY(!set, "\"" << key
+                             << "\" supports frequency-independent permittivities only in "
+                                "this version: material "
+                             << material
+                             << " has a frequency-dependent \"Permittivity\" (Palace "
+                                "0.20.0); give its constant value, or remove \""
+                             << key << "\"!");
+    };
+    Refuse(solver.surface_response_correction.has_value(), "SurfaceResponseCorrection");
+    Refuse(solver.electrostatic.response_correction.has_value(),
+           "Electrostatic.ResponseCorrection");
+    for (const auto &[idx, data] : boundaries.postpro.dielectric)
+    {
+      const std::string entry = "Dielectric[" + std::to_string(idx) + "].";
+      // SaveLocalEdgeEnergy writes the table LocalizeEdgeEnergy computes (which requires
+      // EdgeDistances): the more specific key is named first.
+      Refuse(data.localize_edge_energy, entry + "LocalizeEdgeEnergy");
+      Refuse(!data.edge_distances.empty(), entry + "EdgeDistances");
+      Refuse(data.flux_recovery, entry + "FluxRecovery");
+      Refuse(!data.ownership_data_file.empty() || data.ownership_group >= 0 ||
+                 data.ownership_slot >= 0,
+             entry + "Ownership");
+      Refuse(data.ownership_quadrature_order > 0, entry + "OwnershipQuadratureOrder");
+      Refuse(data.region.has_value(), entry + "Region");
+    }
+  }
   MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
                   boundaries.prescribed_potential.empty(),
               "\"PrescribedPotential\" boundary conditions are only supported for "

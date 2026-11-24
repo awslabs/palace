@@ -977,6 +977,87 @@ TEST_CASE("Config interface dielectric flux recovery", "[config][Serial]")
   CHECK_NOTHROW(config::InterfaceDielectricData(dielectric));
 }
 
+TEST_CASE(
+    "Config refuses a frequency-dependent permittivity with the surface-response keys",
+    "[config][Serial]")
+{
+  // Decision 2383, ruling Q1 and the plan check's MAJOR-4: the correction and the interface
+  // postprocessing keys of the surface-response product integrate Re{eps} of a static
+  // library and recover D with the static permittivity, so a frequency-dependent
+  // "Permittivity" is refused with each of them, for Maxwell and electrostatic problems,
+  // with a message naming the key; without them the material is accepted as upstream's.
+  const auto type = GENERATE("Driven", "Electrostatic");
+  CAPTURE(type);
+  const json drude = {
+      {"HighFrequencyLimit", 2.08},
+      {"Terms",
+       {{{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}}}}};
+  auto MakeConfig = [&](const json &dielectric_keys)
+  {
+    json entry = {{"Index", 1},
+                  {"Attributes", {7}},
+                  {"Type", "MA"},
+                  {"Thickness", 1.0e-9},
+                  {"Permittivity", 4.0}};
+    entry.update(dielectric_keys);
+    return json{
+        {"Problem", {{"Type", type}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}, {"Permittivity", drude}}}}}},
+        {"Boundaries", {{"Postprocessing", {{"Dielectric", {entry}}}}}},
+        {"Solver",
+         {{"Driven",
+           {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 1.0}, {"FreqStep", 1.0}}}}}}}}};
+  };
+  auto CheckRefused = [](const json &config, const std::string &key)
+  {
+    CAPTURE(key);
+    CHECK_THROWS_WITH(IoData(config, false),
+                      Catch::Matchers::ContainsSubstring(
+                          "\"" + key +
+                          "\" supports frequency-independent "
+                          "permittivities only in this version: material 1"));
+  };
+
+  // Without the keys: accepted (upstream's behaviour).
+  CHECK_NOTHROW(IoData(MakeConfig(json::object()), false));
+
+  // FluxRecovery with a Drude material (the plan check's named case), then every other key.
+  CheckRefused(MakeConfig({{"FluxRecovery", true}}), "Dielectric[1].FluxRecovery");
+  CheckRefused(MakeConfig({{"EdgeAttributes", {5}}, {"EdgeDistances", {1.0e-6}}}),
+               "Dielectric[1].EdgeDistances");
+  CheckRefused(MakeConfig({{"EdgeAttributes", {5}},
+                           {"EdgeDistances", {1.0e-6}},
+                           {"EdgeFrameNormal", {0.0, 0.0, 1.0}},
+                           {"LocalizeEdgeEnergy", true},
+                           {"SaveLocalEdgeEnergy", true}}),
+               "Dielectric[1].LocalizeEdgeEnergy");
+  CheckRefused(MakeConfig({{"OwnershipDataFile", "ownership.json"},
+                           {"OwnershipGroup", 0},
+                           {"OwnershipSlot", 0},
+                           {"OwnershipQuadratureOrder", 4}}),
+               "Dielectric[1].Ownership");
+  CheckRefused(
+      MakeConfig({{"Region", {{"BoxMin", {0.0, 0.0, 0.0}}, {"BoxMax", {1.0, 1.0, 1.0}}}}}),
+      "Dielectric[1].Region");
+
+  // The correction itself, on its own path.
+  const json correction = {{"Library", "fabrication-process.json"},
+                           {"TargetInterfaces", {1}},
+                           {"UnmatchedPolicy", "Error"}};
+  auto config = MakeConfig(json::object());
+  if (std::string(type) == "Driven")
+  {
+    config["Solver"]["SurfaceResponseCorrection"] = correction;
+    CheckRefused(config, "SurfaceResponseCorrection");
+  }
+  else
+  {
+    config["Solver"]["Electrostatic"] = {{"ResponseCorrection", correction}};
+    CheckRefused(config, "Electrostatic.ResponseCorrection");
+  }
+}
+
 TEST_CASE("Config electrostatic response matrix", "[config][Serial]")
 {
   json config = {{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
