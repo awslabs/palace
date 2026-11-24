@@ -42,7 +42,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with inverted triangular factors instead of distributed triangular solves, for a slower
     factorization. The new `config["Solver"]["Linear"]["STRUMPACKSelectiveInversion"]` is
     on by default for eigenmode and transient simulations, where a factorization serves
-    many solves. SchemaVer 6-2-0 [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    many solves. SchemaVer 6-2-0 [PR 1300](https://github.com/awslabs/palace/pull/1300).
   - The STRUMPACK coarse solvers map the elimination tree to the processes by factor size,
     the cost of a triangular solve, instead of by the operations of the factorization. On a
     model with 115M unknowns on 3072 processes a coarse solve takes 43 ms instead of 72 ms.
