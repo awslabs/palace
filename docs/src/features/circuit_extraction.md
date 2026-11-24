@@ -333,21 +333,29 @@ the screened quasistatic system
 \left(\bm{K} + \nu^2\bm{M}\right)\bm{x} = \bm{b}_p ,
 ```
 
-with $\bm{b}_p$ the drive of port $p$ and a screening angular frequency $\nu$ well below the
-sweep band, where $\nu/2\pi$ is set by
+with a screening angular frequency $\nu$ well below the sweep band, where $\nu/2\pi$ is set by
 [`"AdaptiveCircuitSynthesisAnchorFreq"`](../config/reference.md#config-solver-driven) (by
 default one tenth of the lowest sweep frequency). This is the system of the lossless DC-limit
-model of the device at the imaginary frequency $s = \nu$: the damping terms, which vanish at
-DC, are left out, and frequency-dependent boundaries and materials enter $\bm{K}$ at their static
-limit. An
-inductive `"RationalImpedance"` keeps its DC term, while wave-port, `"Conductivity"`, and
-frequency-dependent `"Permittivity"` terms vanish at DC, and the second-order `"Absorbing"` term,
-a pole at $\omega = 0$ with no static limit, is left out. As in ``\widehat{\bm{C}}``, a
+model of the device at the imaginary frequency $s = \nu$: the damping terms, which vanish at DC,
+are left out, and frequency-dependent boundaries and materials enter $\bm{K}$ at their static
+limit. An inductive `"RationalImpedance"` keeps its DC term, while wave-port, `"Conductivity"`,
+and frequency-dependent `"Permittivity"` terms vanish at DC, and the second-order `"Absorbing"`
+term, a pole at $\omega = 0$ with no static limit, is left out. As in ``\widehat{\bm{C}}``, a
 frequency-dependent material enters $\bm{M}$ with its high-frequency permittivity
-$\varepsilon_\infty$. When no port inductance is negative, the positive screening term makes
-the system positive definite, so the solve cannot resonate with modes of the device. The anchor
-adds one real column, `anchor_<idx>_re`, to the synthesized matrices and to
+$\varepsilon_\infty$. When no port inductance is negative, the positive screening term makes the
+system positive definite, so the solve cannot resonate with modes of the device. The anchor adds
+one real column, `anchor_<idx>_re`, to the synthesized matrices and to
 `rom-orthogonalization-matrix-R.csv`.
+
+The drive $\bm{b}_p = \bm{W}\bm{v}_p$ is that of the port node: the weight matrix $\bm{W}$ of
+the inner product of the basis (see [Orthogonalization](#Orthogonalization) below) applied to the
+basis vector $\bm{v}_p$ of the port. As $\bm{W}$ does not couple the port and bulk degrees of
+freedom, this is the boundary load of the port mode as the basis represents it, which is the
+drive of the port when its basis vector represents the port mode exactly, as for a rectangular
+port between PEC terminals, such as a junction port. For a port whose mode the basis represents
+only approximately, such as a coaxial port or a port with PEC along its sides, the anchor is the
+response to a current into the port node of the synthesized circuit, which a netlist connects a
+junction to, rather than to the configured incident field of the port.
 
 A port with a negative inductance, such as the linearized inductance of a Josephson junction
 biased at a phase beyond $\pi/2$, can be anchored as well. Its anchor is still its quasistatic
@@ -362,15 +370,13 @@ satisfy
 \left(\widehat{\bm{L}}^{-1} + \nu^2\widehat{\bm{C}}\right)\bm{v} = s\,\bm{e}_p
 ```
 
-for a scalar $s$ when two conditions hold. First, the drive of port $p$ projects onto its own
-port row only: the other basis vectors carry no voltage on the port. This holds for a
-rectangular port between PEC terminals, such as a junction port, but not exactly for a coaxial
-port or a port with PEC along its sides. Second, the static limit of the model is in
-$\widehat{\bm{L}}^{-1}$ alone. This does not hold when a frequency-dependent boundary puts a
+for a scalar $s$, since the basis is orthonormal in the inner product of $\bm{W}$, so that the
+drive projects onto the port row only. This holds when the static limit of the model is in
+$\widehat{\bm{L}}^{-1}$ alone, which is not the case when a frequency-dependent boundary puts a
 static term in $\widehat{\bm{L}}^{-1}$ which its auxiliary states compensate at DC, as the fit
 of a `"Conductivity"` boundary or the polynomial part of the Robin coefficient of a series RL
 `"RationalImpedance"` does, while an inductive `"RationalImpedance"` contributes its exact
-static term. The anchor is then the field of a unit current through the port in the
+static term. The anchor is then the field of a unit current into the port node in the
 inductive limit, up to the $O(\nu^2/\omega^2)$ screening term, which junction-anchored
 (bare-basis) netlist extraction can use directly instead of a pseudo-inverse of
 $\widehat{\bm{L}}^{-1}$. The static inductance of the port in the synthesized circuit is

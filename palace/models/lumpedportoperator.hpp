@@ -277,12 +277,6 @@ public:
   // domain ones unit instantaneous power (see LumpedPortData::GetExcitationPower).
   void AddExcitationBdrCoefficients(int excitation_idx, SumVectorCoefficient &fbr,
                                     SumVectorCoefficient &fbi, bool time_harmonic);
-
-  // Same drive term for a single port selected by port index, time-harmonic (unit
-  // time-averaged incident power) with unit weight, independent of any "Excitation"
-  // grouping and excitation weight in the configuration. Used for the quasistatic anchor
-  // solves in circuit synthesis.
-  void AddPortExcitationBdrCoefficient(int port_idx, SumVectorCoefficient &fb);
 };
 
 }  // namespace palace

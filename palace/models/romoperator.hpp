@@ -657,7 +657,9 @@ public:
   void AddWavePortModesForSynthesis(double omega_ref);
 
   // Solve the screened quasistatic system (K₀ + ν²M) x = b_p for each anchor-flagged
-  // lumped port and add the solution to the PROM basis (labels "anchor_<idx>"). K₀ is the
+  // lumped port p, with the drive b_p = W v_p of the port node (the inner-product weight
+  // applied to the basis vector v_p of the port, whose projection onto the basis is e_p),
+  // and add the solution to the PROM basis (labels "anchor_<idx>"). K₀ is the
   // static system stiffness, K plus the DC limit of the frequency-dependent terms
   // (SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit, ...)): nonzero only for an
   // inductive rational surface impedance, since wave-port, surface-conductivity, and

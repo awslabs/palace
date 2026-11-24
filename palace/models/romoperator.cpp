@@ -1309,13 +1309,13 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
     return;
   }
 
-  // The anchor is the screened quasistatic response (K₀ + ν²M) x(ν) = b_p, where
-  // K₀ = K + A2(0) is the static system stiffness: the ω → 0 limit of the system matrix
-  // A(ω) = K + iωC − ω²M + A2(ω) without its mass term. Damping (iωC) vanishes in this
-  // limit, and so do the frequency-dependent terms A2(ω) of wave ports, surface
-  // conductivity, and frequency-dependent permittivity (whose ε∞ is part of M); an
-  // inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a finite DC Robin
-  // term, and the second-order farfield pole at ω = 0 is omitted (see
+  // The anchor is the screened quasistatic response (K₀ + ν²M) x(ν) = b_p to the drive b_p
+  // of the port node (see below), where K₀ = K + A2(0) is the static system stiffness: the
+  // ω → 0 limit of the system matrix A(ω) = K + iωC − ω²M + A2(ω) without its mass term.
+  // Damping (iωC) vanishes in this limit, and so do the frequency-dependent terms A2(ω) of
+  // wave ports, surface conductivity, and frequency-dependent permittivity (whose ε∞ is
+  // part of M); an inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a finite
+  // DC Robin term, and the second-order farfield pole at ω = 0 is omitted (see
   // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). When no port
   // inductance is negative, the positive mass coefficient makes the (real part of the)
   // system positive definite — unlike the driven system at real frequency ω, which is
@@ -1383,8 +1383,16 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
       {
         continue;
       }
-      MFEM_VERIFY(space_op.GetLumpedPortExcitationVector(port_idx, rhs),
-                  "Lumped port " << port_idx << " has no drive for its anchor solve!");
+      // The drive of the port node: b_p = W v_p for the basis vector v_p of the port, the
+      // boundary load of the port mode as represented in the basis (W does not couple the
+      // port and bulk dofs), whose projection onto the W-orthonormal basis is e_p.
+      const long j = LabelIndex(v_node_label, fmt::format("port_{:d}_re", port_idx));
+      MFEM_VERIFY(j >= 0 && weight_op_W,
+                  "Lumped port " << port_idx
+                                 << " has no basis vector for its anchor solve!");
+      weight_op_W->Mult(V[j], rhs.Real());
+      rhs.Imag() = 0.0;
+      linalg::SetSubVector(rhs.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
       ksp->Mult(rhs, u);
       // Keep only the real part, a real field configuration: the drive is real, and so is
       // the system, except with a material loss tangent, whose complex mass matrix gives

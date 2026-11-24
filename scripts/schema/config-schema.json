@@ -1635,7 +1635,7 @@
         },
         "SynthesisAnchor": {
           "type": "boolean",
-          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)): the screened quasistatic response to the drive of this port, ``(K_0 + \\nu^2 M)\\,x = b_p`` with ``K_0`` the static (DC) system stiffness, is added to the reduced-order basis as the column `anchor_<index>_re` of the exported circuit matrices. Requires a nonzero `\"L\"` or `\"Ls\"` with `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu``, or several of them, is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
+          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)): the screened quasistatic response to a current into this port, ``(K_0 + \\nu^2 M)\\,x = b_p`` with ``K_0`` the static (DC) system stiffness, is added to the reduced-order basis as the column `anchor_<index>_re` of the exported circuit matrices. Requires a nonzero `\"L\"` or `\"Ls\"` with `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu``, or several of them, is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
           "default": false,
           "x-palace-advanced": true
         }
@@ -1739,7 +1739,7 @@
         },
         "SynthesisAnchor": {
           "type": "boolean",
-          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)): the screened quasistatic response to the drive of this port, ``(K_0 + \\nu^2 M)\\,x = b_p`` with ``K_0`` the static (DC) system stiffness, is added to the reduced-order basis as the column `anchor_<index>_re` of the exported circuit matrices. Requires a nonzero `\"L\"` or `\"Ls\"` with `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu``, or several of them, is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
+          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)): the screened quasistatic response to a current into this port, ``(K_0 + \\nu^2 M)\\,x = b_p`` with ``K_0`` the static (DC) system stiffness, is added to the reduced-order basis as the column `anchor_<index>_re` of the exported circuit matrices. Requires a nonzero `\"L\"` or `\"Ls\"` with `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu``, or several of them, is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
           "default": false,
           "x-palace-advanced": true
         }
