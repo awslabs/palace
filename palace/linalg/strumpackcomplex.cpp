@@ -96,13 +96,14 @@ void StrumpackComplexSolver::SetOperator(const ComplexOperator &op)
           strumpack::SparseSolverMPIDist<std::complex<double>, HYPRE_BigInt>>(comm,
                                                                               print > 1);
       ConfigureOptions(solver->options(), reorder, print);
-      ConfigureStrumpackCompression(solver->options(), compression, lr_tol, butterfly_l,
-                                    lossy_prec);
+      ConfigureStrumpackCompression(solver->options(), compression, lr_tol,
+                                    StrumpackLabButterflyLevels(butterfly_l), lossy_prec);
       EnableStrumpackSharedPermutation(solver->options());
       if (selective_inversion)
       {
         EnableStrumpackSelectiveInversion(solver->options());
       }
+      ApplyStrumpackLabFlags(solver->options(), butterfly_l, comm);  // LAB (si3)
       solver->set_distributed_csr_matrix(csr.n_loc, csr.I.data(), csr.J.data(),
                                          csr.V.data(), dist.data(), false);
     }

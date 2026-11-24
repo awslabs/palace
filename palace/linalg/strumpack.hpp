@@ -9,6 +9,7 @@
 #if defined(MFEM_USE_STRUMPACK)
 
 #include "linalg/operator.hpp"
+#include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
 namespace palace
@@ -64,6 +65,33 @@ inline void EnableStrumpackSelectiveInversion(strumpack::SPOptions<ScalarType> &
   {
     opts.enable_selective_inversion();
     opts.set_selective_inversion_max_cond(max_cond);
+  }
+}
+
+// LAB (si3), not for a pull request. A value of "STRUMPACKButterflyLevels" of 1000 or more
+// carries lab flags (value - 1000), and the number of butterfly levels is then 1. Flag 16:
+// STRUMPACK maps the elimination tree to the processes by factor size instead of by the
+// operations of the factorization. The flags act on the solver objects of the coarse solver
+// which can get the selective inversion (real-valued and complex arithmetic), not on the
+// mixed precision solver nor on the mode solver.
+inline int StrumpackLabFlags(int butterfly_l)
+{
+  return (butterfly_l >= 1000) ? butterfly_l - 1000 : 0;
+}
+
+inline int StrumpackLabButterflyLevels(int butterfly_l)
+{
+  return (butterfly_l >= 1000) ? 1 : butterfly_l;
+}
+
+template <typename ScalarType>
+inline void ApplyStrumpackLabFlags(strumpack::SPOptions<ScalarType> &opts, int butterfly_l,
+                                   MPI_Comm comm)
+{
+  if (StrumpackLabFlags(butterfly_l) & 16)
+  {
+    opts.set_proportional_mapping(strumpack::ProportionalMapping::FACTOR_MEMORY);
+    Mpi::Print(comm, "LAB si3: proportional mapping by factor size\n");
   }
 }
 

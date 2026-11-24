@@ -120,8 +120,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
       reorder_reuse);  // If true repeated calls use same sparsity pattern
 
   // Configure compression.
-  ConfigureStrumpackCompression(this->solver_->options(), compression, lr_tol, butterfly_l,
-                                lossy_prec);
+  ConfigureStrumpackCompression(this->solver_->options(), compression, lr_tol,
+                                StrumpackLabButterflyLevels(butterfly_l), lossy_prec);
 
   // Store the permutation once per node. The mixed precision solver computes the ordering
   // in its single precision solver, which has its own options.
@@ -143,6 +143,7 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     {
       EnableStrumpackSelectiveInversion(this->solver_->options());
     }
+    ApplyStrumpackLabFlags(this->solver_->options(), butterfly_l, comm);  // LAB (si3)
   }
   // if (mfem::Device::Allows(mfem::Backend::DEVICE_MASK))
   // {

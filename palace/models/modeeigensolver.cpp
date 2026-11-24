@@ -580,7 +580,8 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
           // factorization serves few solves, so there is no gain.
           return std::make_unique<StrumpackSolver>(
               comm, linear.sym_factorization, linear.strumpack_compression_type,
-              linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+              linear.strumpack_lr_tol,
+              StrumpackLabButterflyLevels(linear.strumpack_butterfly_l),  // LAB (si3)
               linear.strumpack_lossy_precision, reorder_reuse, false, verbose - 1);
 #endif
         }
@@ -671,7 +672,8 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
             std::make_unique<StrumpackSolver>(
                 comm, linear.sym_factorization, linear.strumpack_compression_type,
-                linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
+                linear.strumpack_lr_tol,
+                StrumpackLabButterflyLevels(linear.strumpack_butterfly_l),  // LAB (si3)
                 linear.strumpack_lossy_precision, true, false, print),
             false, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
