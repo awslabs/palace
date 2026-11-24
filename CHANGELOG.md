@@ -24,7 +24,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     complex (frequency-domain) field is the time average, one half of the Hermitian form,
     applied once by the owner of each energy, as for *Palace*'s own energies. What changes
     for a designer, by solver:
-      - eigenmode and boundary mode: every energy in J of the surface-response outputs
+      + eigenmode and boundary mode: every energy in J of the surface-response outputs
         halves, exactly when the field is unchanged, as `domain-E.csv`: `E_norm`, `E_surf`
         and `W within-R raw` of `surface-Q-corrected.csv`; `E_out`, `E_ann` and the local
         energies of `surface-Q-edge.csv` and `surface-Q-edge-local.csv`; the "(J)" columns
@@ -34,14 +34,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
         coverage, resolution, loop-fit (the loop weight and the withheld domain correction),
         magnetic and impedance-candidate tables; and the "(J)" values of `SurfaceResponse` in
         `palace.json`.
-      - port-driven (lumped or wave ports): the same energies do not change, up to the solver
+      + port-driven (lumped or wave ports): the same energies do not change, up to the solver
         tolerance (the ports deliver 1 W of time-averaged incident power, so the fields scale
         by sqrt(2) and the energies by 2 x 1/2); the linear quantities scale by sqrt(2): the
         device traces and loop scales (V), the Ls-law gate normalizations and leg values (V),
         and the conductor-consistency `Amplitude` and `Normalization`.
-      - driven by a surface current or through Floquet ports: the energies halve.
-      - electrostatic: nothing changes.
-      - the participations (`p_surf`, `p_out`, ...), Q, shares, fractions, correction
+      + driven by a surface current or through Floquet ports: the energies halve.
+      + electrostatic: nothing changes.
+      + the participations (`p_surf`, `p_out`, ...), Q, shares, fractions, correction
         factors, residuals, statuses and verdicts do not change (ratios of like energies),
         nor does the fabrication-process library (static responses, stored unchanged).
   - A frequency-dependent material `"Permittivity"` (*Palace* 0.20.0) is refused with the
