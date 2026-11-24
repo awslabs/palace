@@ -2590,14 +2590,22 @@ TEST_CASE("BoundaryModeOperator rejects multiple boundary conditions on an attri
   const auto multiple_bc = Catch::Matchers::ContainsSubstring(
       "Boundary attribute 2 should not be specified with multiple BC!");
 
-  // One boundary condition on each attribute, and the same PEC attribute given as "PEC"
-  // and "WavePortPEC".
+  // One boundary condition on each attribute, the same PEC attribute given as "PEC" and
+  // "WavePortPEC", and "WavePortPEC" overriding another boundary condition, as in the mode
+  // solve of a wave port.
   CHECK_NOTHROW(Construct(
       [&](IoData &iodata)
       {
         iodata.boundaries.auxpec.attributes = {1};
         Impedance(iodata, {2});
         iodata.boundaries.farfield.attributes = {4};
+      }));
+  CHECK_NOTHROW(Construct(
+      [&](IoData &iodata)
+      {
+        iodata.boundaries.auxpec.attributes = {2, 4};
+        Impedance(iodata, {2});
+        Conductivity(iodata, {4});
       }));
   CHECK_NOTHROW(Construct(
       [&](IoData &iodata)
@@ -2612,11 +2620,6 @@ TEST_CASE("BoundaryModeOperator rejects multiple boundary conditions on an attri
       {
         Impedance(iodata, {2});
         iodata.boundaries.farfield.attributes = {2};
-      },
-      [&](IoData &iodata)
-      {
-        iodata.boundaries.auxpec.attributes = {2, 4};
-        Impedance(iodata, {2});
       },
       [&](IoData &iodata)
       {
@@ -2637,6 +2640,40 @@ TEST_CASE("BoundaryModeOperator rejects multiple boundary conditions on an attri
   {
     CHECK_THROWS_WITH(Construct(configure_bcs), multiple_bc);
   }
+}
+
+TEST_CASE("BoundaryMode WavePortPEC overrides other boundary conditions",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // "WavePortPEC" on the sides x = 0 and x = W of the rectangle of
+  // SolveRectangleCrossSectionModes, which are also impedance and conductivity boundaries,
+  // makes them PEC, as in the mode solve of a wave port: the TE10 mode is that of the PEC
+  // rectangle.
+  const double k0 =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(rectangle_freq_ghz);
+  const double kn_exact = std::sqrt(k0 * k0 - std::numbers::pi * std::numbers::pi);
+  const auto pec = SolveRectangleCrossSectionModes(
+      [](IoData &iodata) { iodata.boundaries.pec.attributes = {1, 2, 3, 4}; },
+      kn_exact / k0, 2, 8, 1, false);
+  const auto overridden = SolveRectangleCrossSectionModes(
+      [](IoData &iodata)
+      {
+        iodata.boundaries.pec.attributes = {1, 3};
+        iodata.boundaries.auxpec.attributes = {2, 4};
+        auto &impedance = iodata.boundaries.impedance.emplace_back();
+        impedance.attributes = {2};
+        impedance.Rs = 50.0;
+        auto &conductivity = iodata.boundaries.conductivity.emplace_back();
+        conductivity.attributes = {4};
+        conductivity.sigma = 5.8e7;
+      },
+      kn_exact / k0, 2, 8, 1, false);
+  CAPTURE(kn_exact, pec.kn, overridden.kn);
+  const auto te10 = std::ranges::find_if(pec.kn, [&](auto kn)
+                                         { return HasMode({kn}, kn_exact, 1.0e-4); });
+  REQUIRE(te10 != pec.kn.end());
+  CHECK(HasMode(overridden.kn, *te10, 1.0e-10));
 }
 
 }  // namespace palace

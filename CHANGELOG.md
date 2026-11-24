@@ -30,7 +30,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1298](https://github.com/awslabs/palace/pull/1298).
   - `"BoundaryMode"` simulations stop when a boundary attribute is given more than one
     boundary condition, as the other simulation types do, instead of adding the terms of
-    each.
+    each. `"WavePortPEC"` still overrides the other boundary conditions of an attribute.
     [PR 1298](https://github.com/awslabs/palace/pull/1298).
   - Fixed the modes of `"BoundaryMode"` simulations and wave ports with an anisotropic
     permeability: for μ = diag(μx, μy, μz), the mode with its electric field along y had the

@@ -94,13 +94,23 @@ BoundaryModeOperator::ComputePoyntingPower(double omega, std::complex<double> kn
 void BoundaryModeOperator::CheckBoundaryProperties() const
 {
   // No boundary attribute may be assigned more than one of the boundary conditions of the
-  // 2D mode solve (PEC, which includes WavePortPEC, and the absorbing, finite
-  // conductivity, impedance and rational impedance boundaries of SurfaceTerms), as for the
-  // 3D operators (SpaceOperator::CheckBoundaryProperties): the terms of each would be
-  // added on the boundary.
+  // 2D mode solve (PEC, and the absorbing, finite conductivity, impedance and rational
+  // impedance boundaries of SurfaceTerms), as for the 3D operators
+  // (SpaceOperator::CheckBoundaryProperties): the terms of each would be added on the
+  // boundary. WavePortPEC is not counted: as in the mode solve of a wave port, it may
+  // override another boundary condition of the attribute, whose terms then only act on
+  // eliminated essential DOFs.
   const auto &pmesh = solve_mesh->Get();
   const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
-  const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, dbc_bcs);
+  mfem::Array<int> pec_bcs;
+  for (auto attr : iodata.boundaries.pec.attributes)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
+      pec_bcs.Append(attr);
+    }
+  }
+  const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, pec_bcs);
   const auto farfield_marker =
       mesh::AttrToMarker(bdr_attr_max, surface_terms->GetFarfieldOp().GetAttrList());
   const auto surf_sigma_marker = mesh::AttrToMarker(
