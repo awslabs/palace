@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_MESH_HPP
 #define PALACE_FEM_MESH_HPP
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
@@ -126,6 +127,12 @@ private:
                          std::optional<ceed::GeometryObjectMap<ceed::CeedGeomFactorData>>>>
       geom_data_attr;
 
+  // Element sizes of the PML blocks (by their attributes), which pml::Layer uses in place
+  // of measuring them on the mesh. Adaptive mesh refinement sets those of the initial mesh,
+  // which Update keeps, so that the automatic conductivity of the PML does not change with
+  // the refinement.
+  std::map<std::vector<int>, std::array<double, 6>> pml_element_size;
+
 public:
   template <typename... T>
   Mesh(T &&...args) : Mesh(std::make_unique<mfem::ParMesh>(std::forward<T>(args)...))
@@ -155,6 +162,18 @@ public:
 
   const auto &GetCeedAttributes() const { return loc_attr; }
   const auto &GetCeedBdrAttributes() const { return loc_bdr_attr; }
+
+  // Element sizes of a PML block with the given (sorted) attributes, if set.
+  void SetPMLElementSize(const std::vector<int> &attributes,
+                         const std::array<double, 6> &element_size)
+  {
+    pml_element_size[attributes] = element_size;
+  }
+  const std::array<double, 6> *GetPMLElementSize(const std::vector<int> &attributes) const
+  {
+    const auto it = pml_element_size.find(attributes);
+    return (it != pml_element_size.end()) ? &it->second : nullptr;
+  }
 
   // Convert a list of global attributes to the corresponding process-local libCEED ones.
   template <typename T>

@@ -635,6 +635,32 @@ TEST_CASE("MaterialOperator PML regions", "[pml][materialoperator][Serial]")
           Approx(pml::AUTO_SIGMA_FACTOR * 4.0 * fe_order / (1.0 * 0.25)));
   }
 
+  SECTION("Element size of the initial mesh through mesh refinement")
+  {
+    // The element size follows the refinement of the mesh, unless the mesh keeps the one
+    // of the initial mesh, as adaptive mesh refinement does, and so does σ_max.
+    auto mesh = MakeMesh(false);
+    const auto pml = MakePML(false);
+    auto Layer = [&]()
+    {
+      MaterialOperator mat_op(MakeMaterials(false), periodic, ProblemType::DRIVEN, *mesh,
+                              {pml});
+      const auto &layer = mat_op.GetPMLLayers().at(0);
+      return std::pair{layer.GetAttributes(), layer.GetStretch()};
+    };
+    const auto [attributes, initial] = Layer();
+    CHECK(initial.element_size[5] == Approx(0.25));
+    mesh->Get().UniformRefinement();
+    mesh->Update();
+    const auto refined = Layer().second;
+    CHECK(refined.element_size[5] == Approx(0.125));
+    CHECK(refined.sigma_max[5] == Approx(2.0 * initial.sigma_max[5]));
+    mesh->SetPMLElementSize(attributes, initial.element_size);
+    const auto kept = Layer().second;
+    CHECK(kept.element_size[5] == Approx(0.25));
+    CHECK(kept.sigma_max[5] == Approx(initial.sigma_max[5]));
+  }
+
   SECTION("Configured layer geometry")
   {
     auto mesh = MakeMesh(false);

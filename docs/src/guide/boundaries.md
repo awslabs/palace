@@ -314,8 +314,9 @@ after its refinement for the meshed and the extruded PML alike, over the element
 layer of that face only if there are any (not the edges and corners of a box), and the
 finite element order ``p``, as
 ``\sigma_\text{max} = 0.8 (n + 1) p / (\eta_0 n_r h)`` for the grading order ``n`` and
-the smallest refractive index ``n_r`` of the materials of the PML regions of the block. The
-theoretical reflection at normal incidence of a layer of ``N`` elements is then
+the smallest refractive index ``n_r`` of the materials of the PML regions of the block.
+With adaptive mesh refinement, ``h`` is measured on the initial mesh, so that the layer is
+the same in every iteration. The theoretical reflection at normal incidence of a layer of ``N`` elements is then
 ``e^{-1.6 p N}``, and ``e^{-1.6 p N \cos\theta}`` at the angle of incidence ``\theta``:
 for a given order, it is set by the number of elements across the layer, and not by its
 thickness. A guided mode reflects as a plane wave with ``\cos\theta = k_z / k``, for its

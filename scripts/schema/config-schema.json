@@ -771,7 +771,7 @@
         },
         "AllowRefinement": {
           "type": "boolean",
-          "description": "Allow adaptive mesh refinement inside of the PML regions. The error indicators of PML elements measure the discretization error of the stretched fields with the background material properties. By default, PML elements are not marked for refinement, and their error indicators do not contribute to the adaptive mesh refinement tolerance (they are included in the postprocessed error indicators).",
+          "description": "Allow adaptive mesh refinement inside of the PML regions. The error indicators of PML elements measure the discretization error of the stretched fields with the background material properties. By default, PML elements are not marked for refinement, and their error indicators do not contribute to the adaptive mesh refinement tolerance (they are included in the postprocessed error indicators), but conforming refinement can still refine PML elements next to refined ones. Either way, the automatic `\"SigmaMax\"` is computed from the element size of the initial mesh in every iteration.",
           "default": false,
           "x-palace-advanced": true
         }

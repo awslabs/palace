@@ -13,6 +13,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
+#include "models/materialoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
@@ -170,6 +171,24 @@ mfem::Array<int> MarkedElements(const Vector &e, double threshold)
   return ind;
 }
 
+// Adaptive mesh refinement keeps the PML of the initial mesh: the element sizes of the PML
+// blocks, from which their automatic conductivities are computed, are those of the initial
+// mesh in every iteration, also where the refinement splits PML elements (as conforming
+// refinement does to keep the mesh conforming, even with "AllowRefinement": false).
+void KeepPMLElementSize(const IoData &iodata, Mesh &mesh)
+{
+  if (iodata.domains.pml.empty() || (iodata.problem.type != ProblemType::DRIVEN &&
+                                     iodata.problem.type != ProblemType::EIGENMODE))
+  {
+    return;
+  }
+  const MaterialOperator mat_op(iodata, mesh);
+  for (const auto &layer : mat_op.GetPMLLayers())
+  {
+    mesh.SetPMLElementSize(layer.GetAttributes(), layer.GetStretch().element_size);
+  }
+}
+
 int MaskPMLRefinementIndicators(const IoData &iodata, const mfem::ParMesh &mesh, Vector &e)
 {
   MFEM_VERIFY(e.Size() == mesh.GetNE(),
@@ -275,6 +294,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     mesh.erase(mesh.begin(), mesh.end() - 1);
   }
   MPI_Comm comm = mesh.back()->GetComm();
+  if (use_amr)
+  {
+    KeepPMLElementSize(iodata, *mesh.back());
+  }
 
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);
@@ -335,7 +358,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Mark.
     if (masked_pml_elements > 0)
     {
-      Mpi::Print(" PML refinement disabled for {:d} element{}\n", masked_pml_elements,
+      Mpi::Print(" {:d} PML element{} not marked for refinement\n", masked_pml_elements,
                  masked_pml_elements == 1 ? "" : "s");
     }
     const auto marked_elements = [&comm, &refinement](const Vector &indicators)

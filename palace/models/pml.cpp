@@ -213,6 +213,14 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
   { return std::ranges::binary_search(attributes, attr); };
   const std::string block = fmt::format("PML block with attributes {}", attributes);
 
+  // The element sizes set on the mesh (those of the initial mesh, through adaptive mesh
+  // refinement), or measured on it.
+  auto ElementSize = [&](const Stretch &form)
+  {
+    const auto *element_size = mesh.GetPMLElementSize(attributes);
+    return element_size ? *element_size : MeasureElementSize(pmesh, attributes, form);
+  };
+
   // Smallest refractive index of the materials of the PML regions, for the default σ_max
   // (the same on all processes).
   double n_r = std::numeric_limits<double>::infinity();
@@ -285,8 +293,7 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
     form.center = ex.center;
     form.distance = ex.distance;
     form.plane = ex.plane;
-    stretch = BuildStretch(data, form.geometry, n_r,
-                           MeasureElementSize(pmesh, attributes, form), fe_order);
+    stretch = BuildStretch(data, form.geometry, n_r, ElementSize(form), fe_order);
     stretch.extruded = form.extruded;
     stretch.depth = form.depth;
     stretch.center = form.center;
@@ -344,8 +351,7 @@ Layer::Layer(const config::PMLData &data, const std::vector<int> &pml_attributes
                             "\"Direction\"!"));
   Stretch form;
   form.geometry = geometry;
-  stretch = BuildStretch(data, geometry, n_r, MeasureElementSize(pmesh, attributes, form),
-                         fe_order);
+  stretch = BuildStretch(data, geometry, n_r, ElementSize(form), fe_order);
 
   // Every element of a PML region must be in the layer (no stretch would be applied in a
   // region beyond an inactive face, or between the inner interface and the physical
