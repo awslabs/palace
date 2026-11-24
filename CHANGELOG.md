@@ -17,6 +17,23 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
+    eigenmode simulations, meshed with the model (`config["Domains"]["PML"]`) or extruded by
+    *Palace* from farfield boundaries of the mesh (`config["Boundaries"]["PML"]`), with a
+    stretch evaluated at a reference frequency or at the solve frequency. The multigrid
+    preconditioner solves the PML regions with a sparse direct solver, and `eig.csv` reports
+    the fraction of the energy of each mode in the PML regions. SchemaVer 6-1-0
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
+#### Interface Changes
+
+  - Eigenmode simulations now postprocess the converged modes, with a warning, when fewer than
+    `Solver.Eigenmode.N` modes converge within `Solver.Eigenmode.MaxIts` iterations,
+    instead of aborting without output.
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
 #### Bug Fixes
 
   - Fixed the S-parameters of Floquet ports in `port-floquet-S.csv` for the excitation of a
@@ -29,6 +46,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     below cutoff, for example in total internal reflection. Such a port only terminates the
     model and needs no incident wave: it reports the orders which carry power, if any.
     [PR 1289](https://github.com/awslabs/palace/pull/1289).
+  - With a Floquet wave vector and `Solver.Linear.PCMatShifted`, the preconditioner matrix
+    is now unsymmetric for the sparse direct solvers, which were told that it is symmetric
+    positive definite: with MUMPS, the linear solver did not converge and gave wrong
+    S-parameters. [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
+#### Documentation
+
+  - Added the microstrip patch antenna example and a PML section to the dipole antenna
+    example, and described the PML in the boundary conditions guide.
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
 ## [0.20.0] - 2026-11-23
 
