@@ -2686,17 +2686,21 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
   SECTION("Round-trip: Magnetostatic and FluxLoop defaulted fields are reproducible")
   {
-    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries",
-                    {{"FluxLoop",
-                      {{{"Index", 3},
-                        {"FilmAttributes", {8}},
-                        {"HoleAttributes", {9}},
-                        {"FluxAmounts", {1.0}},
-                        {"Direction", "+Z"}}}}}},
-                   {"Solver", json::object()}};
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"FluxLoop",
+           {{{"Index", 3},
+             {"FilmAttributes", {8}},
+             {"HoleAttributes", {9}},
+             {"FluxAmounts", {1.0}},
+             {"Direction", "+Z"}}}},
+          {"Superconductor",
+           {{{"Attributes", {10}}, {"KineticInductance", 1.0e-12}},
+            {{"Attributes", {11}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.2}}}}}},
+        {"Solver", json::object()}};
 
     IoData iodata1(config, false);
     config = IoData::ConcretizeDefaults(iodata1, config);
@@ -2713,6 +2717,27 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata2.boundaries.fluxloop.at(3).pec_lperp ==
           iodata1.boundaries.fluxloop.at(3).pec_lperp);
 
+    // TwoSided is written out for every Superconductor. The (PenetrationDepth, Thickness)
+    // and KineticInductance forms are mutually exclusive, so the keys of the unused form
+    // are not.
+    REQUIRE(config["Boundaries"]["Superconductor"].size() == 2);
+    // The film of the flux loop is registered as a further Superconductor after the two
+    // declared ones, in both IoData objects.
+    REQUIRE(iodata1.boundaries.superconductor.size() == 3);
+    REQUIRE(iodata2.boundaries.superconductor.size() == 3);
+    for (std::size_t i = 0; i < 2; ++i)
+    {
+      const auto &j_sc = config["Boundaries"]["Superconductor"][i];
+      CHECK(j_sc["TwoSided"] == false);
+      CHECK(iodata2.boundaries.superconductor[i].two_sided ==
+            iodata1.boundaries.superconductor[i].two_sided);
+      CHECK(iodata2.boundaries.superconductor[i].Ls ==
+            iodata1.boundaries.superconductor[i].Ls);
+    }
+    CHECK_FALSE(config["Boundaries"]["Superconductor"][0].contains("PenetrationDepth"));
+    CHECK_FALSE(config["Boundaries"]["Superconductor"][0].contains("Thickness"));
+    CHECK_FALSE(config["Boundaries"]["Superconductor"][1].contains("KineticInductance"));
+
     auto ms_gaps = SchemaCoverageGaps("/properties/Solver/properties/Magnetostatic",
                                       config["Solver"]["Magnetostatic"], /*skip=*/{});
     INFO("Solver.Magnetostatic missing keys: " << json(ms_gaps).dump());
@@ -2721,6 +2746,15 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                                         config["Boundaries"]["FluxLoop"][0], /*skip=*/{});
     INFO("Boundaries.FluxLoop[] missing keys: " << json(loop_gaps).dump());
     CHECK(loop_gaps.empty());
+
+    // PenetrationDepth/Thickness and KineticInductance are mutually exclusive forms with
+    // no meaningful default (0.0 reads as a value), so they are only emitted as given.
+    auto sc_gaps =
+        SchemaCoverageGaps("/properties/Boundaries/properties/Superconductor/items",
+                           config["Boundaries"]["Superconductor"][0],
+                           /*skip=*/{"PenetrationDepth", "Thickness", "KineticInductance"});
+    INFO("Boundaries.Superconductor[] missing keys: " << json(sc_gaps).dump());
+    CHECK(sc_gaps.empty());
   }
 
   SECTION("Round-trip: BoundaryMode defaulted fields are reproducible")

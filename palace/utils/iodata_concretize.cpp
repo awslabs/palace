@@ -312,6 +312,21 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries, json &j_bounda
     }
   }
 
+  // Superconductor: JSON array of objects, C++ vector (positional). Only TwoSided has a
+  // schema default worth writing out: PenetrationDepth, Thickness and KineticInductance
+  // default to 0.0, but exactly one of the (PenetrationDepth, Thickness) and
+  // KineticInductance forms is accepted, so writing the zero of the unused form would
+  // make the resolved configuration invalid.
+  if (j_boundaries.contains("Superconductor"))
+  {
+    auto &j_sc = j_boundaries["Superconductor"];
+    const std::size_t n = std::min(j_sc.size(), boundaries.superconductor.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+      Concretize(j_sc[i], "TwoSided", boundaries.superconductor[i].two_sided);
+    }
+  }
+
   // LumpedPort: JSON array with Index, C++ map keyed by Index.
   if (j_boundaries.contains("LumpedPort"))
   {
