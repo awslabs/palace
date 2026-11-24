@@ -113,6 +113,16 @@ computational domain (only one conductor surface), the
 [`"External"`](../config/reference.md#config-boundaries-conductivity) flag should be set
 for the thickness correction.
 
+The conductor can also be given a relative permittivity,
+[`"Permittivity"`](../config/reference.md#config-boundaries-conductivity), a number or the
+object form of a [frequency-dependent permittivity](model.md#Frequency-dependent-permittivity),
+which adds its displacement and polarization currents to the conductivity: the surface
+impedance is ``Z_s = i\omega\mu/k``, or ``Z_s \coth(kh/2)`` for a thickness ``h``, with
+``k^2 = i\omega\mu(\sigma + i\omega\epsilon_0\epsilon(\omega))``. With a `"MattisBardeen"`
+or `"TabulatedConductivity"` term, this models superconducting films without resolving the
+penetration depth in the mesh, when the film is wide compared to its thickness; these terms
+are supported for driven and boundary mode simulations.
+
 ## Interior boundaries
 
 Boundary conditions can also be specified on interior boundaries of the computational

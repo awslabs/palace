@@ -25,7 +25,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     with the weak-coupling BCS gap at the temperature, or tabulated `σ₁` and `σ₂`. They are
     supported for driven simulations, with wave ports, adaptive frequency sweeps, and
     circuit synthesis, and for boundary mode simulations; their stored energy is the
-    kinetic energy of the carriers. SchemaVer 6-1-0
+    kinetic energy of the carriers. Finite conductivity boundaries take an optional
+    `"Permittivity"` of the conductor, a number or a frequency-dependent permittivity, so
+    that superconducting films can be modeled by their surface impedance. SchemaVer 6-1-0
 
 #### Bug Fixes
 

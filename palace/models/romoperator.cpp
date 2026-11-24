@@ -3821,7 +3821,8 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
     return;
   }
   MPI_Comm comm = space_op.GetComm();
-  if (space_op.GetMaterialOp().HasRealFrequencyPermittivity())
+  if (space_op.GetMaterialOp().HasRealFrequencyPermittivity() ||
+      space_op.GetSurfaceTerms().GetSurfaceConductivityOp().HasRealFrequencyTerms())
   {
     // The operator of a conductor permittivity term has no value at a complex frequency.
     for (auto &est : estimates)

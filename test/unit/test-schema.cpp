@@ -1091,6 +1091,36 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     }
   }
 
+  SECTION("Conductivity boundary requires Conductivity or Permittivity")
+  {
+    auto ValidateBoundary = [](const json &boundary)
+    {
+      json config;
+      config["Problem"] = {{"Type", "Driven"}};
+      config["Model"] = {{"Mesh", "test.msh"}};
+      config["Domains"]["Materials"] = {{{"Attributes", {1}}}};
+      config["Boundaries"]["Conductivity"] = {boundary};
+      config["Solver"]["Driven"]["Samples"] = {
+          {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}};
+      return ValidateConfig(config);
+    };
+    const json mb = {{"Type", "MattisBardeen"},
+                     {"NormalConductivity", 1.605e7},
+                     {"Temperature", 4.2},
+                     {"Gap", 1.343e-3}};
+    CHECK(ValidateBoundary({{"Attributes", {1}}, {"Conductivity", 5.8e7}}).empty());
+    CHECK(ValidateBoundary(
+              {{"Attributes", {1}}, {"Conductivity", 5.8e7}, {"Permittivity", 2.0}})
+              .empty());
+    CHECK(
+        ValidateBoundary({{"Attributes", {1}},
+                          {"Permittivity", {{"HighFrequencyLimit", 1.0}, {"Terms", {mb}}}},
+                          {"Thickness", 0.2}})
+            .empty());
+    CHECK_FALSE(ValidateBoundary({{"Attributes", {1}}, {"Thickness", 0.2}}).empty());
+    CHECK_FALSE(ValidateBoundary({{"Attributes", {1}}, {"Permittivity", 0.0}}).empty());
+  }
+
   SECTION("Excitation integer minimum - LumpedPort")
   {
     json port = {{"Index", 1}, {"Attributes", {1}}, {"Excitation", -1}};

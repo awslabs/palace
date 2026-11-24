@@ -1319,8 +1319,24 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "Attributes",
-        "Conductivity"
+        "Attributes"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "Conductivity"
+          ]
+        },
+        {
+          "required": [
+            "Permittivity"
+          ],
+          "not": {
+            "required": [
+              "Conductivity"
+            ]
+          }
+        }
       ],
       "properties": {
         "Attributes": {
@@ -1329,7 +1345,19 @@
         },
         "Conductivity": {
           "type": "number",
-          "description": "Electrical conductivity for this boundary, S/m."
+          "description": "Electrical conductivity for this boundary, S/m. Required unless `\"Permittivity\"` is given."
+        },
+        "Permittivity": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0.0
+            },
+            {
+              "$ref": "#/$defs/PermittivityModel"
+            }
+          ],
+          "description": "Optional relative permittivity of the conductor, for the displacement and polarization currents in its surface impedance, `σ(ω) + iωε₀ε(ω)` in place of `σ`: a number, or the object form of a frequency-dependent permittivity, as for domain materials (for example a `\"MattisBardeen\"` term for a superconducting film)."
         },
         "Permeability": {
           "type": "number",

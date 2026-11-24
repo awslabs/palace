@@ -319,27 +319,18 @@ ModelData::ModelData(const json &model)
   refinement = ParseOptional<RefinementData>(model, "Refinement");
 }
 
-MaterialData::MaterialData(const json &domain)
+namespace
 {
-  attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
-  std::ranges::sort(attributes);
-  ParseSymmetricMatrixData(domain, "Permeability", mu_r);
-  ParseSymmetricMatrixData(domain, "LossTan", tandelta);
-  ParseSymmetricMatrixData(domain, "Conductivity", sigma);
-  lambda_L = domain.value("LondonDepth", lambda_L);
 
-  const auto permittivity = domain.find("Permittivity");
-  if (permittivity == domain.end() || !permittivity->is_object())
-  {
-    ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
-    return;
-  }
-
-  epsilon_r =
-      SymmetricMatrixData<3>(ParseFiniteNumber(*permittivity, "HighFrequencyLimit"));
-  const auto &terms = permittivity->at("Terms");
+// Parse the object form {"HighFrequencyLimit", "Terms"} of a frequency-dependent relative
+// permittivity, with angular rates in rad/s.
+void ParsePermittivityModel(const json &permittivity, double &eps_inf,
+                            std::vector<PermittivityTermData> &permittivity_terms)
+{
+  eps_inf = ParseFiniteNumber(permittivity, "HighFrequencyLimit");
+  const auto &terms = permittivity.at("Terms");
   MFEM_VERIFY(terms.is_array() && !terms.empty(),
-              "Material permittivity \"Terms\" must be a nonempty array!");
+              "Permittivity \"Terms\" must be a nonempty array!");
   constexpr double ghz_to_angular_si = 2.0 * std::numbers::pi * 1.0e9;
   for (const auto &term : terms)
   {
@@ -420,10 +411,33 @@ MaterialData::MaterialData(const json &domain)
     }
     else
     {
-      MFEM_ABORT("Unknown material permittivity term Type \"" << type << "\"!");
+      MFEM_ABORT("Unknown permittivity term Type \"" << type << "\"!");
     }
   }
-  permittivity::CheckTerms(epsilon_r.s[0], permittivity_terms);
+  permittivity::CheckTerms(eps_inf, permittivity_terms);
+}
+
+}  // namespace
+
+MaterialData::MaterialData(const json &domain)
+{
+  attributes = domain.at("Attributes").get<std::vector<int>>();  // Required
+  std::ranges::sort(attributes);
+  ParseSymmetricMatrixData(domain, "Permeability", mu_r);
+  ParseSymmetricMatrixData(domain, "LossTan", tandelta);
+  ParseSymmetricMatrixData(domain, "Conductivity", sigma);
+  lambda_L = domain.value("LondonDepth", lambda_L);
+
+  const auto permittivity = domain.find("Permittivity");
+  if (permittivity == domain.end() || !permittivity->is_object())
+  {
+    ParseSymmetricMatrixData(domain, "Permittivity", epsilon_r);
+    return;
+  }
+
+  double eps_inf;
+  ParsePermittivityModel(*permittivity, eps_inf, permittivity_terms);
+  epsilon_r = SymmetricMatrixData<3>(eps_inf);
 }
 
 DomainEnergyData::DomainEnergyData(const json &domain)
@@ -531,7 +545,22 @@ ConductivityData::ConductivityData(const json &boundary)
 {
   attributes = boundary.at("Attributes").get<std::vector<int>>();  // Required
   std::ranges::sort(attributes);
-  sigma = boundary.at("Conductivity");  // Required
+  MFEM_VERIFY(boundary.contains("Conductivity") || boundary.contains("Permittivity"),
+              "Conductivity boundary requires \"Conductivity\" or \"Permittivity\"!");
+  sigma = boundary.value("Conductivity", sigma);
+  if (const auto it = boundary.find("Permittivity"); it != boundary.end())
+  {
+    if (it->is_object())
+    {
+      ParsePermittivityModel(*it, epsilon_r, permittivity_terms);
+    }
+    else
+    {
+      epsilon_r = it->get<double>();
+      MFEM_VERIFY(std::isfinite(epsilon_r) && epsilon_r > 0.0,
+                  "Conductivity boundary \"Permittivity\" must be positive!");
+    }
+  }
   mu_r = boundary.value("Permeability", mu_r);
   h = boundary.value("Thickness", h);
   external = boundary.value("External", external);
@@ -2016,34 +2045,12 @@ inline auto LengthScaler(const Units &units)
   return [Lc0 = units.GetMeshLengthRelativeScale()](double val) { return val / Lc0; };
 }
 
-}  // namespace
-
-void Nondimensionalize(const Units &units, RefinementData &data)
+// Angular rates and times of permittivity terms to the nondimensional time unit.
+void NondimensionalizePermittivityTerms(const Units &units,
+                                        std::vector<PermittivityTermData> &terms)
 {
-  auto scale = LengthScaler(units);
-  for (auto &box : data.GetBoxes())
-  {
-    std::ranges::transform(box.bbmin, box.bbmin.begin(), scale);
-    std::ranges::transform(box.bbmax, box.bbmax.begin(), scale);
-  }
-  for (auto &sphere : data.GetSpheres())
-  {
-    sphere.r /= units.GetMeshLengthRelativeScale();
-    std::ranges::transform(sphere.center, sphere.center.begin(), scale);
-  }
-}
-
-double MaterialData::StaticPermittivity() const
-{
-  return epsilon_r.s[0] + permittivity::StaticSusceptibility(permittivity_terms);
-}
-
-void Nondimensionalize(const Units &units, MaterialData &data)
-{
-  data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
-  data.lambda_L /= units.GetMeshLengthRelativeScale();
   const double tc_seconds = 1.0e-9 * units.GetScaleFactor<Units::ValueType::TIME>();
-  for (auto &term : data.permittivity_terms)
+  for (auto &term : terms)
   {
     std::visit(
         [tc_seconds](auto &t)
@@ -2093,6 +2100,35 @@ void Nondimensionalize(const Units &units, MaterialData &data)
   }
 }
 
+}  // namespace
+
+void Nondimensionalize(const Units &units, RefinementData &data)
+{
+  auto scale = LengthScaler(units);
+  for (auto &box : data.GetBoxes())
+  {
+    std::ranges::transform(box.bbmin, box.bbmin.begin(), scale);
+    std::ranges::transform(box.bbmax, box.bbmax.begin(), scale);
+  }
+  for (auto &sphere : data.GetSpheres())
+  {
+    sphere.r /= units.GetMeshLengthRelativeScale();
+    std::ranges::transform(sphere.center, sphere.center.begin(), scale);
+  }
+}
+
+double MaterialData::StaticPermittivity() const
+{
+  return epsilon_r.s[0] + permittivity::StaticSusceptibility(permittivity_terms);
+}
+
+void Nondimensionalize(const Units &units, MaterialData &data)
+{
+  data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
+  data.lambda_L /= units.GetMeshLengthRelativeScale();
+  NondimensionalizePermittivityTerms(units, data.permittivity_terms);
+}
+
 void Nondimensionalize(const Units &units, ProbeData &data)
 {
   std::ranges::transform(data.center, data.center.begin(), LengthScaler(units));
@@ -2107,6 +2143,7 @@ void Nondimensionalize(const Units &units, ConductivityData &data)
 {
   data.sigma /= units.GetScaleFactor<Units::ValueType::CONDUCTIVITY>();
   data.h /= units.GetMeshLengthRelativeScale();
+  NondimensionalizePermittivityTerms(units, data.permittivity_terms);
 }
 
 void Nondimensionalize(const Units &units, ImpedanceData &data)

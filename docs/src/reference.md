@@ -825,7 +825,11 @@ Z_s = \frac{1}{\delta\sigma}\left(\frac{\sinh{\nu}+\sin{\nu}}{\cosh{\nu}-\cos{\n
 ```
 
 where ``\nu = h/\delta`` and ``h`` is the layer thickness. This model correctly produces the
-DC limit when ``h\ll\delta``.
+DC limit when ``h\ll\delta``. Both are ``Z_s = i\omega\mu/k`` and ``Z_s\coth(kh/2)`` with
+``k^2 = i\omega\mu\sigma``, ``k = (1+i)/\delta``, which hold for a complex conductivity as
+well: *Palace* evaluates them with
+``k^2 = i\omega\mu(\sigma + i\omega\epsilon_0\epsilon(\omega))`` when the conductor has a
+permittivity. For a London superconductor, ``Z_s = i\omega\mu\lambda_L\coth(h/2\lambda_L)``.
 
 ## Energy-participation ratios
 

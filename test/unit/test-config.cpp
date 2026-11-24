@@ -98,9 +98,11 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &pointer,
       arms.push_back(resolve_ref(arm));
     }
   }
-  else
+  // Arms of only required constraints (one of two keys) validate the object, not split it.
+  if (std::ranges::none_of(arms,
+                           [](const json &arm) { return arm.contains("properties"); }))
   {
-    arms.push_back(resolved);
+    arms = {resolved};
   }
   REQUIRE(!arms.empty());
 
@@ -1796,6 +1798,47 @@ TEST_CASE("Config material permittivity models", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config conductivity boundary permittivity", "[config][Serial]")
+{
+  // The conductor of a finite conductivity boundary can have a permittivity, a number or
+  // the object form of a frequency-dependent permittivity, in place of or added to its
+  // conductivity.
+  const json mb = {{"Type", "MattisBardeen"},
+                   {"NormalConductivity", 1.605e7},
+                   {"Temperature", 4.2},
+                   {"Gap", 1.343e-3}};
+  const config::ConductivityData film(
+      {{"Attributes", {1}},
+       {"Permittivity", {{"HighFrequencyLimit", 1.0}, {"Terms", json::array({mb})}}},
+       {"Thickness", 0.2}});
+  CHECK(film.sigma == 0.0);
+  CHECK(film.epsilon_r == 1.0);
+  REQUIRE(film.permittivity_terms.size() == 1);
+  CHECK(std::holds_alternative<config::MattisBardeenData>(film.permittivity_terms[0]));
+  const config::ConductivityData metal(
+      {{"Attributes", {1}}, {"Conductivity", 5.8e7}, {"Permittivity", 2.0}});
+  CHECK(metal.sigma == 5.8e7);
+  CHECK(metal.epsilon_r == 2.0);
+  CHECK(metal.permittivity_terms.empty());
+  CHECK_THROWS_WITH(
+      config::ConductivityData({{"Attributes", {1}}, {"Thickness", 0.2}}),
+      Catch::Matchers::ContainsSubstring("requires \"Conductivity\" or \"Permittivity\""));
+
+  // A superconducting film is rejected for eigenmode simulations.
+  json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries",
+                  {{"Conductivity",
+                    {{{"Attributes", {1}},
+                      {"Permittivity",
+                       {{"HighFrequencyLimit", 1.0}, {"Terms", json::array({mb})}}}}}}}},
+                 {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  CHECK_THROWS_WITH(IoData(config, false),
+                    Catch::Matchers::ContainsSubstring(
+                        "TabulatedConductivity permittivity terms are only supported"));
+}
+
 TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Serial]")
 {
   auto MakeConfig = []
@@ -2637,9 +2680,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     INFO("Boundaries.Absorbing missing keys: " << json(abs_gaps).dump());
     CHECK(abs_gaps.empty());
 
-    auto cond_gaps =
-        SchemaCoverageGaps("/properties/Boundaries/properties/Conductivity/items",
-                           config["Boundaries"]["Conductivity"][0]);
+    // Permittivity is opt-in: it adds the displacement and polarization currents.
+    auto cond_gaps = SchemaCoverageGaps(
+        "/properties/Boundaries/properties/Conductivity/items",
+        config["Boundaries"]["Conductivity"][0], /*skip=*/{"Permittivity"});
     INFO("Boundaries.Conductivity[] missing keys: " << json(cond_gaps).dump());
     CHECK(cond_gaps.empty());
 

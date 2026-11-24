@@ -471,6 +471,12 @@ public:
   // Electrical conductivity of the conductor [S/m].
   double sigma = 0.0;
 
+  // Optional relative permittivity of the conductor, for the displacement and polarization
+  // currents in its surface impedance: the high-frequency limit ε∞ (zero if not given) and
+  // additive frequency-dependent terms, as for MaterialData.
+  double epsilon_r = 0.0;
+  std::vector<PermittivityTermData> permittivity_terms = {};
+
   // Conductor relative permeability.
   double mu_r = 1.0;
 
