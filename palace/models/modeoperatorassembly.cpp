@@ -67,26 +67,77 @@ void AddScaledComplex(std::unique_ptr<mfem::HypreParMatrix> &real,
 }
 }  // namespace
 
+mfem::DenseMatrix GetTransverseInvPermeability(const mfem::DenseMatrix &muinv,
+                                               const mfem::Vector *normal)
+{
+  const int dim = muinv.Height();
+  mfem::DenseMatrix nu(dim);
+  if (!normal)
+  {
+    // Rᵀ μ⁻¹ R for R = [0, -1; 1, 0].
+    MFEM_VERIFY(dim == 2 && muinv.Width() == 2,
+                "The transverse inverse permeability of a 2D cross-section needs the 2 x 2 "
+                "in-plane inverse permeability!");
+    nu(0, 0) = muinv(1, 1);
+    nu(0, 1) = -muinv(1, 0);
+    nu(1, 0) = -muinv(0, 1);
+    nu(1, 1) = muinv(0, 0);
+    return nu;
+  }
+  MFEM_VERIFY(
+      dim == 3 && muinv.Width() == 3 && normal->Size() == 3,
+      "The transverse inverse permeability of a cross-section in 3D needs the 3 x 3 "
+      "inverse permeability and a normal!");
+  mfem::Vector n(*normal);
+  n /= n.Norml2();
+  mfem::DenseMatrix N(3), M(3);  // N u = n × u
+  N = 0.0;
+  N(0, 1) = -n(2);
+  N(0, 2) = n(1);
+  N(1, 0) = n(2);
+  N(1, 2) = -n(0);
+  N(2, 0) = -n(1);
+  N(2, 1) = n(0);
+  mfem::Mult(muinv, N, M);
+  mfem::MultAtB(N, M, nu);
+  return nu;
+}
+
+mfem::DenseTensor GetTransverseInvPermeability(const mfem::DenseTensor &muinv,
+                                               const mfem::Vector *normal)
+{
+  mfem::DenseTensor nu(muinv.SizeI(), muinv.SizeJ(), muinv.SizeK());
+  for (int k = 0; k < muinv.SizeK(); k++)
+  {
+    nu(k) = GetTransverseInvPermeability(muinv(k), normal);
+  }
+  return nu;
+}
+
 ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,
                                   const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op)
+                                  const MaterialOperator &mat_op,
+                                  const mfem::Vector *normal)
 {
-  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                         mat_op.GetInvPermeability(), -1.0);
+  MaterialPropertyCoefficient nu_func(
+      mat_op.GetAttributeToMaterial(),
+      GetTransverseInvPermeability(mat_op.GetInvPermeability(), normal), -1.0);
   BilinearForm atn(h1_fespace, nd_fespace);
-  atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_func);
+  atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(nu_func);
   return {ParOperator(atn.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
               .StealParallelAssemble(),
           nullptr};
 }
 
 ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
-                                  const MaterialOperator &mat_op)
+                                  const MaterialOperator &mat_op,
+                                  const mfem::Vector *normal)
 {
-  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
+  MaterialPropertyCoefficient nu_func(
+      mat_op.GetAttributeToMaterial(),
+      GetTransverseInvPermeability(mat_op.GetInvPermeability(), normal));
   BilinearForm btt(nd_fespace);
-  btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
+  btt.AddDomainIntegrator<VectorFEMassIntegrator>(nu_func);
   return {ParOperator(btt.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble(),
           nullptr};
 }
@@ -168,13 +219,13 @@ ModeOperatorModel::ModeOperatorModel(
     }
     auto Attr = assemble_nd(att);
 
-    MaterialPropertyCoefficient neg_muinv(attr_to_mat, mat_op.GetInvPermeability(), -1.0);
-    if (normal)
-    {
-      neg_muinv.NormalProjectedCoefficient(*normal);
-    }
+    // The diffusion of the out-of-plane component comes from the in-plane part of the curl,
+    // with ν, not the out-of-plane component of μ⁻¹.
+    MaterialPropertyCoefficient neg_nu(
+        attr_to_mat, GetTransverseInvPermeability(mat_op.GetInvPermeability(), normal),
+        -1.0);
     BilinearForm ann(h1_fespace);
-    ann.AddDomainIntegrator<DiffusionIntegrator>(neg_muinv);
+    ann.AddDomainIntegrator<DiffusionIntegrator>(neg_nu);
     // The H1 block is assembled with the opposite sign (negative diffusion), so the London
     // mass, like the surface inductance, enters with a negative coefficient.
     MaterialPropertyCoefficient london_n(n_attr);

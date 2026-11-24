@@ -117,11 +117,31 @@ public:
                                         std::unique_ptr<mfem::HypreParMatrix> &imag) const;
 };
 
+// The inverse permeability of the terms of the mode eigenproblem which come from the
+// in-plane part of the curl of the field, (∇×E)ₜ = -n×(∇ₜEₙ + ikₙEₜ) for the direction of
+// propagation n: ν = [n×]ᵀ μ⁻¹ [n×], μ⁻¹ rotated by 90 degrees about n, which is μ⁻¹ for a
+// permeability isotropic in the plane of the cross-section, but in general has the
+// in-plane components of μ⁻¹ across those of μ⁻¹ (for a diagonal μ, the x component of ν
+// is 1/μ_y). These are the terms of Btt, Atn, Btn and Ann, and ν is the admittance of the
+// in-plane magnetic field: n×Hₜ is ν (kₙEₜ - i∇ₜEₙ)/ω, up to the sign of the convention.
+// Without a normal, the inverse permeability is the in-plane 2 x 2 μ⁻¹ of a 2D
+// cross-section, and ν is Rᵀμ⁻¹R for the rotation R by 90 degrees, the adjugate of μ⁻¹.
+// With the normal of a cross-section in 3D (not necessarily of unit length), it is the
+// 3 x 3 μ⁻¹.
+mfem::DenseMatrix GetTransverseInvPermeability(const mfem::DenseMatrix &muinv,
+                                               const mfem::Vector *normal);
+mfem::DenseTensor GetTransverseInvPermeability(const mfem::DenseTensor &muinv,
+                                               const mfem::Vector *normal);
+
+// Frequency-independent block matrices Atn = -(ν ∇ₜu, v) and Btt = (ν u, v), with ν of
+// GetTransverseInvPermeability for the normal of the cross-section (null for a 2D mesh).
 ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,
                                   const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op);
+                                  const MaterialOperator &mat_op,
+                                  const mfem::Vector *normal);
 ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
-                                  const MaterialOperator &mat_op);
+                                  const MaterialOperator &mat_op,
+                                  const mfem::Vector *normal);
 
 ComplexHypreParMatrix BuildSystemMatrixA(
     const FiniteElementSpace &nd_fespace, const FiniteElementSpace &h1_fespace,

@@ -393,6 +393,17 @@ the port boundary, the propagation constant ``k_{n,m}`` is complex, and its imag
 part (the attenuation of the port mode) is kept in the boundary condition and in the incident field,
 so that the port is matched to its own mode.
 
+For an anisotropic permeability, the in-plane magnetic field of a mode, ``\bm{H}_t``, comes
+from the in-plane part of the curl of its electric field,
+``(\nabla\times\bm{E})_t = -\hat{\bm{n}}\times(\nabla_t E_n + ik_n\bm{E}_t)``, which is
+``\nabla_t E_n + ik_n\bm{E}_t`` rotated by 90 degrees about the port normal ``\hat{\bm{n}}``.
+The in-plane terms of the eigenvalue problem and ``\mu_r^{-1}`` in the coefficient ``\gamma``
+are therefore ``[\hat{\bm{n}}\times]^T\mu_r^{-1}[\hat{\bm{n}}\times]``, the inverse
+permeability rotated in the same way: for ``\mu_r = \text{diag}(\mu_x, \mu_y, \mu_z)`` and the
+normal ``\hat{\bm{z}}``, the field ``E_y`` has the inverse permeability ``1/\mu_x`` of its
+magnetic field ``H_x``. The same holds for the 2D eigenvalue problem of a
+[boundary mode simulation](guide/problem.md#Mode-analysis-problems).
+
 The modes of a lossy cross-section are orthogonal under the unconjugated (reciprocity) pairing
 ``\int_\Gamma (\bm{E}_m\times\bm{H}_k)\cdot\bm{n}\,dS``, and not under the power pairing
 ``\int_\Gamma (\bm{E}_m\times\bm{H}_k^*)\cdot\bm{n}\,dS`` [[11]](#References). The incident wave

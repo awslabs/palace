@@ -33,8 +33,10 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
   CheckBoundaryProperties();
 
   // Frequency-independent block matrices. Atn is the ND/H1 gradient coupling,
-  // Btn = -Atn^T, Btt is the ND mass.
-  std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(GetNDSpace(), GetH1Space(), mat_op);
+  // Btn = -Atn^T, Btt is the ND mass, all with the in-plane inverse permeability rotated
+  // by 90 degrees (mode_assembly::GetTransverseInvPermeability).
+  std::tie(Atnr, Atni) =
+      mode_assembly::AssembleAtn(GetNDSpace(), GetH1Space(), mat_op, nullptr);
   Btnr.reset(Atnr->Transpose());
   *Btnr *= -1.0;
   if (Atni)
@@ -42,7 +44,7 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
     Btni.reset(Atni->Transpose());
     *Btni *= -1.0;
   }
-  auto [bttr_tmp, btti_tmp] = mode_assembly::AssembleBtt(GetNDSpace(), mat_op);
+  auto [bttr_tmp, btti_tmp] = mode_assembly::AssembleBtt(GetNDSpace(), mat_op, nullptr);
   Bttr = std::move(bttr_tmp);
 
   Mpi::Print(" ND space: {:d} DOFs, H1 space: {:d} DOFs, total: {:d}\n",
@@ -67,13 +69,15 @@ BoundaryModeOperator::ComputePoyntingPower(double omega, std::complex<double> kn
   }
   auto comm = GetComm();
   // P = ½ ∫ (Eₜ × Hₜ*)·ẑ for E = (Eₜ + ẑEₙ) e^{-ikₙz}, whose transverse magnetic field is
-  // Hₜ = μ⁻¹ (kₙ ẑ×Eₜ + i ∇ₜEₙ×ẑ) / ω, so that
-  //   P = (1/2ω) ∫ μ⁻¹ (kₙ* |Eₜ|² + i Eₜ·∇ₜEₙ*)  (real μ).
-  // With Atn = -(μ⁻¹∇ₜφₙ, φₜ), etᴴ Atn en = -∫ μ⁻¹ Eₜ*·∇ₜEₙ, the conjugate of minus the
-  // second integral. Without the conjugate, the second term is only right when Eₙ is in
-  // quadrature with Eₜ, as for a lossless mode: for a lossy mode, it adds a spurious
-  // imaginary part to P, which inflates |P| and lowers Z_PV = Re{|V|² / 2P}.
-  // The ½ is the time-average weight of the peak phasors.
+  // Hₜ = μ⁻¹ (kₙ ẑ×Eₜ + i ∇ₜEₙ×ẑ) / ω, so that, with (ẑ×a)·μ⁻¹(ẑ×b) = a·νb,
+  //   P = (1/2ω) ∫ (kₙ* Eₜ·νEₜ* + i Eₜ·ν∇ₜEₙ*)  (real μ)
+  // for the in-plane inverse permeability rotated by 90 degrees, ν, of Btt and Atn
+  // (mode_assembly::GetTransverseInvPermeability). With Atn = -(ν∇ₜφₙ, φₜ),
+  // etᴴ Atn en = -∫ Eₜ*·ν∇ₜEₙ, the conjugate of minus the second integral. Without the
+  // conjugate, the second term is only right when Eₙ is in quadrature with Eₜ, as for a
+  // lossless mode: for a lossy mode, it adds a spurious imaginary part to P, which inflates
+  // |P| and lowers Z_PV = Re{|V|² / 2P}. The ½ is the time-average weight of the peak
+  // phasors.
   constexpr double weight = electromagnetics::TimeAverageWeight(true);
   std::complex<double> P =
       weight * std::conj(kn) / omega * linalg::Dot(comm, et, *Bttr, et);

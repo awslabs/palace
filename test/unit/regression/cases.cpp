@@ -934,6 +934,54 @@ palace::test::CustomCheck TestWavePortShortedGuide(CircularWaveguideTE11 guide,
   };
 }
 
+// TestWavePortLossless, and a reference-free check of the reflection S₁₁ = −exp(−2ikₙL) of
+// the TM01 port mode of a lossless circular waveguide of radius a and length L (in m),
+// shorted at the far end, filled with a dielectric of relative permittivity εᵣ and a
+// permeability with the relative permeability μₜ in the plane of the port: kₙ² = μₜ εᵣ
+// (ω / c₀)² − (χ₀₁ / a)², with the first zero χ₀₁ of J₀, which does not depend on the
+// permeability along the guide. S₁₁ is compared to it within atol.
+palace::test::CustomCheck TestWavePortShortedGuideTM01(double eps_r, double mu_t, double a,
+                                                       double length, double atol)
+{
+  return [eps_r, mu_t, a, length, atol](palace::Table &actual, palace::Table &reference,
+                                        const std::filesystem::path &path)
+  {
+    TestWavePortLossless(1.0e-3)(actual, reference, path);
+    const palace::Column *f = nullptr, *abs_s = nullptr, *arg_s = nullptr;
+    for (auto &column : actual)
+    {
+      if (column.header_text == "f (GHz)")
+      {
+        f = &column;
+      }
+      else if (column.header_text == "|S[1][1]| (dB)")
+      {
+        abs_s = &column;
+      }
+      else if (column.header_text == "arg(S[1][1]) (deg.)")
+      {
+        arg_s = &column;
+      }
+    }
+    REQUIRE(f != nullptr);
+    REQUIRE(abs_s != nullptr);
+    REQUIRE(arg_s != nullptr);
+    constexpr double chi01 = 2.404825557695773;
+    for (std::size_t r = 0; r < actual.n_rows(); r++)
+    {
+      const double k =
+          2.0 * std::numbers::pi * f->data[r] * 1.0e9 / palace::electromagnetics::c0_;
+      const double kn = std::sqrt(mu_t * eps_r * k * k - (chi01 / a) * (chi01 / a));
+      const std::complex<double> S = std::polar(std::pow(10.0, abs_s->data[r] / 20.0),
+                                                arg_s->data[r] * std::numbers::pi / 180.0);
+      const std::complex<double> S_exact =
+          -std::exp(std::complex<double>(0.0, -2.0 * kn * length));
+      INFO("f = " << f->data[r] << " GHz: S11 = " << S << ", analytic " << S_exact);
+      CHECK(std::abs(S - S_exact) <= atol);
+    }
+  };
+}
+
 // Reference-free check of the wave-port total-field impedance in port-Z.csv. At the wave
 // port's own excitation, Z[i][i] = |V|^2 / (2 conj(P)) must agree with the input impedance
 // implied by the reflection coefficient in the sibling port-S.csv,
@@ -2403,15 +2451,18 @@ TEST_CASE("cylinder_driven_wave_tm", "[Serial][Parallel][GPU][Regression]")
 }
 
 // TM01 (E_n != 0) driven through a uniaxial-anisotropic mu (mu_t != mu_z); mu_x = mu_y
-// keeps TM01 clean so the anisotropic mu^-1 path must still give Sum_i |S_i1|^2 = 1.
-// Rotated mu is covered by the WavePortData reconstruction unit test.
+// keeps TM01 clean so the anisotropic mu^-1 path must still give Sum_i |S_i1|^2 = 1, and
+// the port mode has the propagation constant of mu_t (about 90.2 1/m), for which the
+// short at the far end gives S11 = -exp(-2 i kn L), within 4e-3 here (0.2 degrees). Rotated
+// mu is covered by the WavePortData reconstruction unit test.
 TEST_CASE("cylinder_driven_wave_tm_aniso", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-3;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
-  opts.custom_checks["port-S.csv"] = TestWavePortLossless(1.0e-3);
+  opts.custom_checks["port-S.csv"] =
+      TestWavePortShortedGuideTM01(2.08, 1.5, 2.74e-2, 5.48e-2, 1.0e-2);
   palace::test::RunRegressionCase("cylinder", "driven_wave_tm_aniso.json",
                                   "driven_wave_tm_aniso", opts);
 }

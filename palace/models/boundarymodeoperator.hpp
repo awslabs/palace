@@ -63,10 +63,12 @@ public:
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
   SurfaceTerms &GetSurfaceTerms() { return *surface_terms; }
 
-  // Frequency-independent block matrices, assembled in the constructor.
-  //   Atn = -(mu^{-1} grad_t u, v)           (ND / H1 gradient coupling)
+  // Frequency-independent block matrices, assembled in the constructor, with the in-plane
+  // inverse permeability rotated by 90 degrees, nu (see
+  // mode_assembly::GetTransverseInvPermeability).
+  //   Atn = -(nu grad_t u, v)                 (ND / H1 gradient coupling)
   //   Btn = -Atn^T                            (negative transpose coupling)
-  //   Btt = (mu^{-1} u, v)                    (ND mass, positive)
+  //   Btt = (nu u, v)                         (ND mass, positive)
   const mfem::HypreParMatrix *GetAtnr() const { return Atnr.get(); }
   const mfem::HypreParMatrix *GetAtni() const { return Atni.get(); }
   const mfem::HypreParMatrix *GetBtnr() const { return Btnr.get(); }

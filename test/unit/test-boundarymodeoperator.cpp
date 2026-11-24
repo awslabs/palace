@@ -336,10 +336,11 @@ public:
     mat_op = std::make_unique<MaterialOperator>(iodata, *mesh);
     surface_terms = std::make_unique<SurfaceTerms>(iodata, *mat_op, mesh->Get());
 
-    std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(*nd_fespace, *h1_fespace, *mat_op);
+    std::tie(Atnr, Atni) =
+        mode_assembly::AssembleAtn(*nd_fespace, *h1_fespace, *mat_op, nullptr);
     Btnr.reset(Atnr->Transpose());
     *Btnr *= -1.0;
-    Bttr = std::get<0>(mode_assembly::AssembleBtt(*nd_fespace, *mat_op));
+    Bttr = std::get<0>(mode_assembly::AssembleBtt(*nd_fespace, *mat_op, nullptr));
 
     // Essential (PEC) true DOFs of the block system: ND, then H1 offset by the ND size.
     {
@@ -666,26 +667,26 @@ SolveParallelPlateMode(double t, double d, double freq_ghz, double n_target,
           ksp->NumTotalMultIterations()};
 }
 
-// The two modes nearest to the shift target kₙ = omega n_target of the cross-section of
-// test::ExactAbsorbingParallelPlateKn for W = 1 m and H = 0.5 m, at 0.5 GHz (the free-space
-// wavenumber k = omega, in 1/m), with a mesh of n x n / 2 quadrilaterals of the given
-// order, solved through the 2D BoundaryModeOperator path of the BoundaryMode driver with a
-// sparse direct or p-multigrid (mg_max_levels > 1) preconditioner: their propagation
-// constants, and the numbers of linear solves and iterations. MakeCartesian2D boundary
-// attributes: bottom = 1, right = 2, top = 3, left = 4.
-constexpr double absorbing_parallel_plate_freq_ghz = 0.5;
-struct AbsorbingParallelPlateModes
+// The two modes nearest to the shift target kₙ = omega n_target of the cross-section
+// 0 < x < W, 0 < y < H, W = 1 m and H = 0.5 m, of a guide filled with one material (vacuum,
+// or as configured) at 0.5 GHz (the free-space wavenumber k = omega, in 1/m), with the
+// boundary conditions configured, on a mesh of n x n / 2 quadrilaterals of the given order,
+// solved through the 2D BoundaryModeOperator path of the BoundaryMode driver with a sparse
+// direct or p-multigrid (mg_max_levels > 1) preconditioner: their propagation constants,
+// and the numbers of linear solves and iterations. MakeCartesian2D boundary attributes:
+// bottom = 1, right = 2, top = 3, left = 4.
+constexpr double rectangle_freq_ghz = 0.5;
+struct RectangleModes
 {
   std::vector<std::complex<double>> kn;
   int num_solves, num_iterations;
 };
-AbsorbingParallelPlateModes SolveAbsorbingParallelPlateModes(int abc_order, double n_target,
-                                                             int order, int n,
-                                                             int mg_max_levels,
-                                                             bool pc_mat_real)
+RectangleModes
+SolveRectangleCrossSectionModes(const std::function<void(IoData &)> &configure,
+                                double n_target, int order, int n, int mg_max_levels,
+                                bool pc_mat_real)
 {
-  constexpr double W = 1.0, H = 0.5, freq_ghz = absorbing_parallel_plate_freq_ghz,
-                   tol = 1.0e-10;
+  constexpr double W = 1.0, H = 0.5, freq_ghz = rectangle_freq_ghz, tol = 1.0e-10;
   constexpr int num_modes = 2;
   MPI_Comm comm = Mpi::World();
   IoData iodata(Units(1.0, 1.0));
@@ -693,9 +694,7 @@ AbsorbingParallelPlateModes SolveAbsorbingParallelPlateModes(int abc_order, doub
   iodata.model.L0 = 1.0;
   iodata.model.Lc = 1.0;
   iodata.domains.materials.emplace_back().attributes = {1};
-  iodata.boundaries.pec.attributes = {1, 3};
-  iodata.boundaries.farfield.attributes = {2, 4};
-  iodata.boundaries.farfield.order = abc_order;
+  configure(iodata);
   iodata.solver.order = order;
   iodata.solver.boundary_mode.freq = freq_ghz;
   iodata.solver.boundary_mode.n = num_modes;
@@ -731,7 +730,7 @@ AbsorbingParallelPlateModes SolveAbsorbingParallelPlateModes(int abc_order, doub
   const double kn_target = omega * n_target;
   auto result = mode_solver.Solve(omega, -kn_target * kn_target);
   REQUIRE(result.num_converged >= num_modes);
-  AbsorbingParallelPlateModes modes;
+  RectangleModes modes;
   for (int i = 0; i < num_modes; i++)
   {
     modes.kn.push_back(mode_solver.GetPropagationConstant(i));
@@ -741,6 +740,18 @@ AbsorbingParallelPlateModes SolveAbsorbingParallelPlateModes(int abc_order, doub
   modes.num_solves = ksp->NumTotalMult();
   modes.num_iterations = ksp->NumTotalMultIterations();
   return modes;
+}
+
+// PEC plates at y = 0 and y = H and absorbing boundaries of the given order at x = 0 and
+// x = W (the cross-section of test::ExactAbsorbingParallelPlateKn).
+std::function<void(IoData &)> AbsorbingParallelPlate(int abc_order)
+{
+  return [abc_order](IoData &iodata)
+  {
+    iodata.boundaries.pec.attributes = {1, 3};
+    iodata.boundaries.farfield.attributes = {2, 4};
+    iodata.boundaries.farfield.order = abc_order;
+  };
 }
 
 // Whether a propagation constant is within the relative tolerance of the expected one.
@@ -1295,9 +1306,9 @@ TEST_CASE("ModeEigenSolver absorbing boundaries of first and second order",
   // first-order condition. The two conditions give modes 1e-2 apart, and the
   // discretization error of these modes is less than 1e-7.
   const int abc_order = GENERATE(1, 2);
-  const double omega = 2.0 * std::numbers::pi *
-                       Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(
-                           absorbing_parallel_plate_freq_ghz);
+  const double omega =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(rectangle_freq_ghz);
   for (int m : {0, 1})
   {
     // The target is the real part of the exact mode.
@@ -1305,8 +1316,8 @@ TEST_CASE("ModeEigenSolver absorbing boundaries of first and second order",
         test::ExactAbsorbingParallelPlateKn(1.0, 0.5, omega, m, abc_order);
     const auto kn_other =
         test::ExactAbsorbingParallelPlateKn(1.0, 0.5, omega, m, 3 - abc_order);
-    const auto modes = SolveAbsorbingParallelPlateModes(abc_order, kn_exact.real() / omega,
-                                                        3, 16, 1, false);
+    const auto modes = SolveRectangleCrossSectionModes(
+        AbsorbingParallelPlate(abc_order), kn_exact.real() / omega, 3, 16, 1, false);
     CAPTURE(abc_order, m, omega, modes.kn, kn_exact, kn_other);
     CHECK(HasMode(modes.kn, kn_exact, 1.0e-6));
     CHECK(std::abs(kn_other - kn_exact) > 1.0e-2 * std::abs(kn_exact));
@@ -1326,21 +1337,77 @@ TEST_CASE("ModeEigenSolver multigrid preconditioners of second-order absorbing b
   // previous test with m = 1 on a coarser mesh, compared to the solution with the sparse
   // direct preconditioner (here 70 to 80 iterations per solve, and 60 to 70 with
   // first-order absorbing boundaries).
-  const double omega = 2.0 * std::numbers::pi *
-                       Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(
-                           absorbing_parallel_plate_freq_ghz);
+  const double omega =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(rectangle_freq_ghz);
   const double n_target =
       test::ExactAbsorbingParallelPlateKn(1.0, 0.5, omega, 1, 2).real() / omega;
-  const auto ref = SolveAbsorbingParallelPlateModes(2, n_target, 2, 8, 1, false);
+  const auto ref =
+      SolveRectangleCrossSectionModes(AbsorbingParallelPlate(2), n_target, 2, 8, 1, false);
   for (bool pc_mat_real : {false, true})
   {
-    const auto modes = SolveAbsorbingParallelPlateModes(2, n_target, 2, 8, 2, pc_mat_real);
+    const auto modes = SolveRectangleCrossSectionModes(AbsorbingParallelPlate(2), n_target,
+                                                       2, 8, 2, pc_mat_real);
     CAPTURE(pc_mat_real, modes.kn, ref.kn, modes.num_solves, modes.num_iterations);
     REQUIRE(modes.num_solves > 0);
     CHECK(modes.num_iterations <= 100 * modes.num_solves);
     for (const auto &kn : ref.kn)
     {
       CHECK(HasMode(modes.kn, kn, 1.0e-8));
+    }
+  }
+}
+
+TEST_CASE("ModeEigenSolver anisotropic permeability",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The in-plane terms of the mode eigenproblem come from the in-plane magnetic field, so
+  // they have the in-plane inverse permeability rotated by 90 degrees. In the PEC rectangle
+  // of SolveRectangleCrossSectionModes with μ = diag(μx, μy, μz), the mode with E along y,
+  // varying along x, has kₙ² = μx (k₀² - (π/W)²/μz), and that with E along x, varying along
+  // y, kₙ² = μy (k₀² - (π/H)²/μz). With the uniaxial μ = diag(μₜ, μₜ, μz), the TM11 mode
+  // has kₙ² = μₜ k₀² - (π/W)² - (π/H)², independent of μz. Without the rotation, the modes
+  // of μ = diag(2, 3, 1) are those of diag(3, 2, 1), 22% and 18% away. The p-multigrid
+  // preconditioner, with the rotated inverse permeability as well, gives the modes of the
+  // sparse direct one (here in at most 86 iterations per solve, and 123 without the
+  // rotation in the preconditioner).
+  constexpr double W = 1.0, H = 0.5;
+  const double k0 =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(rectangle_freq_ghz);
+  struct Mode
+  {
+    std::array<double, 3> mu;
+    double kn2;
+  };
+  const Mode modes[] = {
+      {{2.0, 3.0, 1.0}, 2.0 * (k0 * k0 - std::pow(std::numbers::pi / W, 2))},
+      {{2.0, 3.0, 1.0}, 3.0 * (k0 * k0 - std::pow(std::numbers::pi / H, 2))},
+      {{1.5, 1.5, 1.0},
+       1.5 * k0 * k0 - std::pow(std::numbers::pi / W, 2) -
+           std::pow(std::numbers::pi / H, 2)}};
+  for (const auto &mode : modes)
+  {
+    auto configure = [&](IoData &iodata)
+    {
+      iodata.domains.materials[0].mu_r.s = mode.mu;
+      iodata.boundaries.pec.attributes = {1, 2, 3, 4};
+    };
+    const double kn_exact = std::sqrt(mode.kn2);
+    const auto direct =
+        SolveRectangleCrossSectionModes(configure, kn_exact / k0, 3, 16, 1, false);
+    CAPTURE(mode.mu, kn_exact, direct.kn);
+    CHECK(HasMode(direct.kn, kn_exact, 1.0e-6));
+
+    const auto coarse =
+        SolveRectangleCrossSectionModes(configure, kn_exact / k0, 2, 8, 1, false);
+    const auto multigrid =
+        SolveRectangleCrossSectionModes(configure, kn_exact / k0, 2, 8, 2, false);
+    CAPTURE(coarse.kn, multigrid.kn, multigrid.num_solves, multigrid.num_iterations);
+    CHECK(multigrid.num_iterations <= 100 * multigrid.num_solves);
+    for (const auto &kn : coarse.kn)
+    {
+      CHECK(HasMode(multigrid.kn, kn, 1.0e-8));
     }
   }
 }
