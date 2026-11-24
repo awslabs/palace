@@ -28,7 +28,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     recommended, remove most of the growth of the number of linear solver iterations with
     the aspect ratio of the elements. The blocks are applied on the host and are not
     available with `"Device": "GPU"`. SchemaVer 6-1-0
-    [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
+    [PR 1301](https://github.com/awslabs/palace/pull/1301).
 
 ## [0.20.0] - 2026-11-23
 
