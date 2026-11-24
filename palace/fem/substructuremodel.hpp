@@ -104,8 +104,9 @@ constexpr long long TriangleColumnStart(long long n, long long b)
 std::array<long long, 2> TriangleEntry(long long n, long long e);
 
 // The share [e0, e1) of this process of the entries of the triangle of an n x n matrix, an
-// equal one of the processes of comm.
+// equal one of the processes of comm, and the sizes of the shares of all of them.
 std::array<long long, 2> TriangleShare(long long n, MPI_Comm comm);
+std::vector<long long> TriangleShareSizes(long long n, MPI_Comm comm);
 
 // The triangle of an n x n matrix, each process of comm holding its share of it
 // (TriangleShare), added onto a target layout through a map of its DOFs: read(e, m, x)
@@ -130,6 +131,15 @@ void RedistributeTriangle(MPI_Comm comm, long long n,
 template <typename T>
 void ToRoot(MPI_Comm comm, const std::vector<T> &x, const std::vector<long long> &size,
             std::size_t chunk, const std::function<void(const T *, std::size_t)> &write);
+
+// From rank 0: the values of every process (size[q] of process q) in rank order, which
+// read(e, m, x) gives on rank 0, filling x with the m values from e of all of them, in
+// chunks of at most chunk values, so that it holds one chunk at a time. Returns those of
+// this process. Collective.
+template <typename T>
+std::vector<T> FromRoot(MPI_Comm comm, const std::vector<long long> &size,
+                        std::size_t chunk,
+                        const std::function<void(long long, long long, T *)> &read);
 
 // The records of the interface every substructuring model holds: the signatures of its DOFs
 // (n x width, row-major, see TrueDofSignatures) and the characteristic length of the run

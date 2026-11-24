@@ -129,9 +129,8 @@ struct DrivenSubstructureModel
     std::vector<std::complex<double>> S, g, h, c;
   };
 
-  // A record as one vector, in the order of the file (S by its lower triangle), and the
-  // sizes of its parts.
-  std::vector<std::complex<double>> Flatten(const Record &r) const;
+  // The sizes of the parts of a record, in the order of the file: S by the columns of its
+  // lower triangle, then g, h and c.
   std::array<std::size_t, 4> PartSizes() const;
 
   // The records of the model in its file (see substructuring::ModelFile), written and read
@@ -166,15 +165,20 @@ struct DrivenSubstructureModel
   static bool SameEnvironment(const std::vector<double> &a, const std::vector<double> &b);
   static bool SameSource(const double *a, const double *b, double tol = 1.0e-10);
 
-  // The passivity of a condensed environment S_E (n x n, complex symmetric, by its lower
-  // triangle in the order of a record): the least eigenvalue of Im S_E, which is positive
-  // semidefinite for a passive environment (Im u_Γ^H S_E u_Γ is the power it absorbs),
-  // relative to ‖S_E‖_F. A negative value is a violation.
-  static double Passivity(const std::complex<double> *lower, int n);
+  // The passivity of a condensed environment S_E (n x n, complex symmetric), from the share
+  // of each process of the communicator of the grid of its lower triangle (in the order of
+  // a record, see substructuring::TriangleShare): the least eigenvalue of Im S_E, which is
+  // positive semidefinite for a passive environment (Im u_Γ^H S_E u_Γ is the power it
+  // absorbs), relative to ‖S_E‖_F, computed on the grid. A negative value is a violation.
+  // Collective.
+  static double Passivity(const std::complex<double> *share, int n,
+                          const BlockCyclicGrid &grid);
 
   // Whether S_E is passive to tol: Im S_E + tol ‖S_E‖_F I is positive definite, that is,
-  // Passivity >= -tol (up to rounding), tested by a Cholesky factorization.
-  static bool Passive(const std::complex<double> *lower, int n, double tol);
+  // Passivity >= -tol (up to rounding), tested by a Cholesky factorization on the grid.
+  // Collective.
+  static bool Passive(const std::complex<double> *share, int n, double tol,
+                      const BlockCyclicGrid &grid);
 
 private:
   std::size_t RecordBytes() const;
@@ -404,11 +408,6 @@ private:
 std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
                                   std::map<int, std::vector<char>> &port_dofs,
                                   std::vector<int> &port_attributes);
-
-// The full S_E (n x n, row-major) of a record's lower triangle (by columns), mapped to the
-// current interface as M^-T S_E M^-1 with map, if given (SignatureMap::DualMatrix).
-std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, int n,
-                                            const SignatureMap *map);
 
 // The index of x in y (relative tolerance tol), -1 if none.
 int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10);

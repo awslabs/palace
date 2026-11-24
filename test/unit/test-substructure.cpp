@@ -842,12 +842,14 @@ TEST_CASE("Saved lower triangles are redistributed onto rows and process grids",
 TEST_CASE("The parts of a model record pass through rank 0 in chunks",
           "[substructure][Serial][Parallel]")
 {
-  // Rank q holds 3 q + 2 doubles, but rank 1 none; a chunk of 1 or 4 doubles holds part of
-  // those of a rank, the largest one all of them.
+  // Rank q holds 3 q + 2 values, but rank 1 none, or every rank some; a chunk of 1 or 4
+  // values holds part of those of a rank, the largest one all of them. They pass to rank 0
+  // (ToRoot), and from it (FromRoot), which reads them in order.
   MPI_Comm comm = Mpi::World();
   const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
   const std::size_t chunk = GENERATE(1, 4, 1000);
-  auto count = [](int q) { return (q == 1) ? 0 : 3 * q + 2; };
+  const int empty = GENERATE(1, -1);
+  auto count = [empty](int q) { return (q == empty) ? 0 : 3 * q + 2; };
   auto value = [](int q, int i) { return 100.0 * q + i; };
   std::vector<long long> size(nranks);
   for (int q = 0; q < nranks; q++)
@@ -876,6 +878,37 @@ TEST_CASE("The parts of a model record pass through rank 0 in chunks",
   }
   CHECK(got == expected);
   CHECK(most <= chunk);
+
+  std::vector<long long> start(nranks + 1, 0);
+  for (int q = 0; q < nranks; q++)
+  {
+    start[q + 1] = start[q] + size[q];
+  }
+  auto complex_value = [&](int q, int i) { return std::complex<double>(value(q, i), -q); };
+  long long next = 0;
+  most = 0;
+  const auto mine = substructuring::FromRoot<std::complex<double>>(
+      comm, size, chunk,
+      [&](long long e, long long m, std::complex<double> *y)
+      {
+        CHECK(e == next);
+        next += m;
+        most = std::max(most, static_cast<std::size_t>(m));
+        for (long long k = 0; k < m; k++)
+        {
+          const int q = static_cast<int>(
+              std::upper_bound(start.begin(), start.end(), e + k) - start.begin() - 1);
+          y[k] = complex_value(q, static_cast<int>(e + k - start[q]));
+        }
+      });
+  std::vector<std::complex<double>> own(count(rank));
+  for (int i = 0; i < count(rank); i++)
+  {
+    own[i] = complex_value(rank, i);
+  }
+  CHECK(mine == own);
+  CHECK(most <= chunk);
+  CHECK(next == (Mpi::Root(comm) ? start[nranks] : 0));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "Records of a substructuring model file",

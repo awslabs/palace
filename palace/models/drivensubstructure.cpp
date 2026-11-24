@@ -30,18 +30,6 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
-extern "C"
-{
-  void zgetrf_(const int *, const int *, std::complex<double> *, const int *, int *, int *);
-  void zgetrs_(const char *, const int *, const int *, const std::complex<double> *,
-               const int *, const int *, std::complex<double> *, const int *, int *);
-  void dpotrf_(const char *, const int *, double *, const int *, int *);
-  void dsyevr_(const char *, const char *, const char *, const int *, double *, const int *,
-               const double *, const double *, const int *, const int *, const double *,
-               int *, double *, double *, const int *, int *, double *, const int *, int *,
-               const int *, int *);
-}
-
 namespace palace
 {
 
@@ -1327,61 +1315,66 @@ std::vector<std::complex<double>> BarycentricInterpolant::Evaluate(double omega)
   return x;
 }
 
-double DrivenSubstructureModel::Passivity(const std::complex<double> *lower, int n)
+namespace
 {
-  std::vector<double> A(static_cast<std::size_t>(n) * n, 0.0);
+
+// Im S_E on a grid, from the share of each process of the lower triangle of S_E, and
+// ‖S_E‖_F. Collective.
+std::pair<std::vector<double>, double> ImaginaryPart(const std::complex<double> *share,
+                                                     int n, const BlockCyclicGrid &grid)
+{
+  MPI_Comm comm = grid.GetComm();
+  const auto range = substructuring::TriangleShare(n, comm);
+  const long long e0 = range[0];
   double f = 0.0;
-  std::size_t q = 0;
-  for (int j = 0; j < n; j++)
+  auto [a, b] = substructuring::TriangleEntry(n, e0);
+  for (long long e = e0; e < range[1]; e++)
   {
-    for (int i = j; i < n; i++, q++)
+    f += ((a == b) ? 1.0 : 2.0) * std::norm(share[e - e0]);
+    if (++a == n)
     {
-      A[static_cast<std::size_t>(j) * n + i] = lower[q].imag();
-      f += ((i == j) ? 1.0 : 2.0) * std::norm(lower[q]);
+      a = ++b;
     }
   }
-  // The least eigenvalue only (LAPACK dsyevr). W needs n entries even for one eigenvalue
-  // (dstebz stores the whole bracket first).
-  const int one = 1;
-  const double zero = 0.0;
-  int found = 0, info = 0, lwork = -1, liwork = -1, iwq = 0;
-  double wq = 0.0, z = 0.0;
-  std::vector<double> w(n);
-  std::vector<int> isuppz(2);
-  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found,
-          w.data(), &z, &one, isuppz.data(), &wq, &lwork, &iwq, &liwork, &info);
-  lwork = static_cast<int>(wq);
-  liwork = iwq;
-  std::vector<double> work(lwork);
-  std::vector<int> iwork(liwork);
-  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found,
-          w.data(), &z, &one, isuppz.data(), work.data(), &lwork, iwork.data(), &liwork,
-          &info);
-  MFEM_VERIFY(info == 0 && found == 1,
-              "Eigenvalue of Im S_E failed: info = " << info << "!");
-  return (f > 0.0) ? w[0] / std::sqrt(f) : 0.0;
+  Mpi::GlobalSum(1, &f, comm);
+  std::vector<double> A(grid.LocalSize(), 0.0);
+  substructuring::RedistributeTriangle<double>(
+      comm, n,
+      [share, e0](long long e, long long m, double *x)
+      {
+        for (long long k = 0; k < m; k++)
+        {
+          x[k] = share[e - e0 + k].imag();
+        }
+      },
+      {}, [&grid](int g, int h) { return grid.Owner(g, h); },
+      [&grid](int g, int h) { return grid.LocalIndex(g, h); }, A);
+  return {std::move(A), std::sqrt(f)};
 }
 
-bool DrivenSubstructureModel::Passive(const std::complex<double> *lower, int n, double tol)
+}  // namespace
+
+double DrivenSubstructureModel::Passivity(const std::complex<double> *share, int n,
+                                          const BlockCyclicGrid &grid)
 {
-  std::vector<double> A(static_cast<std::size_t>(n) * n, 0.0);
-  double f = 0.0;
-  std::size_t q = 0;
-  for (int j = 0; j < n; j++)
+  auto [A, f] = ImaginaryPart(share, n, grid);
+  const double lambda = LeastEigenvalue(grid, A);
+  return (f > 0.0) ? lambda / f : 0.0;
+}
+
+bool DrivenSubstructureModel::Passive(const std::complex<double> *share, int n, double tol,
+                                      const BlockCyclicGrid &grid)
+{
+  auto [A, f] = ImaginaryPart(share, n, grid);
+  const int rank = Mpi::Rank(grid.GetComm());
+  for (int g = 0; grid.InGrid() && g < n; g++)
   {
-    for (int i = j; i < n; i++, q++)
+    if (grid.Owner(g, g) == rank)
     {
-      A[static_cast<std::size_t>(j) * n + i] = lower[q].imag();
-      f += ((i == j) ? 1.0 : 2.0) * std::norm(lower[q]);
+      A[grid.LocalIndex(g, g)] += tol * f;
     }
   }
-  for (int j = 0; j < n; j++)
-  {
-    A[static_cast<std::size_t>(j) * n + j] += tol * std::sqrt(f);
-  }
-  int info = 0;
-  dpotrf_("L", &n, A.data(), &n, &info);
-  return info == 0;
+  return PositiveDefinite(grid, A);
 }
 
 double BarycentricInterpolant::FindMaxError() const
@@ -1393,25 +1386,6 @@ std::array<std::size_t, 4> DrivenSubstructureModel::PartSizes() const
 {
   const std::size_t n = nG, ne = excitations.size(), np = ports.size();
   return {n * (n + 1) / 2, n * ne, n * np, np * ne};
-}
-
-std::vector<std::complex<double>> DrivenSubstructureModel::Flatten(const Record &r) const
-{
-  // S_E is symmetric: its lower triangle, by columns.
-  std::vector<std::complex<double>> x;
-  const auto sz = PartSizes();
-  x.reserve(sz[0] + sz[1] + sz[2] + sz[3]);
-  for (int j = 0; j < nG; j++)
-  {
-    for (int i = j; i < nG; i++)
-    {
-      x.push_back(r.S[static_cast<std::size_t>(j) * nG + i]);
-    }
-  }
-  x.insert(x.end(), r.g.begin(), r.g.end());
-  x.insert(x.end(), r.h.begin(), r.h.end());
-  x.insert(x.end(), r.c.begin(), r.c.end());
-  return x;
 }
 
 std::size_t DrivenSubstructureModel::RecordBytes() const
@@ -1693,37 +1667,6 @@ std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure
     add(iodata.boundaries.waveport.at(idx).attributes);
   }
   return env_ports;
-}
-
-std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, int n,
-                                            const SignatureMap *map)
-{
-  auto at = [&](int a, int b)
-  {
-    if (a < b)
-    {
-      std::swap(a, b);
-    }
-    return lower[static_cast<std::size_t>(b) * n -
-                 static_cast<std::size_t>(b) * (b - 1) / 2 + (a - b)];
-  };
-  auto read_row = [&](int a, std::complex<double> *x)
-  {
-    for (int b = 0; b < n; b++)
-    {
-      x[b] = at(a, b);
-    }
-  };
-  if (map)
-  {
-    return map->DualMatrix<std::complex<double>>(0, n, read_row);
-  }
-  std::vector<std::complex<double>> S(static_cast<std::size_t>(n) * n);
-  for (int a = 0; a < n; a++)
-  {
-    read_row(a, S.data() + static_cast<std::size_t>(a) * n);
-  }
-  return S;
 }
 
 int FindValue(const std::vector<double> &y, double x, double tol)

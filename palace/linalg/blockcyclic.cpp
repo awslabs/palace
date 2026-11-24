@@ -12,6 +12,11 @@ extern "C"
   void zgetrf_(const int *, const int *, std::complex<double> *, const int *, int *, int *);
   void zgetrs_(const char *, const int *, const int *, const std::complex<double> *,
                const int *, const int *, std::complex<double> *, const int *, int *);
+  void dpotrf_(const char *, const int *, double *, const int *, int *);
+  void dsyevr_(const char *, const char *, const char *, const int *, double *, const int *,
+               const double *, const double *, const int *, const int *, const double *,
+               int *, double *, double *, const int *, int *, double *, const int *, int *,
+               const int *, int *);
 #if defined(PALACE_WITH_SCALAPACK)
   int Csys2blacs_handle(MPI_Comm);
   void Cfree_blacs_system_handle(int);
@@ -24,6 +29,13 @@ extern "C"
   void pzgetrs_(const char *, const int *, const int *, const std::complex<double> *,
                 const int *, const int *, const int *, const int *, std::complex<double> *,
                 const int *, const int *, const int *, int *);
+  void pdpotrf_(const char *, const int *, double *, const int *, const int *, const int *,
+                int *);
+  void pdsyevx_(const char *, const char *, const char *, const int *, double *,
+                const int *, const int *, const int *, const double *, const double *,
+                const int *, const int *, const double *, int *, int *, double *,
+                const double *, double *, const int *, const int *, const int *, double *,
+                const int *, int *, const int *, int *, int *, double *, int *);
 #endif
 }
 
@@ -233,6 +245,144 @@ void BlockCyclicLU::Solve(std::vector<std::complex<double>> &b, int nb) const
     MFEM_VERIFY(info == 0, "Dense LU solve failed (info = " << info << ")!");
   }
 #endif
+}
+
+namespace
+{
+
+#if defined(PALACE_WITH_SCALAPACK)
+// The BLACS context of a grid, while in scope, and the ScaLAPACK descriptor of an n x n
+// matrix on it. Collective.
+class BlacsGrid
+{
+public:
+  explicit BlacsGrid(const BlockCyclicGrid &grid) : grid(grid)
+  {
+    system = Csys2blacs_handle(grid.GetComm());
+    ctxt = system;
+    Cblacs_gridinit(&ctxt, "Row", grid.NumProcessRows(), grid.NumProcessCols());
+  }
+  ~BlacsGrid()
+  {
+    if (grid.InGrid())
+    {
+      Cblacs_gridexit(ctxt);
+    }
+    Cfree_blacs_system_handle(system);
+  }
+  BlacsGrid(const BlacsGrid &) = delete;
+  BlacsGrid &operator=(const BlacsGrid &) = delete;
+
+  std::array<int, 9> Descriptor(int &info) const
+  {
+    const int n = grid.Size(), mb = grid.BlockSize(), lld = grid.LeadingDim(), izero = 0;
+    std::array<int, 9> desc{};
+    descinit_(desc.data(), &n, &n, &mb, &mb, &izero, &izero, &ctxt, &lld, &info);
+    return desc;
+  }
+
+private:
+  const BlockCyclicGrid &grid;
+  int system = -1, ctxt = -1;
+};
+#endif
+
+}  // namespace
+
+bool PositiveDefinite(const BlockCyclicGrid &grid, std::vector<double> &A)
+{
+  const int n = grid.Size();
+  MFEM_VERIFY(A.size() == grid.LocalSize(), "Wrong size of a block cyclic matrix!");
+  int info = 0;
+#if defined(PALACE_WITH_SCALAPACK)
+  const BlacsGrid blacs(grid);
+  if (grid.InGrid() && n > 0)
+  {
+    const auto desc = blacs.Descriptor(info);
+    const int ione = 1;
+    if (info == 0)
+    {
+      pdpotrf_("L", &n, A.data(), &ione, &ione, desc.data(), &info);
+    }
+  }
+#else
+  if (grid.InGrid() && n > 0)
+  {
+    dpotrf_("L", &n, A.data(), &n, &info);
+  }
+#endif
+  // info > 0: a leading minor is not positive definite.
+  int failed = (info < 0);
+  Mpi::GlobalMax(1, &failed, grid.GetComm());
+  MFEM_VERIFY(!failed, "Dense Cholesky factorization failed (info = " << info << ")!");
+  Mpi::GlobalMax(1, &info, grid.GetComm());
+  return info == 0;
+}
+
+double LeastEigenvalue(const BlockCyclicGrid &grid, std::vector<double> &A)
+{
+  const int n = grid.Size();
+  MFEM_VERIFY(A.size() == grid.LocalSize(), "Wrong size of a block cyclic matrix!");
+  const int one = 1;
+  const double zero = 0.0;
+  int found = 1, info = 0, lwork = -1, liwork = -1;
+  double z = 0.0;
+  // W needs n entries even for one eigenvalue (the bisection stores the whole bracket).
+  std::vector<double> w(std::max(n, 1), 0.0), work(3);
+  std::vector<int> iwork(1);
+#if defined(PALACE_WITH_SCALAPACK)
+  const BlacsGrid blacs(grid);
+  if (grid.InGrid() && n > 0)
+  {
+    // The least eigenvalue only, without eigenvectors (Z is not referenced). The workspace
+    // query also writes WORK(1:3), the tolerance and bounds that rank 0 broadcasts.
+    const auto desc = blacs.Descriptor(info);
+    const int nprocs = grid.NumProcessRows() * grid.NumProcessCols();
+    const double orfac = 1.0e-3;
+    int nz = 0;
+    std::vector<int> ifail(n), iclustr(2 * nprocs);
+    std::vector<double> gap(nprocs);
+    for (int pass = 0; pass < 2 && info == 0; pass++)
+    {
+      pdsyevx_("N", "I", "L", &n, A.data(), &one, &one, desc.data(), &zero, &zero, &one,
+               &one, &zero, &found, &nz, w.data(), &orfac, &z, &one, &one, desc.data(),
+               work.data(), &lwork, iwork.data(), &liwork, ifail.data(), iclustr.data(),
+               gap.data(), &info);
+      if (pass == 0)
+      {
+        lwork = static_cast<int>(work[0]);
+        liwork = iwork[0];
+        work.resize(lwork);
+        iwork.resize(liwork);
+      }
+    }
+  }
+#else
+  if (grid.InGrid() && n > 0)
+  {
+    std::vector<int> isuppz(2);
+    for (int pass = 0; pass < 2 && info == 0; pass++)
+    {
+      dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found,
+              w.data(), &z, &one, isuppz.data(), work.data(), &lwork, iwork.data(), &liwork,
+              &info);
+      if (pass == 0)
+      {
+        lwork = static_cast<int>(work[0]);
+        liwork = iwork[0];
+        work.resize(lwork);
+        iwork.resize(liwork);
+      }
+    }
+  }
+#endif
+  int failed = (info != 0 || (n > 0 && found != 1));
+  Mpi::GlobalMax(1, &failed, grid.GetComm());
+  MFEM_VERIFY(!failed,
+              "Dense symmetric eigenvalue computation failed (info = " << info << ")!");
+  // The grid includes rank 0, which holds the eigenvalue.
+  Mpi::Broadcast(1, w.data(), 0, grid.GetComm());
+  return (n > 0) ? w[0] : 0.0;
 }
 
 }  // namespace palace

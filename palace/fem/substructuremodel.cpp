@@ -260,6 +260,17 @@ std::array<long long, 2> TriangleShare(long long n, MPI_Comm comm)
   return {total * r / p, total * (r + 1) / p};
 }
 
+std::vector<long long> TriangleShareSizes(long long n, MPI_Comm comm)
+{
+  const long long total = TriangleSize(n), p = Mpi::Size(comm);
+  std::vector<long long> size(p);
+  for (long long r = 0; r < p; r++)
+  {
+    size[r] = total * (r + 1) / p - total * r / p;
+  }
+  return size;
+}
+
 template <typename T>
 void ToRoot(MPI_Comm comm, const std::vector<T> &x, const std::vector<long long> &size,
             std::size_t chunk, const std::function<void(const T *, std::size_t)> &write)
@@ -299,9 +310,51 @@ void ToRoot(MPI_Comm comm, const std::vector<T> &x, const std::vector<long long>
 template void ToRoot<double>(MPI_Comm, const std::vector<double> &,
                              const std::vector<long long> &, std::size_t,
                              const std::function<void(const double *, std::size_t)> &);
-template void ToRoot<std::complex<double>>(
-    MPI_Comm, const std::vector<std::complex<double>> &, const std::vector<long long> &,
-    std::size_t, const std::function<void(const std::complex<double> *, std::size_t)> &);
+
+template <typename T>
+std::vector<T> FromRoot(MPI_Comm comm, const std::vector<long long> &size,
+                        std::size_t chunk,
+                        const std::function<void(long long, long long, T *)> &read)
+{
+  const auto type = mpi::DataType<T>();
+  const std::size_t per = std::max<std::size_t>(1, chunk);
+  std::vector<T> x(static_cast<std::size_t>(size[Mpi::Rank(comm)]));
+  if (!Mpi::Root(comm))
+  {
+    for (std::size_t i = 0; i < x.size(); i += per)
+    {
+      MPI_Recv(x.data() + i, static_cast<int>(std::min(per, x.size() - i)), type, 0, 0,
+               comm, MPI_STATUS_IGNORE);
+    }
+    return x;
+  }
+  std::vector<T> buf;
+  long long e = 0;
+  for (std::size_t q = 0; q < size.size(); q++)
+  {
+    for (std::size_t i = 0; i < static_cast<std::size_t>(size[q]);)
+    {
+      const std::size_t n = std::min(per, static_cast<std::size_t>(size[q]) - i);
+      if (q == 0)
+      {
+        read(e, static_cast<long long>(n), x.data() + i);
+      }
+      else
+      {
+        buf.resize(n);
+        read(e, static_cast<long long>(n), buf.data());
+        MPI_Send(buf.data(), static_cast<int>(n), type, static_cast<int>(q), 0, comm);
+      }
+      e += static_cast<long long>(n);
+      i += n;
+    }
+  }
+  return x;
+}
+
+template std::vector<std::complex<double>> FromRoot<std::complex<double>>(
+    MPI_Comm, const std::vector<long long> &, std::size_t,
+    const std::function<void(long long, long long, std::complex<double> *)> &);
 
 template <typename T>
 void RedistributeTriangle(MPI_Comm comm, long long n,

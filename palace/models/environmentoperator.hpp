@@ -44,7 +44,9 @@ class SpaceOperator;
 class EnvironmentOperator
 {
 public:
-  // The records of a model, in order (flat, in the saved basis, on root).
+  // The records of a model, in order (in the saved basis): each process its share of the
+  // lower triangle of S_E (see substructuring::TriangleShare), then root the parts after
+  // it.
   using RecordFunction = std::function<std::vector<std::complex<double>>(std::size_t)>;
 
   // Read the model and check it against the run: the environment (its record and, on the
@@ -187,10 +189,10 @@ private:
   std::vector<int> grid_rows, grid_cols;
   double pc_omega = std::numeric_limits<double>::quiet_NaN();
 
-  // A record from its flat entries on root (in the saved basis, see
-  // DrivenSubstructureModel::Flatten), or record j of the model file, whose S_E each
-  // process reads a share of, and the record from the parts after S_E on root. Collective.
-  Rows Distribute(const std::vector<std::complex<double>> &flat) const;
+  // A record from the shares of the processes (see RecordFunction), or record j of the
+  // model file, whose S_E each process reads a share of, and the record from the parts
+  // after S_E on root. Collective.
+  Rows Distribute(const std::vector<std::complex<double>> &x) const;
   Rows ReadRecord(int j) const;
   Rows DistributeVectors(const std::complex<double> *tail) const;
 

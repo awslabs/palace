@@ -113,6 +113,13 @@ private:
   const std::vector<std::complex<double>> *factors = nullptr;
 };
 
+// A dense real symmetric matrix distributed on a BlockCyclicGrid (the local part A of this
+// process, whose lower triangle is referenced and overwritten): whether it is positive
+// definite, by a Cholesky factorization, and its least eigenvalue, ScaLAPACK's, or
+// LAPACK's on a grid of one process. Collective on the communicator of the grid.
+bool PositiveDefinite(const BlockCyclicGrid &grid, std::vector<double> &A);
+double LeastEigenvalue(const BlockCyclicGrid &grid, std::vector<double> &A);
+
 }  // namespace palace
 
 #endif  // PALACE_LINALG_BLOCK_CYCLIC_HPP

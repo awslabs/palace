@@ -40,6 +40,7 @@
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
 #include "fixtures.hpp"
+#include "linalg/blockcyclic.hpp"
 #include "linalg/directschur.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/lowertriangle.hpp"
@@ -3591,11 +3592,29 @@ TEST_CASE("Barycentric interpolation of a rational vector function",
   CHECK(a[2] == 1.0);
 }
 
-TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
+TEST_CASE("Passivity of a condensed environment", "[substructure][Serial][Parallel]")
 {
   // S = Re + i Im with Im = Q diag(d) Q^T (Q a rotation): the least eigenvalue of Im,
   // relative to ‖S‖_F, for any scaling of S, and the Cholesky test of passivity to a
-  // tolerance, about that eigenvalue.
+  // tolerance, about that eigenvalue, on grids of all the processes, from the share of each
+  // of the lower triangle of S.
+  MPI_Comm comm = Mpi::World();
+  auto share = [comm](const std::vector<std::complex<double>> &lower, int n)
+  {
+    const auto range = substructuring::TriangleShare(n, comm);
+    return std::vector<std::complex<double>>(lower.begin() + range[0],
+                                             lower.begin() + range[1]);
+  };
+  auto passivity_of = [&](const std::vector<std::complex<double>> &lower, int n)
+  {
+    const BlockCyclicGrid grid(comm, n, Mpi::Size(comm), 1);
+    return DrivenSubstructureModel::Passivity(share(lower, n).data(), n, grid);
+  };
+  auto passive_to = [&](const std::vector<std::complex<double>> &lower, int n, double tol)
+  {
+    const BlockCyclicGrid grid(comm, n, Mpi::Size(comm), 1);
+    return DrivenSubstructureModel::Passive(share(lower, n).data(), n, tol, grid);
+  };
   const double c = std::cos(0.3), s = std::sin(0.3);
   auto lower = [&](double d0, double d1, double scale)
   {
@@ -3611,14 +3630,14 @@ TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
   for (double scale : {1.0, 1.0e-6})
   {
     const auto passive = lower(0.3, 0.1, scale), active = lower(0.3, -0.2, scale);
-    CHECK(DrivenSubstructureModel::Passivity(passive.data(), 2) ==
+    CHECK(passivity_of(passive, 2) ==
           Catch::Approx(0.1 * scale / norm(passive)).epsilon(1.0e-12));
-    CHECK(DrivenSubstructureModel::Passivity(active.data(), 2) ==
+    CHECK(passivity_of(active, 2) ==
           Catch::Approx(-0.2 * scale / norm(active)).epsilon(1.0e-12));
     const double violation = 0.2 * scale / norm(active);
-    CHECK(DrivenSubstructureModel::Passive(passive.data(), 2, 1.0e-12));
-    CHECK_FALSE(DrivenSubstructureModel::Passive(active.data(), 2, 0.5 * violation));
-    CHECK(DrivenSubstructureModel::Passive(active.data(), 2, 2.0 * violation));
+    CHECK(passive_to(passive, 2, 1.0e-12));
+    CHECK_FALSE(passive_to(active, 2, 0.5 * violation));
+    CHECK(passive_to(active, 2, 2.0 * violation));
   }
 
   // A least eigenvalue repeated four times, whose whole cluster the bisection of LAPACK
@@ -3633,8 +3652,7 @@ TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
     }
   }
   const double fro = std::sqrt(4.0 * 1.25 + 2.0 * 2.0);
-  CHECK(DrivenSubstructureModel::Passivity(S.data(), n) ==
-        Catch::Approx(-0.5 / fro).epsilon(1.0e-12));
+  CHECK(passivity_of(S, n) == Catch::Approx(-0.5 / fro).epsilon(1.0e-12));
 }
 
 TEST_CASE("Saved driven excitations match across partitions", "[substructure][Serial]")
@@ -3815,6 +3833,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
     r.c = {s};
     return r;
   };
+  // A record in the order of the file: S by the columns of its lower triangle, then g, h
+  // and c.
+  auto flat = [](double s)
+  {
+    return std::vector<std::complex<double>>{
+        s, 2.0 * s, 3.0 * s, s, -s, std::complex<double>(0.0, s), s, s};
+  };
   const auto path = (temp_dir / "driven-model-restart.bin").string();
   m.WriteHeader(path);
   m.AppendRecord(path, record(1.0));
@@ -3833,10 +3858,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(m.SameHeader(saved, 1.0e-10));
   m.TruncateRecords(path, 1);
   CHECK(m.NumRecords(path) == 1);
-  CHECK(m.ReadFlatRecord(path, 0) == m.Flatten(record(1.0)));
+  CHECK(m.ReadFlatRecord(path, 0) == flat(1.0));
   m.AppendRecord(path, record(4.0));
   CHECK(m.NumRecords(path) == 2);
-  CHECK(m.ReadFlatRecord(path, 1) == m.Flatten(record(4.0)));
+  CHECK(m.ReadFlatRecord(path, 1) == flat(4.0));
 
   // The model of another sweep does not continue: other frequencies, interface, boundaries,
   // ports, environment (beyond the rounding of its moments) or sources (beyond their
