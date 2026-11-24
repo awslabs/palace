@@ -51,6 +51,9 @@ public:
 
   CeedOperator operator[](std::size_t i) const { return op[i]; }
 
+  // The composite of the transposed sub-operators of thread i (empty without them).
+  CeedOperator Transpose(std::size_t i) const { return op_t[i]; }
+
   auto Size() const { return op.size(); }
 
   void AddSubOperator(CeedOperator sub_op, CeedOperator sub_op_t = nullptr,
@@ -112,7 +115,8 @@ std::unique_ptr<hypre::HypreCSRMatrix> CeedOperatorFullAssemble(const Operator &
                                                                 bool skip_zeros, bool set);
 
 // Construct a coarse-level ceed::Operator, reusing the quadrature data and quadrature
-// function from the fine-level operator. Only available for square, symmetric operators
+// function from the fine-level operator, and its transposed sub-operators if it is not a
+// SymmetricOperator. Only available for square operators
 // (same input and output spaces).
 std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
                                               const FiniteElementSpace &fespace_coarse);

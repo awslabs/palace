@@ -4,6 +4,7 @@
 #ifndef PALACE_FEM_INTEGRATOR_HPP
 #define PALACE_FEM_INTEGRATOR_HPP
 
+#include <memory>
 #include <optional>
 #include <vector>
 #include <mfem.hpp>
@@ -71,6 +72,13 @@ public:
   virtual std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const;
 
   void AssembleQuadratureData() { assemble_q_data = true; }
+
+  // Whether the form is symmetric, a(u, v) = a(v, u), with the same trial and test spaces.
+  virtual bool IsSymmetric() const { return false; }
+
+  // The integrator of the transposed form, aᵀ(u, v) = a(v, u), with the same trial and test
+  // spaces, or nullptr if it is not available.
+  virtual std::unique_ptr<BilinearFormIntegrator> GetTranspose() const { return nullptr; }
 };
 
 // Integrator for a(u, v) = (Q u, v) for H1 and L2 elements (also for vector (H1)ᵈ
@@ -93,6 +101,10 @@ public:
     trial_map_type = trial_type;
     test_map_type = test_type;
   }
+
+  // Symmetric for symmetric coefficients, with the transposed coefficients as transpose.
+  bool IsSymmetric() const override;
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 };
 
 // Integrator for a(u, v) = (Q u, v) for vector finite elements.
@@ -114,6 +126,10 @@ public:
     trial_map_type = trial_type;
     test_map_type = test_type;
   }
+
+  // Symmetric for symmetric coefficients, with the transposed coefficients as transpose.
+  bool IsSymmetric() const override;
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 };
 
 // Integrator for a(u, v) = (Q n x u, n x v) for Nedelec elements on the boundary of a 3D
@@ -139,6 +155,10 @@ public:
     trial_map_type = trial_type;
     test_map_type = test_type;
   }
+
+  // Symmetric for symmetric coefficients, with the transposed coefficients as transpose.
+  bool IsSymmetric() const override;
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 };
 
 // Integrator for a(u, v) = (Q grad u, grad v) for H1 elements.
@@ -150,6 +170,10 @@ public:
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  // Symmetric for symmetric coefficients, with the transposed coefficients as transpose.
+  bool IsSymmetric() const override;
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 };
 
 // Integrator for a(u, v) = (Q curl u, curl v) for Nedelec elements.
@@ -161,6 +185,10 @@ public:
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  // Symmetric for symmetric coefficients, with the transposed coefficients as transpose.
+  bool IsSymmetric() const override;
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 };
 
 // Integrators for the PML terms. The PML material tensors μ̃⁻¹ and ε̃ are evaluated at each
@@ -282,6 +310,10 @@ public:
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
+
+  // Symmetric for symmetric coefficients, with the transposed coefficients as transpose.
+  bool IsSymmetric() const override;
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 };
 
 // Integrator for a(u, v) = (Qd grad u, grad v) + (Qm u, v) for H1 elements.
@@ -305,6 +337,10 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 
   std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const override;
+
+  // Symmetric for symmetric coefficients, with the transposed coefficients as transpose.
+  bool IsSymmetric() const override;
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 };
 
 // Integrator for a(u, v) = (Qc curl u, curl v) + (Qm u, v) for Nedelec elements.
@@ -328,6 +364,10 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 
   std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const override;
+
+  // Symmetric for symmetric coefficients, with the transposed coefficients as transpose.
+  bool IsSymmetric() const override;
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 };
 
 // Integrator for a(u, v) = (Qd div u, div v) + (Qm u, v) for Raviart-Thomas elements.
@@ -351,6 +391,10 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 
   std::optional<std::vector<int>> GetNonzeroCoefficientAttributes() const override;
+
+  // Symmetric for symmetric coefficients, with the transposed coefficients as transpose.
+  bool IsSymmetric() const override;
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 };
 
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in H(curl) or H(div).
@@ -385,14 +429,15 @@ public:
                 CeedElemRestriction geom_data_restr, CeedOperator *op) const override;
 };
 
-// Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div) or H(curl). On
-// the boundary of a 3D domain (u and v in H(curl)), curl u is the curl of the tangential
-// trace of u, (n · curl u) n with the boundary normal n.
+// Integrator for a(u, v) = (Q curl u, v) for u in H(curl) and v in H(div) or H(curl), times
+// a scale (one by default). On the boundary of a 3D domain (u and v in H(curl)), curl u is
+// the curl of the tangential trace of u, (n · curl u) n with the boundary normal n.
 class MixedVectorCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
   int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
   int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  double scale = 1.0;  // Factor of the form
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
@@ -406,16 +451,23 @@ public:
     trial_map_type = trial_type;
     test_map_type = test_type;
   }
+
+  // The transpose of the form, with the transposed coefficient (see
+  // MixedVectorWeakCurlIntegrator).
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
+
+  void SetScale(double a) { scale = a; }
 };
 
-// Integrator for a(u, v) = -(Q u, curl v) for u in H(div) or H(curl) and v in H(curl). On
-// the boundary of a 3D domain (u and v in H(curl)), curl v is the curl of the tangential
-// trace of v, as for MixedVectorCurlIntegrator.
+// Integrator for a(u, v) = -(Q u, curl v) for u in H(div) or H(curl) and v in H(curl),
+// times a scale (one by default). On the boundary of a 3D domain (u and v in H(curl)), curl
+// v is the curl of the tangential trace of v, as for MixedVectorCurlIntegrator.
 class MixedVectorWeakCurlIntegrator : public BilinearFormIntegrator
 {
 protected:
   int trial_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
   int test_map_type = mfem::FiniteElement::UNKNOWN_MAP_TYPE;
+  double scale = 1.0;  // Factor of the form
 
 public:
   using BilinearFormIntegrator::BilinearFormIntegrator;
@@ -429,6 +481,12 @@ public:
     trial_map_type = trial_type;
     test_map_type = test_type;
   }
+
+  // The transpose of the form, with the transposed coefficient (see
+  // MixedVectorCurlIntegrator).
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
+
+  void SetScale(double a) { scale = a; }
 };
 
 // Integrator for a(u, v) = (Q grad u, v) for u in H1 and v in (H1)ᵈ.

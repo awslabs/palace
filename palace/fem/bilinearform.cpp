@@ -35,9 +35,18 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
               "Trial and test finite element spaces must correspond to the same mesh!");
   const auto &mesh = trial_fespace.GetMesh();
 
-  // Initialize the operator.
+  // Initialize the operator. A square operator whose integrators all have symmetric forms
+  // applies its transpose as itself. Otherwise, as with the antisymmetric Floquet terms of
+  // the curl, the transpose is assembled from the integrators of the transposed forms.
   std::unique_ptr<ceed::Operator> op;
-  if (&trial_fespace == &test_fespace)
+  std::vector<std::unique_ptr<BilinearFormIntegrator>> domain_integs_t, boundary_integs_t;
+  const bool square = (&trial_fespace == &test_fespace);
+  const bool symmetric = square &&
+                         std::ranges::all_of(domain_integs, [](const auto &integ)
+                                             { return integ->IsSymmetric(); }) &&
+                         std::ranges::all_of(boundary_integs, [](const auto &integ)
+                                             { return integ->IsSymmetric(); });
+  if (symmetric)
   {
     op = std::make_unique<ceed::SymmetricOperator>(test_fespace.GetVSize(),
                                                    trial_fespace.GetVSize());
@@ -46,6 +55,21 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   {
     op =
         std::make_unique<ceed::Operator>(test_fespace.GetVSize(), trial_fespace.GetVSize());
+    if (square)
+    {
+      for (const auto &[integs, integs_t] :
+           {std::pair{&domain_integs, &domain_integs_t},
+            std::pair{&boundary_integs, &boundary_integs_t}})
+      {
+        for (const auto &integ : *integs)
+        {
+          integs_t->push_back(integ->GetTranspose());
+          MFEM_VERIFY(integs_t->back(),
+                      "The transpose of a bilinear form with an integrator "
+                      "of a nonsymmetric form is not available!");
+        }
+      }
+    }
   }
 
   // Classify each integrator once, before the thread/geometry loops. An integrator outside
@@ -118,6 +142,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           test_fespace.GetFEColl().GetMapType(mfem::Geometry::Dimension[geom]);
       const bool use_bdr = (mfem::Geometry::Dimension[geom] != mesh.Dimension());
       const auto &integs = use_bdr ? boundary_integs : domain_integs;
+      const auto &integs_t = use_bdr ? boundary_integs_t : domain_integs_t;
       const auto &subsets = use_bdr ? boundary_subsets : domain_subsets;
 
       if (mfem::Geometry::Dimension[geom] >= mesh.Dimension() - 1 && !integs.empty())
@@ -141,12 +166,20 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           CeedElemRestriction test_restr =
               test_fespace.GetCeedElemRestriction(ceed, geom, data, *subset);
 
-          CeedOperator sub_op;
+          CeedOperator sub_op, sub_op_t = nullptr;
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
-          // Sub-operator owned by ceed::Operator.
-          op->AddSubOperator(sub_op);
+          if (!integs_t.empty())
+          {
+            // The transposed form maps the test space to the trial space.
+            integs_t[i]->SetMapTypes(test_map_type, trial_map_type);
+            integs_t[i]->Assemble(ceed, test_restr, trial_restr, test_basis, trial_basis,
+                                  data.geom_data, data.GetGeomDataRestriction(*subset),
+                                  &sub_op_t);
+          }
+          // Sub-operators owned by ceed::Operator.
+          op->AddSubOperator(sub_op, sub_op_t);
         }
       }
     }
@@ -177,11 +210,19 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
             continue;
           }
           const auto &integ = domain_integs[k];
-          CeedOperator sub_op;
+          CeedOperator sub_op, sub_op_t = nullptr;
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.geom_data_restr, &sub_op);
-          op->AddSubOperator(sub_op, nullptr, attr_list);  // Owned by ceed::Operator
+          if (!domain_integs_t.empty())
+          {
+            // The transposed form maps the test space to the trial space.
+            domain_integs_t[k]->SetMapTypes(test_map_type, trial_map_type);
+            domain_integs_t[k]->Assemble(ceed, test_restr, trial_restr, test_basis,
+                                         trial_basis, data.geom_data, data.geom_data_restr,
+                                         &sub_op_t);
+          }
+          op->AddSubOperator(sub_op, sub_op_t, attr_list);  // Owned by ceed::Operator
         }
       }
     }

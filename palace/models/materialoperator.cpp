@@ -1192,6 +1192,32 @@ bool MaterialPropertyCoefficient::IsExactlyZero() const
   return true;
 }
 
+bool MaterialPropertyCoefficient::IsSymmetric() const
+{
+  for (int k = 0; k < mat_coeff.SizeK(); k++)
+  {
+    double max = 0.0;
+    for (int i = 0; i < mat_coeff.SizeI(); i++)
+    {
+      for (int j = 0; j < mat_coeff.SizeJ(); j++)
+      {
+        max = std::max(max, std::abs(mat_coeff(i, j, k)));
+      }
+    }
+    for (int i = 0; i < mat_coeff.SizeI(); i++)
+    {
+      for (int j = i + 1; j < mat_coeff.SizeJ(); j++)
+      {
+        if (std::abs(mat_coeff(i, j, k) - mat_coeff(j, i, k)) > 1.0e-12 * max)
+        {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
 void MaterialPropertyCoefficient::AddNonzeroAttributes(std::vector<int> &attr_list) const
 {
   const int mat_size = mat_coeff.SizeI() * mat_coeff.SizeJ();

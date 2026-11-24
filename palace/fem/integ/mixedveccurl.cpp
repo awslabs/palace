@@ -74,7 +74,7 @@ void MixedVectorCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_re
   info.test_ops = EvalMode::Interp;
 
   // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext(space_dim, Q, transpose);
+  auto ctx = PopulateCoefficientContext(space_dim, Q, transpose, scale);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);
@@ -131,10 +131,36 @@ void MixedVectorWeakCurlIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
   info.test_ops = EvalMode::Curl;
 
   // Set up the coefficient and assemble.
-  auto ctx = PopulateCoefficientContext(space_dim, Q, transpose, -1.0);
+  auto ctx = PopulateCoefficientContext(space_dim, Q, transpose, -scale);
   AssembleCeedOperator(info, (void *)ctx.data(), ctx.size() * sizeof(CeedIntScalar), ceed,
                        trial_restr, test_restr, trial_basis, test_basis, geom_data,
                        geom_data_restr, op);
+}
+
+// With s the scale, the transpose of s (Q curl u, v) is s (Q curl v, u) = s (Qᵀ u, curl v),
+// the weak curl form with Qᵀ and the scale -s, and vice versa.
+std::unique_ptr<BilinearFormIntegrator> MixedVectorCurlIntegrator::GetTranspose() const
+{
+  auto integ = Q ? std::make_unique<MixedVectorWeakCurlIntegrator>(*Q, !transpose)
+                 : std::make_unique<MixedVectorWeakCurlIntegrator>();
+  integ->SetScale(-scale);
+  if (assemble_q_data)
+  {
+    integ->AssembleQuadratureData();
+  }
+  return integ;
+}
+
+std::unique_ptr<BilinearFormIntegrator> MixedVectorWeakCurlIntegrator::GetTranspose() const
+{
+  auto integ = Q ? std::make_unique<MixedVectorCurlIntegrator>(*Q, !transpose)
+                 : std::make_unique<MixedVectorCurlIntegrator>();
+  integ->SetScale(-scale);
+  if (assemble_q_data)
+  {
+    integ->AssembleQuadratureData();
+  }
+  return integ;
 }
 
 }  // namespace palace
