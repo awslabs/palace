@@ -423,6 +423,7 @@ set_property(
 
 # Generate embedded schema header from JSON schema files
 include(${CMAKE_SOURCE_DIR}/../cmake/EmbedSchema.cmake)
+include(${CMAKE_SOURCE_DIR}/../cmake/EmbedVerdictBars.cmake)
 
 # Add Git revision information (forces reconfigure when Git status changes). Builds without
 # usable Git metadata (e.g. Spack) can supply it via PALACE_GIT_COMMIT_ID, as a CMake variable

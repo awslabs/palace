@@ -28,7 +28,9 @@
 #include "linalg/vector.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/surfaceparticipationtable.hpp"
 #include "models/surfaceresponseoperator.hpp"
+#include "models/surfaceresponseresolution.hpp"
 #include "surfaceresponse-fixtures.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
@@ -1083,6 +1085,246 @@ TEST_CASE_METHOD(
   auto Raw = [](const fs::path &dir)
   { return Single(test::LoadCsv(dir / "surface-Q.csv"), "p_surf[4]", {{"i", 1}}); };
   CHECK(Raw(near.first) != Catch::Approx(Raw(far.first)).epsilon(1.0e-6));
+#endif
+}
+
+// CUT-PLAN step 4 (lane v1table): the rows of surface-participation.csv of a Region target
+// read the census of their own patches: recomposed here from the PatchEnergy tables (each
+// patch's census reading, its region share and its fixed-trace fabricated energy on the
+// target) and equal to the row's verdict columns; the row's p values are those of
+// surface-Q-corrected.csv, and the entry without a Region reads its Type's cell.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Region target rows of surface-participation.csv read their own patches "
+                 "(electrostatic)",
+                 "[regiontarget][surfaceparticipation][electrostaticsolver]"
+                 "[surfaceresponseoperator][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "region-target-island.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = ConvexIslandConfig(test::CrackPolicy::Default);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  UseDefaultConstruction(
+      correction, WriteDefaultConstructionLibrary(convex_library_3d_path, temp.temp_dir),
+      true);
+  correction["PatchEnergy"] = true;
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  auto Run = [&](const std::string &stem, const json &region)
+  {
+    json run = config;
+    if (!region.is_null())
+    {
+      run["Boundaries"]["Postprocessing"]["Dielectric"][0]["Region"] = region;
+    }
+    const fs::path output = temp.temp_dir / ("participation-" + stem);
+    run["Problem"]["Output"] = output.string();
+    test::RunElectrostatic(run);
+    Mpi::Barrier(Mpi::World());
+    return output;
+  };
+  const fs::path window = Run("window", json());
+  const fs::path lower = Run("lower", HalfSpaceRegion(true));
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  auto Text = [](const Table &table, const std::string &header, std::size_t row)
+  {
+    const Column &column = test::ColumnByHeader(table, header);
+    REQUIRE(row < column.text.size());
+    return column.text[row];
+  };
+  for (const auto &[dir, region] : {std::pair{window, false}, std::pair{lower, true}})
+  {
+    INFO("run " << dir.filename().string());
+    const Table rows = test::LoadCsv(dir / "surface-participation.csv");
+    const auto interfaces = Select(rows, "interface", {{"point", 1}});
+    const auto p_raw = Select(rows, "p raw", {{"point", 1}});
+    const auto p_corrected = Select(rows, "p corrected (fixed-trace)", {{"point", 1}});
+    const Table level = test::LoadCsv(dir / "surface-Q-corrected.csv");
+    REQUIRE(interfaces.size() == rows.n_rows());  // one terminal, one level
+    std::size_t row4 = rows.n_rows();
+    for (std::size_t i = 0; i < interfaces.size(); i++)
+    {
+      // Interface 0: the Type total (here the one SA interface 4 of the window).
+      const int interface = std::max(4, static_cast<int>(std::lround(interfaces[i])));
+      CHECK(p_raw[i] ==
+            Single(level, fmt::format("p_surf raw[{}]", interface), {{"i", 1}}));
+      CHECK(p_corrected[i] ==
+            Single(level, fmt::format("p_surf postprocessed fixed-trace[{}]", interface),
+                   {{"i", 1}}));
+      row4 = std::lround(interfaces[i]) == 4 ? i : row4;
+    }
+    REQUIRE(row4 < rows.n_rows());
+    CHECK(rows.n_rows() ==
+          (region ? 1 : 2));  // the window: its Type total, then interface 4
+    CHECK(Text(rows, "scope", row4) == (region ? "region" : "interface"));
+    CHECK(Text(rows, "scope", 0) == (region ? "region" : "Type"));
+    CHECK(Text(rows, "convergence", row4) == "MOVING: FIRST-ITERATION");
+    // The census of the row: the Type's cell (no Region) or the box's own patches, each
+    // fabricated energy counted with its share.
+    const Table readings = test::LoadCsv(dir / "surface-response-resolution-patches.csv");
+    const Table energies = test::LoadCsv(dir / "surface-response-patch-energy.csv");
+    std::map<long, double> shares;
+    if (region)
+    {
+      const Table table = test::LoadCsv(dir / "surface-response-region-share.csv");
+      const std::vector<std::pair<std::string, int>> keys = {
+          {"excitation", 1}, {"evaluation", 0}, {"target", 4}};
+      const auto patches = Select(table, "patch", keys);
+      const auto values = Select(table, "share", keys);
+      for (std::size_t i = 0; i < patches.size(); i++)
+      {
+        shares[std::lround(patches[i])] = values[i];
+      }
+    }
+    std::map<long, std::pair<ResolutionStatus, double>> census;
+    const Column &patch_column = test::ColumnByHeader(readings, "patch");
+    const Column &m_column = test::ColumnByHeader(readings, "h/R");
+    bool bars_hold = true;
+    for (std::size_t i = 0; i < patch_column.data.size(); i++)
+    {
+      const std::string name = Text(readings, "status", i);
+      auto status = ResolutionStatus::NOT_EVALUATED;
+      for (const auto candidate :
+           {ResolutionStatus::RESOLVED, ResolutionStatus::MARGINAL,
+            ResolutionStatus::UNDER_RESOLVED, ResolutionStatus::NO_BARS})
+      {
+        status = ResolutionStatusName(candidate) == name ? candidate : status;
+      }
+      bars_hold = bars_hold && status != ResolutionStatus::NO_BARS;
+      census[std::lround(patch_column.data[i])] = {status, m_column.data[i]};
+    }
+    const auto patches = Select(energies, "patch", {{"source", 1}, {"evaluation", 0}});
+    const auto fabricated = Select(energies, "fabricated surface energy[4] (J)",
+                                   {{"source", 1}, {"evaluation", 0}});
+    ResolutionAccumulator sums;
+    sums.Reset(1, 1);
+    for (std::size_t i = 0; i < patches.size(); i++)
+    {
+      const long patch = std::lround(patches[i]);
+      const auto reading = census.at(patch);
+      const auto share = shares.find(patch);
+      const double s = !region ? 1.0 : share != shares.end() ? share->second : 0.0;
+      if (s > 0.0)
+      {
+        sums.AddRegion(4, reading.first, reading.second, s * fabricated[i]);
+      }
+    }
+    REQUIRE(sums.regions.count(4) == 1);
+    const auto cell = ComputeResolutionCell(sums.regions.at(4).data(), "SA", true, 0.0,
+                                            bars_hold, 1.0, "");
+    const double m90 = Select(rows, "h/R m90", {{"point", 1}, {"interface", 4}}).at(0);
+    const double m50 = Select(rows, "h/R m50", {{"point", 1}, {"interface", 4}}).at(0);
+    CHECK((std::isnan(cell.quantiles[2]) ? std::isnan(m90)
+                                         : m90 == Catch::Approx(cell.quantiles[2])));
+    CHECK((std::isnan(cell.quantiles[1]) ? std::isnan(m50)
+                                         : m50 == Catch::Approx(cell.quantiles[1])));
+    // One solve: never SETTLED, so never RESOLVED (Order 1 has no census bar: NO-BARS).
+    CHECK(Text(rows, "resolution (RESOLVED needs SETTLED)", row4) ==
+          ParticipationResolutionWord(cell.quantiles[2], 1, false,
+                                      BuiltInParticipationVerdictBars(), "Electrostatic"));
+  }
+#endif
+}
+
+// CUT-PLAN step 4 (lane v1table; the supervisor's steer on the base's write-through-symlink
+// defect of the per-level region-share file): the table's region rows are formed in memory
+// at each level, never from a per-level file, so the rows of iteration 1 of a two-level run
+// equal the rows of a one-level run on the same first mesh, and the second level has rows
+// of its own. Conforming refinement: the first level solves the given mesh itself (a
+// nonconforming AMR run starts from the mesh's nonconforming form, whose reordering moves a
+// box value of this small fixture by about 3e-5 relative).
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Region target rows of iteration 1 equal a one-level run's (electrostatic, AMR)",
+    "[regiontarget][surfaceparticipation][electrostaticsolver]"
+    "[surfaceresponseoperator][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const fs::path mesh_path = temp.temp_dir / "region-target-island-tet.mesh";
+  if (Mpi::Root(Mpi::World()))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh(false, true);  // tetrahedra: conforming AMR
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(Mpi::World());
+  json config = ConvexIslandConfig(test::CrackPolicy::Default);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  UseDefaultConstruction(
+      correction, WriteDefaultConstructionLibrary(convex_library_3d_path, temp.temp_dir),
+      true);
+  correction["PatchEnergy"] = true;
+  config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
+  config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Region"] = HalfSpaceRegion(true);
+  auto Run = [&](const std::string &stem, const json &refinement)
+  {
+    json run = config;
+    run["Model"]["Refinement"] = refinement;
+    const fs::path output = temp.temp_dir / ("participation-levels-" + stem);
+    run["Problem"]["Output"] = output.string();
+    test::RunElectrostatic(run);
+    Mpi::Barrier(Mpi::World());
+    return output;
+  };
+  const fs::path two = Run("two", {{"MaxIts", 1},
+                                   {"Tol", 1.0e-9},
+                                   {"UpdateFraction", 0.5},
+                                   {"Nonconformal", false},
+                                   {"SaveAdaptIterations", true}});
+  const fs::path one = Run("one", {{"MaxIts", 0}});
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const Table levels = test::LoadCsv(two / "surface-participation.csv");
+  const Table single = test::LoadCsv(one / "surface-participation.csv");
+  const Column &iteration = test::ColumnByHeader(levels, "iteration");
+  REQUIRE(single.n_rows() == 1);
+  REQUIRE(levels.n_rows() == 2);
+  CHECK(iteration.data[0] == 1.0);
+  CHECK(iteration.data[1] == 2.0);
+  CHECK(test::ColumnByHeader(levels, "scope").text[0] == "region");
+  CHECK(test::ColumnByHeader(levels, "unknowns").data[1] >
+        test::ColumnByHeader(levels, "unknowns").data[0]);
+  for (const char *header :
+       {"unknowns", "p raw", "p corrected (fixed-trace)", "h/R m90", "h/R m50"})
+  {
+    INFO("column " << header);
+    const double a = test::ColumnByHeader(levels, header).data[0];
+    const double b = test::ColumnByHeader(single, header).data[0];
+    INFO("two-level run " << fmt::format("{:.15e}", a) << ", one-level run "
+                          << fmt::format("{:.15e}", b));
+    CHECK(((std::isnan(a) && std::isnan(b)) || a == Catch::Approx(b).epsilon(1.0e-10)));
+  }
+  for (const char *header : {"scope", "resolution (RESOLVED needs SETTLED)", "coverage",
+                             "regime", "convergence"})
+  {
+    INFO("column " << header);
+    CHECK(test::ColumnByHeader(levels, header).text[0] ==
+          test::ColumnByHeader(single, header).text[0]);
+  }
+  CHECK(test::ColumnByHeader(levels, "convergence").text[0] == "MOVING: FIRST-ITERATION");
+  // The iteration archive left the table at the top level, a real file.
+  CHECK_FALSE(fs::is_symlink(two / "surface-participation.csv"));
+  CHECK_FALSE(fs::exists(two / "iteration1" / "surface-participation.csv"));
 #endif
 }
 
