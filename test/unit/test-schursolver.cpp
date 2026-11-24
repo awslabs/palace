@@ -195,7 +195,7 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
     if (backend == "MUMPS, blocks of 4")
     {
       // Several blocks of S on each process of the grid.
-      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars, 0.0,
+      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars, 0.0, false, true,
                                                 SymbolicFactorization::DEFAULT, 4);
     }
 #endif

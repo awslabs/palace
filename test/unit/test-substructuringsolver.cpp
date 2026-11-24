@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -31,7 +32,10 @@
 #include "fem/substructuremodel.hpp"
 #include "fixtures.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/lowertriangle.hpp"
+#include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/substructuringsolver.hpp"
@@ -4494,5 +4498,170 @@ TEST_CASE("Rows of an interface operator pass through rank 0 in chunks",
     }
   }
 }
+
+#if defined(MFEM_USE_MUMPS)
+
+TEST_CASE("MumpsSchurSolver refactors with new values", "[substructure][Serial][Parallel]")
+{
+  // A complex symmetric shifted Laplacian with Schur variables on a face of the cube,
+  // refactored with its values doubled: the Schur complement doubles, and the internal
+  // solves halve.
+  auto pmesh = MakeSplitCube(4);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
+  mfem::ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+  a.AddDomainIntegrator(new mfem::MassIntegrator);
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
+  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
+  bdr = 0;
+  bdr[0] = 1;
+  fes.GetEssentialTrueDofs(bdr, face);
+  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
+  for (int i = 0; i < face.Size(); i++)
+  {
+    mine[i] = fes.GetMyTDofOffset() + face[i];
+  }
+  {
+    int n = face.Size();
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    schur_vars.resize(disp.back() + cnt.back());
+    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
+  }
+  REQUIRE(!schur_vars.empty());
+  ComplexVector x(nt);
+  x.Real().Randomize(1 + Mpi::Rank(comm));
+  x.Imag().Randomize(2 + Mpi::Rank(comm));
+
+  ComplexMumpsSchurSolver::Coo coo;
+  std::vector<std::vector<double>> vals;
+  std::vector<int> row_ptr;
+  LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
+  for (double v : vals[0])
+  {
+    coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
+  }
+  ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
+                                 schur_vars, 0.0, true, false);
+  std::vector<std::complex<double>> S[2];
+  ComplexVector y[2];
+  for (int k = 0; k < 2; k++)
+  {
+    if (k == 1)
+    {
+      for (auto &v : solver.Values())
+      {
+        v *= 2.0;
+      }
+      solver.Refactor();
+    }
+    S[k] = solver.ReleaseSchur();
+    solver.SolveInternal({&x}, {&y[k]});
+  }
+  if (Mpi::Root(comm))
+  {
+    double d = 0.0, m = 0.0;
+    for (std::size_t q = 0; q < S[0].size(); q++)
+    {
+      d = std::max(d, std::abs(S[1][q] - 2.0 * S[0][q]));
+      m = std::max(m, std::abs(2.0 * S[0][q]));
+    }
+    CHECK(d <= 1.0e-12 * m);
+  }
+  ComplexVector d(y[1]);
+  d *= 2.0;
+  d -= y[0];
+  CHECK(linalg::Norml2(comm, d) <= 1.0e-12 * linalg::Norml2(comm, y[0]));
+}
+
+TEST_CASE("MumpsSchurSolver keeps its tolerance relative when refactored",
+          "[substructure][Serial][Parallel]")
+{
+  // The block low-rank (BLR) tolerance is relative to the largest diagonal entry of the
+  // values factored: refactored with values 1e6 times smaller, the Schur complement keeps
+  // the accuracy of the first factorization (with the scale of the first values, it loses
+  // three digits here).
+  auto pmesh = MakeSplitCube(12);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
+  mfem::ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+  a.AddDomainIntegrator(new mfem::MassIntegrator);
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
+  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
+  bdr = 0;
+  bdr[0] = 1;
+  fes.GetEssentialTrueDofs(bdr, face);
+  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
+  for (int i = 0; i < face.Size(); i++)
+  {
+    mine[i] = fes.GetMyTDofOffset() + face[i];
+  }
+  {
+    int n = face.Size();
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    schur_vars.resize(disp.back() + cnt.back());
+    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
+  }
+  auto schur = [&](double blr_tol)
+  {
+    ComplexMumpsSchurSolver::Coo coo;
+    std::vector<std::vector<double>> vals;
+    std::vector<int> row_ptr;
+    LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
+    for (double v : vals[0])
+    {
+      coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
+    }
+    const auto values = coo.val;
+    ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
+                                   schur_vars, blr_tol, true, false);
+    std::array<std::vector<std::complex<double>>, 2> S;
+    S[0] = solver.ReleaseSchur();
+    for (std::size_t q = 0; q < values.size(); q++)
+    {
+      solver.Values()[q] = 1.0e-6 * values[q];
+    }
+    solver.Refactor();
+    S[1] = solver.ReleaseSchur();
+    return S;
+  };
+  const auto exact = schur(0.0), blr = schur(1.0e-8);
+  if (Mpi::Root(comm))
+  {
+    for (int k = 0; k < 2; k++)
+    {
+      double d = 0.0, m = 0.0;
+      for (std::size_t q = 0; q < exact[k].size(); q++)
+      {
+        d = std::max(d, std::abs(blr[k][q] - exact[k][q]));
+        m = std::max(m, std::abs(exact[k][q]));
+      }
+      CAPTURE(k, d, m);
+      CHECK(d <= 1.0e-8 * m);
+    }
+  }
+}
+#endif
 
 }  // namespace palace
