@@ -110,6 +110,8 @@ ParticipationVerdictBars ParseParticipationVerdictBars(const std::string &text,
                   << source << "\" requires Verdict.TestedProblems (problem names)!");
   bars.tested_problems = tested->get<std::vector<std::string>>();
   const auto scopes = verdict.find("TestedScopes");
+  // The verdict words of Type rows carry no scope suffix: the data must name "Type" among
+  // its tested scopes (and may name "Region").
   MFEM_VERIFY(scopes != verdict.end() && scopes->is_array() &&
                   std::all_of(scopes->begin(), scopes->end(),
                               [](const nlohmann::json &name)
@@ -117,10 +119,13 @@ ParticipationVerdictBars ParseParticipationVerdictBars(const std::string &text,
                                 return name.is_string() &&
                                        (name.get<std::string>() == "Type" ||
                                         name.get<std::string>() == "Region");
-                              }),
+                              }) &&
+                  std::any_of(scopes->begin(), scopes->end(), [](const nlohmann::json &name)
+                              { return name.get<std::string>() == "Type"; }),
               "The verdict data \""
                   << source
-                  << "\" requires Verdict.TestedScopes (\"Type\" and / or \"Region\")!");
+                  << "\" requires Verdict.TestedScopes naming \"Type\" (and optionally "
+                     "\"Region\")!");
   bars.tested_scopes = scopes->get<std::vector<std::string>>();
   const auto interim = verdict.find("Interim");
   MFEM_VERIFY(interim == verdict.end() || interim->is_boolean(),

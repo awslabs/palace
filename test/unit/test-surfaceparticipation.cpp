@@ -620,7 +620,13 @@ TEST_CASE("Surface participation verdict data from the built-in file and a bars 
           "UnderResolvedFactor": 2, "TestedProblems": ["Electrostatic"])",
        g12_f_t + R"("CensusBarOverR": {"1": null, "2": 1.7, "3": 2.0, "4": 4.0},
           "UnderResolvedFactor": 2, "TestedProblems": ["Electrostatic"],
-          "TestedScopes": ["Type", "Box"])"})
+          "TestedScopes": ["Type", "Box"])",
+       g12_f_t + R"("CensusBarOverR": {"1": null, "2": 1.7, "3": 2.0, "4": 4.0},
+          "UnderResolvedFactor": 2, "TestedProblems": ["Electrostatic"],
+          "TestedScopes": [])",
+       g12_f_t + R"("CensusBarOverR": {"1": null, "2": 1.7, "3": 2.0, "4": 4.0},
+          "UnderResolvedFactor": 2, "TestedProblems": ["Electrostatic"],
+          "TestedScopes": ["Region"])"})
   {
     const auto bad = dir / "bad.json";
     std::ofstream(bad) << "{" << resolution << R"(, "Verdict": {)" << member << "}}";

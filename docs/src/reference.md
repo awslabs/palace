@@ -3841,29 +3841,30 @@ the optional `"Verdict"` member of the `Resolution.BarsFile` file replaces them:
 While data are interim the words read `SETTLED-INTERIM` and `RESOLVED-INTERIM` and the
 headers say INTERIM; on a problem type the rule was not tested on (eigenmode, driven) they
 read `SETTLED-UNTESTED` and `RESOLVED-UNTESTED` and the headers say NOT YET TESTED; such
-rows stay flagged. `TestedScopes` names the census the bars were graded with: the box values
-of the data were graded with their cell's census, while a `region` row reads the census of
-its own patches, which reads finer for junction boxes (2.85 against 3.27 ``R`` on one
-measured level), so with `["Type"]` the resolution words of `region` rows read
-`RESOLVED-UNTESTED`, `MARGINAL-UNTESTED` and `UNDER-RESOLVED-UNTESTED` (their convergence
-word and its guard on the box's own census are unchanged) until the box values are graded
-with their own census. They were measured on 634 values of three designs (two electrostatic
-windows and the junction boxes of a third; one eigenmode design; perfect conductors;
-``R = 1.9`` µm): SETTLED values within the bar were within 5 % of a thick-metal reference in
-every case (39 values), the safe ``T`` per design was 1.26 / 1.28 / 2.97 % per doubling, a
-value printed RESOLVED was up to 4.0 % off (26 of 39 beyond 2 %), and ``B`` is the edge of
-the tested domain, not a size that gives 5 %. SETTLED cannot see a bias of the library or of
-the reference. NOT SUPPORTED by these data (the words are printed but not validated): a 2 %
-target; eigenmode values (no eigenmode value settled within the ladders' size bound, so none
-read RESOLVED there); driven problems; Ls sheets; the etched pocket; whole chips; stretched
-elements (the census reads the longest edge); orders 1 and 5 and above; box values other
-than junction boxes; per-interface values (the rule was measured on `Type` totals and box
-values); designs beyond those three. For an eigenmode the history must follow the same
-physical mode across the rounds (the match above). The log prints the eigenmode joins and
-the values (the `Type` rows and the targeted `region` rows) in short form at the end of each
-level (above 40 values, one line per `Type` and scope with the ranges of the raw and the
-corrected values), and `palace.json` records `SurfaceResponse.ParticipationTable` (the file,
-the levels, the rows and the verdict data with their source).
+rows stay flagged. `TestedScopes` names the census the bars were graded with (it must name
+`"Type"` and may name `"Region"`): the box values of the data were graded with their cell's
+census, while a `region` row reads the census of its own patches, which reads finer for
+junction boxes (2.85 against 3.27 ``R`` on one measured level), so with `["Type"]` the
+resolution words of `region` rows read `RESOLVED-UNTESTED`, `MARGINAL-UNTESTED` and
+`UNDER-RESOLVED-UNTESTED` (their convergence word and its guard on the box's own census are
+unchanged) until the box values are graded with their own census. They were measured on 634
+values of three designs (two electrostatic windows and the junction boxes of a third; one
+eigenmode design; perfect conductors; ``R = 1.9`` µm): SETTLED values within the bar were
+within 5 % of a thick-metal reference in every case (39 values), the safe ``T`` per design
+was 1.26 / 1.28 / 2.97 % per doubling, a value printed RESOLVED was up to 4.0 % off (26 of
+39 beyond 2 %), and ``B`` is the edge of the tested domain, not a size that gives 5 %.
+SETTLED cannot see a bias of the library or of the reference. NOT SUPPORTED by these data
+(the words are printed but not validated): a 2 % target; eigenmode values (no eigenmode
+value settled within the ladders' size bound, so none read RESOLVED there); driven problems;
+Ls sheets; the etched pocket; whole chips; stretched elements (the census reads the longest
+edge); orders 1 and 5 and above; box values other than junction boxes; per-interface values
+(the rule was measured on `Type` totals and box values); designs beyond those three. For an
+eigenmode the history must follow the same physical mode across the rounds (the match
+above). The log prints the eigenmode joins and the values (the `Type` rows and the targeted
+`region` rows) in short form at the end of each level (above 40 values, one line per `Type`
+and scope with the ranges of the raw and the corrected values), and `palace.json` records
+`SurfaceResponse.ParticipationTable` (the file, the levels, the rows and the verdict data
+with their source).
 
 ## Electrostatic Simulations
 

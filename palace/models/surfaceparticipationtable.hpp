@@ -63,7 +63,7 @@ struct ParticipationVerdictBars
 // The "Verdict" member of a JSON text: {"MinUnknownsRatio": G > 1, "MaxCensusRatio": F in
 // (0, 1], "MaxChangePerDoublingPercent": T > 0, "CensusBarOverR": {"1": null | B > 0, ...,
 // "4": ...}, "UnderResolvedFactor": >= 1, "TestedProblems": [names], "TestedScopes":
-// ["Type" and / or "Region"], "Interim": bool
+// ["Type"] or ["Type", "Region"], "Interim": bool
 // (default false), "Provenance": text}.
 ParticipationVerdictBars ParseParticipationVerdictBars(const std::string &text,
                                                        const std::string &source,
