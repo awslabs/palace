@@ -19,6 +19,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - A surface-response-corrected run (electrostatic, eigenmode, driven) writes the
+    per-iteration table `surface-participation.csv`: per adaptive level, point, excitation and
+    interface the raw and the fixed-trace corrected participation with, in the same row, the
+    resolution, coverage, regime and confidence verdicts (a `Region` target's over its own
+    patches), the change since the previous level and the change per doubling of the unknowns
+    (SETTLED below 1 %/doubling, read only where the value's own edges were refined; RESOLVED
+    needs SETTLED and the cell census within its order's bar, so a single solve never reads
+    RESOLVED; per `Type` total and box value; eigenmode and driven words read -UNTESTED until
+    the rule is tested there). The numbers are data
+    (`palace/models/surfaceparticipationverdict.json`, or the `Resolution.BarsFile` file's
+    optional `"Verdict"` member); the log prints the table per level and `palace.json` records
+    `SurfaceResponse.ParticipationTable`. No other output changes.
   - Magnetostatic simulations now model domains with a `LondonDepth`: the London term is
     added to the curl-curl operator and the kinetic energy of the supercurrent to the
     extracted inductance, so conductors of any thickness and width can be modeled as
