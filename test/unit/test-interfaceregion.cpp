@@ -218,7 +218,7 @@ TEST_CASE("InterfaceRegion exhaustive surface quadrature",
   plain.dielectric.emplace(1, data);
   SurfacePostOperator unmasked(plain, ProblemType::ELECTROSTATIC, materials, h1_space,
                                nd_space);
-  const double reference = unmasked.GetInterfaceElectricFieldEnergy(1, field);
+  const double reference = unmasked.GetInterfaceElectricFieldEnergy(1, field, 0.0);
   CHECK_THAT(reference, WithinRel(Strip(0.0, 1.0), 1e-12));
   const auto reference_edges = unmasked.GetInterfaceEdgeElectricFieldEnergies(1, field);
   REQUIRE(reference_edges.size() == 1);
@@ -253,14 +253,14 @@ TEST_CASE("InterfaceRegion exhaustive surface quadrature",
   }
   SurfacePostOperator aligned_post(aligned, ProblemType::ELECTROSTATIC, materials, h1_space,
                                    nd_space);
-  CHECK_THAT(aligned_post.GetInterfaceElectricFieldEnergy(1, field),
+  CHECK_THAT(aligned_post.GetInterfaceElectricFieldEnergy(1, field, 0.0),
              WithinRel(Strip(0.0, 0.5), 1e-12));
-  CHECK_THAT(aligned_post.GetInterfaceElectricFieldEnergy(2, field),
+  CHECK_THAT(aligned_post.GetInterfaceElectricFieldEnergy(2, field, 0.0),
              WithinRel(Strip(0.0, 0.5), 1e-12));
-  CHECK_THAT(aligned_post.GetInterfaceElectricFieldEnergy(3, field),
+  CHECK_THAT(aligned_post.GetInterfaceElectricFieldEnergy(3, field, 0.0),
              WithinRel(0.5 * Strip(0.0, 1.0), 1e-12));
-  CHECK(aligned_post.GetInterfaceElectricFieldEnergy(4, field) == 0.0);
-  CHECK(aligned_post.GetInterfaceElectricFieldEnergy(5, field) == reference);
+  CHECK(aligned_post.GetInterfaceElectricFieldEnergy(4, field, 0.0) == 0.0);
+  CHECK(aligned_post.GetInterfaceElectricFieldEnergy(5, field, 0.0) == reference);
   {
     const auto edges = aligned_post.GetInterfaceEdgeElectricFieldEnergies(5, field);
     REQUIRE(edges.size() == 1);
@@ -291,7 +291,7 @@ TEST_CASE("InterfaceRegion exhaustive surface quadrature",
   double total = 0.0, outside = 0.0, annulus = 0.0;
   for (int idx : {1, 2, 3})
   {
-    const double energy = partition_post.GetInterfaceElectricFieldEnergy(idx, field);
+    const double energy = partition_post.GetInterfaceElectricFieldEnergy(idx, field, 0.0);
     CHECK(energy > 0.0);
     CHECK(energy < reference);
     total += energy;
@@ -349,13 +349,13 @@ TEST_CASE("InterfaceRegion exhaustive surface quadrature",
   }
   SurfacePostOperator on_points_post(on_points, ProblemType::ELECTROSTATIC, materials,
                                      h1_space, nd_space);
-  const double left_box = on_points_post.GetInterfaceElectricFieldEnergy(1, field);
-  const double right_box = on_points_post.GetInterfaceElectricFieldEnergy(2, field);
+  const double left_box = on_points_post.GetInterfaceElectricFieldEnergy(1, field, 0.0);
+  const double right_box = on_points_post.GetInterfaceElectricFieldEnergy(2, field, 0.0);
   CHECK_THAT(left_box + right_box, WithinRel(reference, 1e-12));
-  CHECK_THAT(on_points_post.GetInterfaceElectricFieldEnergy(3, field) +
-                 on_points_post.GetInterfaceElectricFieldEnergy(4, field),
+  CHECK_THAT(on_points_post.GetInterfaceElectricFieldEnergy(3, field, 0.0) +
+                 on_points_post.GetInterfaceElectricFieldEnergy(4, field, 0.0),
              WithinRel(reference, 1e-12));
-  CHECK_THAT(on_points_post.GetInterfaceElectricFieldEnergy(3, field),
+  CHECK_THAT(on_points_post.GetInterfaceElectricFieldEnergy(3, field, 0.0),
              WithinRel(left_box, 1e-12));
   // The points on the cut carry energy (the closed-interval double count would be visible).
   {
@@ -363,7 +363,7 @@ TEST_CASE("InterfaceRegion exhaustive surface quadrature",
     (*shifted.dielectric.at(1).region->box_max)[0] = cut_x + 1.0e-9;
     SurfacePostOperator shifted_post(shifted, ProblemType::ELECTROSTATIC, materials,
                                      h1_space, nd_space);
-    CHECK(shifted_post.GetInterfaceElectricFieldEnergy(1, field) >
+    CHECK(shifted_post.GetInterfaceElectricFieldEnergy(1, field, 0.0) >
           left_box * (1.0 + 1.0e-6));
   }
 

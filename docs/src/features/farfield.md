@@ -31,7 +31,10 @@ follows:
 (``\mathbf{E}`` itself goes to zero at infinity as 1/r). You can also think of
 this as the electric field measured at a distance of one unit of length. With
 this output, you can immediately compute various quantities of interest. For
-instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
+instance, in vacuum, ``|r\mathbf{E}|^2/(2Z_0)``, with ``Z_0`` the impedance of free space,
+is the time-averaged power radiated per unit solid angle (W/sr), and its integral over all
+directions is the radiated power. For another homogeneous exterior, use the wave impedance
+``Z`` of that medium given below in place of ``Z_0``.
 
 !!! warning "Limitations"
 
@@ -42,12 +45,18 @@ instance, ``|r\mathbf{E}|^2`` gives the relative radiative power.
      2. is an external boundary, or an interior surface in a homogeneous medium or on
         the inner side of a perfectly matched layer (no surface source on it)
      3. does not cross anisotropic materials
+     4. bounds a homogeneous exterior, approximated as lossless
 
     On an interior surface (for example a box around the radiating structure, inside the
     physical region terminated by a PML), the fields of each face are taken from the side
     facing the center of the bounding box of the surface, as on an external boundary. An
     interior surface must be closed, every face must face that center, and both sides of
     each face must have the same isotropic material.
+
+    For frequency-dependent exterior materials, the wave speed uses
+    ``\operatorname{Re}\epsilon(i\operatorname{Re}\omega)``, which must be positive
+    next to the integration surface. This retains the existing lossless-exterior
+    approximation; it does not model attenuation through an infinite lossy medium.
 
 ## Setup
 
@@ -123,7 +132,9 @@ space, so that
 r \mathbf{H}_p(\mathbf{r}_0) = \frac{\mathbf{r}_0 \times r \mathbf{E}_p(\mathbf{r}_0)}{Z_0}
 ```
 
-with ``Z_0`` impedance of free space.
+with ``Z_0`` the impedance of free space. For another homogeneous exterior, use its
+lossless-approximation impedance ``Z=\sqrt{\mu/\operatorname{Re}\epsilon}`` at the
+solution frequency instead.
 
 This type of output can be processed by several different packages and
 languages. For instance, see the [antenna example](../examples/antenna.md) for

@@ -589,6 +589,7 @@ int QuasiNewtonSolver::Solve()
     // reuse the assembly from the accepted trial.
     std::unique_ptr<ComplexOperator> A2n;
     double res = compute_residual(eig, v, v2, u, u2, A2n);
+    double res_check = res;  // Residual at the previous preconditioner update check
 
     int it = 0, diverged_it = 0;
     while (it < nleps_it)
@@ -725,8 +726,18 @@ int QuasiNewtonSolver::Solve()
 
       // Lagged preconditioner update using the committed (post-line-search) eig.
       // Updating too close to an eigenvalue can cause numerical instability, so lag
-      // by preconditioner_lag iterations.
-      if (it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol)
+      // by preconditioner_lag iterations. Below preconditioner_tol, the operator of the
+      // last update is kept while the iteration converges fast enough with it: it then
+      // converges linearly, at a rate set by the distance of eig_opInv from the eigenvalue.
+      // It is updated if, at the rate since the previous check, the residual would not
+      // reach the tolerance within the next preconditioner_lag iterations.
+      bool update = false;
+      if (it > 0 && it % preconditioner_lag == 0)
+      {
+        update = (res > preconditioner_tol) || (res * (res / res_check) > rtol);
+        res_check = res;
+      }
+      if (update)
       {
         eig_opInv = eig;
         opA2 = (*funcA2)(eig_opInv);

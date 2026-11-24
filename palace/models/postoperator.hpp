@@ -33,6 +33,7 @@
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/ceedparaviewdatacollection.hpp"
 #include "utils/configfile.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
 
@@ -65,16 +66,17 @@ struct SolverData;
 // (2 U_raw) with U_e,defect = response.domain_correction (the electric fixed-trace domain
 // correction, lowering the frequency when positive), U_m,defect =
 // response.magnetic_domain_correction (the magnetic one, raising it) and U_raw the raw
-// normalization energy (1/2 E^H M E plus the lumped-port capacitor energy); NaN unless the
-// response carries the magnetic term and passes magnetic_confident (the magnetic term's
-// own loop gate). Decision 1250 (mx-sc-magnetic Phase 2): the shift follows the SAME
-// coverage rule as the electric fixed-trace correction it extends, which the binary prints
-// on partial coverage with the uncovered requirements kept raw (decision 394 F2); it is NOT
-// gated by closure_independent_confident (whose coverage criterion >= 1 - 1e-10 withheld
-// it on every device with ends) nor by the trace-closure spread: those flags are printed
-// beside it, and `fixed-trace shift coverage` (FixedTraceShiftCoverage) names the matched
-// energy share the shift rests on. One function, so that the column of record and its
-// unit test read the same formula (review d1227 MAJOR-2).
+// normalization energy (the time-averaged 1/4 E^H M E plus the lumped-port capacitor
+// energy, all three energies time averages, so the ratio is the one before Palace 0.20.0);
+// NaN unless the response carries the magnetic term and passes magnetic_confident (the
+// magnetic term's own loop gate). Decision 1250 (mx-sc-magnetic Phase 2): the shift follows
+// the SAME coverage rule as the electric fixed-trace correction it extends, which the
+// binary prints on partial coverage with the uncovered requirements kept raw (decision 394
+// F2); it is NOT gated by closure_independent_confident (whose coverage criterion >= 1 -
+// 1e-10 withheld it on every device with ends) nor by the trace-closure spread: those flags
+// are printed beside it, and `fixed-trace shift coverage` (FixedTraceShiftCoverage) names
+// the matched energy share the shift rests on. One function, so that the column of record
+// and its unit test read the same formula (review d1227 MAJOR-2).
 double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &response,
                                 double raw_normalization_energy);
 
@@ -92,6 +94,15 @@ double FixedTraceShiftCoverage(double within_radius_raw_energy, double kept_raw_
 inline constexpr const char *kRecoveredFluxSpaceMessage =
     "The recovered electric flux does not match the flux recovery space of the error "
     "estimators (broken across the interior boundary sheet faces when the mesh has any)!";
+
+// The time-averaged stored energy 1/2 C <v(t)²> = 1/4 |C| |V|² of a lumped capacitor C at
+// the peak-phasor port voltage V, as the raw E_cap of the port measurements (Palace
+// 0.20.0's convention): the capacitor energy of the self-consistent corrected field.
+inline double TimeAveragedCapacitorEnergy(double C, std::complex<double> V)
+{
+  return 0.5 * electromagnetics::TimeAverageWeight(true) * std::abs(C) *
+         std::real(V * std::conj(V));
+}
 
 // Statically specify if solver uses real or complex fields.
 
@@ -673,14 +684,20 @@ protected:
   mutable bool surface_response_coverage_started = false;
 
   // Reduced-coordinate outputs for adaptive online postprocessing: the electric energy
-  // form, the factor R of the curls of the basis vectors (the magnetic energy is
-  // 1/2 |R y|² / ω²), the domain energy forms (electric in the basis, magnetic in the
+  // form, the factor R of the curls of the basis vectors (the time-averaged magnetic energy
+  // is 1/4 |R y|² / ω²), the domain energy forms (electric in the basis, magnetic in the
   // coordinates R y), and the lumped-port voltages of the basis vectors (one row per port).
   bool reduced_postprocessing_ready = false;
   std::set<int> reduced_postprocessing_checked;  // Excitations checked
   double reduced_postprocessing_tol = 0.0;
   Eigen::MatrixXd reduced_energy_E, reduced_curl_R, reduced_port_V;
   std::map<int, std::pair<Eigen::MatrixXd, Eigen::MatrixXd>> reduced_domain_energy;
+  // Projections of the unit mass forms of the frequency-dependent materials, weighted at
+  // each frequency by their stored-energy susceptibility.
+  using ReducedFrequencyDependentForms =
+      std::vector<std::pair<std::size_t, Eigen::MatrixXd>>;
+  ReducedFrequencyDependentForms reduced_energy_E_fd;
+  std::map<int, ReducedFrequencyDependentForms> reduced_domain_energy_E_fd;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig
@@ -988,13 +1005,15 @@ public:
   // 4) Trigger ParaView field computation and save.
   //
   // The functions return the total domain energy which is the only thing needed in the
-  // solver to normalize the error indicator. If more measurements were needed by the solver
-  // loop, we could imagine passing a small struct (like Measurement above or some sub-set
-  // therefore).
+  // solver to normalize the error indicator, empty for the frequency-domain solvers without
+  // a stored electric energy (Measurement::TotalFieldEnergy). If more measurements were
+  // needed by the solver loop, we could imagine passing a small struct (like Measurement
+  // above or some sub-set therefore).
   //
   // The measure functions will also do logging of (some) measurements to stdout.
-  double MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &e,
-                            const ComplexVector &b, std::complex<double> omega)
+  std::optional<double> MeasureAndPrintAll(int ex_idx, int step, const ComplexVector &e,
+                                           const ComplexVector &b,
+                                           std::complex<double> omega)
     requires(solver_t == ProblemType::DRIVEN);
 
   // Configure and evaluate the exact reduced-coordinate default output path (domain
@@ -1013,9 +1032,10 @@ public:
     requires(solver_t == ProblemType::DRIVEN);
   bool HasReducedPostprocessing() const { return reduced_postprocessing_ready; }
 
-  double MeasureAndPrintAll(int step, const ComplexVector &e, const ComplexVector &b,
-                            std::complex<double> omega, double error_abs, double error_bkwd,
-                            int num_conv)
+  std::optional<double> MeasureAndPrintAll(int step, const ComplexVector &e,
+                                           const ComplexVector &b,
+                                           std::complex<double> omega, double error_abs,
+                                           double error_bkwd, int num_conv)
     requires(solver_t == ProblemType::EIGENMODE);
 
   double MeasureAndPrintAll(int step, const Vector &v, const Vector &e, int idx)
@@ -1031,9 +1051,10 @@ public:
   // Mode analysis: complex E-field tangential (ND) and normal (H1) eigenvectors,
   // propagation constant kn, and eigensolver error estimates. The Poynting power is
   // computed internally via fem_op->ComputePoyntingPower.
-  double MeasureAndPrintAll(int step, const ComplexVector &et, const ComplexVector &en,
-                            std::complex<double> kn, double omega, double error_abs,
-                            double error_bkwd, int num_conv)
+  std::optional<double> MeasureAndPrintAll(int step, const ComplexVector &et,
+                                           const ComplexVector &en, std::complex<double> kn,
+                                           double omega, double error_abs,
+                                           double error_bkwd, int num_conv)
     requires(solver_t == ProblemType::BOUNDARYMODE);
 
   // Write error indicator into ParaView file and print summary statistics to csv. Should be
@@ -1044,7 +1065,8 @@ public:
   // simulation with PROM. There samples are taken and we need the total domain energy for
   // the error indicator, but no other measurement / printing should be done.
 
-  double MeasureDomainFieldEnergyOnly(const ComplexVector &e, const ComplexVector &b)
+  std::optional<double> MeasureDomainFieldEnergyOnly(const ComplexVector &e,
+                                                     const ComplexVector &b, double omega)
     requires(solver_t == ProblemType::DRIVEN);
 
   // Access grid functions for field solutions. Note that these are NOT const functions. The
@@ -1098,7 +1120,9 @@ public:
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, ElectrostaticEnergyData>
   {
     ElectrostaticEnergyData energies;
-    energies.domain = measurement_cache.domain_E_field_energy_all;
+    MFEM_VERIFY(measurement_cache.domain_E_field_energy_all,
+                "Missing cached electrostatic domain energy!");
+    energies.domain = *measurement_cache.domain_E_field_energy_all;
     for (const auto &interface : measurement_cache.interface_eps_i)
     {
       energies.interfaces.emplace(interface.idx,
@@ -1133,7 +1157,7 @@ public:
     }
 
     ElectrostaticEnergyData energies;
-    energies.domain = dom_post_op.GetElectricFieldEnergy(*V);
+    energies.domain = dom_post_op.GetElectricFieldEnergy(*V, 0.0);
     surf_post_op.ResetInterfaceLocalEdgeEnergyCache();
     const auto outside_energies =
         response_targets ? surf_post_op.GetInterfaceOuterElectricFieldEnergies(
@@ -1153,12 +1177,12 @@ public:
       else
       {
         energies.interfaces.emplace(
-            idx,
-            typename ElectrostaticEnergyData::Interface{
-                surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, D_recovered.get()),
-                surf_post_op.GetInterfaceLossTangent(idx),
-                surf_post_op.GetInterfaceEdgeElectricFieldEnergies(idx, *E,
-                                                                   D_recovered.get())});
+            idx, typename ElectrostaticEnergyData::Interface{
+                     surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, 0.0,
+                                                                  D_recovered.get()),
+                     surf_post_op.GetInterfaceLossTangent(idx),
+                     surf_post_op.GetInterfaceEdgeElectricFieldEnergies(
+                         idx, *E, D_recovered.get())});
       }
     }
     return energies;
@@ -1396,6 +1420,19 @@ public:
   // Access to domain postprocessing objects. Use in electrostatic & magnetostatic matrix
   // measurement (see above).
   const auto &GetDomainPostOp() const { return dom_post_op; }
+
+  // The electric and magnetic field energies of the last measurement, nondimensional: the
+  // electric field energy with the high-frequency permittivity ε∞ of the
+  // frequency-dependent materials
+  // (DomainPostOperator::GetHighFrequencyElectricFieldEnergy), which, unlike the stored and
+  // the material electric energies, is available for every material and does not vanish at
+  // a zero of the permittivity, and the magnetic energy.
+  std::pair<double, double> GetDomainFieldEnergies() const
+    requires(HasEGridFunction<solver_t>())
+  {
+    return {dom_post_op.GetHighFrequencyElectricFieldEnergy(*E),
+            measurement_cache.domain_H_field_energy_all};
+  }
 
   // The L-vector of a magnetostatic solution, on the space of the domain energy operators
   // (broken across two-sided superconductor films, if any).

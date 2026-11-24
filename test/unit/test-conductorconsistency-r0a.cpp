@@ -954,7 +954,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           .at(4)
           .energy;
   REQUIRE(kept > 0.0);
-  const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field);
+  const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field, 0.0);
   const double outside =
       surf_post_op.GetInterfaceOuterElectricFieldEnergy(4, field).energy_outside;
   const double replaced = (raw - outside) - kept;

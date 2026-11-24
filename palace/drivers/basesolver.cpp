@@ -134,31 +134,20 @@ json LoadMetadata(const fs::path &post_dir)
 void WriteMetadata(const fs::path &post_dir, const json &meta,
                    const JsonArraySpill *spill = nullptr)
 {
-  // Write to a temporary file and atomically rename it into place so a concurrent reader
-  // (e.g. an external monitor polling palace.json mid-run) never observes a partial file.
-  std::string path = post_dir / "palace.json";
-  std::string tmp_path = post_dir / "palace.json.tmp";
-  {
-    std::ofstream fo(tmp_path);
-    if (!fo.is_open())
-    {
-      MFEM_ABORT("Unable to open metadata file \"" << tmp_path << "\"!");
-    }
-    // Round 2a R1 (decision 1475 (1); OI-METADATA-WRITE-UNCHECKED-ENOSPC): streamed (the
-    // bytes of dump(2) + '\n' without the whole text as a string) and checked: a short
-    // write (a full disk, an I/O error) aborts instead of leaving an incomplete palace.json
-    // behind.
-    const bool written = StreamJsonMetadata(fo, meta, spill);
-    fo.close();
-    if (!written || fo.fail())
-    {
-      MFEM_ABORT("Writing the metadata file \""
-                 << tmp_path
-                 << "\" failed (a short write: the disk is full "
-                    "or an I/O error); the file is incomplete!");
-    }
-  }
-  fs::rename(tmp_path, path);
+  // Replaced through a temporary file, so a concurrent reader (e.g. an external monitor
+  // polling palace.json mid-run) never observes a partial file. Round 2a R1 (decision 1475
+  // (1); OI-METADATA-WRITE-UNCHECKED-ENOSPC): streamed (the bytes of dump(2) + '\n'
+  // without the whole text as a string) and checked: a short write (a full disk, an I/O
+  // error) fails the stream, and WriteOutputFile aborts instead of leaving an incomplete
+  // palace.json behind.
+  WriteOutputFile(post_dir / "palace.json",
+                  [&](std::ostream &fo)
+                  {
+                    if (!StreamJsonMetadata(fo, meta, spill))
+                    {
+                      fo.setstate(std::ios::failbit);
+                    }
+                  });
 }
 
 // Map an MFEM geometry type to its lowercase JSON key used in the SavedAdaptedMesh block.
@@ -190,21 +179,15 @@ const char *GeometryKey(mfem::Geometry::Type geom)
 void WriteConductorConsistencyRecords(const fs::path &path, const json &records,
                                       const JsonArraySpill *spill)
 {
-  std::ofstream fo(path);
-  if (!fo.is_open())
-  {
-    MFEM_ABORT("Unable to open conductor-consistency records file \"" << path.string()
-                                                                      << "\"!");
-  }
-  const bool written = StreamJsonMetadata(fo, records, spill);
-  fo.close();
-  if (!written || fo.fail())
-  {
-    MFEM_ABORT("Writing the conductor-consistency records file \""
-               << path.string()
-               << "\" failed (a short write: the disk is full "
-                  "or an I/O error); the file is incomplete!");
-  }
+  // A short write fails the stream, and WriteOutputFile aborts (as for palace.json).
+  WriteOutputFile(path,
+                  [&](std::ostream &fo)
+                  {
+                    if (!StreamJsonMetadata(fo, records, spill))
+                    {
+                      fo.setstate(std::ios::failbit);
+                    }
+                  });
 }
 
 // The ConductorConsistency object of palace.json's SurfaceResponse.Diagnostics when it

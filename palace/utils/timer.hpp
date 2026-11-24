@@ -48,6 +48,7 @@ public:
     KSP_SETUP,                    // Linear solver setup
     KSP_PRECONDITIONER,           // Linear solver preconditioner
     KSP_COARSE_SOLVE,             // Linear solver coarse-level solve
+    KSP_INITIAL_GUESS,            // Linear solver initial guess from previous solutions
     RESPONSE_APPLY,               // Surface response operator application
     TS,                           // Time integrator
     EPS,                          // Eigenvalue problem solver
@@ -96,6 +97,7 @@ public:
       "  Setup",
       "  Preconditioner",
       "  Coarse Solve",
+      "  Initial Guess",
       "  Response Application",
       "Time Stepping",
       "Eigenvalue Solve",
@@ -279,6 +281,9 @@ private:
   }
 
 public:
+  BlockTimer(const BlockTimer &) = delete;
+  BlockTimer &operator=(const BlockTimer &) = delete;
+
   BlockTimer(Index i, bool count = true) : count(count)
   {
     // Start timing when entering the block, interrupting whatever we were timing before.

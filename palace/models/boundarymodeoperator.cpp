@@ -5,12 +5,10 @@
 
 #include "fem/multigrid.hpp"
 #include "linalg/operator.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/modeoperatorassembly.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 
 namespace palace
 {
@@ -30,11 +28,7 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
   SetUpFESpaces(mesh);
 
   // Boundary operators.
-  auto &pmesh = solve_mesh->Get();
-  surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, mat_op, pmesh);
-  farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, mat_op, pmesh);
-  surf_sigma_op = std::make_unique<SurfaceConductivityOperator>(iodata, mat_op, pmesh);
-  surf_rz_op = std::make_unique<SurfaceRationalImpedanceOperator>(iodata, mat_op, pmesh);
+  surface_terms = std::make_unique<SurfaceTerms>(iodata, mat_op, solve_mesh->Get());
 
   // Frequency-independent block matrices. Atn is the ND/H1 gradient coupling,
   // Btn = -Atn^T, Btt is the ND mass.
@@ -77,12 +71,15 @@ BoundaryModeOperator::ComputePoyntingPower(double omega, std::complex<double> kn
   // second integral. Without the conjugate, the second term is only right when Eₙ is in
   // quadrature with Eₜ, as for a lossless mode: for a lossy mode, it adds a spurious
   // imaginary part to P, which inflates |P| and lowers Z_PV = Re{|V|² / 2P}.
-  std::complex<double> P = 0.5 * std::conj(kn) / omega * linalg::Dot(comm, et, *Bttr, et);
+  // The ½ is the time-average weight of the peak phasors.
+  constexpr double weight = electromagnetics::TimeAverageWeight(true);
+  std::complex<double> P =
+      weight * std::conj(kn) / omega * linalg::Dot(comm, et, *Bttr, et);
   if (Atnr && en.Size() == GetH1TrueVSize())
   {
     ComplexWrapperOperator Atn(const_cast<mfem::HypreParMatrix *>(Atnr.get()),
                                const_cast<mfem::HypreParMatrix *>(Atni.get()));
-    P -= std::complex<double>(0.0, 1.0) / (2.0 * omega) *
+    P -= std::complex<double>(0.0, weight) / omega *
          std::conj(linalg::Dot(comm, en, Atn, et));
   }
   return P;

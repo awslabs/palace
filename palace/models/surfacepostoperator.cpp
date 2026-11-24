@@ -24,6 +24,7 @@
 #include "models/strattonchu.hpp"
 #include "models/surfaceresponseidentification.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/geodata.hpp"
 #include "utils/interfaceownership.hpp"
@@ -805,6 +806,20 @@ int FindPieceGroup(const PartitionedEdgePieces &pieces, std::size_t segment, dou
              : -1;
 }
 
+// The energies of a field E integrated from its quadratic form are time averages for a
+// complex peak phasor (electromagnetics::TimeAverageWeight: 1/2 of the Hermitian form),
+// instantaneous for a real field, as GetInterfaceElectricFieldEnergy reports them: the
+// weight is applied once, at every site where an energy of ours is integrated (summed over
+// the processes), and never again by a caller.
+void ApplyTimeAverage(const GridFunction &E, std::vector<double> &energies)
+{
+  const double weight = electromagnetics::TimeAverageWeight(E.HasImag());
+  for (auto &energy : energies)
+  {
+    energy *= weight;
+  }
+}
+
 }  // namespace
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
@@ -855,14 +870,14 @@ SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
 
 std::unique_ptr<mfem::Coefficient> SurfacePostOperator::SurfaceFluxData::GetCoefficient(
     const mfem::ParGridFunction *E, const mfem::ParGridFunction *B,
-    const MaterialOperator &mat_op, bool imag_permittivity) const
+    const MaterialOperator &mat_op, const mfem::DenseTensor *epsilon) const
 {
   switch (type)
   {
     case SurfaceFlux::ELECTRIC:
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::ELECTRIC>>>(
-          attr_list, E, nullptr, mat_op, two_sided, center, 1.0, imag_permittivity);
+          attr_list, E, nullptr, mat_op, two_sided, center, 1.0, epsilon);
     case SurfaceFlux::MAGNETIC:
       return std::make_unique<
           RestrictedCoefficient<BdrSurfaceFluxCoefficient<SurfaceFlux::MAGNETIC>>>(
@@ -932,7 +947,8 @@ SurfacePostOperator::InterfaceDielectricData::InterfaceDielectricData(
 std::unique_ptr<mfem::Coefficient>
 SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
     const GridFunction &E, const GridFunction *D, const MaterialOperator &mat_op,
-    InterfaceDielectricComponent component, bool apply_region) const
+    InterfaceDielectricComponent component, bool apply_region,
+    const mfem::DenseTensor *epsilon_s) const
 {
   const GridFunction *recovered_flux = flux_recovery ? D : nullptr;
   MFEM_VERIFY(!flux_recovery || recovered_flux,
@@ -954,7 +970,8 @@ SurfacePostOperator::InterfaceDielectricData::GetCoefficient(
     case InterfaceDielectric::MS:
       coefficient = std::make_unique<
           RestrictedCoefficient<InterfaceDielectricCoefficient<InterfaceDielectric::MS>>>(
-          attr_list, E, mat_op, t, epsilon, &sum_sides_marker, recovered_flux, component);
+          attr_list, E, mat_op, t, epsilon, &sum_sides_marker, recovered_flux, component,
+          epsilon_s);
       break;
     case InterfaceDielectric::SA:
       coefficient = std::make_unique<
@@ -1487,7 +1504,8 @@ SurfacePostOperator::SurfacePostOperator(
 
   // Check the materials on the far-field surface. The Stratton-Chu integrand assumes an
   // isotropic medium, and on an interior surface it uses the medium of the traced side for
-  // both sides, which must then be the same (same speed of light). Both sides of each
+  // both sides, which must then be the same (same speed of light, and the same material if
+  // its permittivity depends on frequency). Both sides of each
   // boundary element are checked, including face neighbor elements on parallel interfaces,
   // and the result is combined across processes so that all of them fail consistently.
   if (!postpro.farfield.empty())
@@ -1518,9 +1536,13 @@ SurfacePostOperator::SurfacePostOperator(
       {
         const int attr2 = FET.Elem2->Attribute;
         anisotropic[attr2 - 1] = !mat_op.IsIsotropic(attr2);
+        // The speed of light is that at ε∞: frequency-dependent materials are the same
+        // only as one material, since two models can share ε∞.
         const double c1 = mat_op.GetLightSpeedMax(attr1),
                      c2 = mat_op.GetLightSpeedMax(attr2);
-        if (std::abs(c1 - c2) > 1.0e-12 * std::max(c1, c2))
+        if (std::abs(c1 - c2) > 1.0e-12 * std::max(c1, c2) ||
+            mat_op.GetFrequencyDependentPermittivityModelMaterial(attr1) !=
+                mat_op.GetFrequencyDependentPermittivityModelMaterial(attr2))
         {
           // Keep the pair with the smallest attributes, for a deterministic message.
           const auto [a, b] = std::minmax(attr1, attr2);
@@ -1554,10 +1576,20 @@ SurfacePostOperator::SurfacePostOperator(
                 "FarField requires the same material on both sides of an interior surface, "
                 "but attributes " +
                     std::to_string(mismatch[0]) + " and " + std::to_string(mismatch[1]) +
-                    " have a different speed of light.");
+                    " have a different speed of light or frequency-dependent "
+                    "permittivity.");
   }
 
   farfield = FarFieldData(postpro.farfield, *nd_fespace.GetParMesh(), bdr_attr_marker);
+  if (!farfield.attr_list.IsEmpty())
+  {
+    for (const auto &[m, attrs] :
+         mat_op.SplitCeedBdrAttributesByFrequencyDependentPermittivity(farfield.attr_list)
+             .materials)
+    {
+      farfield_models.push_back(m);
+    }
+  }
 }
 
 SurfacePostOperator::SurfacePostOperator(
@@ -1572,21 +1604,30 @@ SurfacePostOperator::SurfacePostOperator(
 }
 
 std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunction *E,
-                                                         const GridFunction *B) const
+                                                         const GridFunction *B,
+                                                         double omega) const
 {
   // For complex-valued fields, output the separate real and imaginary parts for the time-
   // harmonic quantity. For power flux (Poynting vector), output only the stationary real
-  // part and not the part which has double the frequency. For the electric flux of a
+  // part, time-averaged for complex peak phasors. For the electric flux of a
   // complex field in a lossy dielectric, D = ε E with the complex permittivity
   // ε = Re{ε} + i Im{ε} (Im{ε} = -Re{ε} tan δ): the Im{ε}-weighted flux F'' of the same
   // field adds as Φ = F'(E) + i F''(E), i.e. Φ_r = F'(E_r) - F''(E_i), Φ_i = F'(E_i) +
-  // F''(E_r).
+  // F''(E_r). A frequency-dependent material uses its complete permittivity ε(iω) at the
+  // frequency ω of the fields, including the loss of its model. A user conductivity is a
+  // free current, not part of D.
   auto it = flux_surfs.find(idx);
   MFEM_VERIFY(it != flux_surfs.end(),
               "Unknown surface flux postprocessing index requested!");
   const bool has_imag = (E) ? E->HasImag() : B->HasImag();
   const bool complex_permittivity =
-      (it->second.type == SurfaceFlux::ELECTRIC && has_imag && mat_op.HasLossTangent());
+      (it->second.type == SurfaceFlux::ELECTRIC && has_imag &&
+       (mat_op.HasLossTangent() || mat_op.HasFrequencyDependentPermittivity()));
+  const bool frequency_dependent = (it->second.type == SurfaceFlux::ELECTRIC &&
+                                    mat_op.HasFrequencyDependentPermittivity());
+  const double power_weight = (it->second.type == SurfaceFlux::POWER)
+                                  ? electromagnetics::TimeAverageWeight(has_imag)
+                                  : 1.0;
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
@@ -1603,7 +1644,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
   }
   if (func && func->IsValid())
   {
-    std::complex<double> flux = func->EvalFlux(E, B);
+    std::complex<double> flux = func->EvalFlux(E, B, omega);
     if (complex_permittivity)
     {
       auto &func_imag = flux_funcs_imag[idx];
@@ -1617,19 +1658,34 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
       MFEM_VERIFY(func_imag && func_imag->IsValid(),
                   "libCEED postprocessing was expected for the lossy electric surface "
                   "flux, but SurfaceFunctional could not assemble!");
-      flux += 1i * func_imag->EvalFlux(E, B);
+      flux += 1i * func_imag->EvalFlux(E, B, omega);
     }
-    return flux;
+    return power_weight * flux;
   }
   if (IsSupportedSurfaceFluxDimension(mesh))
   {
     RequireCeedSurfaceFunctional(func.get(), "3D surface flux");
   }
 
+  // The legacy path evaluates the same permittivity tables as the libCEED functionals.
+  mfem::DenseTensor eps_real, eps_imag;
+  if (frequency_dependent)
+  {
+    MFEM_VERIFY(omega > 0.0, "The electric flux of a frequency-dependent material requires "
+                             "a positive frequency!");
+    eps_real = mat_op.EvaluatePermittivityReal(omega);
+    eps_imag = mat_op.EvaluatePermittivityImag(omega);
+  }
+  else
+  {
+    eps_real = mat_op.GetPermittivityReal();
+    eps_imag = mat_op.GetPermittivityImag();
+  }
   auto Integrate = [&](const mfem::ParGridFunction *Ei, const mfem::ParGridFunction *Bi,
                        bool imag_permittivity)
   {
-    auto f = it->second.GetCoefficient(Ei, Bi, mat_op, imag_permittivity);
+    auto f = it->second.GetCoefficient(Ei, Bi, mat_op,
+                                       imag_permittivity ? &eps_imag : &eps_real);
     return GetLocalSurfaceIntegral(*f, attr_marker);
   };
   std::complex<double> dot(
@@ -1652,7 +1708,7 @@ std::complex<double> SurfacePostOperator::GetSurfaceFlux(int idx, const GridFunc
     }
   }
   Mpi::GlobalSum(1, &dot, (E) ? E->GetComm() : B->GetComm());
-  return dot;
+  return power_weight * dot;
 }
 
 double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
@@ -1664,11 +1720,15 @@ double SurfacePostOperator::GetInterfaceLossTangent(int idx) const
 }
 
 double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E,
+                                                            double omega,
                                                             const GridFunction *D) const
 {
+  // The interface energy integrands are 1/2 t ε |E|² (and variants); for complex peak
+  // phasors the reported energy is the time average over one period.
   auto it = eps_surfs.find(idx);
   MFEM_VERIFY(it != eps_surfs.end(),
               "Unknown interface dielectric postprocessing index requested!");
+  const double weight = electromagnetics::TimeAverageWeight(E.HasImag());
   const auto &mesh = *h1_fespace.GetParMesh();
   int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
   mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, it->second.attr_list);
@@ -1699,7 +1759,7 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx, const GridF
     }
     if (func && func->IsValid())
     {
-      return func->Eval(E);
+      return weight * func->Eval(E, omega);
     }
     if (IsSupportedSurfaceFunctionalDimension(mesh))
     {
@@ -1707,11 +1767,19 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx, const GridF
     }
   }
 
-  auto f = it->second.GetCoefficient(E, D, mat_op);
+  // A frequency-dependent substrate of an MS interface uses |D_n| = |ε(iω)| |E_n|.
+  std::optional<mfem::DenseTensor> epsilon_s;
+  if (it->second.type == InterfaceDielectric::MS &&
+      mat_op.HasFrequencyDependentPermittivity())
+  {
+    epsilon_s = MetalSubstratePermittivity(mat_op, omega);
+  }
+  auto f = it->second.GetCoefficient(E, D, mat_op, InterfaceDielectricComponent::TOTAL,
+                                     true, epsilon_s ? &*epsilon_s : nullptr);
   double dot =
       GetLocalSurfaceIntegral(*f, attr_marker, it->second.ownership_quadrature_order);
   Mpi::GlobalSum(1, &dot, E.GetComm());
-  return dot;
+  return weight * dot;
 }
 
 std::vector<SurfacePostOperator::InterfaceEdgeEnergy>
@@ -1748,6 +1816,7 @@ SurfacePostOperator::GetInterfaceEdgeElectricFieldEnergies(int idx, const GridFu
         GetLocalSurfaceIntegral(annulus, attr_marker, data.ownership_quadrature_order);
   }
   Mpi::GlobalSum(static_cast<int>(local_energy.size()), local_energy.data(), E.GetComm());
+  ApplyTimeAverage(E, local_energy);
   for (std::size_t i = 0; i < data.edge_distances.size(); i++)
   {
     energies.push_back(
@@ -1803,6 +1872,7 @@ SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   for (std::size_t i = 0; i < entries.size(); i++)
   {
     auto &energy = energies.at(entries[i].first);
@@ -1881,6 +1951,7 @@ SurfacePostOperator::PartitionInterfaceEdgeEnergies(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   for (std::size_t i = 0; i < entries.size(); i++)
   {
     energies.at(entries[i].first)[entries[i].second] += local_energies[i];
@@ -2037,6 +2108,7 @@ SurfacePostOperator::GetInterfaceUncoveredFeatureEdgeEnergies(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   for (std::size_t i = 0; i < entries.size(); i++)
   {
     const auto &[idx, type, label] = entries[i];
@@ -2480,12 +2552,14 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   // Rulings 2276 / 2277: the second array (every rank holds the same layout).
   if (!extra_energies.empty())
   {
     Mpi::GlobalSum(static_cast<int>(extra_energies.size()), extra_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, extra_energies);
   if (!overlap_masks.empty())
   {
     MPI_Allreduce(MPI_IN_PLACE, overlap_masks.data(),
@@ -2792,6 +2866,8 @@ SurfacePostOperator::GetInterfaceRegionPatchFootprints(
     {
       Mpi::GlobalSum(static_cast<int>(local.size()), local.data(), E.GetComm());
     }
+    // The energies carry the time average (ApplyTimeAverage), the areas do not.
+    const double time_average = electromagnetics::TimeAverageWeight(E.HasImag());
     auto &footprints = result[idx];
     footprints.resize(reference_points.size());
     for (std::size_t p = 0; p < reference_points.size(); p++)
@@ -2806,10 +2882,10 @@ SurfacePostOperator::GetInterfaceRegionPatchFootprints(
         MFEM_VERIFY(p < footprints.size(),
                     "A region patch footprint names a patch without a reference point!");
         auto &footprint = footprints[p];
-        footprint.open_energy += sums[0];
-        footprint.open_energy_in += sums[1];
-        footprint.energy += sums[2];
-        footprint.energy_in += sums[3];
+        footprint.open_energy += time_average * sums[0];
+        footprint.open_energy_in += time_average * sums[1];
+        footprint.energy += time_average * sums[2];
+        footprint.energy_in += time_average * sums[3];
         footprint.area += sums[4];
         footprint.area_in += sums[5];
       }
@@ -3094,6 +3170,7 @@ SurfacePostOperator::GetInterfaceWeightedPortionEdgeEnergies(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   for (std::size_t i = 0; i < entries.size(); i++)
   {
     energies.at(entries[i].first)[entries[i].second] += local_energies[i];
@@ -3141,6 +3218,7 @@ SurfacePostOperator::GetInterfaceOuterElectricFieldEnergies(const std::set<int> 
   }
   Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                  E.GetComm());
+  ApplyTimeAverage(E, local_energies);
   std::size_t i = 0;
   for (auto &[idx, energy] : energies)
   {
@@ -3276,6 +3354,11 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
                  E.GetComm());
   Mpi::GlobalSum(static_cast<int>(local_polarized_energy.size()),
                  local_polarized_energy.data(), E.GetComm());
+  for (auto *energy : {&local_total_energy, &local_total_polarized_energy, &local_energy,
+                       &local_vertex_energy, &local_polarized_energy})
+  {
+    ApplyTimeAverage(E, *energy);
+  }
   const LocalVolumeEdgeEnergyCache *local_volume_energy = nullptr;
   if (include_volume)
   {
@@ -3965,7 +4048,10 @@ SurfacePostOperator::GetLocalVolumeEdgeElectricFieldEnergies(
   for (auto &component : entry.polarized_energies)
   {
     Mpi::GlobalSum(static_cast<int>(component.size()), component.data(), E.GetComm());
+    ApplyTimeAverage(E, component);
   }
+  ApplyTimeAverage(E, entry.energies);
+  ApplyTimeAverage(E, entry.vertex_energies);
   return entry;
 }
 
@@ -4081,6 +4167,12 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   MFEM_VERIFY(!farfield.interior, "Far-field extraction on interior surfaces requires "
                                   "complex-valued fields (libCEED path)!");
 
+  // The wave speed and impedance of the exterior medium: c₀ at Re ε(i Re{ω}) for a
+  // frequency-dependent one, as in the libCEED functional.
+  const mfem::DenseTensor c0 =
+      farfield_models.empty() ? mat_op.GetLightSpeed()
+                              : mat_op.EvaluateLightSpeed(omega.real(), farfield_models);
+
   // Integrate. Each MPI process computes its contribution and we will reduce
   // everything at the end. We make them std::vector<std::array<double, 3>>
   // because we want a very simple memory layout so that we can reduce
@@ -4098,8 +4190,8 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
 
-    AddStrattonChuIntegrandAtElement(E, B, mat_op, omega.real(), omega.imag(), r_naughts,
-                                     *T, *ir, integrals_r, integrals_i);
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, c0, omega.real(), omega.imag(),
+                                     r_naughts, *T, *ir, integrals_r, integrals_i);
   }
 
   double *data_r_ptr = integrals_r.data()->data();

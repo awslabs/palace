@@ -180,7 +180,17 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
     {
       auto estimator = MakeEstimator(ComplexVector());
       ErrorIndicator ind_c;
-      estimator.AddErrorIndicator(X, 1.0, ind_c);
+      // Complex electric fields require their frequency; this constant material does not
+      // depend on it, so any fixture frequency gives the same estimate.
+      constexpr double omega = 1.0;
+      if constexpr (requires { estimator.AddErrorIndicator(X, 1.0, omega, ind_c); })
+      {
+        estimator.AddErrorIndicator(X, 1.0, omega, ind_c);
+      }
+      else
+      {
+        estimator.AddErrorIndicator(X, 1.0, ind_c);  // Magnetic flux: no frequency
+      }
       Vector expected(ref_re.Local().Size());
       {
         const auto *hre = ref_re.Local().HostRead();
@@ -188,7 +198,9 @@ TEST_CASE("Flux error estimators on mixed-geometry meshes",
         auto *he = expected.HostWrite();
         for (int i = 0; i < expected.Size(); i++)
         {
-          he[i] = std::sqrt(hre[i] * hre[i] + him[i] * him[i]);
+          // At the same physical energy denominator, a peak phasor's squared
+          // error has half the weight of each instantaneous real-field result.
+          he[i] = std::sqrt(0.5 * (hre[i] * hre[i] + him[i] * him[i]));
         }
       }
       Compare(ind_c.Local(), expected, "complex estimate");
@@ -498,7 +510,7 @@ TEST_CASE("Reused recovered D gives the recomputed indicator",
     FillRandom(Bc.Imag(), 29);
     Dc_wrong = 0.0;
     ErrorIndicator recomputed_c, reused_c, unused_c;
-    estimator.AddErrorIndicator(Ec, Bc, 1.0, recomputed_c);
+    estimator.AddErrorIndicator(Ec, Bc, 1.0, 1.0, recomputed_c);
     estimator.RecoverElectricFlux(Ec, Dc);
     estimator.AddErrorIndicator(Ec, Bc, Dc, 1.0, reused_c);
     CheckSameIndicator(comm, reused_c.Local(), recomputed_c.Local(), "drivers' estimator");

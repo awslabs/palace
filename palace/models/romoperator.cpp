@@ -20,6 +20,7 @@
 #include <utility>
 #include <mfem.hpp>
 #include "fem/bilinearform.hpp"
+#include "fem/gridfunction.hpp"
 #include "fem/integrator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
@@ -29,6 +30,7 @@
 #include "models/spaceoperator.hpp"
 #include "utils/aaa.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -120,19 +122,32 @@ inline std::vector<double> SampleChebyshevGauss(double w_lo, double w_hi, int n)
 
 // Complex LSQ quadratic fit y(ω) ≈ c0 + c1·ω + c2·ω² on the given nodes (real inputs
 // come through with zero imaginary parts and produce real coefficients).
+// With weights, each row is divided by its weight (a weighted least-squares fit).
 inline Eigen::Vector3cd FitQuadratic(const std::vector<double> &omegas,
-                                     const Eigen::VectorXcd &y)
+                                     const Eigen::VectorXcd &y,
+                                     const std::vector<double> &weights = {})
 {
   const auto n = static_cast<long>(omegas.size());
   Eigen::MatrixXcd vandermonde(n, 3);
+  Eigen::VectorXcd rhs = y;
   for (long i = 0; i < n; i++)
   {
     const double w = omegas[static_cast<std::size_t>(i)];
-    vandermonde(i, 0) = 1.0;
-    vandermonde(i, 1) = w;
-    vandermonde(i, 2) = w * w;
+    const double s = weights.empty() ? 1.0 : weights[static_cast<std::size_t>(i)];
+    vandermonde(i, 0) = 1.0 / s;
+    vandermonde(i, 1) = w / s;
+    vandermonde(i, 2) = w * w / s;
+    rhs(i) /= s;
   }
-  return vandermonde.colPivHouseholderQr().solve(y);
+  return vandermonde.colPivHouseholderQr().solve(rhs);
+}
+
+// The pointwise scale of the fit residual of f at ω: |f(ω)|, floored at a fraction of
+// max |f| over the band so that a zero of f does not demand an exact fit there.
+constexpr double SCALAR_FIT_SCALE_FLOOR = 1.0e-8;
+inline double PointwiseScale(std::complex<double> f, double f_max)
+{
+  return std::max(std::abs(f), SCALAR_FIT_SCALE_FLOOR * f_max);
 }
 
 // AAA rational fit of a residual sampled on the fit grid, with the synthesis tolerance
@@ -441,6 +456,7 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega,
   x(Eigen::seqN(1, c.size(), 2)) = (1i * omega) * c;
   Q.conservativeResizeLike(Eigen::MatrixXcd::Zero(m, S + 1));
   R.conservativeResizeLike(Eigen::MatrixXcd::Zero(S + 1, S + 1));
+  const double x_norm = x.norm();
   for (int pass = 0; pass < 2; pass++)  // CGS2
   {
     const Eigen::VectorXcd h = Q.leftCols(S).adjoint() * x;
@@ -448,6 +464,9 @@ void MinimalRationalInterpolation::AddSolutionSample(double omega,
     R.col(S).head(S) += h;
   }
   R(S, S) = x.norm();
+  MFEM_VERIFY(R(S, S).real() > ORTHOG_TOL * x_norm,
+              "Minimal rational interpolation sample in the span of the previous ones (the "
+              "same frequency and solution added twice)!");
   Q.col(S) = x / R(S, S).real();
   ComputeMRI(R, q);
   z.push_back(omega);
@@ -641,7 +660,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                    this->response_stiffness->Width() == K->Width()),
               "Invalid fabrication-response magnetic stiffness when constructing PROM!");
 
-  // Frequency-dependent boundary terms, projected onto the basis as it grows.
+  // Frequency-dependent terms, projected onto the basis as it grows.
   auto add_term = [this](BoundaryTermKind kind, int idx,
                          std::unique_ptr<ComplexOperator> op, bool symmetric)
   {
@@ -666,22 +685,11 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
            space_op.GetFarfieldBoundaryCurlCurlMatrix<ComplexOperator>(Operator::DIAG_ZERO,
                                                                        /*imag_slot=*/true),
            !mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling());
-  const auto &surf_sigma_op = space_op.GetSurfaceConductivityOp();
-  for (std::size_t g = 0; g < surf_sigma_op.Size(); g++)
+  for (int i = 0; i < space_op.GetSurfaceTerms().GetNumExtraSystemBdrMassTerms(); i++)
   {
-    if (surf_sigma_op.IsActive(g))
-    {
-      add_term(BoundaryTermKind::SurfaceConductivity, static_cast<int>(g),
-               space_op.GetSurfaceConductivityBoundaryMatrix<ComplexOperator>(
-                   static_cast<int>(g), Operator::DIAG_ZERO),
-               true);
-    }
-  }
-  for (int b = 0; b < space_op.GetRationalImpedanceOp().GetNumBoundaries(); b++)
-  {
-    add_term(BoundaryTermKind::RationalImpedance, b,
-             space_op.GetRationalImpedanceBoundaryMassMatrix<ComplexOperator>(
-                 b, Operator::DIAG_ZERO, /*imag_slot=*/true),
+    add_term(BoundaryTermKind::SurfaceTerm, i,
+             space_op.GetExtraSystemBdrMassTermMatrix<ComplexOperator>(
+                 i, Operator::DIAG_ZERO, /*imag_slot=*/true),
              true);
   }
   for (const auto &[idx, port] : space_op.GetFloquetPortOp())
@@ -698,10 +706,35 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
       }
     }
   }
+  // The second-order terms of the absorbing boundaries next to frequency-dependent
+  // materials (their first-order terms are terms of SurfaceTerms, above). With k = ω k₀,
+  // the rotated trace and mixed curl carry ω/r_k and 1/r_k in A2, not in the static C and
+  // K.
+  for (std::size_t k = 0;
+       k < space_op.GetSurfaceTerms().GetFarfieldOp().NumDispersiveMaterials(); k++)
+  {
+    const int idx = static_cast<int>(k);
+    add_term(BoundaryTermKind::FarfieldPermittivityCurlCurl, idx,
+             space_op.GetFarfieldDispersiveCurlCurlMatrix(k, Operator::DIAG_ZERO),
+             !mat_op.HasWaveVector() || mat_op.HasFloquetFrequencyScaling());
+    add_term(BoundaryTermKind::FarfieldPermittivityRotatedTrace, idx,
+             space_op.GetFarfieldDispersiveDampingFloquetMatrix(k, Operator::DIAG_ZERO),
+             true);
+    add_term(BoundaryTermKind::FarfieldPermittivityMixedCurl, idx,
+             space_op.GetFarfieldDispersiveStiffnessFloquetMatrix(k, Operator::DIAG_ZERO),
+             false);
+  }
+  // The unit mass of each frequency-dependent material, borrowed from SpaceOperator.
+  for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
+  {
+    add_term(BoundaryTermKind::Permittivity, static_cast<int>(m),
+             space_op.GetFrequencyDependentPermittivityMassMatrix(m, Operator::DIAG_ZERO),
+             true);
+  }
   {
     // The terms other than the wave ports reproduce the assembled A2(ω): check on a random
-    // vector at the ends of the sweep, so that a frequency-dependent boundary condition
-    // without a term here (one added to SpaceOperator::GetExtraSystemMatrix but not here)
+    // vector at the ends of the sweep, so that a frequency-dependent term without a
+    // factored form here (one added to SpaceOperator::GetExtraSystemMatrix but not here)
     // stops the simulation instead of being dropped from the PROM. The tolerance leaves
     // room for the round-off of partial assembly on devices.
     const auto &sample_f = iodata.solver.driven.sample_f;
@@ -736,7 +769,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
       const double error = linalg::Norml2(space_op.GetComm(), y);
       MFEM_VERIFY(
           error <= 1.0e-10 * scale,
-          "PROM boundary terms do not reproduce the frequency-dependent system matrix "
+          "PROM factored terms do not reproduce the frequency-dependent system matrix "
           "(relative error "
               << error / scale << ")!");
     }
@@ -754,12 +787,58 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     sweep_omega_min = *std::ranges::min_element(sample_f);
     sweep_omega_max = *std::ranges::max_element(sample_f);
   }
+  if (iodata.solver.driven.adaptive_circuit_synthesis)
+  {
+    // The response of a wave port or absorbing boundary next to a frequency-dependent
+    // material is fit (FitWavePortDispersion, FitScalarDispersion). Near a resonance of the
+    // material it is not rational and the fit can miss AdaptiveTol: warn before the sweep.
+    const double unit_GHz = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
+                            (2.0 * std::numbers::pi);
+    auto WarnResonances = [&](const std::string &boundary, const mfem::Array<int> &attrs)
+    {
+      std::vector<std::string> resonances;
+      const auto split =
+          mat_op.SplitCeedBdrAttributesByFrequencyDependentPermittivity(attrs);
+      for (const auto &[m, ceed_attrs] : split.materials)
+      {
+        for (double w :
+             mat_op.GetPermittivityResonances(m, sweep_omega_min, sweep_omega_max, 0.0))
+        {
+          resonances.push_back(
+              fmt::format("{:.6g} GHz (material {:d})", w * unit_GHz, m + 1));
+        }
+      }
+      if (!resonances.empty())
+      {
+        Mpi::Warning("{} is next to a frequency-dependent material with a resonance inside "
+                     "the band of the sweep, at {}!\nCircuit synthesis fits the response "
+                     "of the boundary, which is not rational near a resonance, and can "
+                     "miss AdaptiveTol there.\n",
+                     boundary, fmt::join(resonances, ", "));
+      }
+    };
+    for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
+    {
+      if (port_data.active || port_data.include_in_synthesis)
+      {
+        WarnResonances(fmt::format("Wave port {:d}", port_idx), port_data.GetAttrList());
+      }
+    }
+    const auto &farfield_attrs = space_op.GetSurfaceTerms().GetFarfieldOp().GetAttrList();
+    WarnResonances(fmt::format("The absorbing boundary (attributes {})",
+                               fmt::join(farfield_attrs, ", ")),
+                   farfield_attrs);
+  }
   // Floor the fit/rank tolerances at the synthesis EVP accuracy floor: resolving finer than
   // the port modes are solved just chases eigensolver noise (see
   // WAVEPORT_SYNTHESIS_EIG_TOL).
   waveport_synthesis_tol =
       std::max(iodata.solver.driven.adaptive_tol, WAVEPORT_SYNTHESIS_EIG_TOL);
   waveport_synthesis_order_max = WAVEPORT_AAA_ORDER_MAX;
+  for (const auto &[idx, data] : iodata.boundaries.waveport)
+  {
+    waveport_mode_tol[idx] = data.eig_tol;
+  }
   waveport_synthesis_rank_tol = std::clamp(
       waveport_synthesis_tol, WAVEPORT_SYNTHESIS_EIG_TOL, WAVEPORT_SYNTHESIS_RANK_TOL_MAX);
 
@@ -787,7 +866,6 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     MFEM_VERIFY(iodata.solver.surface_response_correction,
                 "A response-corrected PROM requires SurfaceResponseCorrection solver "
                 "configuration!");
-    ksp->SetInitialGuess(true);
     ksp->SetRelTol(iodata.solver.surface_response_correction->solve_tol);
   }
 
@@ -835,14 +913,25 @@ std::complex<double> RomOperator::GetBoundaryTermCoefficient(const BoundaryTerm 
                  : 0.0;
     case BoundaryTermKind::Farfield:
       return 0.5 / omega;
-    case BoundaryTermKind::SurfaceConductivity:
-      return space_op.GetSurfaceConductivityOp().EvaluateScalar(term.idx, omega) / 1i;
-    case BoundaryTermKind::RationalImpedance:
-      return space_op.GetRationalImpedanceOp().EvalRobinCoefficient(term.idx, 1i * omega) /
+    case BoundaryTermKind::SurfaceTerm:
+      return space_op.GetSurfaceTerms().GetExtraSystemBdrMassTermScale(term.idx, omega) /
              1i;
     case BoundaryTermKind::FloquetPort:
       space_op.GetFloquetPortOp().Initialize(omega);
       return space_op.GetFloquetPortOp().GetPort(term.idx).GetGamma0();
+    case BoundaryTermKind::FarfieldPermittivityCurlCurl:
+      return 0.5 / (omega * space_op.GetSurfaceTerms().GetFarfieldOp().GetDispersiveScale(
+                                term.idx, omega));
+    case BoundaryTermKind::FarfieldPermittivityRotatedTrace:
+      return omega /
+             space_op.GetSurfaceTerms().GetFarfieldOp().GetDispersiveScale(term.idx, omega);
+    case BoundaryTermKind::FarfieldPermittivityMixedCurl:
+      return 1.0 /
+             space_op.GetSurfaceTerms().GetFarfieldOp().GetDispersiveScale(term.idx, omega);
+    case BoundaryTermKind::Permittivity:
+      return space_op.GetMaterialOp().EvaluateFrequencyDependentPermittivityA2(term.idx,
+                                                                               1i * omega) /
+             1i;
   }
   return 0.0;
 }
@@ -985,43 +1074,51 @@ void RomOperator::CheckWavePortModePairings(double omega, const Eigen::MatrixXcd
   }
 }
 
-void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
+bool RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u,
+                           bool initial_guess, double max_rel_correction)
 {
   // Compute HDM solution at the given frequency. The HDM system operator is applied through
   // the preconditioner (see SpaceOperator::GetSystemOperator), or else built locally with
   // the full frequency-dependent operator (A2 + low-rank Floquet DtN). A refers to P and
   // A2_full, so both must outlive it.
-  auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
-                                                             -omega * omega + 0.0i, omega);
-  std::unique_ptr<ComplexOperator> A2_full;
-  auto A = space_op.GetSystemOperator(omega, *P);
-  const bool assembled = !A;
-  if (!A)
+  if (omega != hdm_omega || !hdm_A)
   {
-    A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-    A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
-                                 std::complex<double>(-omega * omega, 0.0), K.get(),
-                                 C.get(), M.get(), A2_full.get());
-  }
-  // The fabrication-response correction wraps A on either path (through the
-  // preconditioner or assembled).
-  std::unique_ptr<SumComplexOperator> corrected_A;
-  if (response_mass)
-  {
-    corrected_A = std::make_unique<SumComplexOperator>(*A);
-    corrected_A->AddOperator(*response_mass, -omega * omega + 0.0i);
-    if (response_stiffness)
+    hdm_corrected_A.reset();
+    hdm_A.reset();
+    hdm_A2_full.reset();
+    hdm_P.reset();
+    hdm_P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
+                                                              -omega * omega + 0.0i, omega);
+    hdm_A = space_op.GetSystemOperator(omega, *hdm_P);
+    const bool assembled = !hdm_A;
+    if (!hdm_A)
     {
-      corrected_A->AddOperator(*response_stiffness, 1.0 + 0.0i);
+      hdm_A2_full = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+      hdm_A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                       std::complex<double>(-omega * omega, 0.0), K.get(),
+                                       C.get(), M.get(), hdm_A2_full.get());
     }
-  }
-  ksp->SetOperators(corrected_A ? static_cast<const ComplexOperator &>(*corrected_A) : *A,
-                    *P);
-  if (corrected_A)
-  {
-    // The path the response-corrected HDM system operator wraps (log only).
-    Mpi::Print(" Response-corrected PROM HDM system operator: {}\n",
-               assembled ? "assembled" : "matrix-free");
+    // The fabrication-response correction wraps A on either path (through the
+    // preconditioner or assembled). It is cached with the HDM operators, so a refinement
+    // of the sample (RefineHDM) applies the same corrected operator as its solve.
+    if (response_mass)
+    {
+      auto corrected_A = std::make_unique<SumComplexOperator>(*hdm_A);
+      corrected_A->AddOperator(*response_mass, -omega * omega + 0.0i);
+      if (response_stiffness)
+      {
+        corrected_A->AddOperator(*response_stiffness, 1.0 + 0.0i);
+      }
+      hdm_corrected_A = std::move(corrected_A);
+    }
+    ksp->SetOperators(hdm_corrected_A ? *hdm_corrected_A : *hdm_A, *hdm_P);
+    if (hdm_corrected_A)
+    {
+      // The path the response-corrected HDM system operator wraps (log only).
+      Mpi::Print(" Response-corrected PROM HDM system operator: {}\n",
+                 assembled ? "assembled" : "matrix-free");
+    }
+    hdm_omega = omega;
   }
 
   // The HDM excitation vector is computed as RHS = iω RHS1 + RHS2(ω).
@@ -1032,8 +1129,62 @@ void RomOperator::SolveHDM(int excitation_idx, double omega, ComplexVector &u)
     r.Add(1i * omega, RHS1[k]);
   }
 
-  // Solve the linear system.
+  // Solve the linear system. A solve started from u with a correction limit (to certify u)
+  // uses the tighter of the linear solver tolerance and the limit: with a looser solver
+  // tolerance, a guess which already meets it would be returned after no iteration, with a
+  // zero correction, however far from the solution it is within this tolerance (with an
+  // exact preconditioner, the relative preconditioned residual of u is its relative error).
+  const double rel_tol = ksp->GetRelTol();
+  const bool limit_correction = initial_guess && max_rel_correction > 0.0;
+  ksp->SetInitialGuess(initial_guess);
+  ksp->SetMaxRelativeCorrection(limit_correction ? max_rel_correction : 0.0);
+  if (limit_correction && max_rel_correction < rel_tol)
+  {
+    ksp->SetRelTol(max_rel_correction);
+  }
   ksp->Mult(r, u);
+  hdm_b.SetSize(r.Size());
+  hdm_b.UseDevice(true);
+  hdm_b = r;
+  ksp->SetRelTol(rel_tol);
+  ksp->SetMaxRelativeCorrection(0.0);
+  ksp->SetInitialGuess(false);
+  return ksp->GetConverged() && !ksp->GetCorrectionExceeded();
+}
+
+void RomOperator::ReleaseHDMOperators()
+{
+  hdm_corrected_A.reset();
+  hdm_A.reset();
+  hdm_A2_full.reset();
+  hdm_P.reset();
+  hdm_omega = std::numeric_limits<double>::quiet_NaN();
+  hdm_b.Real().Destroy();
+  hdm_b.Imag().Destroy();
+}
+
+void RomOperator::RefineHDM(ComplexVector &u)
+{
+  MFEM_VERIFY(hdm_A, "No HDM system to refine the solution of!");
+  ComplexVector res(u.Size()), d(u.Size());
+  res.UseDevice(true);
+  d.UseDevice(true);
+  // The residual of the system the sample was solved with: the response-corrected one
+  // when the PROM carries the fabrication response (SolveHDM).
+  (hdm_corrected_A ? *hdm_corrected_A : *hdm_A).Mult(u, res);
+  linalg::AXPBY(1.0, hdm_b, -1.0, res);
+  d = 0.0;
+  // The correction is solved from zero: GMRES restarted on the residual can stall for a few
+  // iterations before it converges again, so a correction often costs as many iterations
+  // as the solve of the sample itself. An absolute tolerance would end it at once if the
+  // residual of u is below it.
+  const double rel_tol = ksp->GetRelTol(), abs_tol = ksp->GetAbsTol();
+  ksp->SetRelTol(std::max(rel_tol, 1.0e-2));
+  ksp->SetAbsTol(0.0);
+  ksp->Mult(res, d);
+  ksp->SetRelTol(rel_tol);
+  ksp->SetAbsTol(abs_tol);
+  u += d;
 }
 
 std::size_t RomOperator::NumSynthesisPortModes() const
@@ -1150,12 +1301,23 @@ void RomOperator::AddWavePortModesForSynthesis(double omega_ref)
       continue;
     }
     space_op.GetWavePortFieldVectorPrimaryEt(port_idx, omega_ref, vec);
+    // A mode whose imaginary part is below the tolerance of its mode solve is real (a TE or
+    // TEM mode of a homogeneous lossy medium, after the phase normalization of the mode),
+    // and that part is noise of the solve. As a basis vector it would be a node of the
+    // synthesized circuit, scaled by its Gram-Schmidt norm (of the size of the noise),
+    // which leaves the synthesized pencil numerically singular.
+    if (linalg::Norml2(space_op.GetComm(), vec.Imag()) <=
+        waveport_mode_tol.at(port_idx) * linalg::Norml2(space_op.GetComm(), vec.Real()))
+    {
+      vec.Imag() = 0.0;
+    }
     UpdatePROM(vec, fmt::format("waveport_{:d}", port_idx));
   }
 }
 
 Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
-                                         std::string_view node_label)
+                                         std::string_view node_label,
+                                         bool abort_if_dependent)
 {
   // Update PROM basis V. The basis is always real (each complex solution adds two basis
   // vectors, if it has a nonzero real and imaginary parts).
@@ -1169,18 +1331,20 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
   const bool has_imag = (norm_im > norm_tol);
 
   const std::size_t dim_V_old = V.size();
-  std::size_t dim_V_new = V.size() + std::size_t{has_real} + std::size_t{has_imag};
+  const auto dim_V_max = static_cast<Eigen::Index>(dim_V_old + has_real + has_imag);
+  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_max, dim_V_max));
 
-  orth_R.conservativeResizeLike(Eigen::MatrixXd::Zero(dim_V_new, dim_V_new));
-
-  // Small lambda to add vector to basis. Lambda returns a bool, which is false when the new
-  // vector is below the linear dependence tolerance. The MFEM_VERIFY happens after the
-  // lambda. This is done for MPI syncronization reasons. If the MFEM_VERIFY throws / aborts
-  // on one rank why others are in an inconsistent state, this could lead to MPI
-  // communication failures in the memory unwinding and global MPI hard crash (e.g. in the
-  // unit tests).
-  auto add_real_vector_to_basis = [this](const Vector &vector,
-                                         std::string_view node_label) -> bool
+  // Small lambda to add the real or imaginary part of u to the basis. It returns the
+  // coefficients of the part in the basis, its column of R: the projections onto the
+  // previous basis vectors, and the norm of the remainder, which is the new basis vector. A
+  // part whose remainder is below the linear dependence tolerance is in the span of the
+  // basis to the orthogonalization tolerance: it is not added, and its coefficients are its
+  // projections. The abort for a dependent part happens after the lambda. This is done for
+  // MPI syncronization reasons. If the MFEM_ABORT throws / aborts on one rank why others
+  // are in an inconsistent state, this could lead to MPI communication failures in the
+  // memory unwinding and global MPI hard crash (e.g. in the unit tests).
+  bool dependent = false;
+  auto add_real_vector_to_basis = [&](const Vector &vector, bool imag)
   {
     auto dim_V = V.size();
     MFEM_VERIFY(dim_V < V.capacity(),
@@ -1191,44 +1355,50 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
     // basis vector.
     const bool refine = (orthog_type != Orthogonalization::CGS);
     double *H = orth_R.col(dim_V).data();
-    MPI_Comm comm = space_op.GetComm();
     const auto [pre_norm, norm] = linalg::OrthogonalizeColumnCGS(
         comm, std::span(V), H, refine, weight_op_W ? &*weight_op_W : nullptr, &r);
-    orth_R(dim_V, dim_V) = norm;
-
-    if (orth_R(dim_V, dim_V) <= ORTHOG_TOL * pre_norm)
+    if (norm <= ORTHOG_TOL * pre_norm)
     {
-      return false;
+      V.pop_back();
+      dependent = true;
+      if (!abort_if_dependent)
+      {
+        Mpi::Print(" {} part of {} is in the span of the PROM basis to the "
+                   "orthogonalization tolerance (relative remainder {:.3e}): not added\n",
+                   imag ? "Imaginary" : "Real", node_label, norm / pre_norm);
+      }
+      return Eigen::VectorXd(orth_R.col(dim_V));
     }
-
-    v *= 1.0 / orth_R(dim_V, dim_V);
-    v_node_label.emplace_back(node_label);
-    return true;
+    orth_R(dim_V, dim_V) = norm;
+    v *= 1.0 / norm;
+    v_node_label.emplace_back(fmt::format("{}_{}", node_label, imag ? "im" : "re"));
+    return Eigen::VectorXd(orth_R.col(dim_V));
   };
 
-  if (has_real && !add_real_vector_to_basis(u.Real(), fmt::format("{}_re", node_label)))
-  {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
-  }
-  if (has_imag && !add_real_vector_to_basis(u.Imag(), fmt::format("{}_im", node_label)))
-  {
-    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
-               "convergence issue or a code error (the same vector was added multiple "
-               "times accidentally).");
-  }
-
-  // Coefficients of u in the updated basis (a part below the tolerance is dropped).
-  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(dim_V_new);
+  // Coefficients of u in the updated basis (a part below the tolerance relative to u is
+  // dropped).
+  Eigen::VectorXcd c = Eigen::VectorXcd::Zero(dim_V_max);
   if (has_real)
   {
-    c.real() = orth_R.col(dim_V_old);
+    c.real() = add_real_vector_to_basis(u.Real(), false);
   }
-  if (has_imag)
+  if (has_imag && !(dependent && abort_if_dependent))
   {
-    c.imag() = orth_R.col(dim_V_new - 1);
+    c.imag() = add_real_vector_to_basis(u.Imag(), true);
   }
+  if (dependent && abort_if_dependent)
+  {
+    // Leave the basis unchanged, so that the PROM is consistent if the error is caught.
+    V.resize(dim_V_old);
+    v_node_label.resize(dim_V_old);
+    orth_R.conservativeResize(dim_V_old, dim_V_old);
+    MFEM_ABORT("Linearly dependent vector added to PROM basis. This indicates a "
+               "convergence issue or a code error (the same vector was added multiple "
+               "times accidentally).");
+  }
+  const std::size_t dim_V_new = V.size();
+  orth_R.conservativeResize(dim_V_new, dim_V_new);
+  c.conservativeResize(dim_V_new);
   if (dim_V_new == dim_V_old)
   {
     return c;
@@ -1326,6 +1496,106 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
   return c;
 }
 
+void RomOperator::TruncatePROM(std::size_t n)
+{
+  MFEM_VERIFY(n <= V.size(), "Cannot truncate the PROM basis to more vectors than it has!");
+  const auto ne = static_cast<Eigen::Index>(n);
+  V.resize(n);
+  v_node_label.resize(n);
+  orth_R.conservativeResize(ne, ne);
+  Kr.conservativeResize(ne, ne);
+  if (C)
+  {
+    Cr.conservativeResize(ne, ne);
+  }
+  Mr.conservativeResize(ne, ne);
+  if (response_mass)
+  {
+    response_mass_r.conservativeResize(ne, ne);
+  }
+  if (response_stiffness)
+  {
+    response_stiffness_r.conservativeResize(ne, ne);
+  }
+  for (auto &term : bdr_terms)
+  {
+    term.Ar.conservativeResize(ne, ne);
+  }
+  RHS1r.conservativeResize(ne, Eigen::NoChange);
+  floquet_comp_V.conservativeResize(ne, Eigen::NoChange);
+  if (weight_op_W)
+  {
+    // The Cholesky factor of the leading block of the Gram matrix is the leading block of
+    // its factor.
+    gram_L.conservativeResize(ne, ne);
+  }
+  if (V_wp_dim > n)
+  {
+    for (auto &[port_idx, vp] : V_wp)
+    {
+      vp.resize(n);
+    }
+    V_wp_dim = n;
+  }
+
+  // The PROM system and solutions of the last SolvePROM, and the port pairings cached with
+  // them, are those of the larger basis.
+  Ar.resize(0, 0);
+  Y.resize(0, 0);
+  sV_wp_full.clear();
+}
+
+RomOperator::SampleUpdate RomOperator::AddSamplePROM(int excitation_idx, double omega,
+                                                     ComplexVector &u,
+                                                     std::string_view node_label,
+                                                     double tol)
+{
+  MPI_Comm comm = space_op.GetComm();
+  SampleUpdate update;
+  const std::size_t n0 = V.size();
+
+  // PROM solution at ω before the update. TruncatePROM restores this PROM exactly, so only
+  // the sample changes between the attempts below.
+  SolvePROM(omega);
+  const Eigen::VectorXcd x0 = GetReducedSolution(excitation_idx);
+  while (true)
+  {
+    // Relative PROM error at ω before the update, from the coefficients of u in the updated
+    // basis. The error decides whether to sample again, so it must be the same on every
+    // process, while the replicated dense computations can differ in round-off between
+    // them.
+    Eigen::VectorXcd d = -x0;
+    update.c = UpdatePROM(u, node_label, false);
+    d.conservativeResizeLike(Eigen::VectorXcd::Zero(update.c.size()));
+    update.error = BasisNorm(update.c + d) / BasisNorm(update.c);
+    Mpi::GlobalMax(1, &update.error, comm);
+    // Relative PROM error at ω with u in the basis: the Galerkin PROM reproduces an
+    // accurate sample in its basis. If it does not reproduce u to tol, remove u, refine it
+    // and add it again. If u is in the span of the basis, the PROM is unchanged and this is
+    // the error before the update.
+    double error_full = update.error;
+    if (V.size() > n0)
+    {
+      SolvePROM(omega);
+      const Eigen::VectorXcd y = GetReducedSolution(excitation_idx);
+      error_full = BasisNorm(update.c - y) / BasisNorm(update.c);
+      Mpi::GlobalMax(1, &error_full, comm);
+    }
+    update.reproduced = (error_full < tol);
+    if (update.reproduced || update.num_refined == max_refine)
+    {
+      break;
+    }
+    TruncatePROM(n0);
+    RefineHDM(u);
+    update.num_refined++;
+  }
+
+  // The system of the HDM solve is no longer needed.
+  ReleaseHDMOperators();
+  return update;
+}
+
 double RomOperator::FindMaxError(int excitation_idx) const
 {
   return mri.at(excitation_idx).FindMaxError(space_op.GetComm());
@@ -1387,6 +1657,13 @@ void RomOperator::SolvePROM(double omega)
   Ar += (-omega * omega) * Mr;
   if (response_mass)
   {
+    // TruncatePROM shrinks the projected response matrices with the basis; an update that
+    // adds no vector after it leaves them at that size.
+    MFEM_ASSERT(response_mass_r.rows() == Kr.rows() &&
+                    response_mass_r.cols() == Kr.cols() &&
+                    (!response_stiffness || (response_stiffness_r.rows() == Kr.rows() &&
+                                             response_stiffness_r.cols() == Kr.cols())),
+                "Projected response matrices do not match the PROM basis!");
     Ar += (-omega * omega) * response_mass_r;
   }
   if (response_stiffness)
@@ -1433,15 +1710,17 @@ void RomOperator::SolvePROM(double omega)
 
   for (Eigen::Index k = 0; const auto &[excitation_idx, data] : excitations)
   {
-    // Wave-port excitation RHS2(ω) = −2iω Σ_p s_full,p over the ports excited by this
-    // excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
+    // Wave-port excitation RHS2(ω) = −2iω sqrt(2) Σ_p s_full,p over the ports excited by
+    // this excitation index (see WavePortOperator::AddExcitationBdrCoefficients), from the
     // pairings Vᵀs_full,p at this frequency.
     Eigen::VectorXcd b = (1i * omega) * RHS1r.col(k);
     for (const auto &[port_idx, port_data] : space_op.GetWavePortOp())
     {
       if (port_data.excitation == excitation_idx)
       {
-        b += std::complex<double>(0.0, -2.0 * omega) * sV_wp_full.at(port_idx);
+        b += std::complex<double>(0.0, -2.0 * omega *
+                                           electromagnetics::UnitPowerAmplitude(true)) *
+             sV_wp_full.at(port_idx);
       }
     }
     // Floquet port excitation Σ_p s_p conj(v_p) over the (0,0) modes of the ports excited
@@ -1663,6 +1942,18 @@ void RomOperator::ApplyComplexPolynomialFitCorrections(
   Mr_corr += (-alpha2) * Mp_r;
 }
 
+Eigen::MatrixXcd RomOperator::KeptDirectionsMass(const WavePortAuxBlock &blk, long n)
+{
+  // i Σⱼ λⱼ uⱼuⱼᵀ: the part of the imaginary-slot mass on which the poles are realized.
+  Eigen::MatrixXcd M = Eigen::MatrixXcd::Zero(n, n);
+  for (std::size_t j = 0; j < blk.weights.size(); j++)
+  {
+    M += (std::complex<double>(0.0, 1.0) * blk.weights[j]) *
+         (blk.u_dirs[j] * blk.u_dirs[j].transpose()).cast<std::complex<double>>();
+  }
+  return M;
+}
+
 bool RomOperator::AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::MatrixXcd &Mp_r,
                                         double rank_tol)
 {
@@ -1765,28 +2056,49 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
   auto fit_omegas = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, n_fit);
   auto dense_omegas = SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, n_dense);
 
-  // Complex LSQ polynomial fit of f(ω) ≈ c0 + c1 ω + c2 ω² at order 2.
+  // The residuals are pointwise relative, |fit(ω) − f(ω)| / |f(ω)|, with the scale floored
+  // at SCALAR_FIT_SCALE_FLOOR max |f| (PointwiseScale). Over a wide band f varies by
+  // orders of magnitude (as ω² for a volume term, ω and 1/ω for an absorbing boundary), and
+  // a residual relative to max |f| would not bound the error where f is small.
   Eigen::VectorXcd y(n_fit);
   for (int i = 0; i < n_fit; i++)
   {
     y(i) = f(std::complex<double>(fit_omegas[i], 0.0));
   }
-  Eigen::Vector3cd c = FitQuadratic(fit_omegas, y);
+  std::vector<std::complex<double>> truth(n_dense);
+  double f_max = y.cwiseAbs().maxCoeff();
+  for (int i = 0; i < n_dense; i++)
+  {
+    truth[i] = f(std::complex<double>(dense_omegas[i], 0.0));
+    f_max = std::max(f_max, std::abs(truth[i]));
+  }
+  std::vector<double> fit_scale(n_fit);
+  double min_scale = f_max;
+  for (int i = 0; i < n_fit; i++)
+  {
+    fit_scale[i] = PointwiseScale(y(i), f_max);
+    min_scale = std::min(min_scale, fit_scale[i]);
+  }
+
+  // Weighted complex LSQ polynomial fit of f(ω) ≈ c0 + c1 ω + c2 ω² at order 2.
+  Eigen::Vector3cd c = FitQuadratic(fit_omegas, y, fit_scale);
   fit.alpha0c = c(0);
   fit.alpha1c = c(1);
   fit.alpha2c = c(2);
-
-  // Dense-grid residual (absolute, relative to max |f|).
-  double max_rel = 0.0, max_abs_truth = 0.0;
-  for (int i = 0; i < n_dense; i++)
+  auto PointwiseResidual = [&](auto &&model)
   {
-    const double w = dense_omegas[i];
-    const std::complex<double> truth = f(std::complex<double>(w, 0.0));
-    const std::complex<double> poly = c(0) + c(1) * w + c(2) * w * w;
-    max_abs_truth = std::max(max_abs_truth, std::abs(truth));
-    max_rel = std::max(max_rel, std::abs(poly - truth));
-  }
-  fit.rel_err_polynomial = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+    double max_rel = 0.0;
+    for (int i = 0; i < n_dense; i++)
+    {
+      max_rel = std::max(max_rel, std::abs(model(dense_omegas[i]) - truth[i]) /
+                                      PointwiseScale(truth[i], f_max));
+    }
+    return max_rel;
+  };
+  fit.rel_err_polynomial =
+      (f_max > 0.0)
+          ? PointwiseResidual([&](double w) { return c(0) + c(1) * w + c(2) * w * w; })
+          : 0.0;
   fit.rel_err_augmented = fit.rel_err_polynomial;
   const bool meets_tol = (fit.rel_err_polynomial <= waveport_synthesis_tol);
 
@@ -1795,30 +2107,28 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
     fit.regime = WavePortRegime::Polynomial;
     Mpi::Print(" {}: polynomial synthesis residual {:.3e} (tol {:.3e})\n", label,
                fit.rel_err_polynomial, waveport_synthesis_tol);
+    if (!meets_tol)
+    {
+      Mpi::Warning("{}: polynomial synthesis residual {:.3e} exceeds tolerance {:.3e}!\n",
+                   label, fit.rel_err_polynomial, waveport_synthesis_tol);
+    }
     return fit;
   }
 
-  // Augmented regime: AAA on the complex polynomial residual.
+  // Augmented regime: AAA on the complex polynomial residual, to the tolerance at the
+  // smallest pointwise scale of f.
   Eigen::VectorXcd F_aaa(n_fit);
   for (int i = 0; i < n_fit; i++)
   {
     const double w = fit_omegas[i];
     F_aaa(i) = y(i) - (c(0) + c(1) * w + c(2) * w * w);
   }
-  auto pr = FitResidualPoles(fit_omegas, F_aaa, waveport_synthesis_tol, max_abs_truth,
+  auto pr = FitResidualPoles(fit_omegas, F_aaa, waveport_synthesis_tol, min_scale,
                              waveport_synthesis_order_max);
   FoldAAAPolynomialIntoQuadratic(pr, fit.alpha0c, fit.alpha1c, fit.alpha2c);
-
-  max_rel = 0.0;
-  for (int i = 0; i < n_dense; i++)
-  {
-    const double w = dense_omegas[i];
-    const std::complex<double> truth = f(std::complex<double>(w, 0.0));
-    max_rel = std::max(max_rel, std::abs(EvaluatePolyPlusPoles(fit.alpha0c, fit.alpha1c,
-                                                               fit.alpha2c, pr, w) -
-                                         truth));
-  }
-  fit.rel_err_augmented = (max_abs_truth > 0.0) ? max_rel / max_abs_truth : 0.0;
+  fit.rel_err_augmented = PointwiseResidual(
+      [&](double w)
+      { return EvaluatePolyPlusPoles(fit.alpha0c, fit.alpha1c, fit.alpha2c, pr, w); });
 
   auto [poles, residues] = ToPoleResidueVectors(pr);
   fit.aux = MakeAuxBlock(label, Mp_r, poles, residues, waveport_synthesis_rank_tol);
@@ -1827,38 +2137,35 @@ RomOperator::WavePortDispersionFit RomOperator::FitScalarDispersion(
       " {}: augmented synthesis residual {:.3e} → {:.3e} (tol {:.3e}, {:d} pole{})\n",
       label, fit.rel_err_polynomial, fit.rel_err_augmented, waveport_synthesis_tol,
       pr.poles.size(), pr.poles.size() == 1 ? "" : "s");
+  if (fit.rel_err_augmented > waveport_synthesis_tol)
+  {
+    Mpi::Warning("{}: augmented synthesis residual {:.3e} exceeds tolerance {:.3e}!\n",
+                 label, fit.rel_err_augmented, waveport_synthesis_tol);
+  }
   return fit;
 }
 
 RomOperator::WavePortDispersionFit
-RomOperator::FitRationalImpedanceDispersion(const std::string &label,
-                                            const Eigen::MatrixXcd &Mp_r, int idx) const
+RomOperator::FitExactSplitDispersion(const std::string &label, const Eigen::MatrixXcd &Mp_r,
+                                     const SurfaceTerms::ExactSplit &split) const
 {
-  // Exact split of the rational Robin coefficient g(s) = s·D(s)/N(s) = P(s) + R(s)/N(s)
-  // (long division, precomputed by SurfaceRationalImpedanceOperator). The full term is
-  // g(iω)·M_b = i·f(ω)·M_b with f(ω) = g(iω)/i, so the polynomial part contributes
-  // f_P(ω) = P(iω)/i = P₀/i + P₁ω + i·P₂ω² + ... — exactly representable in the pencil
-  // for deg(P) <= 2 (guaranteed for any passive N/D). The strictly proper remainder
-  // f_R(ω) = (R/N)(iω)/i is itself rational in ω with the poles of g (the zeros of Zs
-  // mapped to the ω plane), so AAA on f_R directly reproduces it to rounding.
-  const auto &surf_rz_op = space_op.GetRationalImpedanceOp();
-  const int deg_P = surf_rz_op.GetRobinQuotientDegree(idx);
-  if (deg_P > 2)
-  {
-    // Non-passive input (|deg N - deg D| > 1); fall back to the generic recipe.
-    auto f = [&surf_rz_op, idx](std::complex<double> omega) -> std::complex<double>
-    {
-      return surf_rz_op.EvalRobinCoefficient(idx, std::complex<double>(0.0, 1.0) * omega) /
-             std::complex<double>(0.0, 1.0);
-    };
-    return FitScalarDispersion(label, Mp_r, f, /*allow_augment=*/true);
-  }
-
+  // Exact split of the scale of a frequency-dependent boundary mass term, c(s) = P(s) +
+  // R(s) with s = iω, for example the long division of the Robin coefficient g(s) =
+  // s·D(s)/N(s) = P(s) + R(s)/N(s) of a rational impedance boundary. The full term is
+  // c(iω)·M = i·f(ω)·M with f(ω) = c(iω)/i, so the polynomial part contributes f_P(ω) =
+  // P(iω)/i = P₀/i + P₁ω + i·P₂ω² + ... — exactly representable in the pencil for
+  // deg(P) <= 2 (guaranteed for any passive N/D), which the caller checks. The strictly
+  // proper remainder f_R(ω) = R(iω)/i is itself rational in ω with the poles of c (for a
+  // rational impedance, the zeros of Zs mapped to the ω plane), so AAA on f_R directly
+  // reproduces it to rounding.
+  MFEM_ASSERT(split.degree <= 2,
+              "The exact split of a synthesized term needs a polynomial part of degree at "
+              "most 2!");
   WavePortDispersionFit fit;
   fit.port_idx = -1;
 
   // Polynomial part, exact: with P(s) = Σ_k P_k s^k, f_P(ω) = Σ_k P_k i^{k-1} ω^k.
-  const auto &P = surf_rz_op.GetRobinQuotient(idx);
+  const auto &P = split.polynomial;
   const auto n_P = static_cast<int>(P.size());
   auto P_coeff = [&](int k) -> double  // P_k, coefficient of s^k (stored high-first)
   { return (k < n_P) ? P[n_P - 1 - k] : 0.0; };
@@ -1870,15 +2177,13 @@ RomOperator::FitRationalImpedanceDispersion(const std::string &label,
   constexpr int n_dense = 200;
   auto fit_omegas = SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, n_fit);
   auto dense_omegas = SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, n_dense);
-  auto f_rem = [&surf_rz_op, idx](double w) -> std::complex<double>
+  auto f_rem = [&split](double w) -> std::complex<double>
   {
-    return surf_rz_op.EvalRobinRemainder(idx, std::complex<double>(0.0, w)) /
-           std::complex<double>(0.0, 1.0);
+    return split.remainder(std::complex<double>(0.0, w)) / std::complex<double>(0.0, 1.0);
   };
-  auto f_full = [&surf_rz_op, idx](double w) -> std::complex<double>
+  auto f_full = [&split](double w) -> std::complex<double>
   {
-    return surf_rz_op.EvalRobinCoefficient(idx, std::complex<double>(0.0, w)) /
-           std::complex<double>(0.0, 1.0);
+    return split.coefficient(std::complex<double>(0.0, w)) / std::complex<double>(0.0, 1.0);
   };
 
   // AAA directly on the strictly proper remainder (no LSQ residual step — the
@@ -1916,11 +2221,86 @@ RomOperator::FitRationalImpedanceDispersion(const std::string &label,
              pr.poles.size() == 1 ? "" : "s");
   if (fit.rel_err_augmented > waveport_synthesis_tol)
   {
-    Mpi::Warning("{}: rational impedance synthesis residual {:.3e} exceeds tolerance "
-                 "{:.3e}!\n",
+    Mpi::Warning("{}: exact-split synthesis residual {:.3e} exceeds tolerance {:.3e}!\n",
                  label, fit.rel_err_augmented, waveport_synthesis_tol);
   }
   return fit;
+}
+
+void RomOperator::AddScalarDispersionSynthesis(
+    const std::string &label, const Eigen::MatrixXcd &Mp_r,
+    const std::function<std::complex<double>(std::complex<double>)> &f,
+    Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+    std::vector<WavePortAuxBlock> &aux) const
+{
+  // The full term is i·f(ω)·M, with the i on the imaginary slot of Mp_r.
+  auto fit = FitScalarDispersion(label, Mp_r, f, /*allow_augment=*/true);
+  // The polynomial part is realized on the directions of the poles, as for a
+  // Djordjevic-Sarkar material: on the full mass, the directions below the rank cutoff
+  // carry the complement of the pole part, which can exceed f by orders of magnitude where
+  // the two parts cancel (near a resonance of the material).
+  const Eigen::MatrixXcd Mp_fit =
+      fit.aux ? KeptDirectionsMass(*fit.aux, Mp_r.rows()) : Mp_r;
+  ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_fit,
+                                       Kr_corr, Cr_corr, Mr_corr);
+  if (fit.aux)
+  {
+    aux.push_back(*fit.aux);
+  }
+}
+
+void RomOperator::AddFrequencyDependentPermittivitySynthesis(
+    const std::string &label, const Eigen::MatrixXcd &Mp_r, std::size_t material_idx,
+    Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr, Eigen::MatrixXcd &Mr_corr,
+    std::vector<WavePortAuxBlock> &aux) const
+{
+  // The full term is g(iω)·B with g(s) = s²χ(s) and Mp_r = i·VᵀBV = i·Σ_j λ_j u_j u_jᵀ.
+  // Each pole term r·s²/(s - p) is realized exactly by one aux state per direction j, with
+  // s - p on its diagonal and couplings s·q_j·u_j, q_j² = -r·λ_j (BuildAugmentedPencil).
+  // Splitting it instead into r·(s + p) + r·p²/(s - p) cancels catastrophically for a pole
+  // far from the band, and the truncation of weak directions would then remove only the
+  // proper part. A Djordjevic-Sarkar term is fit, with its polynomial part restricted to
+  // the directions of its aux block for the same reason.
+  const auto &mat_op = space_op.GetMaterialOp();
+  constexpr std::complex<double> i(0.0, 1.0);
+  WavePortAuxBlock exact;
+  exact.port_idx = -1;
+  exact.label = label;
+  exact.frequency_coupled = true;
+  for (const auto &term : mat_op.GetPermittivityPoleTerms(material_idx))
+  {
+    exact.poles.push_back(term.pole);
+    exact.residues.push_back(term.residue);
+  }
+  if (mat_op.HasDjordjevicSarkarPermittivity(material_idx))
+  {
+    MFEM_VERIFY(sweep_omega_max > sweep_omega_min,
+                "Circuit synthesis of a DjordjevicSarkar permittivity requires a nonzero "
+                "frequency band!");
+    auto f = [&mat_op, material_idx, i](std::complex<double> omega)
+    { return mat_op.EvaluateDjordjevicSarkarPermittivityA2(material_idx, i * omega) / i; };
+    const auto ds = FitScalarDispersion(label + "_djordjevic_sarkar", Mp_r, f,
+                                        /*allow_augment=*/true);
+    Eigen::MatrixXcd Mp_kept = Mp_r;
+    if (ds.aux)
+    {
+      Mp_kept = KeptDirectionsMass(*ds.aux, Mp_r.rows());
+      exact.weights = ds.aux->weights;
+      exact.u_dirs = ds.aux->u_dirs;
+      aux.push_back(*ds.aux);
+    }
+    ApplyComplexPolynomialFitCorrections(ds.alpha0c, ds.alpha1c, ds.alpha2c, Mp_kept,
+                                         Kr_corr, Cr_corr, Mr_corr);
+  }
+  if (!exact.poles.empty() &&
+      (!exact.weights.empty() ||
+       AddAuxBlockDirections(exact, Mp_r, waveport_synthesis_rank_tol)))
+  {
+    Mpi::Print(" {}: {:d} pole{} realized exactly in {:d} direction{}\n", label,
+               exact.poles.size(), exact.poles.size() == 1 ? "" : "s", exact.weights.size(),
+               exact.weights.size() == 1 ? "" : "s");
+    aux.push_back(std::move(exact));
+  }
 }
 
 RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
@@ -1966,14 +2346,31 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
       auto rk = blk.residues[k];
       for (std::size_t j = 0; j < blk.weights.size(); j++)
       {
-        std::complex<double> coupling =
-            std::sqrt(std::complex<double>(0.0, -1.0) * rk * blk.weights[j]);
-        aug.Kr(aux_row, aux_row) = -pk;
-        aug.Cr(aux_row, aux_row) = std::complex<double>(0.0, -1.0);
-        for (long i = 0; i < n_v; i++)
+        if (blk.frequency_coupled)
         {
-          aug.Kr(i, aux_row) = coupling * blk.u_dirs[j](i);
-          aug.Kr(aux_row, i) = coupling * blk.u_dirs[j](i);
+          // Aux diagonal s - pₖ (K_aa = -pₖ, C_aa = 1) and couplings s·q·uⱼ (C_va = C_av =
+          // q·uⱼ): eliminating the aux state gives -q²·s²/(s - pₖ)·uⱼuⱼᵀ, which is the term
+          // rₖ·λⱼ·s²/(s - pₖ)·uⱼuⱼᵀ for q² = -rₖ·λⱼ.
+          const std::complex<double> q = std::sqrt(-rk * blk.weights[j]);
+          aug.Kr(aux_row, aux_row) = -pk;
+          aug.Cr(aux_row, aux_row) = 1.0;
+          for (long i = 0; i < n_v; i++)
+          {
+            aug.Cr(i, aux_row) = q * blk.u_dirs[j](i);
+            aug.Cr(aux_row, i) = q * blk.u_dirs[j](i);
+          }
+        }
+        else
+        {
+          std::complex<double> coupling =
+              std::sqrt(std::complex<double>(0.0, -1.0) * rk * blk.weights[j]);
+          aug.Kr(aux_row, aux_row) = -pk;
+          aug.Cr(aux_row, aux_row) = std::complex<double>(0.0, -1.0);
+          for (long i = 0; i < n_v; i++)
+          {
+            aug.Kr(i, aux_row) = coupling * blk.u_dirs[j](i);
+            aug.Kr(aux_row, i) = coupling * blk.u_dirs[j](i);
+          }
         }
         const std::string prefix =
             blk.label.empty() ? fmt::format("waveport_{:d}", blk.port_idx) : blk.label;
@@ -2086,18 +2483,26 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
       // pencil.
       const auto &port_data = space_op.GetWavePortOp().GetPort(port_idx);
 
+      // The pole part of an active port is realized on the kept directions of its mass
+      // (AddAuxBlockDirections). Its polynomial part is realized on the same directions, as
+      // for a Djordjevic-Sarkar material, so that the port load is kₙ(ω) times one matrix,
+      // the fit whose residual is reported: on the full mass, the dropped directions carry
+      // the complement of the pole part, which can exceed kₙ by orders of magnitude where
+      // the two parts cancel (a resonant port material).
+      const Eigen::MatrixXcd Mp_fit =
+          (port_data.active && fit.aux) ? KeptDirectionsMass(*fit.aux, Mp_r.rows()) : Mp_r;
       PendingPortLoad port_load;
       port_load.label = fmt::format("waveport_{:d}_re", port_idx);
       port_load.Kr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Cr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
       port_load.Mr_corr = Eigen::MatrixXcd::Zero(Kr.rows(), Kr.cols());
-      ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_r,
+      ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_fit,
                                            port_load.Kr_corr, port_load.Cr_corr,
                                            port_load.Mr_corr);
       if (port_data.active)
       {
         // Active ports also load the total pencil and carry their dispersion aux states.
-        ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_r,
+        ApplyComplexPolynomialFitCorrections(fit.alpha0c, fit.alpha1c, fit.alpha2c, Mp_fit,
                                              Kr_total_corr, Cr_total_corr, Mr_total_corr);
         if (fit.aux)
         {
@@ -2475,39 +2880,90 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
             }
           }
           break;
-        case BoundaryTermKind::SurfaceConductivity:
-          // Surface conductivity, one group at a time: fit f_g(ω) = ω/Z_g(ω) with complex
-          // poly + AAA.
-          fit = FitScalarDispersion(
-              fmt::format("surfsigma_{:d}", term.idx), term.Ar,
-              [this, &term](std::complex<double> omega)
-              {
-                return space_op.GetSurfaceConductivityOp().EvaluateScalar(term.idx, omega) /
-                       1i;
-              },
-              /*allow_augment=*/true);
+        case BoundaryTermKind::SurfaceTerm:
+          {
+            // The frequency-dependent boundary mass terms of SurfaceTerms, one at a time:
+            // f_i(ω) = scale_i(ω)/i. A term with an exact split of its scale c(s) = P(s) +
+            // R(s) (s = iω) of deg(P) <= 2 (a rational impedance boundary) has its
+            // polynomial part put into the pencil and AAA run directly on the strictly
+            // proper remainder, which reproduces the coefficient to rounding. The others (a
+            // split of deg(P) > 2, from a non-passive impedance, and the terms without a
+            // split: a finite conductivity group, or the absorbing boundaries next to a
+            // frequency-dependent material, AddScalarDispersionSynthesis) are fit by
+            // complex poly + AAA. As for the terms of frequency-dependent materials, the
+            // polynomial part of a fit with poles is realized on the directions of its
+            // poles: on the full mass, the directions below the rank cutoff carry the
+            // polynomial part alone, which can exceed f_i by orders of magnitude where it
+            // cancels the pole part (a series RLC sheet below its resonance).
+            const auto &surface_terms = space_op.GetSurfaceTerms();
+            const auto label = surface_terms.GetExtraSystemBdrMassTermLabel(term.idx);
+            const auto split = surface_terms.GetExtraSystemBdrMassTermSplit(term.idx);
+            auto f = [&surface_terms, &term](std::complex<double> omega)
+            { return surface_terms.GetExtraSystemBdrMassTermScale(term.idx, omega) / 1i; };
+            if (!split)
+            {
+              AddScalarDispersionSynthesis(label, term.Ar, f, Kr_total_corr, Cr_total_corr,
+                                           Mr_total_corr, aux_blocks_total);
+            }
+            else
+            {
+              fit = (split->degree <= 2)
+                        ? FitExactSplitDispersion(label, term.Ar, *split)
+                        : FitScalarDispersion(label, term.Ar, f, /*allow_augment=*/true);
+            }
+          }
           break;
-        case BoundaryTermKind::RationalImpedance:
-          // Rational surface impedance, one boundary at a time: the exact long-division
-          // split of f_b(ω) = g(iω)/i (polynomial part into the pencil, AAA directly on the
-          // strictly proper remainder) reproduces the rational coefficient to rounding.
-          fit = FitRationalImpedanceDispersion(fmt::format("rationalz_{:d}", term.idx),
-                                               term.Ar, term.idx);
+        case BoundaryTermKind::FarfieldPermittivityCurlCurl:
+          {
+            // The curl-curl term of the absorbing boundary next to frequency-dependent
+            // material k, one material at a time.
+            const auto &farfield_op = space_op.GetSurfaceTerms().GetFarfieldOp();
+            const auto k = static_cast<std::size_t>(term.idx);
+            AddScalarDispersionSynthesis(
+                fmt::format("farfield_permittivity_curlcurl_{:d}", term.idx), term.Ar,
+                [&farfield_op, k](std::complex<double> omega)
+                { return 0.5 / (omega * farfield_op.GetDispersiveScale(k, omega)); },
+                Kr_total_corr, Cr_total_corr, Mr_total_corr, aux_blocks_total);
+          }
           break;
         case BoundaryTermKind::WavePort:
         case BoundaryTermKind::FloquetPort:
+        case BoundaryTermKind::FarfieldPermittivityRotatedTrace:
+        case BoundaryTermKind::FarfieldPermittivityMixedCurl:
+        case BoundaryTermKind::Permittivity:
+          // Wave ports are synthesized above and frequency-dependent permittivity below.
+          // Floquet ports and a Floquet wave vector, which the rotated trace and mixed curl
+          // terms require, are rejected with circuit synthesis.
           break;
       }
       if (fit)
       {
+        // The polynomial part on the directions of the poles, as for the terms without a
+        // split.
+        const Eigen::MatrixXcd Mp_fit =
+            fit->aux ? KeptDirectionsMass(*fit->aux, term.Ar.rows()) : term.Ar;
         ApplyComplexPolynomialFitCorrections(fit->alpha0c, fit->alpha1c, fit->alpha2c,
-                                             term.Ar, Kr_total_corr, Cr_total_corr,
+                                             Mp_fit, Kr_total_corr, Cr_total_corr,
                                              Mr_total_corr);
         if (fit->aux)
         {
           aux_blocks_total.push_back(*fit->aux);
         }
       }
+    }
+  }
+
+  // Frequency-dependent permittivity, one material at a time. Outside the band guard: the
+  // pole terms are realized exactly without sampling, and a Djordjevic-Sarkar term without
+  // a band is an error rather than silently omitted.
+  for (const auto &term : bdr_terms)
+  {
+    if (term.kind == BoundaryTermKind::Permittivity)
+    {
+      AddFrequencyDependentPermittivitySynthesis(
+          fmt::format("permittivity_{:d}", term.idx), term.Ar,
+          static_cast<std::size_t>(term.idx), Kr_total_corr, Cr_total_corr, Mr_total_corr,
+          aux_blocks_total);
     }
   }
 
@@ -2869,10 +3325,11 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
   auto eigs = ComputeEigenvalueEstimates(*matrices.L_inv, matrices.R_inv.get(), *matrices.C,
                                          fmin_GHz, fmax_GHz);
   ComputeEigenvalueEstimateErrors(units, eigs);
+  WarnGrowingEigenvalueEstimates(space_op.GetComm(), eigs);
 
   // Synthesized port realization Y_syn(ω) y = G(ω) a, b = H(ω) y - a, so
   // S(ω) = H(ω) Y_syn(ω)⁻¹ G(ω) - I. Each map column is √y_ref times the port's coupling
-  // vector (a wave port's projected n×H, or a lumped port's terminal selector), the
+  // vector (a wave port's projected n×H, or a lumped port's voltage functional), the
   // symmetric power-wave form that mixes lumped/wave references. rom-coupled-S is the
   // reconstructed S; rom-coupled-G/H export the maps for external reconstruction off the
   // pencil.
@@ -2924,6 +3381,29 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
     const double unit_henry_inv =
         1.0 / units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
     const double omega0 = unit_henry_inv / unit_ohm_inv;
+    // A lumped port couples through its voltage functional on the basis vectors: S + 1 is
+    // V/√R_ref, and its drive is 2/√R_ref times the same mode overlap. This is not a unit
+    // selector on the terminal row: the port basis vector is the L2 projection of the port
+    // mode, normalized in the W norm, so its voltage is orth_R(row, row), not 1, and the
+    // other basis vectors carry small voltages.
+    std::map<int, Eigen::VectorXd> lumped_voltage;
+    for (const auto &[is_wave, port_idx] : coupled_ports)
+    {
+      if (is_wave)
+      {
+        continue;
+      }
+      const auto &port = space_op.GetLumpedPortOp().GetPort(port_idx);
+      GridFunction E(space_op.GetNDSpace(), true);
+      E.Imag() = 0.0;
+      Eigen::VectorXd voltage(nr);
+      for (long j = 0; j < nr; j++)
+      {
+        E.Real().SetFromTrueDofs(V[j]);
+        voltage(j) = port.GetVoltage(E).real();  // A real basis vector has a real voltage
+      }
+      lumped_voltage.emplace(port_idx, std::move(voltage));
+    }
     const std::size_t n_freq = sweep_omega_samples.size();
     coupled_g.assign(n_freq, Eigen::MatrixXcd::Zero(na, n_ports));
     coupled_h.assign(n_freq, Eigen::MatrixXcd::Zero(n_ports, na));
@@ -2942,7 +3422,7 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
       for (std::size_t p = 0; p < n_ports; p++)
       {
         Eigen::VectorXcd cvec = Eigen::VectorXcd::Zero(nr);
-        double y_ref = unit_ohm_inv;  // wave-port modal (unit-power) reference
+        double y_ref = unit_ohm_inv;  // wave-port modal (unit-overlap) reference
         std::complex<double> h_scale = 1.0;
         if (coupled_ports[p].is_wave)
         {
@@ -2958,15 +3438,10 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
         }
         else
         {
-          // Lumped port: fixed selector at its terminal basis row, referenced to R_ref. The
-          // sign aligns the terminal current polarity with the wave-port n×H convention so
-          // mixed lumped↔wave cross-terms match Palace's port-S.
-          const long row =
-              LabelIndex(v_node_label, fmt::format("port_{:d}_re", coupled_ports[p].idx));
-          if (row >= 0 && row < nr)
-          {
-            cvec(row) = -1.0;
-          }
+          // Lumped port: its voltage on each basis vector, referenced to R_ref. The sign
+          // aligns the terminal current polarity with the wave-port n×H convention so mixed
+          // lumped↔wave cross-terms match Palace's port-S.
+          cvec = -lumped_voltage.at(coupled_ports[p].idx).cast<std::complex<double>>();
           y_ref = unit_ohm_inv / space_op.GetLumpedPortOp()
                                      .GetPort(coupled_ports[p].idx)
                                      .GetExcitationRefResistance();
@@ -3230,8 +3705,9 @@ void RomOperator::PrintPROMMatrices(const Units &units, const fs::path &post_dir
                eigs.size(), fmin_GHz, fmax_GHz);
     for (const auto &e : eigs)
     {
-      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e},  bkwd. error = {:.3e}\n",
-                 e.freq_re_GHz, e.freq_im_GHz, e.Q, e.error_bkwd);
+      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e},  bkwd. error = {}\n",
+                 e.freq_re_GHz, e.freq_im_GHz, e.Q,
+                 e.errors_available ? fmt::format("{:.3e}", e.error_bkwd) : "unavailable");
     }
   }
 }
@@ -3368,6 +3844,36 @@ std::vector<RomOperator::EigenvalueEstimate> RomOperator::ComputeEigenvalueEstim
   return modes;
 }
 
+void RomOperator::WarnGrowingEigenvalueEstimates(
+    MPI_Comm comm, const std::vector<EigenvalueEstimate> &estimates)
+{
+  // The fits of the frequency-dependent boundaries (AAA) do not constrain their poles to
+  // the stable half-plane, so a circuit which matches the reduced-order model on the band
+  // can have roots with Im{f} < 0 on their auxiliary states.
+  const EigenvalueEstimate *fastest = nullptr;
+  std::size_t num_growing = 0;
+  for (const auto &est : estimates)
+  {
+    if (est.freq_im_GHz < 0.0)
+    {
+      num_growing++;
+      if (!fastest || est.freq_im_GHz < fastest->freq_im_GHz)
+      {
+        fastest = &est;
+      }
+    }
+  }
+  if (fastest)
+  {
+    Mpi::Warning(comm,
+                 "{:d} of {:d} synthesized-system eigenvalue estimates have Im{{f}} < 0, "
+                 "down to f = {:+.6e} {:+.6e}i GHz!\nThese roots grow in time: the circuit "
+                 "matches the reduced-order model on the band, but it is not stable, for "
+                 "example in a transient circuit simulation.\n",
+                 num_growing, estimates.size(), fastest->freq_re_GHz, fastest->freq_im_GHz);
+  }
+}
+
 void RomOperator::ComputeEigenvalueEstimateErrors(
     const Units &units, std::vector<EigenvalueEstimate> &estimates) const
 {
@@ -3376,8 +3882,8 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   //   error_abs  = ‖(K + iωC − ω²M + A2(ω)) u‖₂ / ‖u‖₂,
   //   error_bkwd = error_abs / (‖K‖₂ + |ω|‖C‖₂ + |ω|²‖M‖₂),
   // with ω the complex eigenfrequency in nondimensional angular units and u = V·y the
-  // prolongation of the eigenvector's basis block. The frequency-dependent A2(ω) —
-  // wave ports, second-order farfield ABC, surface conductivity — is evaluated exactly
+  // prolongation of the eigenvector's basis block. The frequency-dependent A2(ω) — wave
+  // ports, second-order farfield ABC, the terms of SurfaceTerms — is evaluated exactly
   // at complex ω via SpaceOperator::GetExtraSystemMatrix, so this also validates the
   // rational dispersion fit content that the aux rows encode. The aux entries of the
   // eigenvector have no HDM image and are dropped from the prolongation; for a converged
@@ -3430,6 +3936,7 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
   res.UseDevice(true);
   const double freq_to_omega_nd =
       2.0 * std::numbers::pi * units.Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
+  std::string unavailable;
   for (auto &est : estimates)
   {
     // Physical complex frequency f (GHz) → nondimensional complex angular frequency.
@@ -3437,6 +3944,7 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
     // Im{f} in eig.csv) has eigenfrequency ω = 2π(Re{f} + i·Im{f})·tc.
     const std::complex<double> omega(freq_to_omega_nd * est.freq_re_GHz,
                                      freq_to_omega_nd * est.freq_im_GHz);
+    est.errors_available = true;  // Unless a wave port mode does not converge, below
 
     // Prolongate the basis block: u = Σ_j (v_conc_j y_j) V[j] (V real, y complex; the
     // v_conc factor undoes the port-row scaling baked into the synthesized pencil).
@@ -3456,6 +3964,21 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
       continue;
     }
 
+    // The frequency-dependent boundary terms at complex ω (null when absent), including
+    // the wave-port modal correction W (GetExtraSystemOperator, not GetExtraSystemMatrix).
+    // Without a wave port mode at ω there is no residual: the errors are not evaluated.
+    auto A2_omega = space_op.TryGetExtraSystemOperator(omega, Operator::DIAG_ZERO);
+    if (!A2_omega.available)
+    {
+      est.errors_available = false;
+      est.error_abs = est.error_bkwd = std::numeric_limits<double>::quiet_NaN();
+      unavailable += fmt::format("\n f = {:+.6e} {:+.6e}i GHz: wave port {:d} has {:d} of "
+                                 "{:d} modes",
+                                 est.freq_re_GHz, est.freq_im_GHz, A2_omega.port_idx,
+                                 A2_omega.num_converged, A2_omega.requested);
+      continue;
+    }
+
     // res = (K + iωC − ω²M) u.
     K->Mult(u, res);
     if (C)
@@ -3463,17 +3986,21 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
       C->AddMult(u, res, 1i * omega);
     }
     M->AddMult(u, res, -omega * omega);
-    // The frequency-dependent boundary terms at complex ω (null when absent), including
-    // the wave-port modal correction W (GetExtraSystemOperator, not GetExtraSystemMatrix).
-    auto A2_omega = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
-    if (A2_omega)
+    if (A2_omega.A2)
     {
-      A2_omega->AddMult(u, res, 1.0);
+      A2_omega.A2->AddMult(u, res, 1.0);
     }
 
     est.error_abs = linalg::Norml2(comm, res) / unorm;
     const double t = std::abs(omega);
     est.error_bkwd = est.error_abs / (normK + t * normC + t * t * normM);
+  }
+  if (!unavailable.empty())
+  {
+    Mpi::Warning(comm,
+                 "Errors of synthesized-system eigenvalue estimates not evaluated (NaN), "
+                 "as a wave port mode did not converge at the complex frequency:{}\n",
+                 unavailable);
   }
 }
 

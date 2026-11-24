@@ -225,7 +225,7 @@ struct PrescribedSheetCoupon
     std::vector<double> energies;
     for (const int idx : indices)
     {
-      energies.push_back(surf_post_op.GetInterfaceElectricFieldEnergy(idx, E));
+      energies.push_back(surf_post_op.GetInterfaceElectricFieldEnergy(idx, E, 0.0));
     }
     return energies;
   }
@@ -352,8 +352,10 @@ TEST_CASE("PrescribedPotential sheet on an uncracked mesh",
                               InterfaceDielectric::DEFAULT, t_i, epsilon_i, nullptr);
     REQUIRE(sum_sides.IsValid());
     REQUIRE(average.IsValid());
-    const double sum_jump = sum_sides.Eval(*E_jump), sum_const = sum_sides.Eval(*E_const),
-                 avg_jump = average.Eval(*E_jump), avg_const = average.Eval(*E_const);
+    const double sum_jump = sum_sides.Eval(*E_jump, 0.0),
+                 sum_const = sum_sides.Eval(*E_const, 0.0),
+                 avg_jump = average.Eval(*E_jump, 0.0),
+                 avg_const = average.Eval(*E_const, 0.0);
     CAPTURE(sum_jump, sum_const, avg_jump, avg_const);
     CHECK(avg_const > 0.0);
     CHECK_THAT(sum_const, WithinRel(2.0 * avg_const, 1.0e-10));

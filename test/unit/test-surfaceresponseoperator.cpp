@@ -39,6 +39,7 @@
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/edgedistance.hpp"
 #include "utils/iodata.hpp"
 #include "utils/metaledge.hpp"
@@ -1696,17 +1697,21 @@ TEST_CASE_METHOD(
       parallel_cluster_boundary_response_2d.GetMaxwellResponse(
           parallel_cluster_boundary_field_2d, 0.0);
   CHECK(parallel_cluster_boundary_result_2d.loop_residual < 1.0e-10);
-  CHECK_THAT(
-      parallel_cluster_boundary_result_2d.domain_correction,
-      WithinRel(parallel_cluster_electrostatic_result_2d.domain_correction, 1.0e-10));
+  CHECK_THAT(parallel_cluster_boundary_result_2d.domain_correction,
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           parallel_cluster_electrostatic_result_2d.domain_correction,
+                       1.0e-10));
   CHECK_THAT(
       parallel_cluster_boundary_result_2d.domain_correction_fixed_flux,
-      WithinRel(parallel_cluster_electrostatic_result_2d.domain_correction_fixed_flux,
+      WithinRel(electromagnetics::TimeAverageWeight(true) *
+                    parallel_cluster_electrostatic_result_2d.domain_correction_fixed_flux,
                 1.0e-10));
   CHECK_THAT(
       parallel_cluster_boundary_result_2d.fabricated_surface_energy.at(4),
-      WithinRel(parallel_cluster_electrostatic_result_2d.fabricated_surface_energy.at(4),
-                1.0e-10));
+      WithinRel(
+          electromagnetics::TimeAverageWeight(true) *
+              parallel_cluster_electrostatic_result_2d.fabricated_surface_energy.at(4),
+          1.0e-10));
 
   json exact_pair_config_2d = ExactPairConfig2D();
   // Regression (2D pair conductor references, 2026-09-26): the 1- / 2-site patches of
@@ -2600,7 +2605,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Max
   maxwell_field.Real().SetFromTrueDofs(field_true);
   const auto operator_response = maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
   maxwell_response_3d.Mult(field_true, correction_true);
-  CHECK_THAT(0.5 * linalg::Dot(Mpi::World(), field_true, correction_true),
+  // The response's energy of the complex peak phasor is the time average (decision 2383).
+  CHECK_THAT(0.5 * electromagnetics::TimeAverageWeight(true) *
+                 linalg::Dot(Mpi::World(), field_true, correction_true),
              WithinRel(operator_response.domain_correction, 1.0e-10));
 
   Vector probe(field_true.Size()), correction_probe;
@@ -2635,21 +2642,26 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Max
       response_3d.GetFabricatedSurfaceEnergy(potential_true);
   const auto electrostatic_response = response_3d.GetElectrostaticResponse(potential_true);
   const auto gradient_response = maxwell_response_3d.GetMaxwellResponse(maxwell_field, 0.0);
-  CHECK_THAT(gradient_response.domain_correction,
-             WithinRel(electrostatic_correction.domain, 1.0e-10));
+  CHECK_THAT(
+      gradient_response.domain_correction,
+      WithinRel(electromagnetics::TimeAverageWeight(true) * electrostatic_correction.domain,
+                1.0e-10));
   REQUIRE(gradient_response.fabricated_surface_energy.size() ==
           electrostatic_surfaces.size());
   for (const auto &[interface, energy] : electrostatic_surfaces)
   {
     CHECK_THAT(gradient_response.fabricated_surface_energy.at(interface),
-               WithinRel(energy, 1.0e-10));
-    CHECK_THAT(
-        gradient_response.fabricated_surface_energy_fixed_flux.at(interface),
-        WithinRel(electrostatic_response.fabricated_surface_energy_fixed_flux.at(interface),
-                  1.0e-10));
+               WithinRel(electromagnetics::TimeAverageWeight(true) * energy, 1.0e-10));
+    CHECK_THAT(gradient_response.fabricated_surface_energy_fixed_flux.at(interface),
+               WithinRel(electromagnetics::TimeAverageWeight(true) *
+                             electrostatic_response.fabricated_surface_energy_fixed_flux.at(
+                                 interface),
+                         1.0e-10));
   }
   CHECK_THAT(gradient_response.domain_correction_fixed_flux,
-             WithinRel(electrostatic_response.domain_correction_fixed_flux, 1.0e-10));
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           electrostatic_response.domain_correction_fixed_flux,
+                       1.0e-10));
   CHECK_THAT(
       gradient_response.response_weighted_trace_closure_spread,
       WithinRel(electrostatic_response.response_weighted_trace_closure_spread, 1.0e-10));
@@ -2830,19 +2842,24 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Max
                   1.0e-12));
   }
   CHECK_THAT(coupled_maxwell_result.domain_correction,
-             WithinRel(coupled_electrostatic_result.domain_correction, 1.0e-10));
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           coupled_electrostatic_result.domain_correction,
+                       1.0e-10));
   CHECK_THAT(coupled_maxwell_result.domain_correction_fixed_flux,
-             WithinRel(coupled_electrostatic_result.domain_correction_fixed_flux, 1.0e-10));
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           coupled_electrostatic_result.domain_correction_fixed_flux,
+                       1.0e-10));
   for (const auto &[interface, energy] :
        coupled_electrostatic_result.fabricated_surface_energy)
   {
     CHECK_THAT(coupled_maxwell_result.fabricated_surface_energy.at(interface),
-               WithinRel(energy, 1.0e-5));
+               WithinRel(electromagnetics::TimeAverageWeight(true) * energy, 1.0e-5));
     CHECK_THAT(
         coupled_maxwell_result.fabricated_surface_energy_fixed_flux.at(interface),
-        WithinRel(
-            coupled_electrostatic_result.fabricated_surface_energy_fixed_flux.at(interface),
-            1.0e-5));
+        WithinRel(electromagnetics::TimeAverageWeight(true) *
+                      coupled_electrostatic_result.fabricated_surface_energy_fixed_flux.at(
+                          interface),
+                  1.0e-5));
   }
 
   auto parallel_cluster_maxwell_config_3d = coupled_maxwell_config_3d;
@@ -2910,21 +2927,25 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Max
   CHECK(std::abs(parallel_cluster_maxwell_result.domain_correction) > 0.0);
   CHECK(parallel_cluster_maxwell_result.loop_residual < 1.0e-10);
   CHECK_THAT(parallel_cluster_maxwell_result.domain_correction,
-             WithinRel(parallel_cluster_electrostatic_result.domain_correction, 1.0e-10));
-  CHECK_THAT(parallel_cluster_maxwell_result.domain_correction_fixed_flux,
-             WithinRel(parallel_cluster_electrostatic_result.domain_correction_fixed_flux,
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           parallel_cluster_electrostatic_result.domain_correction,
                        1.0e-10));
+  CHECK_THAT(
+      parallel_cluster_maxwell_result.domain_correction_fixed_flux,
+      WithinRel(electromagnetics::TimeAverageWeight(true) *
+                    parallel_cluster_electrostatic_result.domain_correction_fixed_flux,
+                1.0e-10));
   for (const auto &[interface, energy] :
        parallel_cluster_electrostatic_result.fabricated_surface_energy)
   {
     CHECK_THAT(parallel_cluster_maxwell_result.fabricated_surface_energy.at(interface),
-               WithinRel(energy, 1.0e-5));
+               WithinRel(electromagnetics::TimeAverageWeight(true) * energy, 1.0e-5));
     CHECK_THAT(
         parallel_cluster_maxwell_result.fabricated_surface_energy_fixed_flux.at(interface),
-        WithinRel(
-            parallel_cluster_electrostatic_result.fabricated_surface_energy_fixed_flux.at(
-                interface),
-            1.0e-4));
+        WithinRel(electromagnetics::TimeAverageWeight(true) *
+                      parallel_cluster_electrostatic_result
+                          .fabricated_surface_energy_fixed_flux.at(interface),
+                  1.0e-4));
   }
 
   Vector cluster_state(parallel_cluster_maxwell_space_3d.GetNDSpace().GetTrueVSize());
@@ -2965,19 +2986,24 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator 3D CPW Max
   const auto curved_electrostatic_result =
       coupled_response_3d.GetElectrostaticResponse(electrostatic_potential_true);
   CHECK_THAT(curved_maxwell_result.domain_correction,
-             WithinRel(curved_electrostatic_result.domain_correction, 1.0e-10));
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           curved_electrostatic_result.domain_correction,
+                       1.0e-10));
   CHECK_THAT(curved_maxwell_result.domain_correction_fixed_flux,
-             WithinRel(curved_electrostatic_result.domain_correction_fixed_flux, 1.0e-10));
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           curved_electrostatic_result.domain_correction_fixed_flux,
+                       1.0e-10));
   for (const auto &[interface, energy] :
        curved_electrostatic_result.fabricated_surface_energy)
   {
     CHECK_THAT(curved_maxwell_result.fabricated_surface_energy.at(interface),
-               WithinRel(energy, 1.0e-2));
+               WithinRel(electromagnetics::TimeAverageWeight(true) * energy, 1.0e-2));
     CHECK_THAT(
         curved_maxwell_result.fabricated_surface_energy_fixed_flux.at(interface),
-        WithinRel(
-            curved_electrostatic_result.fabricated_surface_energy_fixed_flux.at(interface),
-            1.0e-2));
+        WithinRel(electromagnetics::TimeAverageWeight(true) *
+                      curved_electrostatic_result.fabricated_surface_energy_fixed_flux.at(
+                          interface),
+                  1.0e-2));
   }
 
 #endif
@@ -5886,7 +5912,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator Maxwell is
   // this random (circulating) field the postprocessed domain correction withholds the
   // fallback patches' defects (if any: the rank-dependent probe decides), which the
   // response reports beside it.
-  CHECK_THAT(0.5 * linalg::Dot(Mpi::World(), island_true, island_correction),
+  CHECK_THAT(0.5 * electromagnetics::TimeAverageWeight(true) *
+                 linalg::Dot(Mpi::World(), island_true, island_correction),
              WithinRel(random_island_response.domain_correction +
                            random_island_response.loop_fallback_domain_correction,
                        1.0e-10));
@@ -7281,11 +7308,14 @@ TEST_CASE_METHOD(
   const auto electrostatic_names = cluster_electrostatic_response.GetModelNames();
   CHECK(maxwell_names == electrostatic_names);
 
+  // The Maxwell value of the complex peak phasor is the time average of the electrostatic
+  // reference of the same (real) field: 1/2 of it (decision 2383).
   auto CheckEnergy = [](double value, double reference)
   {
     if (std::abs(reference) > 0.0)
     {
-      CHECK_THAT(value, WithinRel(reference, 1.0e-10));
+      CHECK_THAT(value,
+                 WithinRel(electromagnetics::TimeAverageWeight(true) * reference, 1.0e-10));
     }
     else
     {

@@ -212,24 +212,58 @@ transmission line with the wave-port cross section. The boundary modes will be u
 ``\bm{E}`` and ``\bm{H}``, which will only be impedance-like for TEM, TE or TM modes. Additionally,
 users can choose which of the found modes to excite.
 
-We normalize port fields so the total power flow is ``\vert P^{inc} \vert = 1~\mathrm{W}``, where
-
-*Palace* uses peak phasors for this convention, so ``P^{inc}`` is twice the time-averaged power for
-a propagating mode.
+We normalize port fields so the time-averaged incident power is ``\vert P^{inc} \vert = 1~\mathrm{W}``,
+where
 
 ```math
-P^{inc} = V^{inc} [I^{inc}]^*  = \sum_e \int_{\Gamma_e} dS_e \,  \bm{n}_e \cdot (\bm{E}_e^{inc} \times [\bm{H}_e^{inc}]^*).
+P^{inc} = \frac{1}{2} V^{inc} [I^{inc}]^*  = \frac{1}{2} \sum_e \int_{\Gamma_e} dS_e \,  \bm{n}_e \cdot (\bm{E}_e^{inc} \times [\bm{H}_e^{inc}]^*).
 ```
+
+*Palace* uses peak phasors for frequency domain fields, voltages, and currents, so the factor of
+``1/2`` converts the product of the phasors to the time average over one period. The same
+normalization applies to lumped ports, wave ports, and Floquet ports, so that mixed-port
+S-parameters need no additional scaling. For a lumped port with reference resistance
+``R = 50~\Omega``, the incident wave has ``V^{inc} = 10~\mathrm{V}`` and ``I^{inc} = 0.2~\mathrm{A}``
+(peak). In the time domain, the excitation carries unit instantaneous incident power at unit
+pulse amplitude. When a wave port's cross section contains lossy material, the mode power is
+complex and this normalization fixes its magnitude, so the transported (real) incident power is
+exact only to first order in the loss tangent. The S-parameters of such a port are not
+affected: they are obtained from the unconjugated reaction with the port mode, as described
+for [wave ports](#Wave-ports).
 
 Here we have allowed for the possibility that a port can be made of disjoint surface elements ``e``,
 which separately contribute to the Poynting vector.
+
+**Comparing with other tools.** With these conventions, each excited port of a driven *Palace*
+simulation carries 1 W of time-averaged incident power (``A^2`` W with an excitation amplitude
+``A``). This is the default port excitation of HFSS (driven modal) and of a COMSOL port (an input
+power of 1 W), and that of a COMSOL lumped port with a power source of 1 W or an incident voltage
+``V_0 = \sqrt{2R \cdot 1~\mathrm{W}}`` (10 V for 50 Ω, where the default of COMSOL is 1 V).
+*Palace*, HFSS, and COMSOL all use peak phasors with the time dependence
+``e^{i\omega t}`` and time-averaged powers, so fields, voltages, power fluxes, and S-parameters
+compare directly.
+
+``E_{elec}`` and ``E_{mag}`` are time averages, and their sum is the time-averaged energy stored in
+the fields. The HFSS field calculator recipe for the peak electric energy,
+``\frac{1}{2}\int \varepsilon |\bm{E}|^2\,dV``, which equals the time-averaged stored energy of a
+closed resonator at resonance, gives twice ``E_{elec}``.
+
+Some outputs need a factor. In the time domain, a lumped port excitation of unit amplitude has
+``1/\sqrt{2}`` of the frequency domain amplitude, and an
+[`"ExcitationAmplitude"`](config/reference.md#config-boundaries-lumpedport) of ``\sqrt{2}`` gives
+the same drive. A surface current source drives ``1/\sqrt{Z_0} \approx 51.5`` mA, which is
+reported in `surface-I.csv`. Eigenmodes are normalized to unit norm, so their fields, voltages,
+and energies have an arbitrary scale and only the frequencies and ratios (quality factors,
+coupling rates, participation ratios) compare. COMSOL's quality factor uses
+``\text{Re}\{\omega\}`` in place of ``|\omega|``, which makes it smaller by a relative
+``1/(8Q^2)``.
 
 There is an additional normalization related to voltages and currents. For AC simulations of
 microwave networks, circuit ``V`` and ``I`` are not generally well defined and have to be fixed by
 convention [[11, 12]](#References). This is tantamount to relating the circuit characteristic impedance
 
 ```math
-Z = \frac{V^{inc}}{I^{inc}} = \frac{\vert V^{inc} \vert^2}{[P^{inc}]^*},
+Z = \frac{V^{inc}}{I^{inc}} = \frac{\vert V^{inc} \vert^2}{2[P^{inc}]^*},
 ```
 
 to the physical surface (wave) impedance ``Z_s``. We discuss this for each port type below.
@@ -328,14 +362,16 @@ The incident field ``\bm{E}^{inc}(\bm{x},t)`` is
 \bm{E}^{inc}(\bm{x},t) = p(t)\bm{E}^{inc}(\bm{x})
 ```
 
-where ``\bm{E}^{inc}(\bm{x})`` is identical to the spatial excitation in the frequency domain
-formulation, and ``p(t)`` describes the temporal shape of the excitation. Possible options for
+where ``\bm{E}^{inc}(\bm{x})`` has the spatial form of the frequency domain excitation with
+``1/\sqrt{2}`` of its amplitude (unit instantaneous incident power at ``p = 1``), and ``p(t)``
+describes the temporal shape of the excitation. Possible options for
 [`config["Solver"]["Transient"]["Excitation"]`](config/reference.md#config-solver-transient-excitation)
 include a sinusoidal, Gaussian, modulated Gaussian, or step excitation.
 
 For AC simulations, a surface-current source and a resistive lumped port with the same geometry
 produce right-hand-side source terms with the same spatial form, up to an overall normalization. A
-surface-current source is normalized to unit current and only drives the right-hand side: it
+surface-current source is normalized to a current of ``1/\sqrt{Z_0} \approx 51.5`` mA, the unit
+of current of *Palace*'s nondimensionalization, and only drives the right-hand side: it
 prescribes no boundary condition and provides no termination or dissipation. A lumped port is
 normalized to the unit incident power described above and also imposes its impedance (Robin)
 boundary condition, so a nonzero resistance allows energy to leave the model through the port. Thus,
@@ -359,12 +395,12 @@ so that the port is matched to its own mode.
 
 The modes of a lossy cross-section are orthogonal under the unconjugated (reciprocity) pairing
 ``\int_\Gamma (\bm{E}_m\times\bm{H}_k)\cdot\bm{n}\,dS``, and not under the power pairing
-``\int_\Gamma (\bm{E}_m\times\bm{H}_k^*)\cdot\bm{n}\,dS`` [[11]](#References). Wave port modes are
-normalized to unit power, ``\vert P^{inc} \vert = 1~\mathrm{W}`` as above, with the phase of the mode
-chosen such that its reaction
+``\int_\Gamma (\bm{E}_m\times\bm{H}_k^*)\cdot\bm{n}\,dS`` [[11]](#References). The incident wave
+of a wave port carries unit time-averaged power, ``\vert P^{inc} \vert = 1~\mathrm{W}`` as above, with the
+phase of the mode chosen such that its reaction
 
 ```math
-R^{inc} = \int_\Gamma (\bm{E}^{inc}\times\bm{H}^{inc})\cdot\bm{n}\,dS
+R^{inc} = \frac{1}{2}\int_\Gamma (\bm{E}^{inc}\times\bm{H}^{inc})\cdot\bm{n}\,dS
 ```
 
 is real and positive. For a lossless propagating mode, ``R^{inc} = P^{inc} = 1~\mathrm{W}``. For a
@@ -414,17 +450,17 @@ field component on the port.
 **Impedance.** The *power-voltage* characteristic impedance is defined as
 
 ```math
-Z_{PV} = \frac{|V|^2}{P^*}
+Z_{PV} = \frac{|V|^2}{2P^*}
 ```
 
-where ``P = \int_\Gamma(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\,dS`` is the complex power flux
-of the mode through the cross-section, with peak phasors (twice the time-averaged power). It is
+where ``P = \frac{1}{2}\int_\Gamma(\bm{E}\times\bm{H}^*)\cdot\hat{\bm{n}}\,dS`` is the complex
+time-averaged power flux of the mode through the cross-section for the peak-phasor fields. It is
 real for a lossless propagating mode, and complex for a lossy one. For a TEM mode with a voltage
-path between the two conductors, ``P = V I^*`` and ``Z_{PV} = V / I`` is the conventional complex
-characteristic impedance of the line, which has the phase of ``k_n`` for a quasi-TEM mode on a line
-with a lossless dielectric. Wave ports report ``Z_{PV}`` when `"VoltagePath"` is specified,
-consistent with the total-field impedance ``|V|^2 / P^*`` of the port, and boundary-mode solves
-with impedance postprocessing.
+path between the two conductors, ``P = \frac{1}{2} V I^*`` and ``Z_{PV} = V / I`` is the
+conventional complex characteristic impedance of the line, which has the phase of ``k_n`` for a
+quasi-TEM mode on a line with a lossless dielectric. Wave ports report ``Z_{PV}`` when
+`"VoltagePath"` is specified, consistent with the total-field impedance ``|V|^2 / (2P^*)`` of the
+port, and boundary-mode solves with impedance postprocessing.
 
 As a diagnostic, boundary-mode impedance postprocessing also reports the complex
 *voltage-current* impedance when a current path is specified:
@@ -459,7 +495,7 @@ S_{ij} = \frac{\displaystyle\int_{\Gamma_i}\bm{E}\cdot\bm{E}^{inc}_i\,dS}
 ```
 
 For a resistive excited port, the incident field ``\bm{E}^{inc}`` is normalized so that the
-power integrated over the port boundary is unity, referenced to the port resistance
+time-averaged incident power integrated over the port boundary is unity, referenced to the port resistance
 ``R = R_{ref}``, and the excitation and termination coefficients coincide. A lumped port
 with nonzero inductance and/or capacitance may also be excited. In that case the port's
 full ``R``, ``L``, and ``C`` still enter the system matrix as a physical parallel
@@ -508,7 +544,8 @@ S_{ij} = \frac{\displaystyle\int_{\Gamma_i}(\bm{E}\times\bm{H}^{inc}_i)\cdot\bm{
 ```
 
 For a lossless propagating port mode, this is the projection
-``\int_{\Gamma_i}(\bm{E}\times[\bm{H}^{inc}_i]^*)\cdot\bm{n}\,dS`` onto the unit-power mode, and
+``\frac{1}{2}\int_{\Gamma_i}(\bm{E}\times[\bm{H}^{inc}_i]^*)\cdot\bm{n}\,dS`` onto the unit-power incident
+wave, and
 the scattering parameters have the standard power-wave interpretation. For a lossy port mode, the
 unconjugated reaction separates the incident and reflected modal amplitudes, also from those of
 other modes of the port cross-section, and the scattering parameters are those of the pseudo-waves
@@ -566,6 +603,29 @@ though most users should not need to change it. `"MGS"` is applied as `"CGS2"`, 
 Gram-Schmidt with reorthogonalization, which is as stable with three reductions per vector
 (one per pass and one for the norm) instead of one per basis vector.
 
+An HDM solution is only as accurate as its linear solve:
+[`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear) bounds a
+residual (for GMRES, that of the preconditioned system), not the error, which can be much
+larger, and for an ill-conditioned system the factorization of a direct solver can be
+inaccurate as well. Late in the sampling, the new direction which the real or the imaginary part
+of a sample adds to the basis can be as small as this error, and then consists largely of
+it. The Galerkin projection can amplify the error carried by such a direction, so that the
+PROM with it is farther from the sample, and from the exact solution, than without it. With
+an accurate sample in its basis, the Galerkin PROM reproduces the sample, so after adding a
+sample, *Palace* evaluates the error ``\varepsilon`` defined below at this sample, with the
+sample in the basis. If it is not below
+[`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven), the
+sample is removed, refined and added again, up to four times: a step of iterative refinement adds
+to it a correction for its true residual, solved with the same linear solver to a relative
+tolerance of `1e-2` (or `config["Solver"]["Linear"]["Tol"]`, if looser). A part of a sample
+in the span of the basis, to the orthogonalization tolerance, carries no new information and
+adds no direction. If the sampling of an excitation reaches
+[`config["Solver"]["Driven"]["AdaptiveMaxSamples"]`](config/reference.md#config-solver-driven)
+before converging, *Palace* warns. It also warns if the PROM does not reproduce some of the
+samples even after their refinement: `"AdaptiveTol"` is then likely below the accuracy
+which the HDM solutions can reach, for example because of the conditioning of the system,
+which refinement does not improve, and has to be looser.
+
 ### Internal sample selection
 
 The remaining question is how to choose the internal sample frequencies. *Palace* uses a
@@ -591,6 +651,23 @@ that, the interpolation suggests the next sample from an error indicator that ca
 evaluated without another HDM solve. The selected HDM solution is then added to the shared
 PROM basis.
 
+HDM solutions are solved from zero. When
+[`config["Solver"]["Linear"]["InitialGuess"]`](config/reference.md#config-solver-linear) is
+enabled (the default), the sample which would complete the convergence memory (see below) is
+solved from the PROM solution there instead, to certify the PROM: if the linear solver
+converges, to the tighter of its tolerance and `"AdaptiveTol"`, and changes the PROM
+solution by less than `"AdaptiveTol"`, the sweep of this excitation has converged, and this
+solution is added to the basis as the last sample, unless it is already in the span of the
+basis to round-off (for example when the PROM solution already meets this tolerance, so
+that the solve takes no iteration). Otherwise, the solve is stopped as soon as the change
+exceeds `"AdaptiveTol"` (with GMRES and left preconditioning, the defaults; FGMRES or right
+preconditioning solve to convergence), and the sample is solved again from zero, reusing
+the assembled operators and preconditioner. The other samples are not started from the
+PROM solution: the linear solver controls the residual of the preconditioned system, and
+while the PROM is still inaccurate, a solution started from it can keep errors of the PROM
+which barely affect this residual, for example in weakly excited, high-Q modes, and which
+would then degrade the PROM.
+
 ### Convergence criterion
 
 At a proposed sample frequency ``f^*``, *Palace* compares the HDM solution against the PROM
@@ -605,11 +682,21 @@ solution using
 Convergence is declared when this quantity is below
 [`config["Solver"]["Driven"]["AdaptiveTol"]`](config/reference.md#config-solver-driven) for
 [`config["Solver"]["Driven"]["AdaptiveConvergenceMemory"]`](config/reference.md#config-solver-driven)
-consecutive samples. The norm here is the finite-element coefficient-space L2 norm. It is
-related to, but not the same as, a physical energy norm such as
+consecutive samples. Since ``\varepsilon`` is measured against HDM solutions, it is in
+general not smaller than their error: if they are less accurate than `"AdaptiveTol"`, even
+after their refinement, the sampling may not converge. The norm here is the
+finite-element coefficient-space L2 norm. It is related to, but not the same as, a physical
+energy norm such as
 ``\int \bm{E}^*(\bm{r})\cdot\bm{E}(\bm{r})\,d^3r``. Consequently, the adaptive tolerance is
 not a strict relative-error bound for every derived quantity, such as S-parameters or domain
 energies.
+
+The tolerance of the linear solver
+([`config["Solver"]["Linear"]["Tol"]`](config/reference.md#config-solver-linear)) bounds the
+relative residual of the preconditioned system (with the default left preconditioning), not
+the error of the HDM solution, which can be much larger. Near the accuracy of the HDM
+solves, ``\varepsilon`` no longer measures the PROM error alone, and an `"AdaptiveTol"`
+tighter than this accuracy may not be reached before `"AdaptiveMaxSamples"`.
 
 The indicator is also not a mathematical certificate of the maximum error over the entire
 frequency interval. The convergence memory mitigates accidental early termination when one
@@ -747,15 +834,16 @@ electric and magnetic fields corresponding to eigenmode ``m``, ``\bm{E}_m`` and
 ``\bm{H}_m``, using the formula
 
 ```math
-p_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{2} \, L_j I_{mj}^2
+p_{mj} = \frac{1}{\mathcal{E}^{elec}_m} \, \frac{1}{4} \, L_j |I_{mj}|^2
 ```
 
 where ``p_{mj}\in[-1,1]`` denotes the signed participation ratio for junction ``j`` in mode
 ``m``, ``L_j`` is the provided junction circuit inductance, ``I_ {mj}`` is the peak
-junction current for mode ``m``, and ``\mathcal{E}^{elec}_m`` is the electric energy in
-mode ``m``. The junction current is computed using the mean voltage across the port,
+junction current for mode ``m``, and ``\mathcal{E}^{elec}_m`` is the time-averaged electric
+energy in mode ``m`` (the numerator is likewise the time-averaged energy stored in the
+inductor). The junction current is computed using the mean voltage across the port,
 ``\overline{V}_{mj}``, as ``I_{mj} = \overline{V}_{mj}/Z_{mj}``, where
-``Z_{mj} = 1/(i\omega_m L_j)`` is the impedance of the inductive branch of the lumped
+``Z_{mj} = i\omega_m L_j`` is the impedance of the inductive branch of the lumped
 circuit. The mean port voltage depends on the computed electric field mode and the shape of
 the port:
 
@@ -765,17 +853,21 @@ the port:
  2. *Coaxial ports*:
     ``\overline{V}_{mj} = \frac{1}{2\pi}\int_{\Gamma_j}\frac{\bm{E}_m}{r}\cdot\hat{\bm{r}}_j\,dS``.
 
-Finally, the total electric energy in mode ``m`` is
+Finally, the total time-averaged electric energy in mode ``m`` is
 
 ```math
 \mathcal{E}^{elec}_m
-    = \frac{1}{2} \, \text{Re}\left\{\int_\Omega\bm{D}_m^*\cdot\bm{E}_m\,dV\right\}
-    + \sum_j \frac{1}{2} \, C_jV_{mj}^2
+    = \frac{1}{4} \, \text{Re}\left\{\int_\Omega\bm{D}_m^*\cdot\bm{E}_m\,dV\right\}
+    + \sum_j \frac{1}{4} \, C_j|V_{mj}|^2
 ```
 
 where ``\bm{D}_m = \varepsilon_r\bm{E}_m`` is the electric flux density for mode ``m`` and
 the second term on the right-hand side accounts for any lumped capacitive boundaries with
-nonzero circuit capacitance ``C_j``.
+nonzero circuit capacitance ``C_j``. For a lossless mode with nondispersive storage,
+equipartition gives the total energy ``\mathcal{E}_m = 2\mathcal{E}^{elec}_m``, and the
+port-Q estimate below uses it. This holds for weak loss. It can fail for strongly damped,
+open or dispersive modes, and when the port field is not uniform, since the lumped L/C energy
+then differs from the energy stored in the boundary sheet.
 
 The EPR can also be used to estimate mode quality factors due to input-output (I-O) line
 coupling. The mode coupling quality factor due to the ``j``-th I-O port is given by
@@ -784,12 +876,15 @@ coupling. The mode coupling quality factor due to the ``j``-th I-O port is given
 Q_{mj} = \frac{\text{Re}\{\omega_m\}}{|\kappa_{mj}|}
 ```
 
-The magnitude of the port coupling rate ``\kappa_{mj}`` is the power dissipated in the
-resistive boundary of port ``j`` divided by the electric energy of mode ``m``, and its sign
-is the sign of the real part of the port current ``I_{mj} = \overline{V}_{mj}/R_j``:
+The magnitude of the port coupling rate ``\kappa_{mj}`` is the time-averaged power
+dissipated in the resistive boundary of port ``j`` divided by the total stored energy
+``\mathcal{E}_m`` of mode ``m``, and its sign is the sign of the real part of the port
+current ``I_{mj} = \overline{V}_{mj}/R_j``:
 
 ```math
-\kappa_{mj} = \text{sign}(\text{Re}\{I_{mj}\}) \, \frac{1}{\mathcal{E}^{elec}_m} \,
+\kappa_{mj} = \text{sign}(\text{Re}\{I_{mj}\}) \, \frac{1}{\mathcal{E}_m} \,
+    \frac{1}{2} \sum_e \int_{\Gamma_e} \frac{|\bm{E}_{m,t}|^2}{R_{s,e}} \, dS
+    = \text{sign}(\text{Re}\{I_{mj}\}) \, \frac{1}{2\mathcal{E}^{elec}_m} \,
     \frac{1}{2} \sum_e \int_{\Gamma_e} \frac{|\bm{E}_{m,t}|^2}{R_{s,e}} \, dS \,,
 ```
 
@@ -808,19 +903,19 @@ present in domain ``j`` with associated loss tangent ``\tan{\delta}_j`` is given
 
 ```math
 \frac{1}{Q_j} = p_j \tan{\delta}_j =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \, \tan{\delta}_j \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \, \tan{\delta}_j \,
     \text{Re}\left\{\int_{\Omega_j}\bm{D}^*\cdot\bm{E}\,dV\right\}
 ```
 
-where, as above, ``\mathcal{E}^{elec}`` is the total electric field energy in the domain,
-including the contributions due to capacitive lumped elements.
+where, as above, ``\mathcal{E}^{elec}`` is the total time-averaged electric field energy in
+the domain, including the contributions due to capacitive lumped elements.
 
 Likewise, the quality factor due to surface interface dielectric loss for interface ``j`` is
 given by
 
 ```math
 \frac{1}{Q_j} = p_j \tan{\delta}_j =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \, t_j\tan{\delta}_j \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \, t_j\tan{\delta}_j \,
     \text{Re}\left\{\int_{\Gamma_j}\bm{D}^*\cdot\bm{E}\,dS\right\}
 ```
 
@@ -840,7 +935,7 @@ quality factor for interface ``j`` is given by
 
 ```math
 \frac{1}{Q^{MA}_j} =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \,
     \frac{t_j\tan{\delta}_j}{\varepsilon_{r,j}^{MA}} \,
     \text{Re}\left\{\int_{\Gamma_j}\bm{E}_n^*\cdot\bm{E}_n\,dS\right\}
 ```
@@ -849,7 +944,7 @@ quality factor for interface ``j`` is given by
 
 ```math
 \frac{1}{Q^{MS}_j} =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \,
     \frac{t_j\tan{\delta}_j(\varepsilon_{r,j}^{S})^2}{\varepsilon_{r,j}^{MS}} \,
     \text{Re}\left\{\int_{\Gamma_j}\bm{E}_n^*\cdot\bm{E}_n\,dS\right\}
 ```
@@ -858,7 +953,7 @@ quality factor for interface ``j`` is given by
 
 ```math
 \frac{1}{Q^{SA}_j} =
-    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{2} \,
+    \frac{1}{\mathcal{E}^{elec}} \, \frac{1}{4} \,
     t_j\tan{\delta}_j\left(\varepsilon_{r,j}^{SA} \,
     \text{Re}\left\{\int_{\Gamma_j}\bm{E}_t^*\cdot\bm{E}_t\,dS\right\}
     + \frac{1}{\varepsilon_{r,j}^{SA}} \,
@@ -2521,7 +2616,12 @@ the tangential electric field need not vanish inside a finite-impedance sheet mo
 Palace obtains the remaining coefficients by integrating around the coupon contour.
 Fixing this reference is essential: contour differences alone leave an arbitrary
 constant which changes the coupon response. The complex coefficients are evaluated with
-Hermitian domain- and surface-response quadratic forms.
+Hermitian domain- and surface-response quadratic forms, time-averaged as every energy of
+a frequency-domain solution in *Palace* (one half of the Hermitian form of the complex
+peak phasors, since version 0.20.0): the corrected energies, the raw interface energies
+and the normalization energy share this convention, so the participations are ratios of
+like quantities. The library's coupon responses are static, real-field responses and
+are stored unchanged; the time average is applied where they meet the complex traces.
 
 The corrected interface energy keeps the resolved raw energy outside the matching radius
 and replaces the complete thin core with the fabricated coupon response. The
@@ -3862,4 +3962,5 @@ problems lacking uniform inf-sup stability, _SIAM Journal on Numerical
 Analysis_ 58 (2020) 2265-2293. doi:
 [10.1137/19M1269695](https://doi.org/10.1137/19M1269695).\
 [11] R. B. Marks and D. F. Williams, A general waveguide circuit theory, *J. Res. Natl. Inst. Stan.* 97, 533 (1992).\
-[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.
+[12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.\
+[13] Y. Su and Z. Bai, Solving rational eigenvalue problems via linearization, *SIAM Journal on Matrix Analysis and Applications* 32 (2011) 201-216.

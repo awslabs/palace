@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <array>
 #include <filesystem>
-#include <fstream>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -14,6 +13,7 @@
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "utils/enum_string.hpp"
+#include "utils/outputfile.hpp"
 
 namespace palace
 {
@@ -97,6 +97,7 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"LondonPCShift", linear.london_pc_shift},
                 {"AMGAggressiveCoarsening", static_cast<bool>(linear.amg_agg_coarsen)},
                 {"AMSMaxIts", linear.ams_max_it},
+                {"AMSAgglomerationTarget", linear.ams_agglomeration_target},
                 {"DivFreeTol", linear.divfree_tol},
                 {"DivFreeMaxIts", linear.divfree_max_it},
                 {"EstimatorTol", linear.estimator_tol},
@@ -844,12 +845,8 @@ void IoData::WriteResolvedConfig(const json &raw_config,
   const std::filesystem::path input_path(input_config_path);
   const std::filesystem::path path =
       post_dir / (input_path.stem().string() + "_resolved.json");
-  std::ofstream fo(path);
-  MFEM_VERIFY(fo.is_open(), "Unable to open resolved config file \"" << path << "\"!");
-  fo << ConcretizeDefaults(*this, raw_config).dump(2) << '\n';
-  fo.close();
-  MFEM_VERIFY(std::filesystem::exists(path),
-              "Resolved config file was not created at \"" << path << "\"!");
+  const std::string resolved = ConcretizeDefaults(*this, raw_config).dump(2);
+  WriteOutputFile(path, [&](std::ostream &fo) { fo << resolved << '\n'; });
 }
 
 }  // namespace palace

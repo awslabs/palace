@@ -112,23 +112,33 @@ runs:
         fi
         export PALACE_TEST_NUMPROC=$NUM_PROC_TEST
 
+        # Disable OpenMPI 5.x default CPU binding, as for the unit tests: the long label also
+        # runs the unit tests on the debug device, on 1 and 2 processes, many at once, and
+        # binding would pile them onto the same cores. OpenMPI 5.x uses PRRTE, so set both the
+        # PRTE and legacy OMPI MCA variables.
+        export PRTE_MCA_hwloc_default_binding_policy=none
+        export OMPI_MCA_hwloc_base_binding_policy=none
+
         run_ctest() {
           ctest --test-dir "$TEST_DIR" --output-on-failure -j "$JOBS" "$@"
         }
 
+        # Each selection has a timeout per test, so that a hung case fails instead of
+        # holding the runner to the job limit: 15 min for the regression cases (the
+        # slowest takes under 4 min), 1 h for the long ones (under 30 min).
         # Map the action's `test-cases` input onto a ctest selection. "default"
         # is the always-on regression label; "long" the heavy [Long] cases;
         # anything else is a space-separated list of explicit case names.
         run_cases() {
           local raw="$1"
           if [[ -z "$raw" || "$raw" == "default" ]]; then
-            run_ctest -L "^regression$"
+            run_ctest --timeout 900 -L "^regression$"
           elif [[ "$raw" == "long" ]]; then
-            run_ctest -L "^long$"
+            run_ctest --timeout 3600 -L "^long$"
           else
             local regex
             regex="$(echo "$raw" | tr ' ' '|')"
-            run_ctest -R "^(regression|long)-(${regex})$"
+            run_ctest --timeout 3600 -R "^(regression|long)-(${regex})$"
           fi
         }
 

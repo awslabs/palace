@@ -165,7 +165,7 @@ TEST_CASE("Interface ownership exhaustive surface quadrature",
   plain.dielectric.emplace(1, data);
   SurfacePostOperator unmasked(plain, ProblemType::ELECTROSTATIC, materials, h1_space,
                                nd_space);
-  const double reference = unmasked.GetInterfaceElectricFieldEnergy(1, field);
+  const double reference = unmasked.GetInterfaceElectricFieldEnergy(1, field, 0.0);
   CHECK_THAT(reference, Catch::Matchers::WithinAbs(0.05, 1e-12));
 
   data.ownership_data_file = file.path;
@@ -178,8 +178,8 @@ TEST_CASE("Interface ownership exhaustive surface quadrature",
   partitioned.dielectric.emplace(2, data);
   SurfacePostOperator post(partitioned, ProblemType::ELECTROSTATIC, materials, h1_space,
                            nd_space);
-  const double a = post.GetInterfaceElectricFieldEnergy(1, field);
-  const double b = post.GetInterfaceElectricFieldEnergy(2, field);
+  const double a = post.GetInterfaceElectricFieldEnergy(1, field, 0.0);
+  const double b = post.GetInterfaceElectricFieldEnergy(2, field, 0.0);
   CHECK_THAT(a + b, Catch::Matchers::WithinAbs(reference, 1e-12));
   CHECK_THAT(a, Catch::Matchers::WithinAbs(reference / 2, 1e-12));
   CHECK_THAT(b, Catch::Matchers::WithinAbs(reference / 2, 1e-12));

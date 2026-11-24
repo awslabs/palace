@@ -334,7 +334,7 @@ IslandFluxEnergies RecoverIslandFluxEnergies(const json &config)
     Dc.Real().SetFromTrueDofs(dc);
     Dc.Real().ExchangeFaceNbrData();
     result.continuous_probe =
-        post_op.GetSurfacePostOp().GetInterfaceElectricFieldEnergy(5, E, &Dc);
+        post_op.GetSurfacePostOp().GetInterfaceElectricFieldEnergy(5, E, 0.0, &Dc);
   }
   return result;
 }

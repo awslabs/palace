@@ -31,6 +31,7 @@
 #include "models/surfaceresponseoperator.hpp"
 #include "surfaceresponse-fixtures.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
@@ -872,6 +873,31 @@ TEST_CASE_METHOD(
   const auto &list = footprints.at(4);
   const auto &target = shares.at(4);
   REQUIRE(list.size() == 20);
+  // Palace 0.20.0's convention (decision 2383): the footprint energies of the complex peak
+  // phasor (e, 0) are exactly 1/2 of the real field's (the time average), the areas equal.
+  {
+    GridFunction field_c(laplace.GetNDSpace(), true);
+    field_c.Real().SetFromTrueDofs(e);
+    field_c.Imag() = 0.0;
+    field_c.Real().ExchangeFaceNbrData();
+    field_c.Imag().ExchangeFaceNbrData();
+    const auto footprints_c = post_op.GetSurfacePostOp().GetInterfaceRegionPatchFootprints(
+        {4}, field_c, nullptr, kept, response.GetRegionClaimPortions(),
+        response.GetRegionClaimPatches(), response.GetRegionReferencePoints());
+    const auto &list_c = footprints_c.at(4);
+    REQUIRE(list_c.size() == list.size());
+    const double w = electromagnetics::TimeAverageWeight(true);
+    for (std::size_t p = 0; p < list.size(); p++)
+    {
+      INFO("patch " << p + 1);
+      CHECK(list_c[p].open_energy == w * list[p].open_energy);
+      CHECK(list_c[p].open_energy_in == w * list[p].open_energy_in);
+      CHECK(list_c[p].energy == w * list[p].energy);
+      CHECK(list_c[p].energy_in == w * list[p].energy_in);
+      CHECK(list_c[p].area == list[p].area);
+      CHECK(list_c[p].area_in == list[p].area_in);
+    }
+  }
   // Every patch: the first tier with a denominator, and that tier's ratio.
   for (std::size_t p = 0; p < list.size(); p++)
   {

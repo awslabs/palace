@@ -329,9 +329,7 @@ int main(int argc, char *argv[])
   utils::ConfigureMemory(device_str, device_id);
   mfem::Device device(device_str, device_id);
   ConfigureCeedBackend(iodata.solver.ceed_backend);
-#if defined(PALACE_WITH_GPU_AWARE_MPI)
-  device.SetGPUAwareMPI(true);
-#endif
+  device.SetGPUAwareMPI(utils::QueryGPUAwareMPI());
 
   // Initialize Hypre and, optionally, SLEPc/PETSc.
   hypre::Initialize();

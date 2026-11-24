@@ -12,12 +12,13 @@ namespace palace::hypre
 {
 
 // Helper function to initialize HYPRE and control use of GPU at runtime. This will call
-// HYPRE_SetMemoryLocation and HYPRE_SetExecutionPolicy to match the mfem::Device
-// configuration. When MFEM device memory comes from an Umpire pool, hypre is pointed at the
-// same pool instead of creating its own.
+// HYPRE_SetMemoryLocation, HYPRE_SetExecutionPolicy, and HYPRE_SetGpuAwareMPI to match the
+// mfem::Device configuration. When MFEM device memory comes from an Umpire pool, hypre is
+// pointed at the same pool instead of creating its own.
 inline void Initialize()
 {
   mfem::Hypre::Init();
+  HYPRE_SetGpuAwareMPI(mfem::Device::GetGPUAwareMPI());
 #if defined(HYPRE_USING_UMPIRE) && defined(MFEM_USE_UMPIRE)
   // Must come after HYPRE_Init, which creates the handle that stores the pool name, and
   // before hypre's first device allocation, which creates the pool.
@@ -41,6 +42,8 @@ private:
 public:
   HypreVector(hypre_Vector *vec = nullptr);
   HypreVector(const Vector &x);
+  HypreVector(const HypreVector &) = delete;
+  HypreVector &operator=(const HypreVector &) = delete;
   ~HypreVector();
 
   auto Size() const { return hypre_VectorSize(vec); }
@@ -65,6 +68,8 @@ public:
   HypreCSRMatrix(int h, int w, int nnz);
   HypreCSRMatrix(hypre_CSRMatrix *mat);
   HypreCSRMatrix(const mfem::SparseMatrix &m);
+  HypreCSRMatrix(const HypreCSRMatrix &) = delete;
+  HypreCSRMatrix &operator=(const HypreCSRMatrix &) = delete;
   ~HypreCSRMatrix();
 
   auto NNZ() const { return hypre_CSRMatrixNumNonzeros(mat); }

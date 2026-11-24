@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-6-0",
+  "$id": "urn:palace:schema:6-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -653,6 +653,192 @@
       "minItems": 3,
       "maxItems": 3
     },
+    "ComplexNumber": {
+      "description": "A real number or complex number represented by `[real, imag]`.",
+      "oneOf": [
+        {
+          "type": "number"
+        },
+        {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "minItems": 2,
+          "maxItems": 2,
+          "additionalItems": false
+        }
+      ]
+    },
+    "PermittivityModel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "HighFrequencyLimit",
+        "Terms"
+      ],
+      "properties": {
+        "HighFrequencyLimit": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Scalar high-frequency limit ε∞ of the relative permittivity, positive for a positive field energy."
+        },
+        "Terms": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PermittivityDrude"
+              },
+              {
+                "$ref": "#/$defs/PermittivityDebye"
+              },
+              {
+                "$ref": "#/$defs/PermittivityLorentz"
+              },
+              {
+                "$ref": "#/$defs/PermittivityPoleResidue"
+              },
+              {
+                "$ref": "#/$defs/PermittivityDjordjevicSarkar"
+              }
+            ]
+          },
+          "description": "Nonempty array of additive scalar permittivity terms."
+        }
+      }
+    },
+    "PermittivityDrude": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "PlasmaFrequency",
+        "CollisionFrequency"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Drude"
+        },
+        "PlasmaFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Plasma frequency in GHz."
+        },
+        "CollisionFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Collision frequency in GHz."
+        }
+      }
+    },
+    "PermittivityDebye": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "DeltaPermittivity",
+        "RelaxationTime"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Debye"
+        },
+        "DeltaPermittivity": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Relative-permittivity increment, positive for a passive material: a negative increment has gain at every frequency."
+        },
+        "RelaxationTime": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Relaxation time in ns."
+        }
+      }
+    },
+    "PermittivityLorentz": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "DeltaPermittivity",
+        "ResonanceFrequency",
+        "DampingFrequency"
+      ],
+      "properties": {
+        "Type": {
+          "const": "Lorentz"
+        },
+        "DeltaPermittivity": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Relative-permittivity increment, positive for a passive material: a negative increment has gain at every frequency."
+        },
+        "ResonanceFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Resonance frequency in GHz."
+        },
+        "DampingFrequency": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Damping frequency in GHz. Critical damping, within a relative 1e-6 of twice the resonance frequency, is not supported."
+        }
+      }
+    },
+    "PermittivityPoleResidue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "Pole",
+        "Residue"
+      ],
+      "properties": {
+        "Type": {
+          "const": "PoleResidue"
+        },
+        "Pole": {
+          "$ref": "#/$defs/ComplexNumber",
+          "description": "Pole angular rate in rad/s. Real part must be nonpositive; complex poles must be specified in the upper half-plane."
+        },
+        "Residue": {
+          "$ref": "#/$defs/ComplexNumber",
+          "description": "Scalar residue angular rate in rad/s. Must be nonzero. Real poles require real residues. Passivity is not guaranteed: frequencies where the model has gain are warned. PoleResidue terms specify no stored electric energy, except an exact zero pole with real residue, which has zero additional stored energy by convention (a non-reactive current, assembled in conductivity form but kept as polarization in the permittivity and D); the electric energy outputs of a material with them are omitted."
+        }
+      }
+    },
+    "PermittivityDjordjevicSarkar": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "Strength",
+        "LowerFrequency",
+        "UpperFrequency"
+      ],
+      "properties": {
+        "Type": {
+          "const": "DjordjevicSarkar"
+        },
+        "Strength": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Dimensionless logarithmic strength, positive for a passive material: a negative strength has gain at every frequency."
+        },
+        "LowerFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Lower frequency bound in GHz."
+        },
+        "UpperFrequency": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Upper frequency bound in GHz; must exceed LowerFrequency."
+        }
+      }
+    },
     "Material": {
       "type": "object",
       "additionalProperties": false,
@@ -670,8 +856,15 @@
           "default": 1.0
         },
         "Permittivity": {
-          "$ref": "#/$defs/ScalarOrVector3",
-          "description": "Relative permittivity for this material. Scalar or vector of 3 coefficients corresponding to each of `\"MaterialAxes\"`.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ScalarOrVector3"
+            },
+            {
+              "$ref": "#/$defs/PermittivityModel"
+            }
+          ],
+          "description": "Relative permittivity for this material. A number or 3-vector specifies a frequency-independent value; the object form specifies its scalar high-frequency limit and additive frequency-dependent terms.",
           "default": 1.0
         },
         "LossTan": {
@@ -1173,7 +1366,7 @@
           "default": 0.0
         },
         "Excitation": {
-          "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "description": "Turns on or off port excitation for driven or transient simulations. Driven excitations carry 1 W of time-averaged incident power (peak phasors); transient excitations carry unit instantaneous power at unit pulse amplitude. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
           "default": false,
           "oneOf": [
             {
@@ -1271,7 +1464,7 @@
           "default": 0.0
         },
         "Excitation": {
-          "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "description": "Turns on or off port excitation for driven or transient simulations. Driven excitations carry 1 W of time-averaged incident power (peak phasors); transient excitations carry unit instantaneous power at unit pulse amplitude. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
           "default": false,
           "oneOf": [
             {
@@ -1448,7 +1641,7 @@
           ]
         },
         "Excitation": {
-          "description": "Turns on or off port excitation for driven simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "description": "Turns on or off port excitation for driven simulations, normalized to 1 W of time-averaged incident power for lossless propagating modes. Lossy wave ports normalize the magnitude of complex power. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
           "default": false,
           "oneOf": [
             {
@@ -1552,7 +1745,7 @@
           "description": "Integer array of mesh boundary attributes for this Floquet port. The port face must be planar and lie on the true boundary of the computational domain; the adjacent medium must be homogeneous and isotropic."
         },
         "Excitation": {
-          "description": "Excitation flag or positive excitation index. When excited, injects a unit-power plane wave in the specular `(0, 0)` diffraction order.",
+          "description": "Excitation flag or positive excitation index. When excited, injects a 1 W time-averaged plane wave in the specular `(0, 0)` diffraction order.",
           "default": false,
           "oneOf": [
             {
@@ -2765,7 +2958,7 @@
         },
         {
           "const": "ParMETIS",
-          "description": "Use ParMETIS column ordering."
+          "description": "Use ParMETIS column ordering. Requires *Palace* built with ParMETIS (`PALACE_WITH_PARMETIS=ON`), otherwise METIS is used."
         },
         {
           "const": "Scotch",
@@ -2930,7 +3123,7 @@
         },
         "PreconditionerLagTol": {
           "type": "number",
-          "description": "Residual tolerance below which preconditioner updates are skipped.",
+          "description": "Residual above which the quasi-Newton preconditioner is updated every `PreconditionerLag` iterations. Below it, the preconditioner is updated only when, at the rate of the residual since the previous update check, the eigenvalue tolerance would not be reached within the next `PreconditionerLag` iterations.",
           "minimum": 0.0,
           "default": 0.0001,
           "x-palace-advanced": true
@@ -4114,7 +4307,7 @@
         },
         "InitialGuess": {
           "type": "boolean",
-          "description": "Use the previous solution as an initial guess for the iterative solver. If omitted, Palace enables this for driven simulations without adaptive frequency sweep, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
+          "description": "Use the previous solution as an initial guess for the iterative solver. For driven frequency sweeps without adaptive sampling, the initial guess is the combination of the solutions at up to four previous frequencies which minimizes the residual. For adaptive frequency sweeps, the reduced-order model solution is used as initial guess only at the sample which would complete the convergence memory, to certify convergence; the other samples are solved from zero. GMRES and FGMRES scale a nonzero initial guess to minimize the initial residual, except when certifying the reduced-order model solution. If omitted, Palace enables this for driven simulations, transient simulations, electrostatics, and magnetostatics, and disables it otherwise.",
           "x-palace-advanced": true
         },
         "MGMaxLevels": {
@@ -4265,6 +4458,13 @@
           "type": "integer",
           "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). If omitted, Palace uses [`/Solver/Order`](@ref config-solver-order).",
           "exclusiveMinimum": 0
+        },
+        "AMSAgglomerationTarget": {
+          "type": "integer",
+          "description": "Target number of rows per process for the coarse levels of the auxiliary space AMG hierarchies of AMS. During the solve, the levels with much fewer rows per process are gathered onto fewer processes, so that they are not dominated by message latency at high process counts. The hierarchies are unchanged and the results agree up to the summation order. `0` disables the agglomeration. Requires a patch to hypre, which the superbuild and the Spack package apply, and is ignored without it.",
+          "minimum": 0,
+          "default": 2048,
+          "x-palace-advanced": true
         },
         "DivFreeTol": {
           "type": "number",

@@ -41,8 +41,10 @@ namespace mesh
 // region-based (box/sphere) refinement, boundary cracking, and finalization. Returns a
 // null pointer on ranks that do not hold a copy of the serial mesh. Called by main.cpp
 // before Preprocess hooks on the solver mutate the serial mesh (e.g. BoundaryMode
-// submesh extraction).
-std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm);
+// submesh extraction). With `parallel_nc`, a nonconforming mesh which Palace saved is read
+// in parallel instead (see ReadNCMeshCoarse): every process gets its coarse mesh, which
+// Partition refines, and iodata keeps the rest of the file for Partition.
+std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm, bool parallel_nc = true);
 
 // Interior conductivity boundary attributes without "Crack" (all of their elements are
 // interior), which are uncracked sheets by default. Serial mesh, no communication.
@@ -431,7 +433,7 @@ void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts);
 
 // OI-ADAPT-SAVEMESH-OVERWRITE (idfix DESIGN section 7; decision 1072 Q1): SaveIteration
 // archives an iteration's output files and leaves relative symlinks behind, so a later
-// std::ofstream on the top-level path would write THROUGH the link into the archived
+// file stream opened on the top-level path would write THROUGH the link into the archived
 // iteration folder (the saved adaptive mesh of iteration N replaced by iteration N + 1's,
 // unsolved). A mesh writer under Problem.Output calls this on the WRITING rank before
 // opening its stream: a symlink at `path` is removed so that the stream creates a REAL
