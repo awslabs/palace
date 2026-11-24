@@ -548,6 +548,23 @@ int QuasiNewtonSolver::Solve()
       c2(i) = std::complex<double>(dist_real(gen), dist_real(gen));
       v2(i) = std::complex<double>(dist_real(gen), dist_real(gen));
     }
+    if (k > 0 && restart == 0)
+    {
+      // The first attempt from an initial guess x starts from its extended vector,
+      // v = x - X G⁻¹ Xᴴ x and v2 = (λ I - H) G⁻¹ Xᴴ x, so that v + X (λ I - H)⁻¹ v2 = x
+      // and Xᴴ v = 0. The random deflation component, which a new attempt with the same
+      // guess takes, perturbs x in the span of X by (λ I - H)⁻¹ times a random vector,
+      // large near a deflated eigenvalue. (It is drawn in any case, so that the random
+      // numbers of the next attempts do not depend on the attempts which start from x.)
+      Eigen::VectorXcd y(k);
+      for (int j = 0; j < k; j++)
+      {
+        y(j) = linalg::Dot(GetComm(), v, X[j]);
+      }
+      y = G_lu.solve(y);
+      linalg::AXPY(-1.0, MatVecMult(X, y), v);
+      v2 = (eig * Eigen::MatrixXcd::Identity(k, k) - H) * y;
+    }
 
     // Normalize random c vector.
     double norm_c = std::sqrt(std::abs(linalg::Dot(GetComm(), c, c)) + c2.squaredNorm());
@@ -643,7 +660,7 @@ int QuasiNewtonSolver::Solve()
     double res = compute_residual(eig, v, v2, u, u2, A2n);
     double res_check = res;  // Residual at the previous preconditioner update check
 
-    int it = 0, diverged_it = 0;
+    int it = 0, diverged_it = 0, stalled_windows = 0;
     while (it < nleps_it)
     {
       if (print > 0)
@@ -840,7 +857,24 @@ int QuasiNewtonSolver::Solve()
       if (it > 0 && it % preconditioner_lag == 0)
       {
         update = (res > preconditioner_tol) || (res * (res / res_check) > rtol);
+        // Above preconditioner_tol, each window of preconditioner_lag iterations starts
+        // with an updated preconditioner: an attempt which reduces the residual by less
+        // than 10% in two windows in a row is stagnating, and is ended.
+        stalled_windows =
+            (res > preconditioner_tol && res > 0.9 * res_check) ? stalled_windows + 1 : 0;
         res_check = res;
+      }
+      if (stalled_windows >= 2)
+      {
+        if (print > 0)
+        {
+          Mpi::Print(GetComm(),
+                     "Eigenvalue {:d}, Quasi-Newton not converging after {:d} iterations, "
+                     "restarting.\n",
+                     k, it + 1);
+        }
+        restart = same_attempt ? max_restart + 1 : restart + 1;
+        break;
       }
       if (update)
       {
