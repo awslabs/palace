@@ -609,6 +609,21 @@ std::vector<double> MaterialOperator::GetPermittivityResonances(std::size_t mate
   return resonances;
 }
 
+std::array<double, 3> MaterialOperator::GetFloquetWaveVector(double omega) const
+{
+  std::array<double, 3> k_F = {0.0, 0.0, 0.0};
+  if (!has_wave_attr)
+  {
+    return k_F;
+  }
+  const double scale = (floquet_omega_ref > 0.0) ? omega : 1.0;
+  for (int d = 0; d < std::min(wave_vector.Size(), 3); d++)
+  {
+    k_F[d] = scale * wave_vector(d);
+  }
+  return k_F;
+}
+
 bool MaterialOperator::HasFrequencyDependentPermittivityA2() const
 {
   return std::ranges::any_of(frequency_dependent_materials,

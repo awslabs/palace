@@ -53,6 +53,16 @@ directions is the radiated power. For another homogeneous exterior, use the wave
     interior surface must be closed, every face must face that center, and both sides of
     each face must have the same isotropic material.
 
+    With [periodic boundaries](../config/reference.md#config-boundaries-periodic), the
+    surface must not touch them: it must be closed inside the unit cell, around the
+    sources of the far field. With a
+    [Floquet wave vector](../config/reference.md#config-boundaries-periodic-floquetwavevector)
+    ``\bm{k}_F``, the computed fields are the periodic envelopes of the physical fields
+    ``\bm{E}\,e^{-i\bm{k}_F\cdot\bm{x}}``, which the integral takes with their Floquet
+    phase. A surface across the unit cell (for example its top face) would not give the far
+    field of the periodic structure, which is concentrated on the directions of its Floquet
+    orders, but the element factor of the infinite array.
+
     For frequency-dependent exterior materials, the wave speed uses
     ``\operatorname{Re}\epsilon(i\operatorname{Re}\omega)``, which must be positive
     next to the integration surface. This retains the existing lossless-exterior
