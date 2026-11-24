@@ -15,6 +15,36 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### New Features
+
+  - Incident plane wave excitations (`Domains.PlaneWave`) for driven simulations, with the
+    total-field/scattered-field formulation: the plane wave is injected on the boundary of a
+    total-field region given by volume attributes, the unknown is the total field inside and
+    the scattered field outside, and the truncation of the domain only sees the scattered
+    field. The outputs are the total field everywhere, the scattered field is also written
+    for visualization, and the error estimates take the total field inside the region and
+    the scattered field outside. With a far-field surface
+    (`Boundaries.Postprocessing.FarField`), computed from the scattered field, the bistatic
+    radar cross section of each plane wave excitation is written in the far-field
+    directions (`farfield-rcs.csv`), and the monostatic one in its backscattering direction
+    (`rcs-monostatic.csv`). On periodic cells, the envelope of the incident field is used
+    with a Floquet wave vector, which is checked at setup against the wave vector of the
+    plane wave over the lattice translations, for all the frequencies of the sweep. The
+    adaptive frequency sweep supports plane waves, with the exact projection of their
+    excitation at each frequency, and nonconforming adaptive mesh refinement refines the
+    whole layer of elements around the total-field region. See the new example
+    `examples/rcs_coated_sphere`. SchemaVer 6-1-0
+    [PR 1212](https://github.com/awslabs/palace/pull/1212).
+
+#### Bug Fixes
+
+  - Fixed the partial assembly of nonsymmetric square operators (Floquet periodic boundary
+    conditions, nonsymmetric material tensors), whose transpose was taken equal to the
+    operator itself: the transposes are now assembled from the transposed integrators.
+    [PR 1212](https://github.com/awslabs/palace/pull/1212).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features
