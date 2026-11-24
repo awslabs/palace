@@ -2927,13 +2927,32 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   {
     using VT = Units::ValueType;
     TableWithCSVFile output(post_dir / "surface-Q-corrected.csv");
+    // The v1 default path (decisions 2377 / 2379; CUT-PLAN step 2): the parked columns
+    // (the fixed-flux values and the self-consistent "corrected" ones) are written only
+    // with the developer switch; their values are still computed, and every other column
+    // keeps its name, order and value.
+    const bool parked_columns = response_correction->DeveloperColumns();
+    auto Hidden = [parked_columns](const std::string &name)
+    {
+      return !parked_columns &&
+             (name.find("fixed_flux") != std::string::npos || name == "domain_corrected" ||
+              name.rfind("energy_corrected_", 0) == 0 ||
+              name.rfind("participation_corrected_", 0) == 0 ||
+              name.rfind("quality_corrected_", 0) == 0);
+    };
+    auto Insert = [&output, &Hidden](const std::string &name, const std::string &header)
+    {
+      if (!Hidden(name))
+      {
+        output.table.insert(name, header);
+      }
+    };
     output.table.insert(Column::Integer("source", "i"));
     output.table.insert("domain_raw", "E_elec raw (J)");
     output.table.insert("domain_postprocessed_fixed_trace",
                         "E_elec postprocessed fixed-trace (J)");
-    output.table.insert("domain_postprocessed_fixed_flux",
-                        "E_elec postprocessed fixed-flux (J)");
-    output.table.insert("domain_corrected", "E_elec corrected (J)");
+    Insert("domain_postprocessed_fixed_flux", "E_elec postprocessed fixed-flux (J)");
+    Insert("domain_corrected", "E_elec corrected (J)");
     output.table.insert("maximum_trace_closure_spread", "max trace closure spread");
     output.table.insert("weighted_trace_closure_spread",
                         "response-weighted local trace closure spread");
@@ -2958,20 +2977,18 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           fmt::format("p_surf postprocessed fixed-trace[{}]", interface));
       output.table.insert(fmt::format("quality_postprocessed_fixed_trace_{}", interface),
                           fmt::format("Q_surf postprocessed fixed-trace[{}]", interface));
-      output.table.insert(
-          fmt::format("energy_postprocessed_fixed_flux_{}", interface),
-          fmt::format("E_surf postprocessed fixed-flux[{}] (J)", interface));
-      output.table.insert(
-          fmt::format("participation_postprocessed_fixed_flux_{}", interface),
-          fmt::format("p_surf postprocessed fixed-flux[{}]", interface));
-      output.table.insert(fmt::format("quality_postprocessed_fixed_flux_{}", interface),
-                          fmt::format("Q_surf postprocessed fixed-flux[{}]", interface));
-      output.table.insert(fmt::format("energy_corrected_{}", interface),
-                          fmt::format("E_surf corrected[{}] (J)", interface));
-      output.table.insert(fmt::format("participation_corrected_{}", interface),
-                          fmt::format("p_surf corrected[{}]", interface));
-      output.table.insert(fmt::format("quality_corrected_{}", interface),
-                          fmt::format("Q_surf corrected[{}]", interface));
+      Insert(fmt::format("energy_postprocessed_fixed_flux_{}", interface),
+             fmt::format("E_surf postprocessed fixed-flux[{}] (J)", interface));
+      Insert(fmt::format("participation_postprocessed_fixed_flux_{}", interface),
+             fmt::format("p_surf postprocessed fixed-flux[{}]", interface));
+      Insert(fmt::format("quality_postprocessed_fixed_flux_{}", interface),
+             fmt::format("Q_surf postprocessed fixed-flux[{}]", interface));
+      Insert(fmt::format("energy_corrected_{}", interface),
+             fmt::format("E_surf corrected[{}] (J)", interface));
+      Insert(fmt::format("participation_corrected_{}", interface),
+             fmt::format("p_surf corrected[{}]", interface));
+      Insert(fmt::format("quality_corrected_{}", interface),
+             fmt::format("Q_surf corrected[{}]", interface));
       output.table.insert(fmt::format("trace_closure_spread_{}", interface),
                           fmt::format("trace closure spread[{}]", interface));
     }
@@ -3044,6 +3061,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         for (const auto &name : *names)
         {
+          if (Hidden(name))
+          {
+            continue;
+          }
           const std::string header = output.table[name].header_text;
           output.table.insert(name + "_partial", header + kCoveragePartialColumnSuffix);
         }
@@ -3084,6 +3105,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       };
       auto PrintMarked = [&](const std::string &name, double value, bool marked)
       {
+        if (Hidden(name))
+        {
+          return;
+        }
         if (!marking)
         {
           output.table[name] << value;
@@ -4453,7 +4478,10 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
       source_marked ? *source_marked : std::vector<bool>(n, false));
   const MarkMatrix &marked_C = marks.capacitance, &marked_Cm = marks.mutual,
                    &marked_Cinv = marks.inverse;
-  auto PrintMatrices = [&terminal_sources, source_marked,
+  // The v1 default path (CUT-PLAN step 2): the self-consistent ("corrected") matrices are
+  // parked columns and records, written only with the developer switch.
+  const bool parked_columns = response.DeveloperColumns();
+  auto PrintMatrices = [&terminal_sources, source_marked, parked_columns,
                         this](const std::string &file, const std::string &name,
                               const std::string &unit,
                               const mfem::DenseMatrix &fixed_trace_mat,
@@ -4493,11 +4521,17 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
       }
     };
     AppendColumns("fixed-trace", fixed_trace_mat, false);
-    AppendColumns("corrected", self_consistent_mat, false);
+    if (parked_columns)
+    {
+      AppendColumns("corrected", self_consistent_mat, false);
+    }
     if (source_marked)
     {
       AppendColumns("fixed-trace", fixed_trace_mat, true);
-      AppendColumns("corrected", self_consistent_mat, true);
+      if (parked_columns)
+      {
+        AppendColumns("corrected", self_consistent_mat, true);
+      }
       // Lane L4 round 2 (decision 1914): the explicit mark of entry (i, j), last.
       int j = 0;
       for (const auto &[idx2, data2] : terminal_sources)
@@ -4550,7 +4584,10 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
     record["Indices"].push_back(idx);
   }
   record["FixedTrace"] = MatrixRecord(C_ft, fixed_trace);
-  record["SelfConsistent"] = MatrixRecord(C_sc, self_consistent);
+  if (parked_columns)
+  {
+    record["SelfConsistent"] = MatrixRecord(C_sc, self_consistent);
+  }
   if (source_marked)
   {
     // Lane L4 (E2): a marked entry is null; its value in the Partial matrix (null where
@@ -4573,7 +4610,10 @@ void ElectrostaticSolver::PostprocessCorrectedTerminals(
       record[partial_key] = std::move(partial);
     };
     Split("FixedTrace", "FixedTracePartial");
-    Split("SelfConsistent", "SelfConsistentPartial");
+    if (parked_columns)
+    {
+      Split("SelfConsistent", "SelfConsistentPartial");
+    }
   }
   SaveSurfaceResponseMetadata("TerminalCapacitance", record);
 }

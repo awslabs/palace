@@ -178,9 +178,15 @@ file. These include:
     [`Solver.SurfaceResponseCorrection`](../config/reference.md#config-solver-surfaceresponsecorrection).
     This postprocessing-only correction writes `surface-Q-corrected.csv` and
     `surface-response-confidence.csv`; the solved field, AMR sequence, and standard
-    `surface-Q.csv` remain the uncorrected thin-metal result. PEC, conductivity,
-    impedance, and rational-impedance boundaries require coupons with matching
-    boundary-law metadata. See
+    `surface-Q.csv` remain the uncorrected thin-metal result. Post-processing is the
+    default and the designer's path; the self-consistent corrected solve and the other
+    options set aside from it are developer options, refused by name unless the block
+    sets `"Developer": true` (see the developer switch in
+    [the thin-metal response correction](../reference.md#Self-consistent-thin-metal-response-correction)).
+    PEC, conductivity, impedance, and rational-impedance boundaries require coupons with matching
+    boundary-law metadata; the default path serves PEC and impedance (Ls) sheets, while
+    conductivity and rational-impedance coupons and the boundary-mode correction are developer
+    options. See
     [Maxwell response correction](../reference.md#Maxwell-response-correction)
     for the supported geometry and confidence limits.
     The energies (J) of these outputs are time averages, as the other energies of a
@@ -337,7 +343,8 @@ boundary conditions as well as any material interfaces in the computational doma
 located in the same `paraview/` directory, with suffix `_boundary`. The boundary data
 collection is only available for the ParaView output format.
 
-When Maxwell surface-response correction supplies a self-consistent corrected field,
+When Maxwell surface-response correction supplies a self-consistent corrected field (a
+developer option: `CorrectionMode` `SelfConsistent` or `Both` with `"Developer": true`),
 Palace preserves the ordinary ``E`` output as the raw thin-metal solution and additionally
 writes ``E_corrected_real`` and ``E_corrected_imag``. If recovered electric flux is needed
 by interface postprocessing, ``D_corrected_real`` and ``D_corrected_imag`` are also written.

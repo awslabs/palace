@@ -417,6 +417,59 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - The surface-response correction is post-processing only by default (the v1 default
+    path): `"CorrectionMode"` defaults to `"PostprocessOnly"` (was `"Both"`, which also
+    ran the self-consistent corrected solves), and the options set aside from the default
+    path need the new developer switch `"Developer": true` of the response-correction block
+    (refused by name without it): `"CorrectionMode"` `"SelfConsistent"` / `"Both"`.
+    `"SolveTol"` and `"TranslationalDomainCorrection"` configure that solve only: they are
+    read with it and, in a block without it, not read and named in one warning
+    (`keys ignored`). With the switch the run prints one
+    line `DEVELOPER OPTIONS: ...` and `palace.json` records the list as
+    `SurfaceResponse.Developer`. Without the switch the parked columns are not written
+    (their values are still computed): the fixed-flux and self-consistent columns of
+    `surface-Q-corrected.csv` (Maxwell 8 of 33; electrostatic 6 per interface and 2
+    totals), the `corrected` matrices of `terminal-*-corrected.csv`, the self-consistent
+    columns of `surface-response-confidence.csv` and
+    `SurfaceResponse.TerminalCapacitance.SelfConsistent`. The legacy options need the
+    switch too: `"PatchConstruction": "Legacy"`,
+    `"ConductorConsistency": {"Exclusion": "Sticky"}`, and
+    `config["Model"]["CrackInternalBoundaryElements"] = true` in a
+    correction run where it would crack an interior perfect conductor (PEC, Ground,
+    Terminal, PrescribedPotential; refused at mesh load, naming the per-sheet `"Crack"`);
+    the key stays accepted where the interior metal it cracks is impedance (Ls) sheets.
+    The device-run writers of the examples default to `--crack-policy default` (the v1
+    form; `--developer` writes the records' `legacy` crack with `"Developer": true`), and
+    the preflight writer's `legacy` default writes `"Developer": true` with it. The
+    alternatives need the switch: `"TraceCoupling": "SurfaceMortar"` (its quadrature key
+    `"MortarOversampling"` is not read without it, and named in the `keys ignored`
+    warning) and the hand-placed form (a block without `"Library"`). The
+    library's magnetic (kinetic) leaves are read only with the switch (by default with
+    it; without it the run is that of `"Magnetic": false`, byte-identical to a library
+    without leaves); `"Magnetic": true`, `"AllowElectricOnlyFallback": true` and
+    `"ConductorConsistency": {"ControlStateAnchorSetbackOverR"}` need it. So do the
+    two-dimensional boundary-mode correction, the conductivity or rational-impedance
+    coupons of a library where the device carries that law (refused when the library is
+    read; listed as `DEVELOPER OPTIONS (library)` with the switch; a coupon of a law the
+    device does not carry is never matched and not refused), `"Crack": true` on a
+    `Conductivity` or `RationalImpedance` boundary of a correction run, and
+    `"ConductorConsistency": {"ControlFlipProbePiece"}`. And the conductor-consistency
+    records leave `palace.json` by default: `"Diagnostics": {"ConductorConsistencyRecords"}`
+    defaults to `"Directory"` (was `"Metadata"`), which no longer requires
+    `Diagnostics.Directory` (without it the file is written to `conductor-consistency/` of
+    the output); `palace.json` keeps the count and the gate summary, and the readers of the
+    examples (`spatial_qualification.py`'s gate, `coverage_report.py`) read the Records from
+    that file where `palace.json` lacks them. Nothing is removed.
+    SchemaVer 4-6-0
+
+  - The config writers of the examples write the v1 form by default: the recorded settings
+    less the parked options (`developer_form.py`); `--developer` writes the recorded
+    developer form (the recorded parked settings, the default of record
+    `"CorrectionMode": "Both"` stated where they relied on it, and `"Developer": true`), and
+    each writer prints which form it wrote. No bar or threshold changes: values from the v1
+    form are not comparable with records made before this cut until the benchmark's
+    collocated twins are read.
+
   - A non-finite numeric cell of a CSV table written through the table formatter or the
     CsvNumber helper is a bare token (`nan` for any NaN, where the directly written tables
     printed `+nan`; `+inf` / `-inf`, and `inf` / `-inf` in an integer column) instead of

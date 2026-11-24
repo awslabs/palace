@@ -471,6 +471,33 @@ void IoData::CheckConfiguration()
                   solver.surface_response_correction->IsAutomatic(),
               "Maxwell \"SurfaceResponseCorrection\" requires automatic fabrication-"
               "process library matching!");
+  // The v1 default path (CUT-PLAN step 5d): the 2D boundary-mode correction and the
+  // cracked sheets of the metal laws other than the perfect conductor and the impedance
+  // (Ls) sheet are parked developer options.
+  if (solver.surface_response_correction && problem.type == ProblemType::BOUNDARYMODE)
+  {
+    config::RequireDeveloperOption(*solver.surface_response_correction,
+                                   "on a BoundaryMode problem (the 2D boundary-mode "
+                                   "correction)");
+  }
+  for (auto *response :
+       {solver.electrostatic.response_correction
+            ? &*solver.electrostatic.response_correction
+            : nullptr,
+        solver.surface_response_correction ? &*solver.surface_response_correction
+                                           : nullptr})
+  {
+    const auto Cracked = [](const auto &data) { return data.crack; };
+    if (response && (std::any_of(boundaries.conductivity.begin(),
+                                 boundaries.conductivity.end(), Cracked) ||
+                     std::any_of(boundaries.rational_impedance.begin(),
+                                 boundaries.rational_impedance.end(), Cracked)))
+    {
+      config::RequireDeveloperOption(
+          *response,
+          "with \"Crack\": true on a Conductivity or RationalImpedance boundary");
+    }
+  }
   MFEM_VERIFY(!solver.surface_response_correction ||
                   problem.type != ProblemType::BOUNDARYMODE ||
                   solver.surface_response_correction->correction_mode !=
@@ -564,7 +591,8 @@ void IoData::CheckConfiguration()
         "config[\"Model\"][\"CrackInternalBoundaryElements\"] is not set in a surface "
         "response library run: the default applies, and interior PEC, Ground, Terminal, "
         "and PrescribedPotential sheets are not cracked! Set the option explicitly (true "
-        "selects the legacy cracked mesh).\n");
+        "selects the legacy cracked mesh; a library correction refuses it on perfect "
+        "conductors without \"Developer\": true).\n");
   }
 
   // Mixed current/flux inductance extraction has one complete-matrix contract: every
@@ -1115,6 +1143,32 @@ void IoData::CheckConfiguration()
   fem::DefaultIntegrationOrder::q_order_jac = solver.q_order_jac;
   fem::DefaultIntegrationOrder::q_order_extra_pk = solver.q_order_extra;
   fem::DefaultIntegrationOrder::q_order_extra_qk = solver.q_order_extra;
+
+  // The v1 default path (decisions 2377 / 2379): a correction block with the developer
+  // switch names the parked options it selects, in one line (palace.json records the same
+  // list as SurfaceResponse.Developer); the keys of a parked option the block does not
+  // select are named in one warning.
+  for (const auto *response :
+       {solver.electrostatic.response_correction
+            ? &*solver.electrostatic.response_correction
+            : nullptr,
+        solver.surface_response_correction ? &*solver.surface_response_correction
+                                           : nullptr})
+  {
+    if (response && response->developer)
+    {
+      Mpi::Print("\nDEVELOPER OPTIONS: {}\n",
+                 response->developer_options.empty()
+                     ? std::string("none")
+                     : fmt::format("{}", fmt::join(response->developer_options, ", ")));
+    }
+    if (response && !response->ignored_keys.empty())
+    {
+      Mpi::Warning("Response-correction keys ignored: {} (each configures only that "
+                   "part of the correction, which this block does not select).\n",
+                   fmt::join(response->ignored_keys, ", "));
+    }
+  }
 }
 
 void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)

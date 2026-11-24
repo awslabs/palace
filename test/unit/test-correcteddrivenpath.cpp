@@ -80,6 +80,8 @@ json DrivenPathConfig(const fs::path &output, int mg_max_levels)
                         {"PCMatShifted", false}}},
                       {"SurfaceResponseCorrection",
                        {{"Library", (output / "unused-process-library.json").string()},
+                        {"Developer", true},
+                        {"CorrectionMode", "Both"},
                         {"SolveTol", 1.0e-10}}}};
   return config;
 }

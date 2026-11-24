@@ -1366,6 +1366,7 @@ TEST_CASE("CornerRefinedRuleAcuteConcaveLibraryLoad",
            {{"Library", ""},
             {"TargetInterfaces", {4}},
             {"UnmatchedPolicy", "Error"},
+            {"Developer", true},
             {"TraceCoupling", "SurfaceMortar"},
             {"MortarOversampling", 2}}}}}}}};
   auto notch_45 = MakeStarIslandMesh(NotchedIsland(45.0), 8.0, 0.1);
@@ -1560,6 +1561,7 @@ TEST_CASE("CornerRefinedRuleAcuteConcaveDeviceMortar",
             // The notch arms at this opening are three SpatialEdgeCluster features the
             // library has no model for (omitted with a warning); the corners are the test.
             {"UnmatchedPolicy", "Warn"},
+            {"Developer", true},
             {"TraceCoupling", "SurfaceMortar"},
             {"MortarOversampling", 2}}}}}}}};
   auto notch = MakeStarIslandMesh(NotchedIsland(angle_device), 8.0, 0.05);
@@ -1963,6 +1965,7 @@ TEST_CASE("CornerRefinedRuleLibraryLoad", "[cornerbasisrefinement][Serial][Paral
            {{"Library", ""},
             {"TargetInterfaces", {4}},
             {"UnmatchedPolicy", "Error"},
+            {"Developer", true},
             {"TraceCoupling", "SurfaceMortar"},
             {"MortarOversampling", 2}}}}}}}};
   // The square island (four exact 90-degree corners) and the steep house (two 112.5-degree

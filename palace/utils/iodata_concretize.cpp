@@ -228,12 +228,14 @@ void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostati
     if (j_electrostatic.contains("ResponseCorrection"))
     {
       auto &j_response = j_electrostatic["ResponseCorrection"];
+      Concretize(j_response, "Developer", response.developer);
       Concretize(j_response, "CorrectionMode",
                  CorrectionModeName(response.correction_mode));
       return;
     }
 
     auto &j_response = j_electrostatic["ResponseCorrection"] = json::object();
+    j_response["Developer"] = response.developer;
     j_response["CorrectionMode"] = CorrectionModeName(response.correction_mode);
     j_response["SolveTol"] = response.solve_tol;
     j_response["TranslationalDomainCorrection"] =
@@ -735,6 +737,7 @@ json IoData::ConcretizeDefaults(const IoData &iodata, json config)
     const bool existing = j_solver.contains("SurfaceResponseCorrection");
     auto &j_response = existing ? j_solver["SurfaceResponseCorrection"]
                                 : (j_solver["SurfaceResponseCorrection"] = json::object());
+    Concretize(j_response, "Developer", response.developer);
     Concretize(j_response, "CorrectionMode", CorrectionModeName(response.correction_mode));
     if (!existing)
     {

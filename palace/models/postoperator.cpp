@@ -3616,18 +3616,43 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     }
     return names;
   };
-  auto AppendPartialColumns = [](Table &table, const auto &names)
+  // The v1 default path (decisions 2377 / 2379; CUT-PLAN step 2): the parked columns (the
+  // fixed-flux and self-consistent values and the self-consistent confidence) are written
+  // only with the developer switch. Their values are still computed, and every other
+  // column keeps its name, order and value.
+  const bool parked_columns = surface_response_op->DeveloperColumns();
+  auto Hidden = [parked_columns](std::string_view name)
+  {
+    return !parked_columns && (name.find("fixed_flux") != std::string_view::npos ||
+                               name.find("self_consistent") != std::string_view::npos);
+  };
+  auto Insert = [&Hidden](Table &table, const std::string &name, const std::string &header)
+  {
+    if (!Hidden(name))
+    {
+      table.insert(name, header);
+    }
+  };
+  auto AppendPartialColumns = [&Hidden](Table &table, const auto &names)
   {
     for (const auto &name : names)
     {
+      if (Hidden(name))
+      {
+        continue;
+      }
       const std::string header = table[name].header_text;
       table.insert(fmt::format("{}_partial", name), header + kCoveragePartialColumnSuffix);
     }
   };
   // A marked cell prints nan, its value in the partial column (nan when not marked).
   auto PrintMarked =
-      [marking](Table &table, const std::string &name, double value, bool marked)
+      [marking, &Hidden](Table &table, const std::string &name, double value, bool marked)
   {
+    if (Hidden(name))
+    {
+      return;
+    }
     if (!marking)
     {
       table[name] << value;
@@ -3647,20 +3672,20 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("interface", "interface");
     table.insert("domain_raw", "E_norm raw (J)");
     table.insert("domain_corrected", "E_norm corrected (J)");
-    table.insert("domain_corrected_fixed_flux", "E_norm corrected fixed-flux (J)");
-    table.insert("domain_self_consistent", "E_norm self-consistent (J)");
+    Insert(table, "domain_corrected_fixed_flux", "E_norm corrected fixed-flux (J)");
+    Insert(table, "domain_self_consistent", "E_norm self-consistent (J)");
     table.insert("energy_raw", "E_surf raw (J)");
     table.insert("participation_raw", "p_surf raw");
     table.insert("quality_raw", "Q_surf raw");
     table.insert("energy_corrected", "E_surf corrected (J)");
     table.insert("participation_corrected", "p_surf corrected");
     table.insert("quality_corrected", "Q_surf corrected");
-    table.insert("energy_corrected_fixed_flux", "E_surf corrected fixed-flux (J)");
-    table.insert("participation_corrected_fixed_flux", "p_surf corrected fixed-flux");
-    table.insert("quality_corrected_fixed_flux", "Q_surf corrected fixed-flux");
-    table.insert("energy_self_consistent", "E_surf self-consistent (J)");
-    table.insert("participation_self_consistent", "p_surf self-consistent");
-    table.insert("quality_self_consistent", "Q_surf self-consistent");
+    Insert(table, "energy_corrected_fixed_flux", "E_surf corrected fixed-flux (J)");
+    Insert(table, "participation_corrected_fixed_flux", "p_surf corrected fixed-flux");
+    Insert(table, "quality_corrected_fixed_flux", "Q_surf corrected fixed-flux");
+    Insert(table, "energy_self_consistent", "E_surf self-consistent (J)");
+    Insert(table, "participation_self_consistent", "p_surf self-consistent");
+    Insert(table, "quality_self_consistent", "Q_surf self-consistent");
     table.insert("trace_closure_spread", "trace closure spread");
     table.insert("matched_fraction", "matched edge length fraction");
     table.insert("corner_fraction", "unmodeled corner neighborhood fraction");
@@ -3732,11 +3757,11 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     table.insert("trace_closure_failure_fraction",
                  "trace-closure response fraction above limit");
     table.insert("confident", "confidence pass");
-    table.insert("self_consistent_weighted_loop_residual",
-                 "self-consistent response-weighted loop residual");
-    table.insert("self_consistent_loop_failure_fraction",
-                 "self-consistent loop-response fraction above limit");
-    table.insert("self_consistent_confident", "self-consistent confidence pass");
+    Insert(table, "self_consistent_weighted_loop_residual",
+           "self-consistent response-weighted loop residual");
+    Insert(table, "self_consistent_loop_failure_fraction",
+           "self-consistent loop-response fraction above limit");
+    Insert(table, "self_consistent_confident", "self-consistent confidence pass");
     table["excitation"].print_as_int = true;
     table["confident"].print_as_int = true;
     table["boundary_law_verified"].print_as_int = true;
@@ -3747,9 +3772,9 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
     }
     if constexpr (solver_t == ProblemType::EIGENMODE)
     {
-      table.insert("self_consistent_frequency_re", "Re{f self-consistent} (GHz)");
-      table.insert("self_consistent_frequency_im", "Im{f self-consistent} (GHz)");
-      table.insert("self_consistent_mode_overlap", "self-consistent M-overlap");
+      Insert(table, "self_consistent_frequency_re", "Re{f self-consistent} (GHz)");
+      Insert(table, "self_consistent_frequency_im", "Im{f self-consistent} (GHz)");
+      Insert(table, "self_consistent_mode_overlap", "self-consistent M-overlap");
     }
     // Cap-interior hats (decision 818 R2), the last columns: information, not a gate
     // (decision 814 (1)).
@@ -3782,8 +3807,8 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
       table.insert("withheld_magnetic_domain_correction",
                    "withheld magnetic domain correction (J)");
       table.insert("magnetic_term_applied", "magnetic term applied");
-      table.insert("self_consistent_frequency_magnetic_re",
-                   "Re{f self-consistent (magnetic)} (GHz)");
+      Insert(table, "self_consistent_frequency_magnetic_re",
+             "Re{f self-consistent (magnetic)} (GHz)");
       table["magnetic_confident"].print_as_int = true;
       table["magnetic_patches"].print_as_int = true;
       table["magnetic_excluded_patches"].print_as_int = true;
@@ -4027,14 +4052,17 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
                                    : nan);
   table["confident"] << (result.has_postprocessed ? (confidence.confident ? 1.0 : 0.0)
                                                   : nan);
-  table["self_consistent_weighted_loop_residual"]
-      << (result.has_self_consistent
-              ? result.self_consistent_confidence.response_weighted_loop_residual
-              : nan);
-  table["self_consistent_loop_failure_fraction"]
-      << (result.has_self_consistent
-              ? result.self_consistent_confidence.loop_response_failure_fraction
-              : nan);
+  if (parked_columns)
+  {
+    table["self_consistent_weighted_loop_residual"]
+        << (result.has_self_consistent
+                ? result.self_consistent_confidence.response_weighted_loop_residual
+                : nan);
+    table["self_consistent_loop_failure_fraction"]
+        << (result.has_self_consistent
+                ? result.self_consistent_confidence.loop_response_failure_fraction
+                : nan);
+  }
   bool self_consistent_confident =
       result.has_self_consistent &&
       result.self_consistent_confidence.closure_independent_confident;
@@ -4055,11 +4083,17 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
                                                  (2 * M_PI)
                                            : nan,
                 measurement_marked);
-    table["self_consistent_mode_overlap"]
-        << (result.has_self_consistent ? result.self_consistent_mode_overlap : nan);
+    if (parked_columns)
+    {
+      table["self_consistent_mode_overlap"]
+          << (result.has_self_consistent ? result.self_consistent_mode_overlap : nan);
+    }
   }
-  table["self_consistent_confident"]
-      << (result.has_self_consistent ? (self_consistent_confident ? 1.0 : 0.0) : nan);
+  if (parked_columns)
+  {
+    table["self_consistent_confident"]
+        << (result.has_self_consistent ? (self_consistent_confident ? 1.0 : 0.0) : nan);
+  }
   table["hat_residual"] << (result.has_postprocessed ? confidence.hat_residual : nan);
   table["weighted_hat_residual"]
       << (result.has_postprocessed ? confidence.response_weighted_hat_residual : nan);

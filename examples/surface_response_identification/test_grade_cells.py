@@ -1104,6 +1104,8 @@ class ReportProvenanceWindows(unittest.TestCase):
               "coverage_marks_sha256": "b5ae7f33385046c157e80282c310ef8f0e9dbb841e301663692efdbdd6401239", "explicit_marks": True}
         r4 = dict(good, writer_sha256="6dec72560bf54b9d8f42abed5e03599bac68b584edc87a75e1c225bbaf2a5580")
         self.assertNotEqual(good["writer_sha256"], r4["writer_sha256"])
+        # The two allowed writers: this coverage_report and the merge-preparation one before the v1 cut's records file.
+        self.assertEqual(sorted(gc.ALLOWED_REPORT_WRITERS), sorted([good["writer_sha256"], "0aae7cce91666be3bc3175aca448d92de811efc50e539e20797b0d47cbd3eed2"]))
         provs = {"another writer": dict(good, writer_sha256="f" * 64), "the round-3 writer": r3, "the round-4 writer": r4,
                  "upper case": dict(good, writer_sha256=good["writer_sha256"].upper()),
                  "16 digits": dict(good, writer_sha256=good["writer_sha256"][:16]),

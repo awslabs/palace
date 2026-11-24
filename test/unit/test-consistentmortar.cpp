@@ -330,6 +330,7 @@ TEST_CASE_METHOD(
     auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
     correction.erase("PatchConstruction");
     correction["Library"] = libraries.at(library).string();
+    correction["Developer"] = true;
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
     correction["UnmatchedPolicy"] = "Warn";

@@ -39,8 +39,11 @@ structure key is refused `StructureKeyNotCalibrated` (`test_nearkey_reuse.py`).
 `coupon_library.py spatial-qualify evaluate --gate palace.json ...` reads the resolution-aware conductor-consistency gate
 (Count 0, MaxRatio <= 1e-4; `qualify/spatial_qualification.py`) from the device's cheap thin solves at Orders 3 / 4 / 5 on
 the registration mesh (the c0 solves) with the interim library. `qualify/device_gate_configs.py` writes their configs (the
-geometry-only `preflight.json` + `c0-p<N>.json`) from the window's device run config: `--form es` (the default) is the
-electrostatic form of record, byte-identical to the (F) chains' `write_c0_configs` v2 recipe (`test_device_gate_configs.py`);
+geometry-only `preflight.json` + `c0-p<N>.json`) from the window's device run config: `--form es` (the default) with
+`--developer` is the electrostatic form of record, byte-identical to the (F) chains' `write_c0_configs` v2 recipe plus
+`"Developer": true` (`test_device_gate_configs.py`); without `--developer` it writes the v1 form (the c0 solves collocate,
+the mortar coupling being parked, from a v1 base). The gate bars were set on the recorded (mortar) form and are unchanged:
+values from the v1 form are not comparable with records made before this cut until the benchmark's collocated twins are read;
 `--form driven --frequency F` is the Maxwell form for a window without an electrostatic terminal: the
 F-39 LumpedPort device config at ONE frequency, `Solver.SurfaceResponseCorrection` with `Collocated` trace coupling (the
 Maxwell path refuses `SurfaceMortar`), `Refinement.MaxIts` 0. The gate record is the same on both paths

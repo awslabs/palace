@@ -2176,6 +2176,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseMass",
        {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}},
       {"SurfaceResponseCorrection",
        {{"Library", (temp_dir / "unused-process-library.json").string()},
+        {"Developer", true},
+        {"CorrectionMode", "Both"},
         {"SolveTol", 1.0e-10}}}};
 
   IoData iodata(setup_json, false);
@@ -2261,6 +2263,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseStiffness",
        {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}},
       {"SurfaceResponseCorrection",
        {{"Library", (temp_dir / "unused-process-library.json").string()},
+        {"Developer", true},
+        {"CorrectionMode", "Both"},
         {"SolveTol", 1.0e-10}}}};
 
   IoData iodata(setup_json, false);
@@ -2371,6 +2375,8 @@ static json ResponseSystemPathConfig(const fs::path &temp_dir, int mg_max_levels
         {"PCMatShifted", false}}},
       {"SurfaceResponseCorrection",
        {{"Library", (temp_dir / "unused-process-library.json").string()},
+        {"Developer", true},
+        {"CorrectionMode", "Both"},
         {"SolveTol", 1.0e-10}}}};
   return setup_json;
 }

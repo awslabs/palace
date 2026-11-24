@@ -415,6 +415,7 @@ void UseDefaultConstruction(json &correction, const fs::path &library, bool mort
   correction["Library"] = library.string();
   if (mortar)
   {
+    correction["Developer"] = true;
     correction["TraceCoupling"] = "SurfaceMortar";
     correction["MortarOversampling"] = 2;
   }
@@ -493,6 +494,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   UseDefaultConstruction(
       correction, WriteDefaultConstructionLibrary(convex_library_3d_path, temp.temp_dir),
       true);
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   correction["PatchEnergy"] = true;
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
@@ -633,6 +635,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   UseDefaultConstruction(
       config["Solver"]["SurfaceResponseCorrection"],
       WriteDefaultConstructionLibrary(convex_library_3d_path, temp.temp_dir), false);
+  config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
   config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
   config["Solver"]["SurfaceResponseCorrection"]["PatchEnergy"] = true;
   // The two lowest modes of the 1 m PEC box (as the staged / unstaged case: with N 1 an
@@ -663,9 +666,62 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       Run("region-maxwell-mid-lower", HalfSpaceRegion(true, kMidWall));
   const fs::path mid_upper =
       Run("region-maxwell-mid-upper", HalfSpaceRegion(false, kMidWall));
+  // The v1 default path (CUT-PLAN step 2): the whole-interface run without the developer
+  // switch (CorrectionMode then defaults to PostprocessOnly). The default crack form only:
+  // the legacy crack of the PEC island needs the switch (CUT-PLAN step 5a).
+  fs::path v1_default;
+  if (crack_policy == test::CrackPolicy::Default)
+  {
+    const json developer = config;
+    config["Solver"]["SurfaceResponseCorrection"].erase("Developer");
+    config["Solver"]["SurfaceResponseCorrection"].erase("CorrectionMode");
+    v1_default = Run("region-maxwell-v1-default", json());
+    config = developer;
+  }
   if (!Mpi::Root(comm))
   {
     return;
+  }
+  if (!v1_default.empty())
+  {
+    // Without the switch the parked columns (fixed-flux, self-consistent) are not written:
+    // 8 of surface-Q-corrected.csv and the 6 self-consistent columns of the eigenmode
+    // confidence table; every other column keeps its header and order, and the raw and
+    // fixed-trace corrected values are those of the run with the switch.
+    for (const auto &[file, parked_count] :
+         std::vector<std::pair<std::string, std::size_t>>{
+             {"surface-Q-corrected.csv", 8}, {"surface-response-confidence.csv", 6}})
+    {
+      INFO("table " << file);
+      const Table with_switch = test::LoadCsv(window / file);
+      const Table without = test::LoadCsv(v1_default / file);
+      std::vector<std::string> kept, headers;
+      std::size_t parked = 0;
+      for (auto it = with_switch.cbegin(); it != with_switch.cend(); ++it)
+      {
+        const bool hidden = it->header_text.find("fixed-flux") != std::string::npos ||
+                            it->header_text.find("self-consistent") != std::string::npos;
+        parked += hidden;
+        if (!hidden)
+        {
+          kept.push_back(it->header_text);
+        }
+      }
+      for (auto it = without.cbegin(); it != without.cend(); ++it)
+      {
+        headers.push_back(it->header_text);
+      }
+      CHECK(parked == parked_count);
+      CHECK(headers == kept);
+    }
+    const Table with_switch = test::LoadCsv(window / "surface-Q-corrected.csv");
+    const Table without = test::LoadCsv(v1_default / "surface-Q-corrected.csv");
+    for (const char *header : {"p_surf raw", "p_surf corrected", "E_norm corrected (J)"})
+    {
+      INFO("column " << header);
+      CHECK(test::ColumnByHeader(without, header).data ==
+            test::ColumnByHeader(with_switch, header).data);
+    }
   }
   auto Corrected = [](const fs::path &dir, const std::string &column)
   {

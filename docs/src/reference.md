@@ -1116,9 +1116,27 @@ mesh that is solved: a cracked mesh may be refined next to the crack where the d
 requires it (`config["Model"]["RefineCrackElements"]`, default `true`), so cracked and
 uncracked runs from one input mesh are in general not on the same mesh.
 
+In a correction run (a response-correction block of either solver family) the deprecated
+global key set to `true` stays accepted where the interior metal it cracks is impedance
+(Ls) sheets: it then cracks the same sheets as `"Crack": true` on each of them, with its
+per-face law as before. With the global key each face of an Ls sheet carries 2 Ls (the
+cracked sheet equals the uncracked one); with `"Crack": true` each face carries the
+configured Ls, a different sheet (0.35 % apart in energy on the cpw3d all-Ls case). Where
+it would crack an interior
+perfect conductor (PEC or `Ground`, `Terminal`, `PrescribedPotential`) the run stops at
+mesh load with a message naming those attributes and the per-sheet `"Crack"`, since the
+correction never cracks perfect conductors; with `"Developer": true` in the correction
+block it cracks them as before and the run lists the option (`DEVELOPER OPTIONS (mesh)`).
+
 The coupon generators and library-build tools under `examples/` write the key explicitly:
 `--crack-policy legacy`, their default in this version, writes
 `CrackInternalBoundaryElements: true`, and `--crack-policy default` omits the key. The
+device-run writers (`prepare_maxwell_validation.py`, `corner_validation/prepare_*.py`,
+`window_validation/write_window_es_configs.py`) write the v1 form by default
+(`developer_form.py`: `--crack-policy default` and no parked key); `--developer` writes the
+recorded developer form (the records' `legacy` crack with `"Developer": true`), which
+`--crack-policy legacy` needs. The preflight writer (`preflight_config.py`) keeps the
+coupon tools' default `legacy` and writes `"Developer": true` with it. The
 policy is part of their cache keys and of the qualification records, so a coupon solved
 under one policy is not reused for a build under the other, and a model qualified against
 a reference made under the other policy is labelled as such; a reference without a
@@ -1409,7 +1427,10 @@ each `Patches` entry places that model in the global mesh. `Origin`, `AxisU`, an
 `AxisV` map the coupon coordinates into the global frame. For a one-edge coupon,
 `AxisU` points from metal into the gap and `AxisV` points from the process side toward
 vacuum. The fabricated and thin response matrices must use the contour ordering in
-`BasisPoints`, followed by any explicitly documented conductor-state coefficients.
+`BasisPoints`, followed by any explicitly documented conductor-state coefficients. This
+hand-placed form (`Models` and `Patches`, or the one-model `FabricatedMatrix` / `Edges`
+syntax) is a developer option: it needs `"Developer": true` in the block, since the
+default correction places its models from the `Library`.
 
 For repeated use of one fabrication process, `Library` replaces the explicit `Models`
 and `Patches` lists:
@@ -1421,11 +1442,8 @@ and `Patches` lists:
   "UnmatchedPolicy": "Warn",
   "GeometryFailurePolicy": "RecordRaw",
   "PatchConstruction": "Features",
-  "CorrectionMode": "Both",
-  "TranslationalDomainCorrection": "FixedTrace",
-  "TraceCoupling": "Collocated",
-  "MortarOversampling": 2,
-  "SolveTol": 1.0e-6
+  "CorrectionMode": "PostprocessOnly",
+  "TraceCoupling": "Collocated"
 }
 ```
 
@@ -1449,7 +1467,8 @@ classification: `Features` (the default) consumes the geometry identification's 
 (`Identification.Features` of the preflight manifest): every feature matched by signature
 becomes its patches, an unmatched feature is omitted alone (never an interface group), and
 excluded segments are never corrected. `Legacy` keeps the former per-interface-group
-classification for comparison only. The geometry-only preflight
+classification for comparison only (a developer option: it needs `"Developer": true`).
+The geometry-only preflight
 (`--surface-response-preflight`) is also the patch dry run: it writes
 `surface-response-patches.csv` next to the manifest with the feature id, model, segment
 portion and weights of every patch without any field solve. The dry run holds the placed
@@ -1466,20 +1485,53 @@ counted in `Exact` (they are matched cells left uncorrected): the uncorrected le
 `Missing` + `DomainBoundary`, and `Exact` + `Interpolated` + `Missing` + `DomainBoundary`
 double counts them.
 
-`CorrectionMode` selects `PostprocessOnly`, `SelfConsistent`, or `Both` (the default).
+`CorrectionMode` selects `PostprocessOnly` (the default), `SelfConsistent`, or `Both`.
 Postprocessing-only mode evaluates fixed-trace and fixed-flux responses on the raw field
 without constructing a corrected global solver. Self-consistent mode solves only the
 globally coupled corrected field; fixed-trace/fixed-flux and their confidence columns are
 retained in the output schema as `NaN`. `Both` preserves the historical behavior and
-computes both families. The raw field, ordinary output, and raw AMR estimator remain
-unchanged in every mode.
+computes both families (the default before schema 4-6-0). The raw field, ordinary output,
+and raw AMR estimator remain unchanged in every mode.
 
-`SolveTol` controls only the optional self-consistent corrected-field solve. The raw
-thin-metal field and AMR estimator retain `Solver.Linear.Tol` and `EstimatorTol`,
+`Developer` (default `false`) is the developer switch of the correction. The default
+correction is post-processing only, with the fabrication-process `Library`; the options
+set aside from it (parked) are refused by name at set-up unless the same block sets
+`"Developer": true`: `CorrectionMode` `SelfConsistent` and `Both` (`SolveTol` and
+`TranslationalDomainCorrection` configure that solve only: they are read with it, and in a
+block without it they are not read and are named in one warning, `keys ignored`); the
+legacy options `PatchConstruction` `Legacy` and `ConductorConsistency.Exclusion` `Sticky`;
+the alternatives `TraceCoupling` `SurfaceMortar` (its quadrature key `MortarOversampling`
+is not read without it, as the keys of the self-consistent solve) and the hand-placed form
+without `Library`; the two-dimensional boundary-mode correction, the conductivity or
+rational-impedance coupons of a library where the device carries a boundary of that law
+(refused when the library is read, listed as `DEVELOPER OPTIONS (library)` with the
+switch; a coupon is matched only to a boundary of its own law, so a coupon of a law the
+device does not carry is not refused) and
+`"Crack": true` on a `Conductivity` or `RationalImpedance` boundary of a correction run;
+`ConductorConsistency.ControlFlipProbePiece`; the magnetic leaves (`Magnetic` `true`, `AllowElectricOnlyFallback`
+`true`, `ConductorConsistency.ControlStateAnchorSetbackOverR`; without the switch the
+leaves are not read); and the global crack key where it would crack an interior perfect conductor (see the
+[mesh cracking](#Mesh-cracking-and-the-thin-metal-postprocessing) above). With the
+switch the run prints one line `DEVELOPER OPTIONS: <the parked options in use>` and
+`palace.json` records the same list as `SurfaceResponse.Developer`; every other default is
+unchanged, so a developer run that also states `"CorrectionMode": "Both"` is the run of
+the historical default. Without the switch the parked columns are not written (their
+values are still computed): in `surface-Q-corrected.csv` the `E_elec` postprocessed
+fixed-flux and `E_elec` corrected (self-consistent) totals and, per interface, the
+postprocessed fixed-flux and corrected `E` / `p` / `Q`; the `corrected` (self-consistent)
+matrices of `terminal-C-corrected.csv`, `terminal-Cinv-corrected.csv` and
+`terminal-Cm-corrected.csv`; and `SurfaceResponse.TerminalCapacitance.SelfConsistent` in
+`palace.json`. Every other column keeps its header, order and value.
+
+`SolveTol` (a key of the self-consistent solve, a developer option; not read without it)
+controls only the optional self-consistent
+corrected-field solve. The raw thin-metal field and AMR estimator retain `Solver.Linear.Tol` and `EstimatorTol`,
 respectively. The default `1.0e-6` is normally well below the accuracy of the local
 fabrication response model; it can be tightened independently when needed.
 
-`TranslationalDomainCorrection` controls how isolated-edge, gap, strip, and parallel-edge
+`TranslationalDomainCorrection` (a key of the self-consistent solve, a developer option;
+not read without it) controls how isolated-edge, gap,
+strip, and parallel-edge
 coupon domain matrices enter the self-consistent global operator. `FixedTrace` preserves
 the original additive defect, while `FixedFlux` pulls the fabricated domain response back
 to the thin trace under conserved coupon flux. `Disabled` omits only these translational
@@ -1496,8 +1548,9 @@ until those are available, use the converged fixed-trace/fixed-flux estimates ra
 silently disabling translational physics.
 
 `TraceCoupling` selects the map from the global field into coupon coefficients.
-`Collocated` preserves the historical point evaluation. The experimental
-`SurfaceMortar` option uses a piecewise-linear L2 projection around each translational
+`Collocated` (the default path) preserves the historical point evaluation. The
+experimental `SurfaceMortar` option (a developer option; `MortarOversampling` is read with
+it only) uses a piecewise-linear L2 projection around each translational
 coupon contour and over a finite longitudinal matching-surface strip: the patch's
 longitudinal cell, the interval of its edge portion that its quadrature point integrates
 (the cells of a portion tile it), sampled in slices at the contour resolution and averaged,
@@ -1542,12 +1595,14 @@ missing cluster signatures, and unbracketed pair separations are unsupported. Wi
 correction for the complete interface group, avoiding a partial correction. `Error`
 instead terminates the run.
 
-`Magnetic` (default `true`) reads the library's optional magnetic (inductive) leaves on the
-Maxwell path (the section *The magnetic (inductive) defect of finite-thickness metal*
-below); `false` runs the same library electric-only, byte-identical to the library without
-leaves. `AllowElectricOnlyFallback` (default `false`) lets a model whose magnetic leaf is
-refused by rule r1 / r2 / r3 continue electric-only by name instead of aborting the run.
-Both are ignored by a library without leaves.
+`Magnetic` reads the library's optional magnetic (inductive) leaves on the Maxwell path
+(the section *The magnetic (inductive) defect of finite-thickness metal* below); `false`
+runs the same library electric-only, byte-identical to the library without leaves. The
+leaves are a developer option: without `"Developer": true` they are never read (the run
+is that of `false`) and `"Magnetic": true` is refused; with the switch the default is
+`true`. `AllowElectricOnlyFallback` (default `false`; `true` needs the switch) lets a model
+whose magnetic leaf is refused by rule r1 / r2 / r3 continue electric-only by name instead
+of aborting the run. Both are ignored by a library without leaves.
 The self-consistent eigenmode solve (`CorrectionMode` `SelfConsistent` or `Both`) with
 loaded magnetic leaves is refused under `Solver.Eigenmode.NonlinearType: "SLP"` (wave ports
 or absorbing boundaries): no case exercises the magnetic defect beside the exact A2 term;
@@ -2046,8 +2101,9 @@ zero). `"ConductorConsistency": {"Exclusion": ...}` sets where: `"PerExcitation"
 default) excludes it at the excitation whose own test fails and there only (an eigenmode, a
 driven port excitation at one frequency, an electrostatic terminal): every patch is tested
 again at every excitation, so an excitation's result does not depend on the order of the
-excitations; `"Sticky"` (the rule of results made before this setting existed) excludes it
-at that and every later excitation and does not test it again. Run-level outputs (the
+excitations; `"Sticky"` (the rule of results made before this setting existed; a
+developer option that needs `"Developer": true`) excludes it at that and every later
+excitation and does not test it again. Run-level outputs (the
 `ModelCatalog` `PatchWeight`, `Count`, `ClaimLength`, `CellLength`, `RawPortions` and the
 electrostatic corrected capacitance matrices) take the patches excluded at one or more
 excitations, which are the same on both rules. `surface-response-patches.csv` depends on
@@ -2429,20 +2485,23 @@ writes `surface-response-patches.csv`, `surface-response-patch-energy.csv`,
 confidence, model, class-energy and terminal tables) and `palace.json` stay at the top level,
 unchanged. Under adaptive mesh refinement each `iterationNN/` folder holds its own
 `<name>/` (the final iteration's is `<Output>/<name>/`). `"ConductorConsistencyRecords":
-"Directory"` (default `"Metadata"`; requires `Directory`) moves the `Records` array of
+"Directory"` (the default since schema 4-6-0) writes the `Records` array of
 `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and
-excitation, the bulk of `palace.json` on a full chip) out of `palace.json` into
-`<Output>/<name>/surface-response-conductor-consistency-records.json`, a JSON document with
-the array at the same key path and in the same text; `palace.json` then lacks only that
-member (`TestedPatches`, the record count, and the gate's summary stay). The preflight's
+excitation, the bulk of `palace.json` on a full chip) not into `palace.json` but into
+`<Output>/<name>/surface-response-conductor-consistency-records.json`, or, without
+`Directory`, `<Output>/conductor-consistency/surface-response-conductor-consistency-records.json`
+(each `iterationNN/` folder holds its own), a JSON document with the array at the same key
+path and in the same text; `palace.json` then lacks only that member (`TestedPatches`, the
+record count, and the gate's summary stay). `"Metadata"` keeps the array in `palace.json`
+(the default before). The preflight's
 patch list stays beside its manifest. How large `palace.json` gets: on a full design the
 conductor-consistency `Records` are nearly all of it (measured on one corrected eigenmode
 run of a full chip at element order 4: 362.7 of 363.4 MB, 99.8 %, were
 `SurfaceResponse.Diagnostics.ConductorConsistency.Records`); a service that stores
 `palace.json` as run metadata may refuse a file that large. `"Diagnostics": {"Directory":
-"records", "ConductorConsistencyRecords": "Directory"}` moves that array into
+"records"}` puts that array into
 `<Output>/records/surface-response-conductor-consistency-records.json` and leaves the rest
-of `palace.json` as it was; both keys are off by default. `Diagnostics.Directory` names a sub-directory of
+of `palace.json` as it was. `Diagnostics.Directory` names a sub-directory of
 `Problem.Output`; it is not `Solver.Electrostatic.ResponseArchive.Directory`, which is the
 path of the field archive (relative to the working directory of the process).
 
@@ -2516,23 +2575,27 @@ fabrication-process library to a complex Maxwell field:
   "SurfaceResponseCorrection": {
     "Library": "process-library.json",
     "TargetInterfaces": [1, 2, 3],
-    "UnmatchedPolicy": "Error",
-    "CorrectionMode": "Both"
+    "UnmatchedPolicy": "Error"
   }
 }
 ```
 
 The standard `surface-Q.csv`, saved fields, error indicator, and AMR sequence remain the
 raw thin-metal result. `surface-Q-corrected.csv` is an additional long-form table
-containing raw, fixed-trace, fixed-flux, and, when available, self-consistent
-normalization energies, interface energies, participations, and quality factors for each
-frequency and excitation, eigenmode, or boundary mode. The same `CorrectionMode`
-semantics apply as for electrostatics. `PostprocessOnly` avoids corrected KSP, PROM, and
-eigenmode solves; `SelfConsistent` skips raw-field fixed-trace/fixed-flux evaluation;
-`Both` computes all correction families available to the problem type. Boundary mode has
-no self-consistent corrected eigensolver: it accepts `PostprocessOnly` and `Both`, where
-`Both` means all available boundary-mode correction paths, and rejects
-`SelfConsistent`.
+containing raw and fixed-trace (`corrected`) normalization energies, interface energies,
+participations, and quality factors for each frequency and excitation, eigenmode, or
+boundary mode; with the developer switch it also holds the fixed-flux and, when
+available, self-consistent columns (the parked values: 8 of its columns, and the 3
+self-consistent columns of `surface-response-confidence.csv`, 6 for eigenmode). The
+values are computed in both cases; only the columns are left out. The same
+`CorrectionMode` semantics apply as for electrostatics, with the same default
+`PostprocessOnly` and the same developer switch. `PostprocessOnly` avoids corrected KSP,
+PROM, and eigenmode solves; `SelfConsistent` skips raw-field fixed-trace/fixed-flux
+evaluation; `Both` computes all correction families available to the problem type. The
+two-dimensional boundary-mode correction is a developer option (it needs
+`"Developer": true`). Boundary mode has no self-consistent corrected eigensolver: it accepts
+`PostprocessOnly` and `Both`, where `Both` means all available boundary-mode correction
+paths, and rejects `SelfConsistent`.
 
 In 3D, Palace maps the selected coupon contour into the plane transverse to the physical
 edge at every longitudinal edge quadrature point. A corner coupon instead maps its full
@@ -3053,8 +3116,9 @@ form and its leaves are printed at configuration and recorded (`palace.json`
 ConductorConsistency.ControlFlipProbePiece: [{Model, Edge, Piece}]` (NOT a
 modelling option) relabels the local piece of one model edge's probes at the probe
 construction so that the gate's discrimination of a one-label mis-mapping is MEASURED on a
-device; it is admitted only with `RecordOnly: true`, refused when it applies to no probe,
-printed and recorded as a CONTROL; a run of record never carries it. THE STATE-ANCHOR
+device; it is admitted only with `RecordOnly: true` and `"Developer": true`, refused when
+it applies to no probe, printed and recorded as a CONTROL; a run of record never carries
+it. THE STATE-ANCHOR
 SETBACK OF THE TERM (R-MAG-17; the mx-sc-magnetic Phase 3 measurement: with the chain's
 conductor-path anchor lines starting at the EDGE anchors, the magnetic states carry a
 state-side edge error of ``+0.06..+0.08`` pt of the fixed-trace shift on the (ii) stub): the

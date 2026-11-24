@@ -103,6 +103,7 @@ TEST_CASE_METHOD(
   config["Solver"]["Linear"] = {
       {"Type", "Default"}, {"KSPType", "GMRES"}, {"Tol", 1.0e-12}, {"MaxIts", 400}};
   auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   correction["SolveTol"] = 1.0e-12;
   {
