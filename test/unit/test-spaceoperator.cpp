@@ -886,10 +886,83 @@ TEST_CASE("SpaceOperator rejects PML regions in 2D simulations",
                           "PML regions are only supported for 3D simulations"));
   }
 
-  // Other simulation types treat the PML regions as regular materials.
+  // Static and transient problem types treat the PML regions as regular materials in
+  // SpaceOperator (IoData rejects PML regions in transient simulations).
   SpaceOperator transient_op(solver, domains, boundaries, ProblemType::TRANSIENT, units,
                              mesh);
   CHECK(!transient_op.GetMaterialOp().HasPML());
+}
+
+TEST_CASE("SpaceOperator rejects ports on the boundaries of PML regions",
+          "[spaceoperator][pml][Serial][Parallel]")
+{
+  // Unit cube with a PML layer z > 0.75 (attribute 2): the boundary attribute 1 (z = 0)
+  // only touches the physical region, and the attribute 6 (z = 1) is the back of the layer.
+  using json = nlohmann::json;
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh = mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(2) > 0.75) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(comm, serial_mesh));
+
+  test::IntegrationSettingsGuard settings_guard;
+  config::SolverData solver;
+  solver.order = 1;
+  solver.linear.mg_max_levels = 1;
+  fem::DefaultIntegrationOrder::p_trial = solver.order;
+  config::MaterialData vacuum;
+  vacuum.attributes = {1, 2};
+  config::PMLData pml;
+  pml.attributes = {2};
+  pml.reference_frequency = 2.0;
+  config::DomainData domains;
+  domains.attributes = {1, 2};
+  domains.materials = {vacuum};
+  domains.pml = {pml};
+  Units units(1.0, 1.0);
+  auto Construct = [&](const json &bdr)
+  {
+    const config::BoundaryData boundaries(bdr);
+    return test::CaptureStdout(
+        [&]
+        {
+          SpaceOperator space_op(solver, domains, boundaries, ProblemType::DRIVEN, units,
+                                 mesh);
+        });
+  };
+  auto LumpedPort = [](int attr)
+  {
+    return json{{"LumpedPort", json::array({json{{"Index", 1},
+                                                 {"Attributes", {attr}},
+                                                 {"R", 50.0},
+                                                 {"Direction", "+X"},
+                                                 {"Excitation", 1}}})}};
+  };
+  const std::string warning = "not transformed by the PML stretch";
+
+  // A port which touches the layer is rejected, one which does not is accepted.
+  CHECK(Construct(LumpedPort(1)).find(warning) == std::string::npos);
+  CHECK_THROWS_WITH(Construct(LumpedPort(6)),
+                    Catch::Matchers::ContainsSubstring(
+                        "Ports on boundary attributes adjacent to PML regions are not "
+                        "supported"));
+
+  // An absorbing boundary on the back of the layer is not reported, another boundary
+  // condition is.
+  const auto out_absorbing = Construct(json{{"Absorbing", {{"Attributes", {6}}}}});
+  const auto out_impedance = Construct(
+      json{{"Impedance", json::array({json{{"Attributes", {6}}, {"Rs", 50.0}}})}});
+  if (Mpi::Root(comm))
+  {
+    CHECK(out_absorbing.find(warning) == std::string::npos);
+    CHECK(out_impedance.find(warning) != std::string::npos);
+  }
 }
 
 TEST_CASE("SpaceOperator PML with unit stretch reproduces the bulk operators",

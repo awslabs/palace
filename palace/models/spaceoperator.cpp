@@ -123,47 +123,65 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   {
     PrintPML(units);
 
-    // Boundary conditions other than PEC on the boundaries of the PML regions are not
-    // transformed by the PML stretch.
+    // Boundary conditions on the boundaries of the PML regions are not transformed by the
+    // PML stretch. A port there would be computed without it (a wave port which crosses a
+    // PML region solves its mode on the unstretched cross-section), so ports must not touch
+    // the PML regions, as for config["Boundaries"]["PML"]. The other boundary conditions
+    // there use the background material properties of the PML regions, with a warning,
+    // except an absorbing boundary, which can terminate the layer: on its back, or across
+    // its ends on an open side of an extruded box, where the stretch is one at the
+    // interface with the physical region and the layer absorbs the field beyond it.
     const auto pml_attributes = mat_op.GetPMLAttributes();
     const std::set<int> pml_attr(pml_attributes.begin(), pml_attributes.end());
     const mfem::ParMesh &pmesh = GetMesh();
     int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
     Mpi::GlobalMax(1, &bdr_attr_max, GetComm());
-    mfem::Array<int> bdr_marker(bdr_attr_max);
-    bdr_marker = 0;
-    auto MarkPMLBoundaries = [&](const auto &attr_list)
+    auto PMLBoundaryAttributes =
+        [&](const std::vector<mfem::Array<int>> &attr_lists, const std::set<int> &skip = {})
     {
-      for (auto attr : attr_list)
+      mfem::Array<int> bdr_marker(bdr_attr_max);
+      bdr_marker = 0;
+      for (const auto &attr_list : attr_lists)
       {
-        const auto it = mesh.back()->GetCeedBdrAttributes().find(attr);
-        if (it == mesh.back()->GetCeedBdrAttributes().end())
+        for (auto attr : attr_list)
         {
-          continue;
-        }
-        for (const auto &[nbr_attr, ceed_attr] : it->second)
-        {
-          if (pml_attr.contains(nbr_attr) && attr <= bdr_attr_max)
+          const auto it = mesh.back()->GetCeedBdrAttributes().find(attr);
+          if (attr > bdr_attr_max || skip.contains(attr) ||
+              it == mesh.back()->GetCeedBdrAttributes().end())
           {
-            bdr_marker[attr - 1] = 1;
+            continue;
+          }
+          for (const auto &[nbr_attr, ceed_attr] : it->second)
+          {
+            if (pml_attr.contains(nbr_attr))
+            {
+              bdr_marker[attr - 1] = 1;
+            }
           }
         }
       }
-    };
-    MarkPMLBoundaries(surface_terms.GetAttrList());
-    MarkPMLBoundaries(lumped_port_op.GetAttrList());
-    MarkPMLBoundaries(wave_port_op.GetAttrList());
-    MarkPMLBoundaries(floquet_port_op.GetAttrList());
-    MarkPMLBoundaries(surf_j_op.GetAttrList());
-    Mpi::GlobalMax(bdr_attr_max, bdr_marker.HostReadWrite(), GetComm());
-    std::vector<int> pml_bdr_attr;
-    for (int i = 0; i < bdr_attr_max; i++)
-    {
-      if (bdr_marker[i])
+      Mpi::GlobalMax(bdr_attr_max, bdr_marker.HostReadWrite(), GetComm());
+      std::vector<int> pml_bdr_attr;
+      for (int i = 0; i < bdr_attr_max; i++)
       {
-        pml_bdr_attr.push_back(i + 1);
+        if (bdr_marker[i])
+        {
+          pml_bdr_attr.push_back(i + 1);
+        }
       }
-    }
+      return pml_bdr_attr;
+    };
+    const auto port_attr =
+        PMLBoundaryAttributes({lumped_port_op.GetAttrList(), wave_port_op.GetAttrList(),
+                               floquet_port_op.GetAttrList()});
+    MFEM_VERIFY(port_attr.empty(),
+                "Ports on boundary attributes adjacent to PML regions are not supported, "
+                "since they are computed without the PML stretch ("
+                    << fmt::format("{}", fmt::join(port_attr, ", ")) << ")!");
+    const auto &farfield_attr = surface_terms.GetFarfieldOp().GetAttrList();
+    const auto pml_bdr_attr =
+        PMLBoundaryAttributes({surface_terms.GetAttrList(), surf_j_op.GetAttrList()},
+                              std::set<int>(farfield_attr.begin(), farfield_attr.end()));
     if (!pml_bdr_attr.empty())
     {
       Mpi::Warning(GetComm(),

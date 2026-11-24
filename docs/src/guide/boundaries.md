@@ -115,6 +115,12 @@ parameters, and the guidelines on the
 [eigenmode simulations and postprocessing](#Eigenmode-simulations-and-postprocessing-with-PML-regions),
 and [linear solvers](#Linear-solvers-with-PML-regions) apply to both.
 
+Ports must not touch the PML regions, since the port modes and the S-parameters do not
+include the stretch. The other boundary conditions on the boundaries of the PML regions are
+not transformed by the stretch either, which a warning reports, except PEC and absorbing
+boundaries, which can terminate the layer (for example, the absorbing boundary of an open
+side of an extruded box continues across the ends of the layer).
+
 ### Meshed perfectly matched layer
 
 The domains of a meshed PML are specified with the `"Attributes"` of the blocks of
