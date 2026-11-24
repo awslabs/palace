@@ -274,18 +274,36 @@ void ResolutionAccumulator::Reset(int types_, int slots_)
   types = types_;
   slots = slots_;
   values.assign(static_cast<std::size_t>(types) * slots * kStride, 0.0);
+  regions.clear();
 }
 
-void ResolutionAccumulator::Add(int type, int plane_slot, ResolutionStatus status, double m,
-                                double energy)
+namespace
 {
-  // The status bins in the order R, M, U, NO-BARS, NE; the histogram after them; then the
-  // patch count and the not-evaluated count.
+
+// One patch's sums in one slot: the status bins in the order R, M, U, NO-BARS, NE; the
+// histogram after them; then the patch count and the not-evaluated count.
+void AddResolutionPatch(double *values, ResolutionStatus status, double m, double energy)
+{
   const int bin = status == ResolutionStatus::RESOLVED         ? 0
                   : status == ResolutionStatus::MARGINAL       ? 1
                   : status == ResolutionStatus::UNDER_RESOLVED ? 2
                   : status == ResolutionStatus::NO_BARS        ? 3
                                                                : 4;
+  values[bin] += energy;
+  if (status != ResolutionStatus::NOT_EVALUATED && energy > 0.0)
+  {
+    values[ResolutionAccumulator::kStatusBins + ResolutionHistogramBin(m)] += energy;
+  }
+  values[ResolutionAccumulator::kStride - 2] += 1.0;
+  values[ResolutionAccumulator::kStride - 1] +=
+      status == ResolutionStatus::NOT_EVALUATED ? 1.0 : 0.0;
+}
+
+}  // namespace
+
+void ResolutionAccumulator::Add(int type, int plane_slot, ResolutionStatus status, double m,
+                                double energy)
+{
   // Slot 0 (every plane), then the patch's plane slot (none when <= 0: no located census).
   for (const int slot : {0, plane_slot > 0 ? plane_slot : -1})
   {
@@ -293,15 +311,16 @@ void ResolutionAccumulator::Add(int type, int plane_slot, ResolutionStatus statu
     {
       continue;
     }
-    double *values = Slot(type, slot);
-    values[bin] += energy;
-    if (status != ResolutionStatus::NOT_EVALUATED && energy > 0.0)
-    {
-      values[kStatusBins + ResolutionHistogramBin(m)] += energy;
-    }
-    values[kStride - 2] += 1.0;
-    values[kStride - 1] += status == ResolutionStatus::NOT_EVALUATED ? 1.0 : 0.0;
+    AddResolutionPatch(Slot(type, slot), status, m, energy);
   }
+}
+
+void ResolutionAccumulator::AddRegion(int interface, ResolutionStatus status, double m,
+                                      double energy)
+{
+  auto &sums = regions[interface];
+  sums.resize(kStride, 0.0);
+  AddResolutionPatch(sums.data(), status, m, energy);
 }
 
 ResolutionStatus ResolutionShareStatus(const std::array<double, 4> &shares)

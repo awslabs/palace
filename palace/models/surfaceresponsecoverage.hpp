@@ -327,6 +327,10 @@ struct CoverageMeasurement
   std::map<int, CoverageInterfaceSummary> interfaces;
   std::map<int, std::string> types;
   std::vector<CoverageCell> cells;
+  // CUT-PLAN step 4 (lane v1table): per target interface a cell of that interface ALONE
+  // (its own summary; the surface-participation.csv verdicts of a Region target's row). No
+  // other writer and no policy reads it.
+  std::map<int, CoverageCell> interface_cells;
   std::vector<CoverageKeyRow> keys;
   // The served models (runtime index) with served energy whose library record carries no
   // QualificationStatus (item (5): information) and the pending ones.

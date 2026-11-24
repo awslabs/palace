@@ -2101,6 +2101,12 @@ public:
   ResolutionAccumulator NewResolutionAccumulator() const;
   std::vector<ResolutionCell> MeasureResolution(ResolutionAccumulator *accumulator,
                                                 double energy_scale) const;
+  // CUT-PLAN step 4 (lane v1table; collective): the census cell of every target with a
+  // Region, from the accumulator's box slots (`regions`: the box's own patches weighted
+  // with their region shares); the root's cells, empty elsewhere, for a null accumulator
+  // and without Region targets.
+  std::map<int, ResolutionCell> MeasureRegionResolution(ResolutionAccumulator *accumulator,
+                                                        double energy_scale) const;
   void WriteResolutionPatchTable(const std::string &path) const;
   bool ResolutionEnabled() const { return resolution_enabled; }
   ResolutionRunRecord &GetResolutionRunRecord() { return resolution_run_record; }

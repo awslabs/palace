@@ -5,6 +5,7 @@
 #define PALACE_MODELS_SURFACE_RESPONSE_RESOLUTION_HPP
 
 #include <array>
+#include <map>
 #include <ostream>
 #include <string>
 #include <string_view>
@@ -119,6 +120,13 @@ struct ResolutionAccumulator
   }
   // One patch's energy `energy` of Type `type` on plane slot `plane_slot` (>= 1).
   void Add(int type, int plane_slot, ResolutionStatus status, double m, double energy);
+  // CUT-PLAN step 4 (lane v1table): per target with a Region (its interface index) ONE
+  // slot of the same sums over the patches that add to the box, each patch's fixed-trace
+  // fabricated energy on that interface counted with its region share s_p (ruling 2251),
+  // so that a box's census is its own patches'. Summed apart from `values`
+  // (SurfaceResponseOperator::MeasureRegionResolution); empty without Region targets.
+  std::map<int, std::vector<double>> regions;
+  void AddRegion(int interface, ResolutionStatus status, double m, double energy);
 };
 
 // One row of surface-response-resolution.csv.
