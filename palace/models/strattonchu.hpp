@@ -4,6 +4,7 @@
 #ifndef PALACE_MODELS_STRATTONCHU_HPP
 #define PALACE_MODELS_STRATTONCHU_HPP
 
+#include <array>
 #include <vector>
 #include <mfem.hpp>
 #include <linalg/vector.hpp>
@@ -13,13 +14,17 @@
 namespace palace
 {
 // The light speed c0 (layout of MaterialOperator::GetLightSpeed()) sets the wave speed and
-// impedance of the isotropic exterior medium, Z H = c0 B.
-void AddStrattonChuIntegrandAtElement(
-    const GridFunction &E, const GridFunction &B, const MaterialOperator &mat_op,
-    const mfem::DenseTensor &c0, double omega_re, double omega_im,
-    std::vector<std::array<double, 3>> &r_naughts, mfem::ElementTransformation &T,
-    const mfem::IntegrationRule &ir, std::vector<std::array<double, 3>> &integrand_r,
-    std::vector<std::array<double, 3>> &integrand_i);
+// impedance of the isotropic exterior medium, Z H = c0 B. With a Floquet wave vector k_F,
+// E and B are the periodic envelopes of the physical fields E exp(-i k_F . x).
+void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction &B,
+                                      const MaterialOperator &mat_op,
+                                      const mfem::DenseTensor &c0, double omega_re,
+                                      double omega_im, const std::array<double, 3> &k_F,
+                                      std::vector<std::array<double, 3>> &r_naughts,
+                                      mfem::ElementTransformation &T,
+                                      const mfem::IntegrationRule &ir,
+                                      std::vector<std::array<double, 3>> &integrand_r,
+                                      std::vector<std::array<double, 3>> &integrand_i);
 
 }  // namespace palace
 

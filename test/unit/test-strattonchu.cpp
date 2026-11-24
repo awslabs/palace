@@ -20,12 +20,16 @@
 //
 // where k = 2π/λ = ω/c and p₀ is the dipole moment.
 
+#include <algorithm>
+#include <array>
+#include <cmath>
 #include <complex>
 #include <numbers>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <mfem/fem/coefficient.hpp>
 #include <mfem/linalg/vector.hpp>
 #include "fem/fespace.hpp"
@@ -154,13 +158,20 @@ std::vector<std::pair<double, double>> GenerateSphericalTestPoints()
 
 // Compare the implementation in SurfacePostOperator with the analytic
 // expectation in ComputeAnalyticalFarFieldrE. Note, the agreement has to be up
-// to a phase, so we compare the magnitudes along each direction.
+// to a phase, so we compare the magnitudes along each direction. With a Floquet wave
+// vector k_F = kF_over_k k (nondimensional), the fields are given as their periodic
+// envelopes E exp(i k_F . x), as in a Floquet periodic simulation, and the far field is
+// still the one of the physical fields.
 void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
-                     const std::vector<int> &attributes)
+                     const std::vector<int> &attributes,
+                     const std::array<double, 3> &kF_over_k = {0.0, 0.0, 0.0})
 {
   // Test constants.
   constexpr double atol = 1e-4;
-  constexpr double rtol = 1e-5;
+  // The envelope oscillates faster than the dipole fields, so its interpolation error is
+  // larger.
+  const bool floquet = (kF_over_k[0] != 0.0 || kF_over_k[1] != 0.0 || kF_over_k[2] != 0.0);
+  const double rtol = floquet ? 1e-4 : 1e-5;
 
   constexpr double p0 = 1e-9;  // Dipole moment [C⋅m]
 
@@ -173,7 +184,22 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   config::MaterialData material;
   material.attributes = {1};
 
+  double omega_rad_per_time =
+      2 * std::numbers::pi *
+      units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
+
+  // In nondimensional units, the speed of light in vacuum is 1 and k = omega.
   config::PeriodicBoundaryData periodic;
+  std::array<double, 3> k_F;
+  for (int d = 0; d < 3; d++)
+  {
+    k_F[d] = periodic.wave_vector[d] = kF_over_k[d] * omega_rad_per_time;
+  }
+  auto Envelope = [k_F](const mfem::Vector &x)
+  {
+    return std::exp(
+        std::complex<double>(0.0, k_F[0] * x(0) + k_F[1] * x(1) + k_F[2] * x(2)));
+  };
 
   config::BoundaryPostData postpro;
   postpro.farfield.attributes = attributes;
@@ -196,33 +222,37 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   auto E_real = [=](const mfem::Vector &x, mfem::Vector &E)
   {
     auto E_complex = ComputeDipoleENonDim(x, units, p0, freq_Hz);
-    E(0) = std::real(E_complex[0]);
-    E(1) = std::real(E_complex[1]);
-    E(2) = std::real(E_complex[2]);
+    const auto phase = Envelope(x);
+    E(0) = std::real(E_complex[0] * phase);
+    E(1) = std::real(E_complex[1] * phase);
+    E(2) = std::real(E_complex[2] * phase);
   };
 
   auto E_imag = [=](const mfem::Vector &x, mfem::Vector &E)
   {
     auto E_complex = ComputeDipoleENonDim(x, units, p0, freq_Hz);
-    E(0) = std::imag(E_complex[0]);
-    E(1) = std::imag(E_complex[1]);
-    E(2) = std::imag(E_complex[2]);
+    const auto phase = Envelope(x);
+    E(0) = std::imag(E_complex[0] * phase);
+    E(1) = std::imag(E_complex[1] * phase);
+    E(2) = std::imag(E_complex[2] * phase);
   };
 
   auto B_real = [=](const mfem::Vector &x, mfem::Vector &B)
   {
     auto B_complex = ComputeDipoleBNonDim(x, units, p0, freq_Hz);
-    B(0) = std::real(B_complex[0]);
-    B(1) = std::real(B_complex[1]);
-    B(2) = std::real(B_complex[2]);
+    const auto phase = Envelope(x);
+    B(0) = std::real(B_complex[0] * phase);
+    B(1) = std::real(B_complex[1] * phase);
+    B(2) = std::real(B_complex[2] * phase);
   };
 
   auto B_imag = [=](const mfem::Vector &x, mfem::Vector &B)
   {
     auto B_complex = ComputeDipoleBNonDim(x, units, p0, freq_Hz);
-    B(0) = std::imag(B_complex[0]);
-    B(1) = std::imag(B_complex[1]);
-    B(2) = std::imag(B_complex[2]);
+    const auto phase = Envelope(x);
+    B(0) = std::imag(B_complex[0] * phase);
+    B(1) = std::imag(B_complex[1] * phase);
+    B(2) = std::imag(B_complex[2] * phase);
   };
 
   bool complex = true;
@@ -243,9 +273,6 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   SurfacePostOperator surf_post_op(postpro, ProblemType::DRIVEN, mat_op, nd_fespace,
                                    nd_fespace);
 
-  double omega_rad_per_time =
-      2 * std::numbers::pi *
-      units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_Hz / 1e9);
   constexpr double omega_im = 0.0;
   auto CheckFarField = [&](const std::vector<std::pair<double, double>> &thetaphis)
   {
@@ -268,6 +295,36 @@ void runFarFieldTest(double freq_Hz, std::unique_ptr<mfem::Mesh> serial_mesh,
   };
 
   CheckFarField(GenerateSphericalTestPoints());
+  if (floquet)
+  {
+    // Without the Floquet phase, the integral of the envelopes is not the far field of the
+    // dipole.
+    MaterialOperator mat_op_0({material}, config::PeriodicBoundaryData{},
+                              ProblemType::DRIVEN, palace_mesh);
+    SurfacePostOperator surf_post_op_0(postpro, ProblemType::DRIVEN, mat_op_0, nd_fespace,
+                                       nd_fespace);
+    const auto thetaphis = GenerateSphericalTestPoints();
+    auto rE_0 = surf_post_op_0.GetFarFieldrE(thetaphis, E_field, B_field,
+                                             {omega_rad_per_time, omega_im});
+    double max_rel = 0.0;
+    for (std::size_t i = 0; i < thetaphis.size(); i++)
+    {
+      const auto &[theta, phi] = thetaphis[i];
+      const auto rE_far = ComputeAnalyticalFarFieldrE(theta, phi, p0, freq_Hz);
+      const auto E_phys = units.Dimensionalize<Units::ValueType::VOLTAGE>(rE_0[i]);
+      double num = 0.0, den = 0.0;
+      for (int j = 0; j < 3; j++)
+      {
+        num += std::pow(std::abs(E_phys[j]) - std::abs(rE_far[j]), 2);
+        den += std::norm(rE_far[j]);
+      }
+      if (den > 0.0)
+      {
+        max_rel = std::max(max_rel, std::sqrt(num / den));
+      }
+    }
+    CHECK(max_rel > 1.0e-2);
+  }
   // Observation directions are part of the assembled libCEED functional. A second call
   // with a different-sized set must rebuild the cached functional rather than silently
   // returning values for the first call's directions.
@@ -345,6 +402,61 @@ TEST_CASE("PostOperator", "[strattonchu][Serial]")
       });
 
   runFarFieldTest(freq_Hz, std::move(serial_mesh), attributes);
+}
+
+TEST_CASE("PostOperator with a Floquet wave vector", "[strattonchu][Serial]")
+{
+  // The fields are the periodic envelopes of the dipole fields, with an oblique Floquet
+  // wave vector: the far field must be the one of the dipole.
+  double freq_Hz = 50e6;
+  std::vector<int> attributes = {1, 2, 3, 4, 5, 6};
+  int resolution = 20;
+  std::unique_ptr<mfem::Mesh> serial_mesh =
+      std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian3D(
+          resolution, resolution, resolution, mfem::Element::TETRAHEDRON));
+  serial_mesh->Transform(
+      [](const mfem::Vector &x, mfem::Vector &p)
+      {
+        p = x;
+        p(0) -= 0.25;
+        p(1) -= 0.25;
+        p(2) -= 0.25;
+      });
+  runFarFieldTest(freq_Hz, std::move(serial_mesh), attributes, {0.4, -0.3, 0.0});
+}
+
+TEST_CASE("FarField surfaces must not touch periodic boundaries",
+          "[strattonchu][Serial][Parallel]")
+{
+  // Faces of the unit cube: 1 (z = 0), 2 (y = 0), 3 (x = 1), 4 (y = 1), 5 (x = 0) and
+  // 6 (z = 1). With the periodic attribute 1, the faces 2 to 5 touch it along an edge.
+  config::MaterialData material;
+  material.attributes = {1};
+  config::PeriodicBoundaryData periodic;
+
+  MPI_Comm comm = Mpi::World();
+  std::unique_ptr<mfem::Mesh> serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::TETRAHEDRON));
+  const int dim = serial_mesh->Dimension();
+  auto par_mesh = std::make_unique<mfem::ParMesh>(comm, *serial_mesh);
+  Mesh palace_mesh(std::move(par_mesh));
+
+  mfem::ND_FECollection nd_fec(1, dim);
+  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
+
+  auto Construct = [&](const std::vector<int> &farfield_attributes)
+  {
+    config::BoundaryPostData postpro;
+    postpro.farfield.attributes = farfield_attributes;
+    postpro.farfield.thetaphis.emplace_back();
+    SurfacePostOperator(postpro, ProblemType::DRIVEN, mat_op, nd_fespace, nd_fespace, {},
+                        {1});
+  };
+  CHECK_NOTHROW(Construct({6}));
+  CHECK_THROWS_WITH(Construct({3}), ContainsSubstring("attribute 3"));
+  CHECK_THROWS_WITH(Construct({2, 6}), ContainsSubstring("attribute 2"));
+  CHECK_THROWS_WITH(Construct({1}), ContainsSubstring("attribute 1"));
 }
 
 TEST_CASE("FarField constructor fails with anisotropic materials", "[strattonchu][Serial]")

@@ -2542,7 +2542,10 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
   MPI_Comm comm = MPI_COMM_WORLD;
   auto elem_type = GENERATE(mfem::Element::TETRAHEDRON, mfem::Element::HEXAHEDRON);
   auto order = GENERATE(1, 2);
-  CAPTURE(elem_type, order);
+  // With a Floquet wave vector, the fields are envelopes and both paths add the Floquet
+  // phase.
+  auto floquet = GENERATE(false, true);
+  CAPTURE(elem_type, order, floquet);
   fem::DefaultIntegrationOrder::p_trial = order;
   fem::DefaultIntegrationOrder::q_order_jac = true;
   fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
@@ -2555,6 +2558,10 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
   vacuum.attributes = {1};
   dielectric.attributes = {2};  // Isotropic (far-field requirement)
   config::PeriodicBoundaryData periodic;
+  if (floquet)
+  {
+    periodic.wave_vector = {0.9, -0.6, 0.4};
+  }
   MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
 
   mfem::ND_FECollection nd_fec(order, 3);
@@ -2636,8 +2643,8 @@ TEST_CASE("SurfaceFunctional FarField", "[surfacefunctional][Serial][Parallel][G
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
     AddStrattonChuIntegrandAtElement(E, B, mat_op, mat_op.GetLightSpeed(), omega_re,
-                                     omega_im, r_naughts, *T, *ir, integrals_r,
-                                     integrals_i);
+                                     omega_im, mat_op.GetFloquetWaveVector(omega_re),
+                                     r_naughts, *T, *ir, integrals_r, integrals_i);
   }
   Mpi::GlobalSum(3 * r_naughts.size(), integrals_r.data()->data(), comm);
   Mpi::GlobalSum(3 * r_naughts.size(), integrals_i.data()->data(), comm);
@@ -4020,7 +4027,8 @@ TEST_CASE("Far field of a frequency-dependent exterior medium",
       const auto *ir = &mfem::IntRules.Get(nd_fespace.Get().GetBE(i)->GetGeomType(),
                                            fem::DefaultIntegrationOrder::Get(*T));
       AddStrattonChuIntegrandAtElement(E, B, mat_op, c0, omega.real(), omega.imag(),
-                                       r_naughts, *T, *ir, legacy_r, legacy_i);
+                                       mat_op.GetFloquetWaveVector(omega.real()), r_naughts,
+                                       *T, *ir, legacy_r, legacy_i);
     }
     Mpi::GlobalSum(3 * r_naughts.size(), legacy_r.data()->data(), comm);
     Mpi::GlobalSum(3 * r_naughts.size(), legacy_i.data()->data(), comm);

@@ -1094,6 +1094,8 @@ public:
   // recovered fluxes, and interface dielectric energies sum the contributions of both faces
   // (when cracked, the faces are exterior boundaries anyway).
   std::vector<int> GetSheetAttributes() const;
+  // Donor and receiver attributes of all the periodic boundary pairs.
+  std::vector<int> GetPeriodicAttributes() const;
 
   // Return the boundary attributes of boundary conditions whose faces, where they meet a 2D
   // cross-section of the mesh (the face of a wave port, or the cross-section of a boundary

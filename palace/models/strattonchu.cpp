@@ -46,12 +46,15 @@ namespace palace
 // reason for this is so that we can ensure that memory layout is simple (and
 // contiguous), ensuring that we can perform one single MPI reduction for all
 // the points in integrand_*.
-void AddStrattonChuIntegrandAtElement(
-    const GridFunction &E, const GridFunction &B, const MaterialOperator &mat_op,
-    const mfem::DenseTensor &c0, double omega_re, double omega_im,
-    std::vector<std::array<double, 3>> &r_naughts, mfem::ElementTransformation &T,
-    const mfem::IntegrationRule &ir, std::vector<std::array<double, 3>> &integrand_r,
-    std::vector<std::array<double, 3>> &integrand_i)
+void AddStrattonChuIntegrandAtElement(const GridFunction &E, const GridFunction &B,
+                                      const MaterialOperator &mat_op,
+                                      const mfem::DenseTensor &c0, double omega_re,
+                                      double omega_im, const std::array<double, 3> &k_F,
+                                      std::vector<std::array<double, 3>> &r_naughts,
+                                      mfem::ElementTransformation &T,
+                                      const mfem::IntegrationRule &ir,
+                                      std::vector<std::array<double, 3>> &integrand_r,
+                                      std::vector<std::array<double, 3>> &integrand_i)
 {
   MFEM_VERIFY(E.VectorDim() == 3,
               "Stratton-Chu far-field computation is only available for 3D simulations!");
@@ -104,6 +107,9 @@ void AddStrattonChuIntegrandAtElement(
     double k_im = omega_im / wave_speed;
     double quadrature_weight = ip.weight * T.Weight();
 
+    // Floquet phase of the physical fields, E exp(-i k_F . r') from the envelope E.
+    const double kF_dot = k_F[0] * r_phys(0) + k_F[1] * r_phys(1) + k_F[2] * r_phys(2);
+
     // Complex prefactor: (ik/4π) = (i(k_re + ik_im)/4π) = (ik_re - k_im)/4π.
     double prefactor_re = -quadrature_weight * k_im / (4 * std::numbers::pi);
     double prefactor_im = quadrature_weight * k_re / (4 * std::numbers::pi);
@@ -133,9 +139,10 @@ void AddStrattonChuIntegrandAtElement(
 
       // Complex phase: exp(i*k*r₀·r') = exp(i*(k_re + ik_im)*dot_product)
       //                               = exp(i*k_re*dot_product - k_im*dot_product)
-      //                               = exp(-k_im*dot_product) * exp(i*k_re*dot_product).
+      //                               = exp(-k_im*dot_product) * exp(i*k_re*dot_product),
+      // times the Floquet phase exp(-i*k_F·r').
       double amplitude = std::exp(-k_im * dot_product);
-      double phase_re = k_re * dot_product;
+      double phase_re = k_re * dot_product - kF_dot;
       double cos_phase = std::cos(phase_re);
       double sin_phase = std::sin(phase_re);
 

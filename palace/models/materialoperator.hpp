@@ -5,6 +5,7 @@
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
 #include <algorithm>
+#include <array>
 #include <complex>
 #include <string>
 #include <vector>
@@ -400,6 +401,10 @@ public:
   // divided by the reference angular frequency with FloquetReferenceFrequency).
   const mfem::DenseMatrix &GetWaveVectorCross() const { return wave_vector_cross; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }
+  // Floquet wave vector k_F at the angular frequency omega, the one of the phase
+  // exp(-i k_F . x) between the physical fields and their periodic envelope (k_F scales
+  // with frequency with FloquetReferenceFrequency), zero without one.
+  std::array<double, 3> GetFloquetWaveVector(double omega) const;
   double GetFloquetOmegaRef() const { return floquet_omega_ref; }
   // Cartesian PML regions (see models/pml.hpp), only for 3D frequency domain problems, in
   // blocks with their own stretch. A frequency-dependent stretch is evaluated at the solve
