@@ -1408,7 +1408,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 // defect of the per-level region-share file): the table's region rows are formed in memory
 // at each level, never from a per-level file, so the rows of iteration 1 of a two-level run
 // equal the rows of a one-level run on the same first mesh, and the second level has rows
-// of its own. Conforming refinement: the first level solves the given mesh itself (a
+// of its own. The defect itself is fixed by the checked writers (a file at a path where
+// SaveIteration left a symlink is replaced, not written through): iteration 1's archived
+// region-share file keeps the first level's rows and the top-level one is a real file of
+// the second level. Conforming refinement: the first level solves the given mesh itself (a
 // nonconforming AMR run starts from the mesh's nonconforming form, whose reordering moves a
 // box value of this small fixture by about 3e-5 relative).
 TEST_CASE_METHOD(
@@ -1490,6 +1493,39 @@ TEST_CASE_METHOD(
   // The iteration archive left the table at the top level, a real file.
   CHECK_FALSE(fs::is_symlink(two / "surface-participation.csv"));
   CHECK_FALSE(fs::exists(two / "iteration1" / "surface-participation.csv"));
+  // The per-level region-share file: the archived copy of iteration 1 holds the rows of the
+  // one-level run (the second level did not write through the archive's symlink), and the
+  // top-level file is a real file with the second level's energies.
+  const fs::path share_file = "surface-response-region-share.csv";
+  REQUIRE(fs::is_regular_file(two / "iteration1" / share_file));
+  CHECK_FALSE(fs::is_symlink(two / "iteration1" / share_file));
+  CHECK_FALSE(fs::is_symlink(two / share_file));
+  const Table archived = test::LoadCsv(two / "iteration1" / share_file);
+  const Table single_shares = test::LoadCsv(one / share_file);
+  const Table final_shares = test::LoadCsv(two / share_file);
+  REQUIRE(archived.n_rows() > 0);
+  REQUIRE(archived.n_rows() == single_shares.n_rows());
+  for (const char *header : {"excitation", "target", "patch", "share", "energy (J)",
+                             "energy_in (J)", "area (m^2)", "area_in (m^2)"})
+  {
+    INFO("region-share column " << header);
+    const Column &a = test::ColumnByHeader(archived, header);
+    const Column &b = test::ColumnByHeader(single_shares, header);
+    for (std::size_t i = 0; i < archived.n_rows(); i++)
+    {
+      INFO("row " << i << ": archived " << fmt::format("{:.15e}", a.data[i])
+                  << ", one-level run " << fmt::format("{:.15e}", b.data[i]));
+      CHECK(a.data[i] == Catch::Approx(b.data[i]).epsilon(1.0e-10).margin(1.0e-30));
+    }
+  }
+  bool final_level_differs = final_shares.n_rows() != archived.n_rows();
+  for (std::size_t i = 0; !final_level_differs && i < archived.n_rows(); i++)
+  {
+    const double a = test::ColumnByHeader(archived, "energy (J)").data[i];
+    const double b = test::ColumnByHeader(final_shares, "energy (J)").data[i];
+    final_level_differs = std::abs(a - b) > 1.0e-8 * std::abs(a);
+  }
+  CHECK(final_level_differs);
 #endif
 }
 
