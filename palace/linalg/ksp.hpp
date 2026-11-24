@@ -74,6 +74,10 @@ public:
 
   void SetOperators(const OperType &op, const OperType &pc_op);
 
+  // STUDY ONLY (ams-robust): access to the parts.
+  Solver<OperType> *GetPreconditioner() { return pc.get(); }
+  IterativeSolver<OperType> *GetKrylovSolver() { return ksp.get(); }
+
   void Mult(const VecType &x, VecType &y) const;
 };
 

@@ -5,6 +5,7 @@
 #define PALACE_LINALG_AMS_HPP
 
 #include <memory>
+#include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
@@ -64,6 +65,22 @@ public:
   ~HypreAmsSolver() override;
 
   void SetOperator(const Operator &op) override;
+
+  // STUDY ONLY (ams-robust): AMSR_AMS_ALPHA=1 passes this vector Laplacian (H1(1)^3,
+  // byVDIM) to HYPRE_AMSSetAlphaPoissonMatrix (used by hypre for cycle types < 10).
+  inline static mfem::HypreParMatrix *study_alpha = nullptr;
+  // STUDY ONLY (ams-robust): AMSR_AMS_PIOP = rap | rapdiv | hx: a user Pi (hypre's
+  // vertex-coordinate Pi, built here, byVDIM columns) and a user Pi-space operator:
+  // Pi^T A Pi, Pi^T A Pi + study_divdiv (alpha-weighted nodal div-div), or study_alpha.
+  inline static mfem::HypreParMatrix *study_divdiv = nullptr;
+
+private:
+  std::unique_ptr<mfem::HypreParMatrix> study_Pi, study_APi;
+  std::vector<std::unique_ptr<mfem::SparseMatrix>> study_Ed;
+  std::vector<std::unique_ptr<mfem::HypreParMatrix>> study_keep;
+  mfem::Array<HYPRE_BigInt> study_rows, study_cols;
+
+public:
 
   operator HYPRE_Solver() const override { return ams; }
 

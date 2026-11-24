@@ -3,6 +3,9 @@
 
 #include "ams.hpp"
 
+#include <cstdlib>
+#include <string>
+
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
@@ -126,6 +129,60 @@ void HypreAmsSolver::ConstructAuxiliaryMatrices(FiniteElementSpace &nd_fespace,
     {
       z = Project(z_coord);
     }
+    // STUDY ONLY (ams-robust): hypre's vertex-coordinate Pi built explicitly, so that a user
+    // Pi-space operator can be formed from it: Pi_d = diag(G x_d / 2) |G|, columns 3 n + d.
+    if (std::getenv("AMSR_AMS_PIOP") && *std::getenv("AMSR_AMS_PIOP"))
+    {
+      MFEM_VERIFY(!h1_fespace.IsBroken() && space_dim == 3,
+                  "AMSR_AMS_PIOP prototype: unbroken 3D spaces only!");
+      MPI_Comm comm = h1_fespace.GetComm();
+      const HYPRE_BigInt *off = h1_fespace.Get().GetTrueDofOffsets();
+      const int nloc = h1_fespace.GetTrueVSize();
+      study_rows.SetSize(2);
+      study_cols.SetSize(2);
+      study_rows[0] = off[0];
+      study_rows[1] = off[1];
+      study_cols[0] = 3 * off[0];
+      study_cols[1] = 3 * off[1];
+      const HYPRE_BigInt nglob = h1_fespace.GlobalTrueVSize();
+      auto Gabs = std::make_unique<mfem::HypreParMatrix>(*G);
+      {
+        mfem::SparseMatrix gd, go;
+        HYPRE_BigInt *cmap;
+        Gabs->GetDiag(gd);
+        Gabs->GetOffd(go, cmap);
+        for (int k = 0; k < gd.NumNonZeroElems(); k++)
+        {
+          gd.GetData()[k] = std::abs(gd.GetData()[k]);
+        }
+        for (int k = 0; k < go.NumNonZeroElems(); k++)
+        {
+          go.GetData()[k] = std::abs(go.GetData()[k]);
+        }
+      }
+      const mfem::HypreParVector *X[3] = {x.get(), y.get(), z.get()};
+      std::unique_ptr<mfem::HypreParMatrix> sum;
+      for (int d = 0; d < 3; d++)
+      {
+        auto &Ed = study_Ed.emplace_back(std::make_unique<mfem::SparseMatrix>(nloc, 3 * nloc));
+        for (int i = 0; i < nloc; i++)
+        {
+          Ed->Add(i, 3 * i + d, 1.0);
+        }
+        Ed->Finalize();
+        auto &E = study_keep.emplace_back(std::make_unique<mfem::HypreParMatrix>(
+            comm, nglob, 3 * nglob, study_rows.GetData(), study_cols.GetData(), Ed.get()));
+        mfem::Vector gx(G->Height());
+        G->Mult(*X[d], gx);
+        gx *= 0.5;
+        mfem::HypreParMatrix Pid(*Gabs);
+        Pid.ScaleRows(gx);
+        std::unique_ptr<mfem::HypreParMatrix> PE(mfem::ParMult(&Pid, E.get(), true));
+        sum = sum ? std::unique_ptr<mfem::HypreParMatrix>(mfem::ParAdd(sum.get(), PE.get()))
+                  : std::move(PE);
+      }
+      study_Pi = std::move(sum);
+    }
   }
   else
   {
@@ -198,6 +255,23 @@ void HypreAmsSolver::InitializeSolver()
     relax_type = 1;
   }
 
+  // STUDY ONLY (ams-robust): AMSR_AMS_AGG / AMSR_AMS_RELAX / AMSR_AMS_THETA / AMSR_AMS_CYCLE.
+  if (const char *e = std::getenv("AMSR_AMS_AGG"))
+  {
+    amg_agg_levels = std::atoi(e);
+  }
+  if (const char *e = std::getenv("AMSR_AMS_RELAX"))
+  {
+    relax_type = std::atoi(e);
+  }
+  if (const char *e = std::getenv("AMSR_AMS_THETA"))
+  {
+    theta = std::atof(e);
+  }
+  if (const char *e = std::getenv("AMSR_AMS_CYCLE"))
+  {
+    HYPRE_AMSSetCycleType(ams, std::atoi(e));
+  }
   HYPRE_AMSSetSmoothingOptions(ams, relax_type, ams_smooth_it, weight, omega);
   HYPRE_AMSSetAlphaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                               interp_type, Pmax);
@@ -205,8 +279,19 @@ void HypreAmsSolver::InitializeSolver()
                              interp_type, Pmax);
 
   int coarse_relax_type = 9;  // Default, l1-symm. GS, 9 = Gaussian elimination
+  // STUDY ONLY (ams-robust): AMSR_AMS_COARSE overrides the AMG coarse relaxation type.
+  if (const char *e = std::getenv("AMSR_AMS_COARSE"))
+  {
+    coarse_relax_type = std::atoi(e);
+  }
   HYPRE_AMSSetAlphaAMGCoarseRelaxType(ams, coarse_relax_type);
   HYPRE_AMSSetBetaAMGCoarseRelaxType(ams, coarse_relax_type);
+
+  // STUDY ONLY (ams-robust): user vector Laplacian for the Pi-space (cycle types < 10).
+  if (study_alpha && std::getenv("AMSR_AMS_ALPHA") && std::atoi(std::getenv("AMSR_AMS_ALPHA")))
+  {
+    HYPRE_AMSSetAlphaPoissonMatrix(ams, (HYPRE_ParCSRMatrix)*study_alpha);
+  }
 
   // Set the discrete gradient matrix.
   HYPRE_AMSSetDiscreteGradient(ams, (HYPRE_ParCSRMatrix)*G);
@@ -220,7 +305,12 @@ void HypreAmsSolver::InitializeSolver()
   // Only pass the interpolation matrices when they exist (order > 1): hypre marks them as
   // not owned by AMS even when given null pointers, so at order 1 the matrices that hypre
   // builds from the vertex coordinates in each setup would never be freed.
-  if (Pi || Pix)
+  if (study_Pi)
+  {
+    HYPRE_AMSSetInterpolations(ams, (HYPRE_ParCSRMatrix)*study_Pi, nullptr, nullptr,
+                               nullptr);
+  }
+  else if (Pi || Pix)
   {
     HYPRE_ParCSRMatrix HY_Pi = (Pi) ? (HYPRE_ParCSRMatrix)*Pi : nullptr;
     HYPRE_ParCSRMatrix HY_Pix = (Pix) ? (HYPRE_ParCSRMatrix)*Pix : nullptr;
@@ -243,6 +333,28 @@ void HypreAmsSolver::SetOperator(const Operator &op)
   MFEM_VERIFY(A, "HypreAmsSolver requires a HypreParMatrix operator!");
   height = A->Height();
   width = A->Width();
+
+  // STUDY ONLY (ams-robust): user Pi-space operator (AMSR_AMS_PIOP, cycle type < 10).
+  if (study_Pi)
+  {
+    const std::string piop = std::getenv("AMSR_AMS_PIOP");
+    if (piop == "hx")
+    {
+      MFEM_VERIFY(study_alpha, "AMSR_AMS_PIOP=hx needs the vector Laplacian!");
+      study_APi = std::make_unique<mfem::HypreParMatrix>(*study_alpha);
+    }
+    else
+    {
+      study_APi.reset(mfem::RAP(A, study_Pi.get()));
+      if (piop == "rapdiv")
+      {
+        MFEM_VERIFY(study_divdiv && study_divdiv->Height() == study_APi->Height(),
+                    "AMSR_AMS_PIOP=rapdiv needs the nodal div-div matrix!");
+        study_APi.reset(mfem::ParAdd(study_APi.get(), study_divdiv));
+      }
+    }
+    HYPRE_AMSSetAlphaPoissonMatrix(ams, (HYPRE_ParCSRMatrix)*study_APi);
+  }
 
   // From mfem::HypreAMS: Update HypreSolver base class.
   setup_called = 0;

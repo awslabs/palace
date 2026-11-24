@@ -3,6 +3,7 @@
 
 #include "lumpedelement.hpp"
 
+#include <cstdlib>
 #include <string>
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
@@ -64,7 +65,8 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
                    fmt::join(n1, ", "), deviations_deg(1));
     }
   }
-  if (std::ranges::none_of(deviations_deg, [](double x) { return x < angle_error_deg; }))
+  if (std::ranges::none_of(deviations_deg, [](double x) { return x < angle_error_deg; }) &&
+      !std::getenv("AMSR_SKIPCHECK"))  // STUDY ONLY (ams-robust)
   {
     Mpi::Barrier(mesh.GetComm());
     std::string dev_str;
@@ -102,7 +104,8 @@ UniformElementData::UniformElementData(const std::array<double, 3> &input_dir,
   // edge), in which case the projected length is near zero and the check does not apply.
   {
     double proj_l = mesh::GetProjectedLength(mesh, attr_marker, true, dir_vec);
-    MFEM_VERIFY(proj_l < rel_tol * l || std::abs(l - proj_l) < rel_tol * l,
+    MFEM_VERIFY(std::getenv("AMSR_SKIPCHECK") || proj_l < rel_tol * l ||
+                    std::abs(l - proj_l) < rel_tol * l,
                 "Bounding box discovered length ("
                     << l << ") should match projected length (" << proj_l << "!");
   }

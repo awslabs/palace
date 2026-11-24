@@ -4,6 +4,7 @@
 #ifndef PALACE_LINALG_ITERATIVE_HPP
 #define PALACE_LINALG_ITERATIVE_HPP
 
+#include <functional>
 #include <type_traits>
 #include <vector>
 #include <mfem.hpp>
@@ -144,6 +145,11 @@ protected:
 
 public:
   CgSolver(MPI_Comm comm, int print) : IterativeSolver<OperType>(comm, print) {}
+
+  // STUDY ONLY (ams-robust): monitor(it, x, p, alpha, r), the iterate being x + alpha p.
+  inline static std::function<void(int, const VecType &, const VecType &, double,
+                                   const VecType &)>
+      study_monitor;
 
   void Mult(const VecType &b, VecType &x) const override;
 };

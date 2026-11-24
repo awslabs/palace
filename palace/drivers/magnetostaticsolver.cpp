@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "magnetostaticsolver.hpp"
+#include "drivers/amsrstudy.hpp"  // STUDY ONLY (ams-robust)
 
 #include <algorithm>
 #include <cmath>
@@ -132,6 +133,19 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // whose essential DOFs match that step's shorted inactive ports (an empty set for a step
   // with no shorted ports reuses the base operator K). The base operator is bound lazily so
   // that an all-short configuration does not pay for an unused preconditioner setup.
+  // STUDY ONLY (ams-robust): vector Laplacian for AMS's Pi-space (AMSR_AMS_ALPHA=1).
+  std::unique_ptr<mfem::HypreParMatrix> amsr_alpha;
+  std::unique_ptr<mfem::HypreParMatrix> amsr_divdiv;
+  if (amsr::EnvInt("AMSR_AMS_ALPHA", 0) || amsr::EnvStr("AMSR_AMS_PIOP") == "hx")
+  {
+    amsr_alpha = curlcurl_op.AssembleAMSVectorLaplacian();
+    HypreAmsSolver::study_alpha = amsr_alpha.get();
+  }
+  if (amsr::EnvStr("AMSR_AMS_PIOP") == "rapdiv")
+  {
+    amsr_divdiv = curlcurl_op.AssembleAMSDivDiv();
+    HypreAmsSolver::study_divdiv = amsr_divdiv.get();
+  }
   KspSolver ksp(iodata, curlcurl_op.GetSolutionNDSpaces(),
                 &curlcurl_op.GetSolutionH1Spaces());
   const Operator *bound_op = nullptr;
@@ -294,7 +308,137 @@ MagnetostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       {
         // No inactive ports shorted for this step: all inactive ports are open.
         set_operator(*K, K_pc);
+        // STUDY ONLY (ams-robust): see drivers/amsrstudy.hpp.
+        Vector amsr_w;
+        const bool amsr_smooth = amsr::EnvStr("AMSR_RHS") == "smooth";
+        if (amsr_smooth)
+        {
+          amsr::SmoothRHS(curlcurl_op, *K, amsr_w, RHS);
+        }
+        if (amsr::EnvStr("AMSR_RHS") == "random")
+        {
+          // As aniso-mg's ANISO_RANDOM_RHS: b = K x, x = SetRandomReal(seed 1234).
+          Vector xr(RHS.Size());
+          xr.UseDevice(true);
+          linalg::SetRandomReal(curlcurl_op.GetComm(), xr, 1234);
+          K->Mult(xr, RHS);
+        }
+        if (amsr::EnvInt("AMSR_PROBE", 0))
+        {
+          amsr::Probe(iodata, curlcurl_op, *K, ksp, RHS);
+        }
+        // Floating-point kernel tests (p = 1, single level): K through the exact sequence
+        // (AMSR_KEXACT=assembled|factored), long double CG operator (AMSR_KLD=1, np 1), RHS
+        // projected onto (M range G)^perp (AMSR_RHS_PROJ=1).
+        const Operator *amsr_Kcg = K.get();
+        std::unique_ptr<amsr::ExactSequenceK> amsr_Kex;
+        std::unique_ptr<amsr::LongDoubleOperator> amsr_Kld;
+        const std::string amsr_kexact = amsr::EnvStr("AMSR_KEXACT");
+        if (!amsr_kexact.empty())
+        {
+          MFEM_VERIFY(curlcurl_op.GetNDSpaces().GetNumLevels() == 1,
+                      "AMSR_KEXACT needs a single level (Order 1 or MGMaxLevels 1)!");
+          amsr_Kex = std::make_unique<amsr::ExactSequenceK>(curlcurl_op);
+          ksp.SetOperators(*amsr_Kex->K, *amsr_Kex->K);
+          amsr_Kcg = (amsr_kexact == "factored") ? static_cast<const Operator *>(amsr_Kex->F.get())
+                                                 : amsr_Kex->K.get();
+          ksp.GetKrylovSolver()->SetOperator(*amsr_Kcg);
+          if (amsr_smooth)
+          {
+            amsr_Kcg->Mult(amsr_w, RHS);
+          }
+          Vector t1(RHS.Size()), t2(RHS.Size()), wr(RHS.Size());
+          linalg::SetRandom(curlcurl_op.GetComm(), wr, 3);
+          K->Mult(wr, t1);
+          amsr_Kcg->Mult(wr, t2);
+          t2 -= t1;
+          Mpi::Print(" AMSR KEXACT={}: ||K_ex w - K w|| / ||K w|| = {:.3e}\n", amsr_kexact,
+                     linalg::Norml2(curlcurl_op.GetComm(), t2) /
+                         linalg::Norml2(curlcurl_op.GetComm(), t1));
+        }
+        if (amsr::EnvInt("AMSR_KLD", 0))
+        {
+          const auto &hK = amsr_Kex ? *amsr_Kex->K
+                                    : dynamic_cast<const ParOperator &>(
+                                          dynamic_cast<const MultigridOperator &>(*K)
+                                              .GetFinestOperator())
+                                          .ParallelAssemble();
+          amsr_Kld = std::make_unique<amsr::LongDoubleOperator>(hK);
+          ksp.GetKrylovSolver()->SetOperator(*amsr_Kld);
+          amsr_Kcg = amsr_Kld.get();
+          Mpi::Print(" AMSR KLD: CG operator applied with long double accumulation\n");
+        }
+        const std::string amsr_fix = amsr::EnvStr("AMSR_FIX");
+        const int amsr_mon = amsr::EnvInt("AMSR_MON", 0);
+        std::unique_ptr<amsr::GaugeProjector> amsr_P, amsr_Pfix;
+        std::unique_ptr<amsr::ProjectedPC> amsr_pc;
+        if (amsr_mon || !amsr_fix.empty() || amsr::EnvInt("AMSR_DIAG", 0) ||
+            amsr::EnvInt("AMSR_RHS_PROJ", 0))
+        {
+          amsr_P = std::make_unique<amsr::GaugeProjector>(
+              curlcurl_op.GetNDSpace(), curlcurl_op.GetH1Space(), curlcurl_op.GetDbcAttr());
+        }
+        if (amsr_fix == "proj" || amsr_fix == "projamg")
+        {
+          amsr_Pfix = std::make_unique<amsr::GaugeProjector>(
+              curlcurl_op.GetNDSpace(), curlcurl_op.GetH1Space(), curlcurl_op.GetDbcAttr(),
+              amsr_fix == "projamg" ? amsr::EnvInt("AMSR_PROJ_IT", 1) : 0);
+          amsr_pc = std::make_unique<amsr::ProjectedPC>(*ksp.GetPreconditioner(), *amsr_Pfix);
+          amsr_pc->SetOperator(*K);
+          ksp.GetKrylovSolver()->SetPreconditioner(*amsr_pc);
+        }
+        if (amsr::EnvInt("AMSR_RHS_PROJ", 0))
+        {
+          const double g0 = amsr_P->ProjectDual(RHS);
+          Vector gt(curlcurl_op.GetH1Space().GetTrueVSize());
+          amsr_P->GetG().MultTranspose(RHS, gt);
+          for (int i : amsr_P->GetH1Ess())
+          {
+            gt(i) = 0.0;
+          }
+          Mpi::Print(" AMSR RHS_PROJ: |G^T b| = {:.3e} -> {:.3e} (|b| = {:.3e})\n", g0,
+                     linalg::Norml2(curlcurl_op.GetComm(), gt),
+                     linalg::Norml2(curlcurl_op.GetComm(), RHS));
+        }
+        if (amsr_mon)
+        {
+          amsr::SetMonitor(amsr_mon, *amsr_Kcg, RHS, *amsr_P, &Curl, amsr_smooth ? &amsr_w : nullptr,
+                           curlcurl_op.GetComm(), ksp.GetPreconditioner());
+        }
         ksp.Mult(RHS, A[step]);
+        CgSolver<Operator>::study_monitor = nullptr;
+        if (amsr_pc)
+        {
+          ksp.GetKrylovSolver()->SetPreconditioner(*ksp.GetPreconditioner());
+        }
+        if (amsr_P)
+        {
+          MPI_Comm comm = curlcurl_op.GetComm();
+          Vector t(RHS.Size()), Ax(A[step]);
+          amsr_Kcg->Mult(A[step], t);
+          t -= RHS;
+          double nx, ng;
+          amsr_P->Measure(Ax, nx, ng, amsr_fix == "final");
+          if (amsr_fix == "final")
+          {
+            A[step] = Ax;
+          }
+          std::string eb;
+          if (amsr_smooth)
+          {
+            Vector B1(Curl.Height()), B2(Curl.Height());
+            Curl.Mult(A[step], B1);
+            Curl.Mult(amsr_w, B2);
+            B1 -= B2;
+            eb = fmt::format(", eB = {:.3e}", linalg::Norml2(comm, B1) /
+                                                 linalg::Norml2(comm, B2));
+          }
+          Mpi::Print(comm,
+                     " AMSR final: |A|_2 = {:.3e}, |A|_M = {:.3e}, grad = {:.3e}, true res "
+                     "= {:.3e}{}\n",
+                     linalg::Norml2(comm, A[step]), nx, nx > 0.0 ? ng / nx : 0.0,
+                     linalg::Norml2(comm, t) / linalg::Norml2(comm, RHS), eb);
+        }
       }
       if (!ksp.GetConverged())
       {

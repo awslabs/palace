@@ -4,6 +4,7 @@
 #include "curlcurloperator.hpp"
 
 #include <algorithm>
+#include <cstdlib>
 #include <set>
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
@@ -867,5 +868,77 @@ template Vector CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOST
 template void CurlCurlOperator::SolveSurfaceCurlProblem<ProblemType::MAGNETOSTATIC>(
     int flux_loop_idx, PostOperator<ProblemType::MAGNETOSTATIC> &post_op,
     Vector &result) const;
+
+}  // namespace palace
+
+namespace palace
+{
+
+// STUDY ONLY (ams-robust): the Hiptmair-Xu auxiliary operator of the Pi-space, the vector
+// Laplacian (mu^-1 grad u, grad v) on H1(1)^3 (byVDIM, the ordering of hypre's Pi), with all
+// components eliminated on the PEC nodes.
+std::unique_ptr<mfem::HypreParMatrix> CurlCurlOperator::AssembleAMSVectorLaplacian()
+{
+  auto &h1_0 = GetH1Spaces().GetFESpaceAtLevel(0);
+  mfem::ParMesh &pmesh = h1_0.GetParMesh();
+  const int dim = pmesh.Dimension();
+  mfem::ParFiniteElementSpace vfes(&pmesh, h1_0.Get().FEColl(), dim, mfem::Ordering::byVDIM);
+  const int amax = pmesh.attributes.Size() ? pmesh.attributes.Max() : 0;
+  mfem::Vector vals(amax);
+  vals = 1.0;
+  const auto &loc = GetMesh().GetCeedAttributes();
+  for (int a = 1; a <= amax; a++)
+  {
+    if (loc.contains(a))
+    {
+      const auto muinv = mat_op.GetInvPermeability(a);
+      vals(a - 1) = (muinv(0, 0) + muinv(1, 1) + (dim > 2 ? muinv(2, 2) : 0.0)) / dim;
+    }
+  }
+  mfem::PWConstCoefficient coef(vals);
+  mfem::ParBilinearForm a(&vfes);
+  a.AddDomainIntegrator(new mfem::VectorDiffusionIntegrator(coef));
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  if (!std::getenv("AMSR_AMS_HXBC") || std::atoi(std::getenv("AMSR_AMS_HXBC")))
+  {
+    auto marker = mesh::BdrAttrToMarker(pmesh, dbc_attr, true);
+    mfem::Array<int> ess;
+    vfes.GetEssentialTrueDofs(marker, ess);
+    A->EliminateBC(ess, mfem::Operator::DiagonalPolicy::DIAG_ONE);
+  }
+  return A;
+}
+
+// STUDY ONLY (ams-robust): the alpha-weighted nodal div-div form (mu^-1 div u, div v) on
+// H1(1)^3 (byVDIM), no boundary conditions: the grad-div part of the Hiptmair-Xu vector
+// Laplacian, added to the Pi-space RAP.
+std::unique_ptr<mfem::HypreParMatrix> CurlCurlOperator::AssembleAMSDivDiv()
+{
+  auto &h1_0 = GetH1Spaces().GetFESpaceAtLevel(0);
+  mfem::ParMesh &pmesh = h1_0.GetParMesh();
+  const int dim = pmesh.Dimension();
+  mfem::ParFiniteElementSpace vfes(&pmesh, h1_0.Get().FEColl(), dim, mfem::Ordering::byVDIM);
+  const int amax = pmesh.attributes.Size() ? pmesh.attributes.Max() : 0;
+  mfem::Vector vals(amax);
+  vals = 1.0;
+  const auto &loc = GetMesh().GetCeedAttributes();
+  for (int a = 1; a <= amax; a++)
+  {
+    if (loc.contains(a))
+    {
+      const auto muinv = mat_op.GetInvPermeability(a);
+      vals(a - 1) = (muinv(0, 0) + muinv(1, 1) + (dim > 2 ? muinv(2, 2) : 0.0)) / dim;
+    }
+  }
+  mfem::PWConstCoefficient lambda(vals);
+  mfem::ConstantCoefficient zero(0.0);
+  mfem::ParBilinearForm a(&vfes);
+  a.AddDomainIntegrator(new mfem::ElasticityIntegrator(lambda, zero));
+  a.Assemble();
+  a.Finalize();
+  return std::unique_ptr<mfem::HypreParMatrix>(a.ParallelAssemble());
+}
 
 }  // namespace palace

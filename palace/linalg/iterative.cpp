@@ -486,6 +486,10 @@ void CgSolver<OperType>::Mult(const VecType &b, VecType &x) const
     CheckDot(beta, "PCG preconditioner is not positive definite: (Br, r) = ");
     res = std::sqrt(std::abs(beta));
     converged = (res <= eps);
+    if (study_monitor)
+    {
+      study_monitor(it + 1, x, p, std::real(alpha), r);
+    }
   }
   if (it > 0)
   {

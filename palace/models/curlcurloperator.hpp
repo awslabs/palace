@@ -176,6 +176,11 @@ public:
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
 
+  // STUDY ONLY (ams-robust).
+  const mfem::Array<int> &GetDbcAttr() const { return dbc_attr; }
+  std::unique_ptr<mfem::HypreParMatrix> AssembleAMSVectorLaplacian();
+  std::unique_ptr<mfem::HypreParMatrix> AssembleAMSDivDiv();
+
   // Access to underlying BC operator objects for postprocessing.
   const auto &GetSurfaceCurrentOp() const { return surf_j_op; }
   const auto &GetSurfaceFluxOp() const { return surf_flux_op; }
