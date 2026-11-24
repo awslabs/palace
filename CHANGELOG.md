@@ -50,6 +50,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     is now unsymmetric for the sparse direct solvers, which were told that it is symmetric
     positive definite: with MUMPS, the linear solver did not converge and gave wrong
     S-parameters. [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Fixed the resolved configuration `<input>_resolved.json`, which left out the default
+    `"TwoSided": false` of `Boundaries.Superconductor` entries. The schema no longer gives
+    their `PenetrationDepth`, `Thickness` and `KineticInductance` a default of 0.0, which
+    only meant that the form is not used. SchemaVer 6-1-1
+    [PR 1293](https://github.com/awslabs/palace/pull/1293).
 
 #### Documentation
 
