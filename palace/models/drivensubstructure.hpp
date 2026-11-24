@@ -124,8 +124,9 @@ struct DrivenSubstructureModel
 
   struct Record
   {
-    // S (nG x nG), g (nG x excitations), h (nG x ports), c (ports x excitations), all
-    // column-major.
+    // S (nG x nG, complex symmetric) by the share of this process of its lower triangle
+    // (see substructuring::TriangleShare), and on rank 0 g (nG x excitations), h (nG x
+    // ports) and c (ports x excitations), column-major.
     std::vector<std::complex<double>> S, g, h, c;
   };
 
@@ -134,12 +135,13 @@ struct DrivenSubstructureModel
   std::array<std::size_t, 4> PartSizes() const;
 
   // The records of the model in its file (see substructuring::ModelFile), written and read
-  // by the calling process (ReadHeader is collective): the interface records of a new file
-  // (substructuring::InterfaceRecords: nG, sig_w, the signatures and length_scale), the
-  // header and the record of the environment, in a new file or appended (superseding the
-  // previous ones), and the records of the frequencies.
+  // by the calling process (AppendRecord and ReadHeader are collective): the interface
+  // records of a new file (substructuring::InterfaceRecords: nG, sig_w, the signatures and
+  // length_scale), the header and the record of the environment, in a new file or appended
+  // (superseding the previous ones), and the records of the frequencies, which rank 0
+  // writes, S from the shares of the processes in chunks.
   void WriteHeader(const std::string &path, bool create = true) const;
-  void AppendRecord(const std::string &path, const Record &r) const;
+  void AppendRecord(const std::string &path, const Record &r, MPI_Comm comm) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);
   std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
   // Number of complete records of frequencies in the file.
@@ -213,7 +215,8 @@ public:
   // Condense the environment and factor the region against it at the angular frequency ω
   // (nondimensional), or only condense the environment (without region, for its condensed
   // data). The analyses of the first frequency are reused at the next ones. Online, S_E(ω)
-  // is given on rank 0 (|Γ| x |Γ|, column-major, in interface order). Collective.
+  // is given by the share of each process of its lower triangle (in interface order, see
+  // substructuring::TriangleShare). Collective.
   void Condense(double omega, bool region = true);
   void Condense(double omega, std::vector<std::complex<double>> &&S_env);
 
@@ -242,8 +245,9 @@ public:
   }
   const std::vector<std::complex<double>> &InterfaceSolution() const { return u_last; }
 
-  // S_E(ω) of the last condensation on rank 0 (|Γ| x |Γ|, column-major, complex
-  // symmetric), in interface order (offline), or handed over.
+  // S_E(ω) of the last condensation (complex symmetric, in interface order), by the share
+  // of this process of its lower triangle (see substructuring::TriangleShare), or handed
+  // over (offline).
   const std::vector<std::complex<double>> &Schur() const { return S; }
   std::vector<std::complex<double>> TakeSchur() { return std::move(S); }
 
@@ -348,12 +352,14 @@ private:
   Side env, region;
   bool solvable = false;  // the region is factored against the environment
   // The region with S_E on Γ, factored as one system; its entries are the region's, then
-  // (on rank 0) S_E's lower triangle.
+  // the share of each process of S_E's lower triangle.
   std::unique_ptr<SchurFactorization<std::complex<double>>> coupled;
   std::size_t coupled_region_entries = 0;
-  // On rank 0: S_E (offline), the environment's source condensation and the interface
-  // solution of the last Solve.
+  // The share of this process of S_E's lower triangle (offline), and on rank 0 the
+  // environment's source condensation and the interface solution of the last Solve.
   std::vector<std::complex<double>> S, g_last, u_last;
+  // The grid of the interface, of all the processes, on which MUMPS condenses S_E.
+  std::unique_ptr<BlockCyclicGrid> gamma_grid;
 
   // The local true DOFs of the wave ports (each in the wave_ports of its side).
   std::map<int, std::vector<char>> wave_port_dofs;

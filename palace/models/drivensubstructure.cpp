@@ -605,10 +605,12 @@ void DrivenSubstructure::Factor(Side &side, double omega)
 {
   if (!side.schur)
   {
+    MPI_Comm comm = space_op.GetComm();
+    gamma_grid = std::make_unique<BlockCyclicGrid>(comm, InterfaceSize(), Mpi::Size(comm));
     side.schur = MakeSchurFactorization(
-        SchurSolverType(solver), ordering, space_op.GetComm(), side.n_sys,
+        SchurSolverType(solver), ordering, comm, side.n_sys,
         {std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)},
-        side.gamma_sys, side.rows);
+        side.gamma_sys, side.rows, gamma_grid.get());
     return;
   }
 
@@ -654,11 +656,22 @@ void DrivenSubstructure::Condense(double omega, bool region_too)
   {
     Setup(region, omega);
   }
-  // S_E on rank 0 moves out of MUMPS's Schur buffer without a copy (the buffer is allocated
-  // again at the next factorization).
+  // Each process takes its share of S_E from the grid of MUMPS's Schur complement, which is
+  // released (and allocated again at the next factorization), or from rank 0.
   Release(S);
   Factor(env, omega);
-  S = env.schur->ReleaseSchur();
+#if defined(MFEM_USE_MUMPS)
+  if (auto *mumps =
+          dynamic_cast<MumpsSchurSolverT<std::complex<double>> *>(env.schur.get()))
+  {
+    S = substructuring::ShareFromGrid(*gamma_grid, mumps->ReleaseSchurBlocks());
+  }
+  else
+#endif
+  {
+    S = substructuring::ShareFromRoot(space_op.GetComm(), InterfaceSize(),
+                                      env.schur->ReleaseSchur());
+  }
   if (region_too)
   {
     FactorCoupled(omega, S, false, set_up);
@@ -678,21 +691,23 @@ void DrivenSubstructure::FactorCoupled(double omega,
                                        bool release, bool set_up)
 {
   MPI_Comm comm = space_op.GetComm();
-  const bool root = Mpi::Root(comm);
   const int nG = InterfaceSize();
-  MFEM_VERIFY(!root || S_env.size() == static_cast<std::size_t>(nG) * nG,
+  const auto share = substructuring::TriangleShare(nG, comm);
+  MFEM_VERIFY(S_env.size() == static_cast<std::size_t>(share[1] - share[0]),
               "Wrong size of a given S_E!");
-  // The region with S_E added on Γ, factored as one system: the region's entries, then on
-  // rank 0 those of S_E's lower triangle, in the rows of the interface DOFs (whose system
-  // indices increase with the interface order).
+  // The region with S_E added on Γ, factored as one system: the region's entries, then
+  // those of the share of each process of S_E's lower triangle, in the rows of the
+  // interface DOFs (whose system indices increase with the interface order).
   auto add_schur = [&](auto &&add)
   {
-    for (int q = 0; q < nG && root; q++)
+    const auto first = substructuring::TriangleEntry(nG, share[0]);
+    long long p = first[0], q = first[1];
+    for (const auto &v : S_env)
     {
-      for (int p = q; p < nG; p++)
+      add(region.gamma_sys[p], region.gamma_sys[q], v);
+      if (++p == nG)
       {
-        add(region.gamma_sys[p], region.gamma_sys[q],
-            S_env[p + static_cast<std::size_t>(nG) * q]);
+        p = ++q;
       }
     }
   };
@@ -1449,26 +1464,29 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
       { f.write(record.data(), static_cast<std::streamsize>(record.size())); });
 }
 
-void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r) const
+void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r,
+                                           MPI_Comm comm) const
 {
-  // From the parts of the record: S_E by the columns of its lower triangle, then g, h and
-  // c.
-  ModelFile::Append(path, MPI_COMM_SELF, kRecordTag, static_cast<long long>(RecordBytes()),
-                    [&](std::ostream &f)
-                    {
-                      auto write = [&f](const std::complex<double> *x, std::size_t n)
-                      {
-                        f.write(reinterpret_cast<const char *>(x),
-                                static_cast<std::streamsize>(sizeof(*x) * n));
-                      };
-                      for (int j = 0; j < nG; j++)
-                      {
-                        write(r.S.data() + static_cast<std::size_t>(j) * nG + j, nG - j);
-                      }
-                      write(r.g.data(), r.g.size());
-                      write(r.h.data(), r.h.size());
-                      write(r.c.data(), r.c.size());
-                    });
+  // S_E by the columns of its lower triangle, from the shares of the processes, then g, h
+  // and c.
+  using T = std::complex<double>;
+  const auto size = substructuring::TriangleShareSizes(nG, comm);
+  ModelFile::Append(
+      path, comm, kRecordTag, static_cast<long long>(RecordBytes()),
+      [&](std::ostream &f)
+      {
+        auto write = [&f](const T *x, std::size_t n)
+        {
+          f.write(reinterpret_cast<const char *>(x),
+                  static_cast<std::streamsize>(sizeof(T) * n));
+        };
+        substructuring::ToRoot<T>(comm, r.S, size, substructuring::kTriangleChunk, write);
+        write(r.g.data(), r.g.size());
+        write(r.h.data(), r.h.size());
+        write(r.c.data(), r.c.size());
+      },
+      [&]()
+      { substructuring::ToRoot<T>(comm, r.S, size, substructuring::kTriangleChunk, {}); });
 }
 
 void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)

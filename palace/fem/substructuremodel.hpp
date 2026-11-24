@@ -17,6 +17,7 @@
 namespace palace
 {
 
+class BlockCyclicGrid;
 class IoData;
 
 }  // namespace palace
@@ -131,6 +132,15 @@ void RedistributeTriangle(MPI_Comm comm, long long n,
 template <typename T>
 void ToRoot(MPI_Comm comm, const std::vector<T> &x, const std::vector<long long> &size,
             std::size_t chunk, const std::function<void(const T *, std::size_t)> &write);
+
+// The share of this process (TriangleShare) of the lower triangle of a symmetric matrix on
+// a grid, from the local parts of the processes in it (the entries above the diagonal
+// ignored), or of an n x n matrix on rank 0 (column-major; not used on the other
+// processes), which it sends in chunks. Collective.
+template <typename T>
+std::vector<T> ShareFromGrid(const BlockCyclicGrid &grid, const std::vector<T> &local);
+template <typename T>
+std::vector<T> ShareFromRoot(MPI_Comm comm, long long n, const std::vector<T> &S);
 
 // From rank 0: the values of every process (size[q] of process q) in rank order, which
 // read(e, m, x) gives on rank 0, filling x with the m values from e of all of them, in

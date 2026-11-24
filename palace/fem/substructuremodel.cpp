@@ -11,6 +11,7 @@
 #include <limits>
 #include <stdexcept>
 #include <fmt/format.h>
+#include "linalg/blockcyclic.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/outputdir.hpp"
@@ -310,6 +311,9 @@ void ToRoot(MPI_Comm comm, const std::vector<T> &x, const std::vector<long long>
 template void ToRoot<double>(MPI_Comm, const std::vector<double> &,
                              const std::vector<long long> &, std::size_t,
                              const std::function<void(const double *, std::size_t)> &);
+template void ToRoot<std::complex<double>>(
+    MPI_Comm, const std::vector<std::complex<double>> &, const std::vector<long long> &,
+    std::size_t, const std::function<void(const std::complex<double> *, std::size_t)> &);
 
 template <typename T>
 std::vector<T> FromRoot(MPI_Comm comm, const std::vector<long long> &size,
@@ -356,23 +360,21 @@ template std::vector<std::complex<double>> FromRoot<std::complex<double>>(
     MPI_Comm, const std::vector<long long> &, std::size_t,
     const std::function<void(long long, long long, std::complex<double> *)> &);
 
-template <typename T>
-void RedistributeTriangle(MPI_Comm comm, long long n,
-                          const std::function<void(long long, long long, T *)> &read,
-                          const std::vector<std::vector<std::pair<int, double>>> &to,
-                          const std::function<int(int, int)> &owner,
-                          const std::function<std::size_t(int, int)> &index,
-                          std::vector<T> &y)
+namespace
+{
+
+// Entries (g, h, v) to the processes holding them, owner(g, h), which add v at index(g, h)
+// of y: this process gives its entries in rounds, produce(round, add) calling add(g, h, v)
+// for those of a round, as many rounds as the process with the most. Collective.
+template <typename T, typename Produce>
+void SendEntries(MPI_Comm comm, long long rounds, Produce &&produce,
+                 const std::function<int(int, int)> &owner,
+                 const std::function<std::size_t(int, int)> &index, std::vector<T> &y)
 {
   const int nranks = Mpi::Size(comm);
-  const auto [e0, e1] = TriangleShare(n, comm);
-  long long rounds = (e1 - e0 + kTriangleChunk - 1) / kTriangleChunk;
   Mpi::GlobalMax(1, &rounds, comm);
-
-  auto [a, b] = TriangleEntry(n, e0);
-
   const auto type = mpi::DataType<T>();
-  std::vector<T> buf, svals, rvals;
+  std::vector<T> svals, rvals;
   std::vector<std::vector<int>> idx(nranks);
   std::vector<std::vector<T>> vals(nranks);
   std::vector<int> sidx, ridx, scnt(nranks), rcnt(nranks), sdsp(nranks), rdsp(nranks);
@@ -383,51 +385,14 @@ void RedistributeTriangle(MPI_Comm comm, long long n,
     idx[q].push_back(h);
     vals[q].push_back(v);
   };
-  for (long long round = 0, e = e0; round < rounds; round++)
+  for (long long round = 0; round < rounds; round++)
   {
-    const long long e_end = std::min(e1, e + kTriangleChunk);
-    buf.resize(static_cast<std::size_t>(e_end - e));
-    if (!buf.empty())
-    {
-      read(e, e_end - e, buf.data());
-    }
     for (int q = 0; q < nranks; q++)
     {
       idx[q].clear();
       vals[q].clear();
     }
-    for (const T v : buf)
-    {
-      if (to.empty())
-      {
-        add(static_cast<int>(a), static_cast<int>(b), v);
-        if (a != b)
-        {
-          add(static_cast<int>(b), static_cast<int>(a), v);
-        }
-      }
-      else
-      {
-        for (const auto &[g, cg] : to[a])
-        {
-          for (const auto &[h, ch] : to[b])
-          {
-            add(g, h, (cg * ch) * v);
-            if (a != b)
-            {
-              add(h, g, (cg * ch) * v);
-            }
-          }
-        }
-      }
-      if (++a == n)
-      {
-        a = ++b;
-      }
-    }
-    e = e_end;
-
-    // The entries to the processes holding them, which add them up.
+    produce(round, add);
     for (int q = 0; q < nranks; q++)
     {
       scnt[q] = static_cast<int>(vals[q].size());
@@ -467,6 +432,65 @@ void RedistributeTriangle(MPI_Comm comm, long long n,
   }
 }
 
+}  // namespace
+
+template <typename T>
+void RedistributeTriangle(MPI_Comm comm, long long n,
+                          const std::function<void(long long, long long, T *)> &read,
+                          const std::vector<std::vector<std::pair<int, double>>> &to,
+                          const std::function<int(int, int)> &owner,
+                          const std::function<std::size_t(int, int)> &index,
+                          std::vector<T> &y)
+{
+  const auto range = TriangleShare(n, comm);
+  const long long e0 = range[0], e1 = range[1];
+  const auto first = TriangleEntry(n, e0);
+  long long a = first[0], b = first[1];
+  std::vector<T> buf;
+  SendEntries<T>(
+      comm, (e1 - e0 + kTriangleChunk - 1) / kTriangleChunk,
+      [&](long long round, auto &add)
+      {
+        const long long e = e0 + round * kTriangleChunk;
+        buf.resize(
+            static_cast<std::size_t>(std::max(0LL, std::min(e1, e + kTriangleChunk) - e)));
+        if (!buf.empty())
+        {
+          read(e, static_cast<long long>(buf.size()), buf.data());
+        }
+        for (const T v : buf)
+        {
+          if (to.empty())
+          {
+            add(static_cast<int>(a), static_cast<int>(b), v);
+            if (a != b)
+            {
+              add(static_cast<int>(b), static_cast<int>(a), v);
+            }
+          }
+          else
+          {
+            for (const auto &[g, cg] : to[a])
+            {
+              for (const auto &[h, ch] : to[b])
+              {
+                add(g, h, (cg * ch) * v);
+                if (a != b)
+                {
+                  add(h, g, (cg * ch) * v);
+                }
+              }
+            }
+          }
+          if (++a == n)
+          {
+            a = ++b;
+          }
+        }
+      },
+      owner, index, y);
+}
+
 template void RedistributeTriangle<double>(
     MPI_Comm, long long, const std::function<void(long long, long long, double *)> &,
     const std::vector<std::vector<std::pair<int, double>>> &,
@@ -478,5 +502,74 @@ template void RedistributeTriangle<std::complex<double>>(
     const std::vector<std::vector<std::pair<int, double>>> &,
     const std::function<int(int, int)> &, const std::function<std::size_t(int, int)> &,
     std::vector<std::complex<double>> &);
+
+template <typename T>
+std::vector<T> ShareFromGrid(const BlockCyclicGrid &grid, const std::vector<T> &local)
+{
+  MPI_Comm comm = grid.GetComm();
+  const long long n = grid.Size();
+  const int nranks = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  // The first entry of the share of each process (as TriangleShare), to find the owner.
+  std::vector<long long> start(nranks + 1);
+  for (int q = 0; q <= nranks; q++)
+  {
+    start[q] = TriangleSize(n) * q / nranks;
+  }
+  std::vector<T> y(static_cast<std::size_t>(start[rank + 1] - start[rank]), T(0.0));
+  auto entry = [n](int g, int h) { return TriangleColumnStart(n, h) + (g - h); };
+  // The local entries on or below the diagonal, in rounds of local columns.
+  const int mloc = grid.LocalRows(), nloc = grid.LocalCols();
+  const std::size_t lld = grid.LeadingDim();
+  const long long cols = std::max(1LL, kTriangleChunk / std::max(1, mloc));
+  SendEntries<T>(
+      comm, (nloc + cols - 1) / cols,
+      [&](long long round, auto &add)
+      {
+        for (long long jl = round * cols;
+             jl < std::min<long long>(nloc, (round + 1) * cols); jl++)
+        {
+          const int h = grid.GlobalCol(static_cast<int>(jl));
+          for (int il = 0; il < mloc; il++)
+          {
+            const int g = grid.GlobalRow(il);
+            if (g >= h)
+            {
+              add(g, h, local[il + lld * static_cast<std::size_t>(jl)]);
+            }
+          }
+        }
+      },
+      [&](int g, int h)
+      {
+        return static_cast<int>(std::upper_bound(start.begin(), start.end(), entry(g, h)) -
+                                start.begin() - 1);
+      },
+      [&](int g, int h) { return static_cast<std::size_t>(entry(g, h) - start[rank]); }, y);
+  return y;
+}
+
+template <typename T>
+std::vector<T> ShareFromRoot(MPI_Comm comm, long long n, const std::vector<T> &S)
+{
+  return FromRoot<T>(comm, TriangleShareSizes(n, comm), kTriangleChunk,
+                     [&S, n](long long e, long long m, T *y)
+                     {
+                       const auto first = TriangleEntry(n, e);
+                       long long a = first[0], b = first[1];
+                       for (long long k = 0; k < m; k++)
+                       {
+                         y[k] = S[static_cast<std::size_t>(a + n * b)];
+                         if (++a == n)
+                         {
+                           a = ++b;
+                         }
+                       }
+                     });
+}
+
+template std::vector<std::complex<double>>
+ShareFromGrid(const BlockCyclicGrid &, const std::vector<std::complex<double>> &);
+template std::vector<std::complex<double>>
+ShareFromRoot(MPI_Comm, long long, const std::vector<std::complex<double>> &);
 
 }  // namespace palace::substructuring

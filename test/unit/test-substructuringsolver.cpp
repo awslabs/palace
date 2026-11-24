@@ -3827,7 +3827,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   auto record = [](double s)
   {
     Model::Record r;
-    r.S = {s, 2.0 * s, 2.0 * s, 3.0 * s};
+    r.S = {s, 2.0 * s, 3.0 * s};
     r.g = {s, -s};
     r.h = {std::complex<double>(0.0, s), s};
     r.c = {s};
@@ -3842,8 +3842,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   };
   const auto path = (temp_dir / "driven-model-restart.bin").string();
   m.WriteHeader(path);
-  m.AppendRecord(path, record(1.0));
-  m.AppendRecord(path, record(2.0));
+  m.AppendRecord(path, record(1.0), Mpi::World());
+  m.AppendRecord(path, record(2.0), Mpi::World());
   {
     std::ofstream f(path, std::ios::binary | std::ios::app);
     const double part[3] = {1.0, 2.0, 3.0};
@@ -3859,7 +3859,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   m.TruncateRecords(path, 1);
   CHECK(m.NumRecords(path) == 1);
   CHECK(m.ReadFlatRecord(path, 0) == flat(1.0));
-  m.AppendRecord(path, record(4.0));
+  m.AppendRecord(path, record(4.0), Mpi::World());
   CHECK(m.NumRecords(path) == 2);
   CHECK(m.ReadFlatRecord(path, 1) == flat(4.0));
 
@@ -5893,26 +5893,30 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     for (const bool region : {false, true})  // the environment alone, then both sides
     {
       ds.Condense(omega, region);
+      // The lower triangle of S_E on rank 0, from the shares of the processes.
+      std::vector<std::complex<double>> S;
+      substructuring::ToRoot<std::complex<double>>(
+          comm, ds.Schur(), substructuring::TriangleShareSizes(nG, comm),
+          substructuring::kTriangleChunk, [&S](const std::complex<double> *x, std::size_t m)
+          { S.insert(S.end(), x, x + m); });
       if (!root)
       {
         continue;
       }
-      const auto &S = ds.Schur();
-      REQUIRE(S.size() == S_ref.size());
-      double d = 0.0, m = 0.0, asym = 0.0;
+      REQUIRE(S.size() == static_cast<std::size_t>(substructuring::TriangleSize(nG)));
+      double d = 0.0, m = 0.0;
+      std::size_t e = 0;
       for (int b = 0; b < nG; b++)
       {
-        for (int a = 0; a < nG; a++)
+        for (int a = b; a < nG; a++, e++)
         {
           const std::size_t ab = static_cast<std::size_t>(b) * nG + a;
-          d = std::max(d, std::abs(S[ab] - S_ref[ab]));
+          d = std::max(d, std::abs(S[e] - S_ref[ab]));
           m = std::max(m, std::abs(S_ref[ab]));
-          asym = std::max(asym, std::abs(S[ab] - S[static_cast<std::size_t>(a) * nG + b]));
         }
       }
-      CAPTURE(nG, nE, d, m, asym);
+      CAPTURE(nG, nE, d, m);
       CHECK(d <= exact_tol * m);
-      CHECK(asym <= exact_tol * m);
     }
 
     // Substructured solves for the port excitation (an environment source) and random
@@ -5992,11 +5996,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     // Online: the region and interface values of the offline solution, 0 in the
     // environment interior.
     {
-      std::vector<std::complex<double>> S_env;
-      if (root)
-      {
-        S_env = ds.Schur();
-      }
+      auto S_env = ds.Schur();
       ds_online.Condense(omega, std::move(S_env));
       std::vector<ComplexVector> u_online;
       ds_online.Solve({&b[0], &b[1], &b[2]}, u_online, &g_env);

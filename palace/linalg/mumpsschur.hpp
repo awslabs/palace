@@ -82,8 +82,15 @@ public:
 
   // The local part of the Schur complement of the last factorization, 2D block cyclic as
   // BlockCyclicGrid lays it out (of the given grid and block size), which the caller may
-  // overwrite: the next factorization writes the Schur complement in it again.
+  // overwrite: the next factorization writes the Schur complement in it again. Or handed
+  // over (the next factorization allocates it again).
   std::vector<T> &SchurBlocks() { return schur; }
+  std::vector<T> ReleaseSchurBlocks()
+  {
+    std::vector<T> s;
+    s.swap(schur);
+    return s;
+  }
 
   void SolveInternal(const std::vector<const VecType *> &X,
                      const std::vector<VecType *> &Y) override;

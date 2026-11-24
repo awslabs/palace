@@ -191,15 +191,13 @@ private:
   // The functionals l_j of the environment's ports at ω.
   std::vector<const ComplexVector *> PortFunctionals(double omega);
   // Condense the environment at ω and solve all excitations, and the record of the model
-  // (on rank 0), with the condensed functionals of the environment's ports,
-  // h_j = Reduce(l_j), and c_jk = l_j^T u_k - h_j^T u_Γ,k.
+  // (see DrivenSubstructureModel::Record), with the condensed functionals of the
+  // environment's ports, h_j = Reduce(l_j), and c_jk = l_j^T u_k - h_j^T u_Γ,k.
   Record CondenseAndSolve(double omega, bool with_record);
   // The record alone, from the environment (not factoring the region): with the condensed
   // sources g_k and interior solutions x_k = A_EE^-1 b_E,k (Γ held at 0) of the excitations
   // with environment sources, c_jk = l_j^T x_k, since l_j^T u_k = l_j^T x_k + h_j^T u_Γ,k.
   Record EnvironmentRecord(double omega);
-  // A record on root as a sample, which it then frees. Collective.
-  std::vector<std::complex<double>> Share(Record &&rec);
   void ScaleRecord(std::vector<std::complex<double>> &x, bool inverse);
   // Adaptive: sample the environment for the rational model, and check its passivity.
   void SampleEnvironment();
@@ -396,7 +394,7 @@ std::vector<const ComplexVector *> DrivenSubstructuredSweep::PortFunctionals(dou
 }
 
 // Offline: condense the environment at ω and solve all excitations, and the record of the
-// model (on rank 0), with the condensed functionals of the environment's ports,
+// model, with the condensed functionals of the environment's ports,
 // h_j = Reduce(l_j), and c_jk = l_j^T u_k - h_j^T u_Γ,k.
 DrivenSubstructureModel::Record DrivenSubstructuredSweep::CondenseAndSolve(double omega,
                                                                            bool with_record)
@@ -422,9 +420,9 @@ DrivenSubstructureModel::Record DrivenSubstructuredSweep::CondenseAndSolve(doubl
     }
   }
   Mpi::GlobalSum(static_cast<int>(lu.size()), lu.data(), comm);
+  rec.S = ds->TakeSchur();
   if (root)
   {
-    rec.S = ds->TakeSchur();
     const auto &gl = ds->EnvironmentSourceCondensation();
     const auto &uG = ds->InterfaceSolution();
     for (int e = 0; e < ne; e++)
@@ -475,40 +473,13 @@ DrivenSubstructureModel::Record DrivenSubstructuredSweep::EnvironmentRecord(doub
     }
   }
   Mpi::GlobalSum(static_cast<int>(c.size()), c.data(), comm);
+  rec.S = ds->TakeSchur();
   if (root)
   {
-    rec.S = ds->TakeSchur();
     rec.g = std::move(g);
     rec.c = std::move(c);
   }
   return rec;
-}
-
-std::vector<std::complex<double>> DrivenSubstructuredSweep::Share(Record &&rec)
-{
-  // S_E (column-major, on root) by the columns of its lower triangle, sent in chunks.
-  auto x = substructuring::FromRoot<std::complex<double>>(
-      comm, substructuring::TriangleShareSizes(nG, comm), substructuring::kTriangleChunk,
-      [&rec, this](long long e, long long m, std::complex<double> *y)
-      {
-        auto [a, b] = substructuring::TriangleEntry(nG, e);
-        for (long long k = 0; k < m; k++)
-        {
-          y[k] = rec.S[static_cast<std::size_t>(b) * nG + a];
-          if (++a == nG)
-          {
-            a = ++b;
-          }
-        }
-      });
-  if (root)
-  {
-    x.insert(x.end(), rec.g.begin(), rec.g.end());
-    x.insert(x.end(), rec.h.begin(), rec.h.end());
-    x.insert(x.end(), rec.c.begin(), rec.c.end());
-  }
-  rec = Record();
-  return x;
 }
 
 void DrivenSubstructuredSweep::ScaleRecord(std::vector<std::complex<double>> &x,
@@ -560,11 +531,18 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   auto sample = [&](double omega)
   {
     auto rec = EnvironmentRecord(omega);
-    if (save && root)
+    if (save)
     {
-      model.AppendRecord(model_path, rec);
+      model.AppendRecord(model_path, rec, comm);
     }
-    auto x = Share(std::move(rec));
+    // The sample: the share of S_E, then on root the parts after it.
+    auto x = std::move(rec.S);
+    if (root)
+    {
+      x.insert(x.end(), rec.g.begin(), rec.g.end());
+      x.insert(x.end(), rec.h.begin(), rec.h.end());
+      x.insert(x.end(), rec.c.begin(), rec.c.end());
+    }
     ScaleRecord(x, false);
     double err = std::numeric_limits<double>::infinity();
     if (fit.Samples().size() >= 2)
@@ -712,9 +690,9 @@ ErrorIndicator DrivenSubstructuredSweep::Run()
     {
       BlockTimer bt(Timer::KSP);
       const auto rec = CondenseAndSolve(omega, save);
-      if (save && root)
+      if (save)
       {
-        model.AppendRecord(model_path, rec);
+        model.AppendRecord(model_path, rec, comm);
       }
     }
     for (int k = (omega_i == first_freq) ? static_cast<int>(first_ex) : 0; k < n; k++)

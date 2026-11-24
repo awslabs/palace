@@ -823,6 +823,33 @@ void CheckTriangleRedistribution(int n, bool mapped)
       err = std::max(err, std::abs(local[grid.LocalIndex(g, h)] - expected(g, h)));
     }
   }
+
+  // Back to the share of each process of the lower triangle, from the grid, and from the
+  // matrix on rank 0.
+  if constexpr (std::is_same_v<T, std::complex<double>>)
+  {
+    std::vector<T> full(Mpi::Root(comm) ? static_cast<std::size_t>(n) * n : 0);
+    for (std::size_t q = 0; q < full.size(); q++)
+    {
+      full[q] = expected(static_cast<int>(q % n), static_cast<int>(q / n));
+    }
+    const auto from_grid = substructuring::ShareFromGrid(grid, local),
+               from_root = substructuring::ShareFromRoot(comm, n, full);
+    const auto range = substructuring::TriangleShare(n, comm);
+    REQUIRE(from_grid.size() == static_cast<std::size_t>(range[1] - range[0]));
+    REQUIRE(from_root.size() == from_grid.size());
+    const auto entry = substructuring::TriangleEntry(n, range[0]);
+    long long a = entry[0], b = entry[1];
+    for (std::size_t k = 0; k < from_grid.size(); k++)
+    {
+      const T v = expected(static_cast<int>(a), static_cast<int>(b));
+      err = std::max({err, std::abs(from_grid[k] - v), std::abs(from_root[k] - v)});
+      if (++a == n)
+      {
+        a = ++b;
+      }
+    }
+  }
   Mpi::GlobalMax(1, &err, comm);
   CHECK(err == 0.0);
 }
