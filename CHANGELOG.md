@@ -61,6 +61,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - Surface-response-corrected runs write `surface-participation.csv`: per adaptive level
     the raw and corrected participations with their verdicts and a convergence indicator.
+    The optional `"Verdict"` member of the `Resolution.BarsFile` file replaces the built-in
+    verdict data. SchemaVer 6-1-1
   - Added the configuration keys of the surface-response correction and of the features
     below to the schema, all optional (a configuration accepted before is accepted with the
     same meaning): `Solver.SurfaceResponseCorrection`; `Solver.Electrostatic`

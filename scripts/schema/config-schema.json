@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-1-0",
+  "$id": "urn:palace:schema:6-1-1",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3954,7 +3954,7 @@
                 },
                 "BarsFile": {
                   "type": "string",
-                  "description": "Optional bars file for the run's matching radius: {\"RadiusMicrons\": R, \"Bars\": {\"1\": {\"b5\": null or a number, \"b10\": a number}, ..., \"4\": ...}}. Its radius must equal the run's matching radius (else a config error). Absent: the built-in INTERIM bars (R = 1.9 um only)."
+                  "description": "Optional bars file for the run's matching radius: {\"RadiusMicrons\": R, \"Bars\": {\"1\": {\"b5\": null or a number, \"b10\": a number}, ..., \"4\": ...}}, with an optional \"Verdict\" member, the verdict data of the per-iteration table `surface-participation.csv` (absent: the built-in data). Its radius must equal the run's matching radius (else a config error). Absent: the built-in INTERIM bars (R = 1.9 um only)."
                 }
               }
             },
