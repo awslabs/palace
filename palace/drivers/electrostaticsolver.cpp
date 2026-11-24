@@ -19,6 +19,7 @@
 #include "utils/communication.hpp"
 #include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
@@ -111,7 +112,7 @@ std::pair<double, double> CgRitzValueRange(const std::vector<double> &alpha,
 }
 
 template <typename T>
-void WriteArchiveValue(std::ofstream &stream, const T &value)
+void WriteArchiveValue(std::ostream &stream, const T &value)
 {
   stream.write(reinterpret_cast<const char *>(&value), sizeof(value));
 }
@@ -128,23 +129,28 @@ void WriteArchivedVector(const std::filesystem::path &directory, int source,
   const int rank = Mpi::Rank(comm);
   const int size = Mpi::Size(comm);
   const auto path = ArchivePath(directory, source, rank, field);
-  std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-  MFEM_VERIFY(stream,
-              "Unable to create response archive field \"" << path.string() << "\"!");
   const std::int64_t source_value = source;
   const std::int64_t rank_value = rank;
   const std::int64_t size_value = size;
   const std::int64_t local_size = vector.Size();
-  WriteArchiveValue(stream, response_archive_magic);
-  WriteArchiveValue(stream, response_archive_version);
-  WriteArchiveValue(stream, static_cast<std::uint32_t>(field));
-  WriteArchiveValue(stream, source_value);
-  WriteArchiveValue(stream, rank_value);
-  WriteArchiveValue(stream, size_value);
-  WriteArchiveValue(stream, local_size);
-  stream.write(reinterpret_cast<const char *>(vector.HostRead()),
-               local_size * sizeof(double));
-  MFEM_VERIFY(stream, "Failed writing response archive field \"" << path.string() << "\"!");
+  // One field per rank, written by every rank (collective; binary, as by WriteFile).
+  std::string error;
+  WriteRankOutputFile(
+      path,
+      [&](std::ostream &stream)
+      {
+        WriteArchiveValue(stream, response_archive_magic);
+        WriteArchiveValue(stream, response_archive_version);
+        WriteArchiveValue(stream, static_cast<std::uint32_t>(field));
+        WriteArchiveValue(stream, source_value);
+        WriteArchiveValue(stream, rank_value);
+        WriteArchiveValue(stream, size_value);
+        WriteArchiveValue(stream, local_size);
+        stream.write(reinterpret_cast<const char *>(vector.HostRead()),
+                     local_size * sizeof(double));
+      },
+      error);
+  AbortOnOutputFileErrors(comm, error);
 }
 
 Vector ReadArchivedVector(const std::filesystem::path &directory, int source,
@@ -621,9 +627,8 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
     }
     if (root)
     {
-      std::ofstream stream(post_dir / "archive-estimates.json");
-      stream << report.dump(2) << '\n';
-      MFEM_VERIFY(stream, "Cannot write archive diagnostic report!");
+      WriteOutputFile(post_dir / "archive-estimates.json",
+                      [&](std::ostream &stream) { stream << report.dump(2) << '\n'; });
     }
   };
   // One small rank-layout record per rank, never a replicated mesh.
@@ -684,20 +689,26 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
       }
       return fmt::format("{:016x}", hash);
     };
-    std::ofstream layout(post_dir /
-                         fmt::format("archive-layout-rank-{:06d}.json", Mpi::Rank(comm)));
-    layout << json({{"Rank", Mpi::Rank(comm)},
-                    {"H1TrueDofs", Grad.Width()},
-                    {"H1LayoutFNV1a64", Fingerprint(laplace_op.GetH1Space())},
-                    {"NDLayoutFNV1a64", Fingerprint(laplace_op.GetNDSpace())},
-                    {"RTLayoutFNV1a64", Fingerprint(laplace_op.GetRTSpace())},
-                    {"NDTrueDofs", Grad.Height()},
-                    {"RTTrueDofs", laplace_op.GetRTSpace().GetTrueVSize()},
-                    {"FluxTrueDofs", estimator.GetFluxSpace().GetTrueVSize()},
-                    {"LocalElements", laplace_op.GetMesh().GetNE()}})
-                  .dump(2)
-           << '\n';
-    MFEM_VERIFY(layout, "Cannot write archive rank layout!");
+    // One record per rank, written by every rank (collective).
+    std::string error;
+    WriteRankOutputFile(
+        post_dir / fmt::format("archive-layout-rank-{:06d}.json", Mpi::Rank(comm)),
+        [&](std::ostream &layout)
+        {
+          layout << json({{"Rank", Mpi::Rank(comm)},
+                          {"H1TrueDofs", Grad.Width()},
+                          {"H1LayoutFNV1a64", Fingerprint(laplace_op.GetH1Space())},
+                          {"NDLayoutFNV1a64", Fingerprint(laplace_op.GetNDSpace())},
+                          {"RTLayoutFNV1a64", Fingerprint(laplace_op.GetRTSpace())},
+                          {"NDTrueDofs", Grad.Height()},
+                          {"RTTrueDofs", laplace_op.GetRTSpace().GetTrueVSize()},
+                          {"FluxTrueDofs", estimator.GetFluxSpace().GetTrueVSize()},
+                          {"LocalElements", laplace_op.GetMesh().GetNE()}})
+                        .dump(2)
+                 << '\n';
+        },
+        error);
+    AbortOnOutputFileErrors(comm, error);
   }
   auto Finite = [&](const Vector &v)
   {
@@ -980,11 +991,14 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
           (original == std::array<int, 4>{Q::p_trial, Q::q_order_jac, Q::q_order_extra_pk,
                                           Q::q_order_extra_qk}),
           "Surface-only sweep modified global quadrature defaults!");
-      std::ofstream rules_file(
+      // One file per rank, written by every rank (collective).
+      std::string error;
+      WriteRankOutputFile(
           post_dir / fmt::format("archive-quadrature-case-{:04d}-rank-{:06d}.json",
-                                 case_number, Mpi::Rank(comm)));
-      rules_file << local_rules.dump(2) << '\n';
-      MFEM_VERIFY(rules_file, "Cannot write surface quadrature rule evidence!");
+                                 case_number, Mpi::Rank(comm)),
+          [&](std::ostream &rules_file) { rules_file << local_rules.dump(2) << '\n'; },
+          error);
+      AbortOnOutputFileErrors(comm, error);
     }
     for (const auto &[idx, surface] : energies.interfaces)
     {
@@ -1008,29 +1022,38 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
     {
       const auto filename = fmt::format("archive-elements-case-{:04d}-rank-{:06d}.csv",
                                         case_number, Mpi::Rank(comm));
-      std::ofstream elements(post_dir / filename);
-      elements
-          << "local_element,attribute,center_x_m,center_y_m,center_z_m,eta_raw_squared_J\n"
-          << std::setprecision(17);
-      auto &local_mesh = laplace_op.GetH1Space().GetMesh().Get();
-      mfem::Vector center(local_mesh.SpaceDimension());
-      for (int i = 0; i < raw.Local().Size(); i++)
-      {
-        local_mesh.GetElementCenter(i, center);
-        const double eta = raw.Local().HostRead()[i];
-        const double eta_squared_j = eta * eta * energy_scale;
-        MFEM_VERIFY(std::isfinite(eta_squared_j), "Nonfinite localized indicator!");
-        elements << i << ',' << local_mesh.GetAttribute(i);
-        for (int j = 0; j < 3; j++)
-        {
-          const double coordinate =
-              j < center.Size() ? iodata.units.Dimensionalize<VT::LENGTH>(center[j]) : 0.0;
-          MFEM_VERIFY(std::isfinite(coordinate), "Nonfinite element center!");
-          elements << ',' << coordinate;
-        }
-        elements << ',' << eta_squared_j << '\n';
-      }
-      MFEM_VERIFY(elements, "Cannot write localized archive indicators!");
+      // One file per rank, written by every rank (collective: the failures of all ranks
+      // abort together).
+      std::string error;
+      WriteRankOutputFile(
+          post_dir / filename,
+          [&](std::ostream &elements)
+          {
+            elements << "local_element,attribute,center_x_m,center_y_m,center_z_m,eta_raw_"
+                        "squared_J\n"
+                     << std::setprecision(17);
+            auto &local_mesh = laplace_op.GetH1Space().GetMesh().Get();
+            mfem::Vector center(local_mesh.SpaceDimension());
+            for (int i = 0; i < raw.Local().Size(); i++)
+            {
+              local_mesh.GetElementCenter(i, center);
+              const double eta = raw.Local().HostRead()[i];
+              const double eta_squared_j = eta * eta * energy_scale;
+              MFEM_VERIFY(std::isfinite(eta_squared_j), "Nonfinite localized indicator!");
+              elements << i << ',' << local_mesh.GetAttribute(i);
+              for (int j = 0; j < 3; j++)
+              {
+                const double coordinate =
+                    j < center.Size() ? iodata.units.Dimensionalize<VT::LENGTH>(center[j])
+                                      : 0.0;
+                MFEM_VERIFY(std::isfinite(coordinate), "Nonfinite element center!");
+                elements << ',' << coordinate;
+              }
+              elements << ',' << eta_squared_j << '\n';
+            }
+          },
+          error);
+      AbortOnOutputFileErrors(comm, error);
     }
     aggregate.AddIndicator(raw.Local());
     report["Excitations"].push_back(result);
@@ -1324,7 +1347,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // measured for the record's RawShareByEnergy and surface-response-geometry-fallbacks.csv
   // (written only when a fallback fired).
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion> geometry_fallback_portions;
-  std::unique_ptr<std::ofstream> geometry_fallback_csv;
+  bool geometry_fallback_csv_started = false;
   auto MeasureGeometryFallbacks = [&](int source, const EnergyData &energies)
   {
     if (geometry_fallback_portions.empty())
@@ -1394,33 +1417,35 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         length += entry.length;
       }
     }
-    if (!geometry_fallback_csv)
-    {
-      // OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2): a real top-level file on
-      // every adaptive cycle (see the exclusion-energy table below).
-      std::filesystem::remove(post_dir / "surface-response-geometry-fallbacks.csv");
-      geometry_fallback_csv = std::make_unique<std::ofstream>(
-          post_dir / "surface-response-geometry-fallbacks.csv");
-      *geometry_fallback_csv
-          << "source,class,type,count,length (m),raw energy (J),within-R "
-             "energy (J),share\n"
-          << std::setprecision(17);
-    }
-    for (const auto &[cls, by_type] : fallback_by_class_type)
-    {
-      for (const auto &[name, energy] : by_type)
-      {
-        const double within = within_by_type[name];
-        const auto [count, length] = entries_by_class_type[cls][name];
-        *geometry_fallback_csv
-            << source << "," << cls << "," << name << "," << count << ","
-            << iodata.units.Dimensionalize<Units::ValueType::LENGTH>(length) << ","
-            << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy) << ","
-            << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(within) << ","
-            << (within > 0.0 ? energy / within : 0.0) << "\n";
-      }
-    }
-    geometry_fallback_csv->flush();
+    // OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2): a real top-level file on
+    // every adaptive cycle (see the exclusion-energy table below): the first call of a
+    // cycle replaces the table, the others append to it.
+    WriteOutputFile(
+        post_dir / "surface-response-geometry-fallbacks.csv",
+        [&](std::ostream &csv)
+        {
+          if (!geometry_fallback_csv_started)
+          {
+            csv << "source,class,type,count,length (m),raw energy (J),within-R "
+                   "energy (J),share\n";
+          }
+          csv << std::setprecision(17);
+          for (const auto &[cls, by_type] : fallback_by_class_type)
+          {
+            for (const auto &[name, energy] : by_type)
+            {
+              const double within = within_by_type[name];
+              const auto [count, length] = entries_by_class_type[cls][name];
+              csv << source << "," << cls << "," << name << "," << count << ","
+                  << iodata.units.Dimensionalize<Units::ValueType::LENGTH>(length) << ","
+                  << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy) << ","
+                  << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(within) << ","
+                  << (within > 0.0 ? energy / within : 0.0) << "\n";
+            }
+          }
+        },
+        geometry_fallback_csv_started ? std::ios::app : std::ios::trunc);
+    geometry_fallback_csv_started = true;
   };
   // OI-COVERAGE-EXCLUSION-ENERGY (idfix DESIGN section 8; decisions 1064 (2) / 1074): with
   // Diagnostics.ExclusionEnergy on, the raw within-R energy of the EXCLUDED / unclaimed
@@ -1429,7 +1454,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // surface-response-exclusion-energy.csv. A diagnostic partition: no energy column of any
   // other table changes; nothing is written when the flag is off.
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion> exclusion_energy_portions;
-  std::unique_ptr<std::ofstream> exclusion_energy_csv;
+  bool exclusion_energy_csv_started = false;
   auto MeasureExclusionEnergy = [&](int source, const EnergyData &energies)
   {
     if (!response_correction || !response_correction->ExclusionEnergyRequested())
@@ -1499,34 +1524,37 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         length += std::sqrt(length2);
       }
     }
-    if (!exclusion_energy_csv)
-    {
-      // OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE (fix round P2): on a later adaptive cycle the
-      // path is the symlink SaveIteration left into the previous cycle's archive folder;
-      // remove it first so this cycle's table is a real top-level file (the F-18 SaveMesh
-      // form) and the archived one keeps its cycle's content.
-      std::filesystem::remove(post_dir / "surface-response-exclusion-energy.csv");
-      exclusion_energy_csv = std::make_unique<std::ofstream>(
-          post_dir / "surface-response-exclusion-energy.csv");
-      *exclusion_energy_csv << "source,class,type,class portions,class length (m),raw "
-                               "energy (J),interface raw energy (J),share\n"
-                            << std::setprecision(17);
-    }
-    for (const auto &[cls, by_type] : excluded_by_class_type)
-    {
-      const auto [count, length] = portions_by_class[cls];
-      for (const auto &[name, energy] : by_type)
-      {
-        const double interface_raw = interface_raw_by_type[name];
-        *exclusion_energy_csv
-            << source << "," << cls << "," << name << "," << count << ","
-            << iodata.units.Dimensionalize<Units::ValueType::LENGTH>(length) << ","
-            << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy) << ","
-            << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(interface_raw) << ","
-            << (interface_raw > 0.0 ? energy / interface_raw : 0.0) << "\n";
-      }
-    }
-    exclusion_energy_csv->flush();
+    // The first call of a cycle replaces the table, the others append to it. On a later
+    // adaptive cycle the path is the symlink SaveIteration left into the previous cycle's
+    // archive folder: it is replaced, not followed, so this cycle's table is a real
+    // top-level file and the archived one keeps its cycle's content
+    // (OI-ES-EXCLUSION-CSV-SYMLINK-OVERWRITE, fix round P2).
+    WriteOutputFile(
+        post_dir / "surface-response-exclusion-energy.csv",
+        [&](std::ostream &csv)
+        {
+          if (!exclusion_energy_csv_started)
+          {
+            csv << "source,class,type,class portions,class length (m),raw "
+                   "energy (J),interface raw energy (J),share\n";
+          }
+          csv << std::setprecision(17);
+          for (const auto &[cls, by_type] : excluded_by_class_type)
+          {
+            const auto [count, length] = portions_by_class[cls];
+            for (const auto &[name, energy] : by_type)
+            {
+              const double interface_raw = interface_raw_by_type[name];
+              csv << source << "," << cls << "," << name << "," << count << ","
+                  << iodata.units.Dimensionalize<Units::ValueType::LENGTH>(length) << ","
+                  << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(energy) << ","
+                  << iodata.units.Dimensionalize<Units::ValueType::ENERGY>(interface_raw)
+                  << "," << (interface_raw > 0.0 ? energy / interface_raw : 0.0) << "\n";
+            }
+          }
+        },
+        exclusion_energy_csv_started ? std::ios::app : std::ios::trunc);
+    exclusion_energy_csv_started = true;
   };
   // The SpatialClusterPriority raw remainders (decision 922) likewise.
   std::vector<SurfacePostOperator::UncoveredPerimeterPortion>
@@ -1980,25 +2008,30 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     const bool first = coverage_measurements.size() == 1;
     for (const auto &path : {coverage_path, coverage_by_key_path, budget_path})
     {
-      std::ofstream output(path, first ? std::ios::out | std::ios::trunc
-                                       : std::ios::out | std::ios::app);
-      MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
-      if (path == coverage_path)
-      {
-        output << (first ? CoverageTableHeader("i") : "");
-        WriteCoverageRows(output, std::to_string(source), measurement, iodata.units);
-      }
-      else if (path == budget_path)
-      {
-        output << (first ? NearEdgeBudgetTableHeader("i") : "");
-        WriteNearEdgeBudgetRows(output, std::to_string(source), measurement, iodata.units);
-      }
-      else
-      {
-        output << (first ? CoverageByKeyTableHeader("i", targets) : "");
-        WriteCoverageByKeyRows(output, std::to_string(source), measurement, targets,
-                               CoveragePortionsByFeature(uncovered_portions), iodata.units);
-      }
+      WriteOutputFile(
+          path,
+          [&](std::ostream &output)
+          {
+            if (path == coverage_path)
+            {
+              output << (first ? CoverageTableHeader("i") : "");
+              WriteCoverageRows(output, std::to_string(source), measurement, iodata.units);
+            }
+            else if (path == budget_path)
+            {
+              output << (first ? NearEdgeBudgetTableHeader("i") : "");
+              WriteNearEdgeBudgetRows(output, std::to_string(source), measurement,
+                                      iodata.units);
+            }
+            else
+            {
+              output << (first ? CoverageByKeyTableHeader("i", targets) : "");
+              WriteCoverageByKeyRows(output, std::to_string(source), measurement, targets,
+                                     CoveragePortionsByFeature(uncovered_portions),
+                                     iodata.units);
+            }
+          },
+          (first) ? std::ios::trunc : std::ios::app);
     }
     response_correction->GetCoverageRunRecord().Add({{"i", static_cast<double>(source)}},
                                                     measurement);
@@ -2033,32 +2066,37 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
       return CsvNumber(worst);
     };
-    std::ofstream output(post_dir / "terminal-C-corrected-coverage.csv");
-    MFEM_VERIFY(output, "Unable to open terminal-C-corrected-coverage.csv for writing!");
-    output << "i";
-    for (const auto &[idx2, data2] : terminal_sources)
-    {
-      (void)data2;
-      output << fmt::format(",coverage status[i][{}]", idx2);
-    }
-    output << ",source final worst coverage status,source final worst uncovered raw share "
-              "of W,source re-measured\n";
-    std::size_t i = 0;
-    for (const auto &[idx, data] : terminal_sources)
-    {
-      (void)data;
-      output << idx;
-      for (std::size_t j = 0; j < final_coverage.size(); j++)
-      {
-        const auto a = Worst(final_coverage[i]), b = Worst(final_coverage[j]);
-        output << ','
-               << CoverageStatusName(CoverageStatusRank(a) >= CoverageStatusRank(b) ? a
-                                                                                    : b);
-      }
-      output << ',' << CoverageStatusName(Worst(final_coverage[i])) << ','
-             << WorstShare(final_coverage[i]) << ',' << (remeasured[i] ? 1 : 0) << '\n';
-      i++;
-    }
+    WriteOutputFile(
+        post_dir / "terminal-C-corrected-coverage.csv",
+        [&](std::ostream &output)
+        {
+          output << "i";
+          for (const auto &[idx2, data2] : terminal_sources)
+          {
+            (void)data2;
+            output << fmt::format(",coverage status[i][{}]", idx2);
+          }
+          output << ",source final worst coverage status,source final worst uncovered raw "
+                    "share "
+                    "of W,source re-measured\n";
+          std::size_t i = 0;
+          for (const auto &[idx, data] : terminal_sources)
+          {
+            (void)data;
+            output << idx;
+            for (std::size_t j = 0; j < final_coverage.size(); j++)
+            {
+              const auto a = Worst(final_coverage[i]), b = Worst(final_coverage[j]);
+              output << ','
+                     << CoverageStatusName(
+                            CoverageStatusRank(a) >= CoverageStatusRank(b) ? a : b);
+            }
+            output << ',' << CoverageStatusName(Worst(final_coverage[i])) << ','
+                   << WorstShare(final_coverage[i]) << ',' << (remeasured[i] ? 1 : 0)
+                   << '\n';
+            i++;
+          }
+        });
   };
 
   // Main loop over terminal boundaries.
@@ -2718,17 +2756,19 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         if (root)
         {
           const bool first = coverage_measurements.size() == 1;
-          std::ofstream output(resolution_path, first ? std::ios::out | std::ios::trunc
-                                                      : std::ios::out | std::ios::app);
-          MFEM_VERIFY(output,
-                      "Unable to open " << resolution_path.string() << " for writing!");
-          output << (first ? ResolutionTableHeader("i") : "");
-          WriteResolutionRows(output, std::to_string(idx), resolution_cells);
-          for (const auto &cell : resolution_cells)
-          {
-            response_correction->GetResolutionRunRecord().entries.push_back(
-                {{{"i", static_cast<double>(idx)}}, cell});
-          }
+          WriteOutputFile(
+              resolution_path,
+              [&](std::ostream &output)
+              {
+                output << (first ? ResolutionTableHeader("i") : "");
+                WriteResolutionRows(output, std::to_string(idx), resolution_cells);
+                for (const auto &cell : resolution_cells)
+                {
+                  response_correction->GetResolutionRunRecord().entries.push_back(
+                      {{{"i", static_cast<double>(idx)}}, cell});
+                }
+              },
+              (first) ? std::ios::trunc : std::ios::app);
         }
       }
     }
@@ -3280,97 +3320,105 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       // write (the previous adaptive iteration's symlink into its archive folder, and any
       // table of an earlier attempt in the same directory, never survive a solve without
       // portions; decision 473 (3)).
-      std::ofstream output(path);
-      MFEM_VERIFY(output, "Unable to open " << path.filename().string() << " for writing!");
-      output << "source,evaluation,type,portions,length (m)," << extra_header;
-      for (const auto &[interface, data] : interfaces)
-      {
-        (void)data;
-        output << fmt::format(",{} raw energy[{}] (J),{} share[{}]", energy_label,
-                              interface, energy_label, interface);
-      }
-      output << '\n';
-      auto Append = [&](int source, int evaluation, const std::string &type,
-                        const PortionTypeRow &portions, const PortionEnergies &energies_map,
-                        const EnergyData &energies, bool available, bool extra_is_length)
-      {
-        output << fmt::format(
-            "{},{},{},{},{},", source, evaluation, type, portions.portions,
-            CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(portions.length)));
-        if (extra_is_length)
-        {
-          output << CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(portions.extra));
-        }
-        else
-        {
-          output << fmt::format("{}", static_cast<int>(std::lround(portions.extra)));
-        }
-        for (const auto &[interface, interface_data] : interfaces)
-        {
-          (void)interface_data;
-          double energy = nan, share = nan;
-          const auto it = energies_map.find(interface);
-          if (available && it != energies_map.end())
+      WriteOutputFile(
+          path,
+          [&](std::ostream &output)
           {
-            if (type == "Total")
+            output << "source,evaluation,type,portions,length (m)," << extra_header;
+            for (const auto &[interface, data] : interfaces)
             {
-              energy = it->second.energy;
+              (void)data;
+              output << fmt::format(",{} raw energy[{}] (J),{} share[{}]", energy_label,
+                                    interface, energy_label, interface);
             }
-            else
+            output << '\n';
+            auto Append =
+                [&](int source, int evaluation, const std::string &type,
+                    const PortionTypeRow &portions, const PortionEnergies &energies_map,
+                    const EnergyData &energies, bool available, bool extra_is_length)
             {
-              const auto by_type = it->second.by_type.find(type);
-              energy = by_type != it->second.by_type.end() ? by_type->second : 0.0;
+              output << fmt::format(
+                  "{},{},{},{},{},", source, evaluation, type, portions.portions,
+                  CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(portions.length)));
+              if (extra_is_length)
+              {
+                output << CsvNumber(
+                    iodata.units.Dimensionalize<VT::LENGTH>(portions.extra));
+              }
+              else
+              {
+                output << fmt::format("{}", static_cast<int>(std::lround(portions.extra)));
+              }
+              for (const auto &[interface, interface_data] : interfaces)
+              {
+                (void)interface_data;
+                double energy = nan, share = nan;
+                const auto it = energies_map.find(interface);
+                if (available && it != energies_map.end())
+                {
+                  if (type == "Total")
+                  {
+                    energy = it->second.energy;
+                  }
+                  else
+                  {
+                    const auto by_type = it->second.by_type.find(type);
+                    energy = by_type != it->second.by_type.end() ? by_type->second : 0.0;
+                  }
+                  const auto corrected = energies.interfaces.find(interface);
+                  share = corrected != energies.interfaces.end() &&
+                                  corrected->second.energy > 0.0
+                              ? energy / corrected->second.energy
+                              : nan;
+                  energy = iodata.units.Dimensionalize<VT::ENERGY>(energy);
+                }
+                output << fmt::format(",{},{}", CsvNumber(energy), CsvNumber(share));
+              }
+              output << '\n';
+            };
+            const bool extra_is_length = extra_header.find("(m)") != std::string::npos;
+            for (std::size_t k = 0; k < corrected_results.size(); k++)
+            {
+              const auto &result = corrected_results[k];
+              PortionTypeRow source_total = portions_total;
+              if (source_portions_by_type)
+              {
+                source_total = PortionTypeRow();
+                for (const auto &[type, entry] : source_portions_by_type->at(k))
+                {
+                  source_total.portions += entry.portions;
+                  source_total.length += entry.length;
+                  source_total.extra += entry.extra;
+                }
+              }
+              for (const auto &[type, all_portions] : portions_by_type)
+              {
+                PortionTypeRow portions = all_portions;
+                if (source_portions_by_type)
+                {
+                  const auto own = source_portions_by_type->at(k).find(type);
+                  portions = own != source_portions_by_type->at(k).end() ? own->second
+                                                                         : PortionTypeRow();
+                }
+                Append(result.source, 0, type, portions, energies_of(result, false),
+                       result.postprocessed_fixed_trace, result.has_postprocessed,
+                       extra_is_length);
+                Append(result.source, 1, type, portions, energies_of(result, false),
+                       result.postprocessed_fixed_flux, result.has_postprocessed,
+                       extra_is_length);
+                Append(result.source, 2, type, portions, energies_of(result, true),
+                       result.corrected, result.has_self_consistent, extra_is_length);
+              }
+              Append(result.source, 0, "Total", source_total, energies_of(result, false),
+                     result.postprocessed_fixed_trace, result.has_postprocessed,
+                     extra_is_length);
+              Append(result.source, 1, "Total", source_total, energies_of(result, false),
+                     result.postprocessed_fixed_flux, result.has_postprocessed,
+                     extra_is_length);
+              Append(result.source, 2, "Total", source_total, energies_of(result, true),
+                     result.corrected, result.has_self_consistent, extra_is_length);
             }
-            const auto corrected = energies.interfaces.find(interface);
-            share = corrected != energies.interfaces.end() && corrected->second.energy > 0.0
-                        ? energy / corrected->second.energy
-                        : nan;
-            energy = iodata.units.Dimensionalize<VT::ENERGY>(energy);
-          }
-          output << fmt::format(",{},{}", CsvNumber(energy), CsvNumber(share));
-        }
-        output << '\n';
-      };
-      const bool extra_is_length = extra_header.find("(m)") != std::string::npos;
-      for (std::size_t k = 0; k < corrected_results.size(); k++)
-      {
-        const auto &result = corrected_results[k];
-        PortionTypeRow source_total = portions_total;
-        if (source_portions_by_type)
-        {
-          source_total = PortionTypeRow();
-          for (const auto &[type, entry] : source_portions_by_type->at(k))
-          {
-            source_total.portions += entry.portions;
-            source_total.length += entry.length;
-            source_total.extra += entry.extra;
-          }
-        }
-        for (const auto &[type, all_portions] : portions_by_type)
-        {
-          PortionTypeRow portions = all_portions;
-          if (source_portions_by_type)
-          {
-            const auto own = source_portions_by_type->at(k).find(type);
-            portions = own != source_portions_by_type->at(k).end() ? own->second
-                                                                   : PortionTypeRow();
-          }
-          Append(result.source, 0, type, portions, energies_of(result, false),
-                 result.postprocessed_fixed_trace, result.has_postprocessed,
-                 extra_is_length);
-          Append(result.source, 1, type, portions, energies_of(result, false),
-                 result.postprocessed_fixed_flux, result.has_postprocessed,
-                 extra_is_length);
-          Append(result.source, 2, type, portions, energies_of(result, true),
-                 result.corrected, result.has_self_consistent, extra_is_length);
-        }
-        Append(result.source, 0, "Total", source_total, energies_of(result, false),
-               result.postprocessed_fixed_trace, result.has_postprocessed, extra_is_length);
-        Append(result.source, 1, "Total", source_total, energies_of(result, false),
-               result.postprocessed_fixed_flux, result.has_postprocessed, extra_is_length);
-        Append(result.source, 2, "Total", source_total, energies_of(result, true),
-               result.corrected, result.has_self_consistent, extra_is_length);
-      }
+          });
     };
     auto PortionLength = [](const auto &portion)
     {
@@ -3392,7 +3440,7 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // Section 8: a stale exclusion-energy table of an earlier run is removed alike; the
     // table of this run (when Diagnostics.ExclusionEnergy is on) was written per source
     // above and is not touched here.
-    if (!exclusion_energy_csv)
+    if (!exclusion_energy_csv_started)
     {
       std::filesystem::remove(post_dir / "surface-response-exclusion-energy.csv");
     }
@@ -3405,54 +3453,62 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     std::filesystem::remove(post_dir / "surface-response-model-raw-groups.csv");
     if (!raw_model_partitions.empty())
     {
-      std::ofstream energy(post_dir / "surface-response-model-raw-energy.csv");
-      MFEM_VERIFY(energy, "Unable to open surface-response-model-raw-energy.csv!");
-      energy << "source,evaluation,label";
-      for (const auto &[interface, data] : interfaces)
-      {
-        (void)data;
-        energy << fmt::format(",raw energy[{}] (J)", interface);
-      }
-      energy << '\n';
-      for (const auto &[source, partition_by_interface] : raw_model_partitions)
-      {
-        std::set<std::string> labels;
-        for (const auto &[interface, partition] : partition_by_interface)
-        {
-          (void)interface;
-          for (const auto &[label, value] : partition)
+      WriteOutputFile(
+          post_dir / "surface-response-model-raw-energy.csv",
+          [&](std::ostream &energy)
           {
-            (void)value;
-            labels.insert(label);
-          }
-        }
-        for (const auto &label : labels)
-        {
-          energy << fmt::format("{},{},{}", source, 0, label);
-          for (const auto &[interface, data] : interfaces)
-          {
-            (void)data;
-            const auto partition = partition_by_interface.find(interface);
-            double value = 0.0;
-            if (partition != partition_by_interface.end())
+            energy << "source,evaluation,label";
+            for (const auto &[interface, data] : interfaces)
             {
-              const auto entry = partition->second.find(label);
-              value = entry != partition->second.end() ? entry->second : 0.0;
+              (void)data;
+              energy << fmt::format(",raw energy[{}] (J)", interface);
             }
-            energy << "," << CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(value));
-          }
-          energy << '\n';
-        }
-      }
-      std::ofstream groups(post_dir / "surface-response-model-raw-groups.csv");
-      MFEM_VERIFY(groups, "Unable to open surface-response-model-raw-groups.csv!");
-      groups << "label,model,patches,weight length (m)\n";
-      for (const auto &member : response_correction->GetModelRawClaimPortions().members)
-      {
-        groups << fmt::format(
-            "{},{},{},{}\n", member.label, member.model, member.patches,
-            CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(member.weight_length)));
-      }
+            energy << '\n';
+            for (const auto &[source, partition_by_interface] : raw_model_partitions)
+            {
+              std::set<std::string> labels;
+              for (const auto &[interface, partition] : partition_by_interface)
+              {
+                (void)interface;
+                for (const auto &[label, value] : partition)
+                {
+                  (void)value;
+                  labels.insert(label);
+                }
+              }
+              for (const auto &label : labels)
+              {
+                energy << fmt::format("{},{},{}", source, 0, label);
+                for (const auto &[interface, data] : interfaces)
+                {
+                  (void)data;
+                  const auto partition = partition_by_interface.find(interface);
+                  double value = 0.0;
+                  if (partition != partition_by_interface.end())
+                  {
+                    const auto entry = partition->second.find(label);
+                    value = entry != partition->second.end() ? entry->second : 0.0;
+                  }
+                  energy << ","
+                         << CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(value));
+                }
+                energy << '\n';
+              }
+            }
+          });
+      WriteOutputFile(
+          post_dir / "surface-response-model-raw-groups.csv",
+          [&](std::ostream &groups)
+          {
+            groups << "label,model,patches,weight length (m)\n";
+            for (const auto &member :
+                 response_correction->GetModelRawClaimPortions().members)
+            {
+              groups << fmt::format(
+                  "{},{},{},{}\n", member.label, member.model, member.patches,
+                  CsvNumber(iodata.units.Dimensionalize<VT::LENGTH>(member.weight_length)));
+            }
+          });
     }
     if (!uncovered_portions.empty())
     {
@@ -3534,65 +3590,80 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         post_dir / "surface-response-spatial-cluster-priority-clipped-correction.csv");
     if (!clipped_correction_rows.empty())
     {
-      std::ofstream output(
-          post_dir / "surface-response-spatial-cluster-priority-clipped-correction.csv");
-      MFEM_VERIFY(output,
-                  "Unable to open "
-                  "surface-response-spatial-cluster-priority-clipped-correction.csv!");
-      output
-          << "# DERIVED (decisions 958 (b) / 960 / 969; OI-SCP-BOXGROW (ii-a)): parents = "
-             "the dropped coupon's response matrices K_type on the device trace sampled "
-             "at its own basis points (fab energy), the raw within-R interface energy of "
-             "its whole window (raw whole energy) and of the window outside every "
-             "cluster box (raw outside energy = the SpatialClusterPriority add-back of "
-             "surface-response-spatial-cluster-priority-energy.csv per patch); ratio = "
-             "fab / raw whole; clipped correction = (ratio - weight) x raw outside. The "
-             "weight column is the dropped coupon's model BLEND weight, the weight it "
-             "would carry if applied (1 on a whole-weight coupon), never the ownership "
-             "zeroing: the Weight column of "
-             "surface-response-spatial-cluster-priority-energy.csv reads 0 on a corner "
-             "the vertex rule owns and is not this column. Evaluation 0 = fixed trace on "
-             "the raw field, 1 = fixed flux on the raw field, 2 = the self-consistent "
-             "corrected field. Diagnostic only: no total carries these columns.\n";
-      output << "source,evaluation,patch,model,feature,weight";
-      for (const auto &[interface, data] : interfaces)
-      {
-        (void)data;
-        output << fmt::format(",fab energy[{0}] (J),raw whole energy[{0}] (J),raw outside "
-                              "energy[{0}] (J),ratio[{0}],clipped correction[{0}] (J)",
-                              interface);
-      }
-      output << '\n';
-      const double nan = std::numeric_limits<double>::quiet_NaN();
-      for (const auto &row : clipped_correction_rows)
-      {
-        output << fmt::format("{},{},{},{},{},{}", row.source, row.evaluation,
-                              row.diagnostic.patch + 1, row.diagnostic.model,
-                              row.diagnostic.feature, CsvNumber(row.diagnostic.weight));
-        for (const auto &[interface, data] : interfaces)
-        {
-          (void)data;
-          const auto &fab_map = row.fixed_flux
-                                    ? row.diagnostic.fabricated_surface_energy_fixed_flux
-                                    : row.diagnostic.fabricated_surface_energy;
-          const auto fab_it = fab_map.find(interface);
-          const auto whole_it = row.raw_whole.find(interface);
-          const auto outside_it = row.raw_outside.find(interface);
-          const double fab = fab_it != fab_map.end() ? fab_it->second : nan;
-          const double whole = whole_it != row.raw_whole.end() ? whole_it->second : 0.0;
-          const double outside =
-              outside_it != row.raw_outside.end() ? outside_it->second : 0.0;
-          const double ratio = whole > 0.0 && std::isfinite(fab) ? fab / whole : nan;
-          const double clipped =
-              std::isfinite(ratio) ? (ratio - row.diagnostic.weight) * outside : nan;
-          output << fmt::format(
-              ",{},{},{},{},{}", CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(fab)),
-              CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(whole)),
-              CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(outside)), CsvNumber(ratio),
-              CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(clipped)));
-        }
-        output << '\n';
-      }
+      WriteOutputFile(
+          post_dir / "surface-response-spatial-cluster-priority-clipped-correction.csv",
+          [&](std::ostream &output)
+          {
+            output << "# DERIVED (decisions 958 (b) / 960 / 969; OI-SCP-BOXGROW (ii-a)): "
+                      "parents = "
+                      "the dropped coupon's response matrices K_type on the device trace "
+                      "sampled "
+                      "at its own basis points (fab energy), the raw within-R interface "
+                      "energy of "
+                      "its whole window (raw whole energy) and of the window outside every "
+                      "cluster box (raw outside energy = the SpatialClusterPriority "
+                      "add-back of "
+                      "surface-response-spatial-cluster-priority-energy.csv per patch); "
+                      "ratio = "
+                      "fab / raw whole; clipped correction = (ratio - weight) x raw "
+                      "outside. The "
+                      "weight column is the dropped coupon's model BLEND weight, the "
+                      "weight it "
+                      "would carry if applied (1 on a whole-weight coupon), never the "
+                      "ownership "
+                      "zeroing: the Weight column of "
+                      "surface-response-spatial-cluster-priority-energy.csv reads 0 on a "
+                      "corner "
+                      "the vertex rule owns and is not this column. Evaluation 0 = fixed "
+                      "trace on "
+                      "the raw field, 1 = fixed flux on the raw field, 2 = the "
+                      "self-consistent "
+                      "corrected field. Diagnostic only: no total carries these columns.\n";
+            output << "source,evaluation,patch,model,feature,weight";
+            for (const auto &[interface, data] : interfaces)
+            {
+              (void)data;
+              output << fmt::format(
+                  ",fab energy[{0}] (J),raw whole energy[{0}] (J),raw outside "
+                  "energy[{0}] (J),ratio[{0}],clipped correction[{0}] (J)",
+                  interface);
+            }
+            output << '\n';
+            const double nan = std::numeric_limits<double>::quiet_NaN();
+            for (const auto &row : clipped_correction_rows)
+            {
+              output << fmt::format("{},{},{},{},{},{}", row.source, row.evaluation,
+                                    row.diagnostic.patch + 1, row.diagnostic.model,
+                                    row.diagnostic.feature,
+                                    CsvNumber(row.diagnostic.weight));
+              for (const auto &[interface, data] : interfaces)
+              {
+                (void)data;
+                const auto &fab_map =
+                    row.fixed_flux ? row.diagnostic.fabricated_surface_energy_fixed_flux
+                                   : row.diagnostic.fabricated_surface_energy;
+                const auto fab_it = fab_map.find(interface);
+                const auto whole_it = row.raw_whole.find(interface);
+                const auto outside_it = row.raw_outside.find(interface);
+                const double fab = fab_it != fab_map.end() ? fab_it->second : nan;
+                const double whole =
+                    whole_it != row.raw_whole.end() ? whole_it->second : 0.0;
+                const double outside =
+                    outside_it != row.raw_outside.end() ? outside_it->second : 0.0;
+                const double ratio = whole > 0.0 && std::isfinite(fab) ? fab / whole : nan;
+                const double clipped =
+                    std::isfinite(ratio) ? (ratio - row.diagnostic.weight) * outside : nan;
+                output << fmt::format(
+                    ",{},{},{},{},{}",
+                    CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(fab)),
+                    CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(whole)),
+                    CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(outside)),
+                    CsvNumber(ratio),
+                    CsvNumber(iodata.units.Dimensionalize<VT::ENERGY>(clipped)));
+              }
+              output << '\n';
+            }
+          });
     }
     if (!response_correction->GetConductorConsistencyUnionPortionRecord().portions.empty())
     {

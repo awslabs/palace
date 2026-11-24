@@ -12,6 +12,7 @@
 #include <utility>
 #include <vector>
 #include <nlohmann/json.hpp>
+#include "utils/outputfile.hpp"
 
 namespace palace
 {
@@ -34,9 +35,8 @@ public:
   // file behind.
   ~JsonArraySpill()
   {
-    if (os.is_open())
+    if (count > 0)
     {
-      os.close();
       std::remove(path.c_str());
     }
   }
@@ -54,57 +54,43 @@ public:
     return 2 * static_cast<unsigned int>(keys.size() + 1);
   }
 
-  // Appends one entry; false on a failed (short) write.
+  // Appends one entry; false on a failed (short) write. Each entry is written and checked
+  // at once by the checked writers (outputfile.hpp): the first truncates the file, the
+  // others append to it.
   bool Append(const nlohmann::json &entry)
   {
-    if (!os.is_open())
-    {
-      os.open(path, std::ios::binary | std::ios::trunc);
-      if (!os.is_open())
-      {
-        return false;
-      }
-    }
+    std::string text;
     if (count > 0)
     {
-      os.write(",\n", 2);
+      text += ",\n";
     }
-    const std::string indent(EntryIndent(), ' ');
-    os.write(indent.data(), static_cast<std::streamsize>(indent.size()));
+    text.append(EntryIndent(), ' ');
     nlohmann::detail::serializer<nlohmann::json> serializer(
-        nlohmann::detail::output_adapter<char>(os), ' ');
+        nlohmann::detail::output_adapter<char>(text), ' ');
     serializer.dump(entry, true, false, 2, EntryIndent());
-    count++;
-    return static_cast<bool>(os);
-  }
-
-  // Flushes the appended entries to the file; false on a failed write. Records the size.
-  bool Flush()
-  {
-    if (!os.is_open())
-    {
-      return count == 0;
-    }
-    os.flush();
-    if (!os)
+    const auto error = internal::CatchFileError(
+        path,
+        [&]()
+        {
+          internal::WriteFile(
+              path, [&](std::ostream &os)
+              { os.write(text.data(), static_cast<std::streamsize>(text.size())); },
+              (count == 0) ? std::ios::trunc : std::ios::app);
+        });
+    if (!error.empty())
     {
       return false;
     }
-    bytes = static_cast<std::uint64_t>(os.tellp());
+    count++;
+    bytes += text.size();
     return true;
   }
-
-  // Closes the file (checked) and removes it; false on a failed close or removal.
+  // Every entry is written when appended (Append): nothing is left to flush.
+  bool Flush() const { return true; }
+  // Removes the file; false on a failed removal.
   bool Remove()
   {
-    bool ok = true;
-    if (os.is_open())
-    {
-      ok = Flush();
-      os.close();
-      ok = ok && !os.fail();
-      ok = std::remove(path.c_str()) == 0 && ok;
-    }
+    const bool ok = (count == 0) || (std::remove(path.c_str()) == 0);
     count = 0;
     bytes = 0;
     return ok;
@@ -113,7 +99,6 @@ public:
 private:
   std::string path;
   std::vector<std::string> keys;
-  std::ofstream os;
   std::size_t count = 0;
   std::uint64_t bytes = 0;
 };

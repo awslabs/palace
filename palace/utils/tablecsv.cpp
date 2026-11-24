@@ -11,7 +11,6 @@
 #include <iterator>
 #include <utility>
 #include <fmt/format.h>
-#include <fmt/os.h>
 #include <scn/scan.h>
 #include <mfem/general/error.hpp>
 
@@ -444,21 +443,13 @@ void TableWithCSVFile::AppendRowsAndClear()
   {
     table.append_row(buf, j);
   }
-  if (!append_started_)
-  {
-    // The first piece: like WriteFullTableTrunc (remove the previous file / symlink).
-    fs::remove(csv_file_fullpath_);
-    auto file_buffer = fmt::output_file(
-        csv_file_fullpath_, fmt::file::WRONLY | fmt::file::CREATE | fmt::file::TRUNC);
-    file_buffer.print("{}", std::string_view(buf.data(), buf.size()));
-    append_started_ = true;
-  }
-  else
-  {
-    auto file_buffer =
-        fmt::output_file(csv_file_fullpath_, fmt::file::WRONLY | fmt::file::APPEND);
-    file_buffer.print("{}", std::string_view(buf.data(), buf.size()));
-  }
+  // The first piece replaces the file like WriteFullTableTrunc (a previous file or symlink
+  // is replaced, not followed), the others are appended; both checked.
+  WriteOutputFile(
+      csv_file_fullpath_, [&](std::ostream &os)
+      { os.write(buf.data(), static_cast<std::streamsize>(buf.size())); },
+      append_started_ ? std::ios::app : std::ios::trunc);
+  append_started_ = true;
   appended_rows_ += rows;
   for (auto &col : table)
   {

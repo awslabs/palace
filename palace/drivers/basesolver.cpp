@@ -179,21 +179,15 @@ const char *GeometryKey(mfem::Geometry::Type geom)
 void WriteConductorConsistencyRecords(const fs::path &path, const json &records,
                                       const JsonArraySpill *spill)
 {
-  std::ofstream fo(path);
-  if (!fo.is_open())
-  {
-    MFEM_ABORT("Unable to open conductor-consistency records file \"" << path.string()
-                                                                      << "\"!");
-  }
-  const bool written = StreamJsonMetadata(fo, records, spill);
-  fo.close();
-  if (!written || fo.fail())
-  {
-    MFEM_ABORT("Writing the conductor-consistency records file \""
-               << path.string()
-               << "\" failed (a short write: the disk is full "
-                  "or an I/O error); the file is incomplete!");
-  }
+  // A short write fails the stream, and WriteOutputFile aborts (as for palace.json).
+  WriteOutputFile(path,
+                  [&](std::ostream &fo)
+                  {
+                    if (!StreamJsonMetadata(fo, records, spill))
+                    {
+                      fo.setstate(std::ios::failbit);
+                    }
+                  });
 }
 
 // The ConductorConsistency object of palace.json's SurfaceResponse.Diagnostics when it

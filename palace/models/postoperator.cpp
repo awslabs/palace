@@ -4205,43 +4205,48 @@ void PostOperator<solver_t>::PrintSurfaceResponseMagnetic() const
   // archived iteration folder; truncating through it would overwrite the archived table
   // and leave no real top-level file. Remove the link first, then write a real file.
   mesh::RemoveSymlinkBeforeWrite(path);
-  std::ofstream output(path, std::ios::trunc);
-  MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
-  // Phase 3 (a) COL-1 (R-MAG-14): two trailing columns + one "energy" row per model
-  // carrying the term, per source and frequency / mode (the model's applied magnetic domain
-  // correction and its within-R magnetic thin energy, J); the model and gate rows leave
-  // them empty.
-  output << "kind,model,name,status,rule,psd ratio,negative eigenvalues,same-mesh "
-            "deviation,patches,patch,source,f (GHz),max ratio,excluded,reason,magnetic "
-            "domain correction (J),magnetic thin energy (J)\n";
-  auto Quote = [](const std::string &text)
-  {
-    std::string quoted = "\"";
-    for (const char c : text)
-    {
-      quoted += c == '"' ? std::string("\"\"") : std::string(1, c);
-    }
-    return quoted + "\"";
-  };
-  for (const auto &record : surface_response_op->GetMagneticModelRecords())
-  {
-    output << fmt::format("model,{},{},{},{},{:.6e},{},{:.6e},{},,,,,,{},,\n", record.model,
-                          Quote(record.name), record.status, record.rule, record.psd_ratio,
-                          record.negative_eigenvalue_count, record.same_mesh_deviation,
-                          record.patches, Quote(record.reason));
-  }
-  for (const auto &record : surface_response_op->GetMagneticGateRecords())
-  {
-    output << fmt::format("gate,{},,,,,,,,{},{},{:.8e},{:.6e},{},,,\n", record.model,
-                          record.patch, record.source, record.frequency, record.max_ratio,
-                          record.excluded ? 1 : 0);
-  }
-  for (const auto &row : surface_response_magnetic_energy_rows)
-  {
-    output << fmt::format("energy,{},,,,,,,,,{},{:.8e},,,,{:.15e},{:.15e}\n", row.model,
-                          row.source, row.frequency_GHz, row.domain_correction,
-                          row.thin_energy);
-  }
+  WriteOutputFile(
+      path,
+      [&](std::ostream &output)
+      {
+        // Phase 3 (a) COL-1 (R-MAG-14): two trailing columns + one "energy" row per model
+        // carrying the term, per source and frequency / mode (the model's applied magnetic
+        // domain correction and its within-R magnetic thin energy, J); the model and gate
+        // rows leave them empty.
+        output
+            << "kind,model,name,status,rule,psd ratio,negative eigenvalues,same-mesh "
+               "deviation,patches,patch,source,f (GHz),max ratio,excluded,reason,magnetic "
+               "domain correction (J),magnetic thin energy (J)\n";
+        auto Quote = [](const std::string &text)
+        {
+          std::string quoted = "\"";
+          for (const char c : text)
+          {
+            quoted += c == '"' ? std::string("\"\"") : std::string(1, c);
+          }
+          return quoted + "\"";
+        };
+        for (const auto &record : surface_response_op->GetMagneticModelRecords())
+        {
+          output << fmt::format(
+              "model,{},{},{},{},{:.6e},{},{:.6e},{},,,,,,{},,\n", record.model,
+              Quote(record.name), record.status, record.rule, record.psd_ratio,
+              record.negative_eigenvalue_count, record.same_mesh_deviation, record.patches,
+              Quote(record.reason));
+        }
+        for (const auto &record : surface_response_op->GetMagneticGateRecords())
+        {
+          output << fmt::format("gate,{},,,,,,,,{},{},{:.8e},{:.6e},{},,,\n", record.model,
+                                record.patch, record.source, record.frequency,
+                                record.max_ratio, record.excluded ? 1 : 0);
+        }
+        for (const auto &row : surface_response_magnetic_energy_rows)
+        {
+          output << fmt::format("energy,{},,,,,,,,,{},{:.8e},,,,{:.15e},{:.15e}\n",
+                                row.model, row.source, row.frequency_GHz,
+                                row.domain_correction, row.thin_energy);
+        }
+      });
 }
 
 template <ProblemType solver_t>
@@ -4270,12 +4275,14 @@ void PostOperator<solver_t>::PrintSurfaceResponseExclusionEnergies(double output
     // would overwrite the archived table and leave no real top-level file (the loop-fit
     // writer's form: remove first, then write a real file).
     fs::remove(path);
-    std::ofstream output(path);
-    MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
-    output
-        << (solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m")
-        << ",exc,class,type,class portions,class length (m),raw energy (J),interface raw "
-           "energy (J),share\n";
+    WriteOutputFile(path,
+                    [&](std::ostream &output)
+                    {
+                      output << (solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m")
+                             << ",exc,class,type,class portions,class length (m),raw "
+                                "energy (J),interface raw "
+                                "energy (J),share\n";
+                    });
   }
   const auto &types = surface_response_op->GetGeometryFallbackInterfaceTypes();
   auto TypeName = [&](int interface)
@@ -4311,30 +4318,35 @@ void PostOperator<solver_t>::PrintSurfaceResponseExclusionEnergies(double output
       length += std::sqrt(length2);
     }
   }
-  std::ofstream output(path, std::ios::app);
-  MFEM_VERIFY(output, "Unable to open " << path.string() << " for appending!");
-  for (const auto &[cls, by_type] : excluded_by_class_type)
-  {
-    const auto [count, length] = portions_by_class[cls];
-    for (const auto &[name, energy] : by_type)
-    {
-      const double interface_raw = interface_raw_by_type[name];
-      if constexpr (solver_t == ProblemType::DRIVEN)
+  WriteOutputFile(
+      path,
+      [&](std::ostream &output)
       {
-        output << fmt::format("{:.8e},{}", output_index, excitation);
-      }
-      else
-      {
-        output << fmt::format("{},{}", static_cast<int>(std::lround(output_index)),
-                              excitation);
-      }
-      output << fmt::format(",{},{},{},{},{},{},{}\n", cls, name, count,
-                            CsvNumber(units.Dimensionalize<VT::LENGTH>(length)),
-                            CsvNumber(units.Dimensionalize<VT::ENERGY>(energy)),
-                            CsvNumber(units.Dimensionalize<VT::ENERGY>(interface_raw)),
-                            CsvNumber(interface_raw > 0.0 ? energy / interface_raw : 0.0));
-    }
-  }
+        for (const auto &[cls, by_type] : excluded_by_class_type)
+        {
+          const auto [count, length] = portions_by_class[cls];
+          for (const auto &[name, energy] : by_type)
+          {
+            const double interface_raw = interface_raw_by_type[name];
+            if constexpr (solver_t == ProblemType::DRIVEN)
+            {
+              output << fmt::format("{:.8e},{}", output_index, excitation);
+            }
+            else
+            {
+              output << fmt::format("{},{}", static_cast<int>(std::lround(output_index)),
+                                    excitation);
+            }
+            output << fmt::format(
+                ",{},{},{},{},{},{},{}\n", cls, name, count,
+                CsvNumber(units.Dimensionalize<VT::LENGTH>(length)),
+                CsvNumber(units.Dimensionalize<VT::ENERGY>(energy)),
+                CsvNumber(units.Dimensionalize<VT::ENERGY>(interface_raw)),
+                CsvNumber(interface_raw > 0.0 ? energy / interface_raw : 0.0));
+          }
+        }
+      },
+      std::ios::app);
 }
 
 template <ProblemType solver_t>
@@ -4367,16 +4379,19 @@ void PostOperator<solver_t>::PrintSurfaceResponseUncoveredFeatureEnergies(
   const auto target_interfaces = surface_response_op->GetTargetInterfaces();
   if (first_print || !fs::exists(path))
   {
-    std::ofstream output(path);
-    MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
-    output << (solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m")
-           << ",exc,type,features,portions,length (m),x min (m),y min (m),z min (m),x max "
-              "(m),y max (m),z max (m)";
-    for (const int interface : target_interfaces)
-    {
-      output << fmt::format(",uncovered raw energy[{}] (J)", interface);
-    }
-    output << '\n';
+    WriteOutputFile(path,
+                    [&](std::ostream &output)
+                    {
+                      output << (solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m")
+                             << ",exc,type,features,portions,length (m),x min (m),y min "
+                                "(m),z min (m),x max "
+                                "(m),y max (m),z max (m)";
+                      for (const int interface : target_interfaces)
+                      {
+                        output << fmt::format(",uncovered raw energy[{}] (J)", interface);
+                      }
+                      output << '\n';
+                    });
   }
   // The portions per (type, feature): count, length and bounding box.
   struct PortionSummary
@@ -4412,71 +4427,77 @@ void PostOperator<solver_t>::PrintSurfaceResponseUncoveredFeatureEnergies(
       keys.insert(key);
     }
   }
-  std::ofstream output(path, std::ios::app);
-  MFEM_VERIFY(output, "Unable to open " << path.string() << " for appending!");
-  for (const auto &key : keys)
-  {
-    const auto &[type, label] = key;
-    PortionSummary label_summary;
-    std::size_t begin = 0;
-    while (begin <= label.size())
-    {
-      const auto end = label.find('+', begin);
-      const int feature = std::stoi(
-          label.substr(begin, end == std::string::npos ? std::string::npos : end - begin));
-      const auto summary = summaries.find({type, feature});
-      MFEM_VERIFY(summary != summaries.end(), "Uncovered feature label \""
-                                                  << label << "\" of type " << type
-                                                  << " names no uncovered portion!");
-      for (int d = 0; d < 3; d++)
+  WriteOutputFile(
+      path,
+      [&](std::ostream &output)
       {
-        label_summary.min[d] = label_summary.portions == 0
-                                   ? summary->second.min[d]
-                                   : std::min(label_summary.min[d], summary->second.min[d]);
-        label_summary.max[d] = label_summary.portions == 0
-                                   ? summary->second.max[d]
-                                   : std::max(label_summary.max[d], summary->second.max[d]);
-      }
-      label_summary.portions += summary->second.portions;
-      label_summary.length += summary->second.length;
-      if (end == std::string::npos)
-      {
-        break;
-      }
-      begin = end + 1;
-    }
-    if constexpr (solver_t == ProblemType::DRIVEN)
-    {
-      output << fmt::format("{:.8e},{}", output_index, excitation);
-    }
-    else
-    {
-      output << fmt::format("{},{}", static_cast<int>(std::lround(output_index)),
-                            excitation);
-    }
-    output << fmt::format(
-        ",{},{},{},{}", type, label, label_summary.portions,
-        CsvNumber(units.Dimensionalize<VT::LENGTH>(label_summary.length)));
-    for (const auto &bound : {label_summary.min, label_summary.max})
-    {
-      for (int d = 0; d < 3; d++)
-      {
-        output << "," << CsvNumber(units.Dimensionalize<VT::LENGTH>(bound[d]));
-      }
-    }
-    for (const int interface : target_interfaces)
-    {
-      double energy = 0.0;
-      const auto energies = result.uncovered_feature.find(interface);
-      if (energies != result.uncovered_feature.end())
-      {
-        const auto entry = energies->second.find(key);
-        energy = entry != energies->second.end() ? entry->second : 0.0;
-      }
-      output << "," << CsvNumber(units.Dimensionalize<VT::ENERGY>(energy));
-    }
-    output << '\n';
-  }
+        for (const auto &key : keys)
+        {
+          const auto &[type, label] = key;
+          PortionSummary label_summary;
+          std::size_t begin = 0;
+          while (begin <= label.size())
+          {
+            const auto end = label.find('+', begin);
+            const int feature = std::stoi(label.substr(
+                begin, end == std::string::npos ? std::string::npos : end - begin));
+            const auto summary = summaries.find({type, feature});
+            MFEM_VERIFY(summary != summaries.end(), "Uncovered feature label \""
+                                                        << label << "\" of type " << type
+                                                        << " names no uncovered portion!");
+            for (int d = 0; d < 3; d++)
+            {
+              label_summary.min[d] =
+                  label_summary.portions == 0
+                      ? summary->second.min[d]
+                      : std::min(label_summary.min[d], summary->second.min[d]);
+              label_summary.max[d] =
+                  label_summary.portions == 0
+                      ? summary->second.max[d]
+                      : std::max(label_summary.max[d], summary->second.max[d]);
+            }
+            label_summary.portions += summary->second.portions;
+            label_summary.length += summary->second.length;
+            if (end == std::string::npos)
+            {
+              break;
+            }
+            begin = end + 1;
+          }
+          if constexpr (solver_t == ProblemType::DRIVEN)
+          {
+            output << fmt::format("{:.8e},{}", output_index, excitation);
+          }
+          else
+          {
+            output << fmt::format("{},{}", static_cast<int>(std::lround(output_index)),
+                                  excitation);
+          }
+          output << fmt::format(
+              ",{},{},{},{}", type, label, label_summary.portions,
+              CsvNumber(units.Dimensionalize<VT::LENGTH>(label_summary.length)));
+          for (const auto &bound : {label_summary.min, label_summary.max})
+          {
+            for (int d = 0; d < 3; d++)
+            {
+              output << "," << CsvNumber(units.Dimensionalize<VT::LENGTH>(bound[d]));
+            }
+          }
+          for (const int interface : target_interfaces)
+          {
+            double energy = 0.0;
+            const auto energies = result.uncovered_feature.find(interface);
+            if (energies != result.uncovered_feature.end())
+            {
+              const auto entry = energies->second.find(key);
+              energy = entry != energies->second.end() ? entry->second : 0.0;
+            }
+            output << "," << CsvNumber(units.Dimensionalize<VT::ENERGY>(energy));
+          }
+          output << '\n';
+        }
+      },
+      std::ios::app);
 }
 
 template <ProblemType solver_t>
@@ -4509,24 +4530,30 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelRawEnergies(double output_
     // SaveIteration left (see PrintSurfaceResponseExclusionEnergies).
     fs::remove(energy_path);
     fs::remove(groups_path);
-    std::ofstream energy(energy_path);
-    MFEM_VERIFY(energy, "Unable to open " << energy_path.string() << " for writing!");
-    energy << "source,evaluation,label";
-    for (const auto &[interface, data] : result.interfaces)
-    {
-      (void)data;
-      energy << fmt::format(",raw energy[{}] (J)", interface);
-    }
-    energy << (solver_t == ProblemType::DRIVEN ? ",f (GHz),exc\n" : ",m,exc\n");
-    std::ofstream groups(groups_path);
-    MFEM_VERIFY(groups, "Unable to open " << groups_path.string() << " for writing!");
-    groups << "label,model,patches,weight length (m)\n";
-    for (const auto &member : surface_response_op->GetModelRawClaimPortions().members)
-    {
-      groups << fmt::format(
-          "{},{},{},{}\n", member.label, member.model, member.patches,
-          CsvNumber(units.Dimensionalize<VT::LENGTH>(member.weight_length)));
-    }
+    WriteOutputFile(energy_path,
+                    [&](std::ostream &energy)
+                    {
+                      energy << "source,evaluation,label";
+                      for (const auto &[interface, data] : result.interfaces)
+                      {
+                        (void)data;
+                        energy << fmt::format(",raw energy[{}] (J)", interface);
+                      }
+                      energy << (solver_t == ProblemType::DRIVEN ? ",f (GHz),exc\n"
+                                                                 : ",m,exc\n");
+                    });
+    WriteOutputFile(
+        groups_path,
+        [&](std::ostream &groups)
+        {
+          groups << "label,model,patches,weight length (m)\n";
+          for (const auto &member : surface_response_op->GetModelRawClaimPortions().members)
+          {
+            groups << fmt::format(
+                "{},{},{},{}\n", member.label, member.model, member.patches,
+                CsvNumber(units.Dimensionalize<VT::LENGTH>(member.weight_length)));
+          }
+        });
   }
   std::set<std::string> labels;
   for (const auto &[interface, partition] : result.model_raw_partition)
@@ -4538,33 +4565,37 @@ void PostOperator<solver_t>::PrintSurfaceResponseModelRawEnergies(double output_
       labels.insert(label);
     }
   }
-  std::ofstream energy(energy_path, std::ios::app);
-  MFEM_VERIFY(energy, "Unable to open " << energy_path.string() << " for appending!");
-  for (const auto &label : labels)
-  {
-    energy << fmt::format("{},{},{}", source, 0, label);
-    for (const auto &[interface, data] : result.interfaces)
-    {
-      (void)data;
-      const auto partition = result.model_raw_partition.find(interface);
-      double value = 0.0;
-      if (partition != result.model_raw_partition.end())
+  WriteOutputFile(
+      energy_path,
+      [&](std::ostream &energy)
       {
-        const auto entry = partition->second.find(label);
-        value = entry != partition->second.end() ? entry->second : 0.0;
-      }
-      energy << "," << CsvNumber(units.Dimensionalize<VT::ENERGY>(value));
-    }
-    if constexpr (solver_t == ProblemType::DRIVEN)
-    {
-      energy << fmt::format(",{:.8e},{}\n", output_index, excitation);
-    }
-    else
-    {
-      energy << fmt::format(",{},{}\n", static_cast<int>(std::lround(output_index)),
-                            excitation);
-    }
-  }
+        for (const auto &label : labels)
+        {
+          energy << fmt::format("{},{},{}", source, 0, label);
+          for (const auto &[interface, data] : result.interfaces)
+          {
+            (void)data;
+            const auto partition = result.model_raw_partition.find(interface);
+            double value = 0.0;
+            if (partition != result.model_raw_partition.end())
+            {
+              const auto entry = partition->second.find(label);
+              value = entry != partition->second.end() ? entry->second : 0.0;
+            }
+            energy << "," << CsvNumber(units.Dimensionalize<VT::ENERGY>(value));
+          }
+          if constexpr (solver_t == ProblemType::DRIVEN)
+          {
+            energy << fmt::format(",{:.8e},{}\n", output_index, excitation);
+          }
+          else
+          {
+            energy << fmt::format(",{},{}\n", static_cast<int>(std::lround(output_index)),
+                                  excitation);
+          }
+        }
+      },
+      std::ios::app);
 }
 
 template <ProblemType solver_t>
@@ -4617,91 +4648,106 @@ void PostOperator<solver_t>::PrintSurfaceResponseLoopFit(double output_index,
   // both tables without them).
   const bool write_header =
       surface_response_tables_with_header.insert(fit_path.string()).second;
-  std::ofstream fit(fit_path, write_header ? std::ios::out | std::ios::trunc
-                                           : std::ios::out | std::ios::app);
-  MFEM_VERIFY(fit, "Unable to open " << fit_path.string() << " for writing!");
-  std::ofstream remainder(remainder_path, write_header ? std::ios::out | std::ios::trunc
-                                                       : std::ios::out | std::ios::app);
-  MFEM_VERIFY(remainder, "Unable to open " << remainder_path.string() << " for writing!");
-  if (write_header)
-  {
-    fit << "source,evaluation," << key_header
-        << ",max loop share,response-weighted loop share,remainder patches,fallback "
-           "patches,weighted claim length (m),withheld domain correction (J)\n";
-    remainder << "source,evaluation,model,patches,weighted claim length (m)";
-    for (const int interface : target_interfaces)
-    {
-      remainder << fmt::format(",remainder energy[{}] (J)", interface);
-    }
-    remainder << "," << key_header << "\n";
-  }
-  auto Rows = [&](const SurfaceResponseOperator::MaxwellResponse &response)
-  { return surface_response_op->GetLoopRemainderPortions(response.loop_remainders).rows; };
-  auto Write = [&](int evaluation, const SurfaceResponseOperator::MaxwellResponse &response,
-                   const std::map<int, std::map<std::string, double>> &energies)
-  {
-    const auto rows = Rows(response);
-    SurfaceResponseOperator::LoopRemainderPortions::Row total;
-    for (const auto &[label, row] : rows)
-    {
-      (void)label;
-      total.patches += row.patches;
-      total.weighted_length += row.weighted_length;
-    }
-    fit << fmt::format(
-        "{},{},{},{},{},{},{},{},{}\n", source, evaluation, Keys(),
-        CsvNumber(response.maximum_loop_fit_share),
-        CsvNumber(response.response_weighted_loop_fit_share),
-        response.loop_remainder_patch_count, response.loop_fallback_patch_count,
-        CsvNumber(units.Dimensionalize<VT::LENGTH>(total.weighted_length)),
-        CsvNumber(units.Dimensionalize<VT::ENERGY>(
-            evaluation == 1 ? response.loop_fallback_domain_correction_fixed_flux
-                            : response.loop_fallback_domain_correction)));
-    auto Line = [&](const std::string &label,
-                    const SurfaceResponseOperator::LoopRemainderPortions::Row &row)
-    {
-      remainder << fmt::format(
-          "{},{},{},{},{}", source, evaluation, label, row.patches,
-          CsvNumber(units.Dimensionalize<VT::LENGTH>(row.weighted_length)));
-      for (const int interface : target_interfaces)
+  WriteOutputFile(
+      fit_path,
+      [&](std::ostream &fit)
       {
-        double energy = 0.0;
-        const auto it = energies.find(interface);
-        if (it != energies.end())
-        {
-          if (label == "Total")
-          {
-            for (const auto &[key, value] : it->second)
+        WriteOutputFile(
+            remainder_path,
+            [&](std::ostream &remainder)
             {
-              (void)key;
-              energy += value;
-            }
-          }
-          else
-          {
-            const auto entry = it->second.find(label);
-            energy = entry != it->second.end() ? entry->second : 0.0;
-          }
-        }
-        remainder << "," << CsvNumber(units.Dimensionalize<VT::ENERGY>(energy));
-      }
-      remainder << "," << Keys() << "\n";
-    };
-    for (const auto &[label, row] : rows)
-    {
-      Line(label, row);
-    }
-    Line("Total", total);
-  };
-  if (result.has_postprocessed)
-  {
-    Write(0, result.confidence, result.loop_remainder);
-    Write(1, result.confidence, result.loop_remainder);
-  }
-  if (result.has_self_consistent)
-  {
-    Write(2, result.self_consistent_confidence, result.self_consistent_loop_remainder);
-  }
+              if (write_header)
+              {
+                fit << "source,evaluation," << key_header
+                    << ",max loop share,response-weighted loop share,remainder "
+                       "patches,fallback "
+                       "patches,weighted claim length (m),withheld domain correction (J)\n";
+                remainder << "source,evaluation,model,patches,weighted claim length (m)";
+                for (const int interface : target_interfaces)
+                {
+                  remainder << fmt::format(",remainder energy[{}] (J)", interface);
+                }
+                remainder << "," << key_header << "\n";
+              }
+              auto Rows = [&](const SurfaceResponseOperator::MaxwellResponse &response)
+              {
+                return surface_response_op
+                    ->GetLoopRemainderPortions(response.loop_remainders)
+                    .rows;
+              };
+              auto Write = [&](int evaluation,
+                               const SurfaceResponseOperator::MaxwellResponse &response,
+                               const std::map<int, std::map<std::string, double>> &energies)
+              {
+                const auto rows = Rows(response);
+                SurfaceResponseOperator::LoopRemainderPortions::Row total;
+                for (const auto &[label, row] : rows)
+                {
+                  (void)label;
+                  total.patches += row.patches;
+                  total.weighted_length += row.weighted_length;
+                }
+                fit << fmt::format(
+                    "{},{},{},{},{},{},{},{},{}\n", source, evaluation, Keys(),
+                    CsvNumber(response.maximum_loop_fit_share),
+                    CsvNumber(response.response_weighted_loop_fit_share),
+                    response.loop_remainder_patch_count, response.loop_fallback_patch_count,
+                    CsvNumber(units.Dimensionalize<VT::LENGTH>(total.weighted_length)),
+                    CsvNumber(units.Dimensionalize<VT::ENERGY>(
+                        evaluation == 1
+                            ? response.loop_fallback_domain_correction_fixed_flux
+                            : response.loop_fallback_domain_correction)));
+                auto Line =
+                    [&](const std::string &label,
+                        const SurfaceResponseOperator::LoopRemainderPortions::Row &row)
+                {
+                  remainder << fmt::format(
+                      "{},{},{},{},{}", source, evaluation, label, row.patches,
+                      CsvNumber(units.Dimensionalize<VT::LENGTH>(row.weighted_length)));
+                  for (const int interface : target_interfaces)
+                  {
+                    double energy = 0.0;
+                    const auto it = energies.find(interface);
+                    if (it != energies.end())
+                    {
+                      if (label == "Total")
+                      {
+                        for (const auto &[key, value] : it->second)
+                        {
+                          (void)key;
+                          energy += value;
+                        }
+                      }
+                      else
+                      {
+                        const auto entry = it->second.find(label);
+                        energy = entry != it->second.end() ? entry->second : 0.0;
+                      }
+                    }
+                    remainder << "," << CsvNumber(units.Dimensionalize<VT::ENERGY>(energy));
+                  }
+                  remainder << "," << Keys() << "\n";
+                };
+                for (const auto &[label, row] : rows)
+                {
+                  Line(label, row);
+                }
+                Line("Total", total);
+              };
+              if (result.has_postprocessed)
+              {
+                Write(0, result.confidence, result.loop_remainder);
+                Write(1, result.confidence, result.loop_remainder);
+              }
+              if (result.has_self_consistent)
+              {
+                Write(2, result.self_consistent_confidence,
+                      result.self_consistent_loop_remainder);
+              }
+            },
+            (write_header) ? std::ios::trunc : std::ios::app);
+      },
+      (write_header) ? std::ios::trunc : std::ios::app);
 }
 
 template <ProblemType solver_t>
@@ -4740,26 +4786,31 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
   {
     const bool write_header =
         surface_response_tables_with_header.insert(path.string()).second;
-    std::ofstream output(path, write_header ? std::ios::out | std::ios::trunc
-                                            : std::ios::out | std::ios::app);
-    MFEM_VERIFY(output, "Unable to open " << path.string() << " for writing!");
-    if (path == coverage_path)
-    {
-      output << (write_header ? CoverageTableHeader(key_header) : "");
-      WriteCoverageRows(output, keys, coverage, units);
-    }
-    else if (path == budget_path)
-    {
-      output << (write_header ? NearEdgeBudgetTableHeader(key_header) : "");
-      WriteNearEdgeBudgetRows(output, keys, coverage, units);
-    }
-    else
-    {
-      output << (write_header ? CoverageByKeyTableHeader(key_header, target_interfaces)
-                              : "");
-      WriteCoverageByKeyRows(output, keys, coverage, target_interfaces,
-                             CoveragePortionsByFeature(surface_response_uncovered), units);
-    }
+    WriteOutputFile(
+        path,
+        [&](std::ostream &output)
+        {
+          if (path == coverage_path)
+          {
+            output << (write_header ? CoverageTableHeader(key_header) : "");
+            WriteCoverageRows(output, keys, coverage, units);
+          }
+          else if (path == budget_path)
+          {
+            output << (write_header ? NearEdgeBudgetTableHeader(key_header) : "");
+            WriteNearEdgeBudgetRows(output, keys, coverage, units);
+          }
+          else
+          {
+            output << (write_header
+                           ? CoverageByKeyTableHeader(key_header, target_interfaces)
+                           : "");
+            WriteCoverageByKeyRows(output, keys, coverage, target_interfaces,
+                                   CoveragePortionsByFeature(surface_response_uncovered),
+                                   units);
+          }
+        },
+        (write_header) ? std::ios::trunc : std::ios::app);
   }
   std::vector<std::pair<std::string, double>> cell_keys;
   if constexpr (solver_t == ProblemType::DRIVEN)
@@ -4775,11 +4826,14 @@ void PostOperator<solver_t>::PrintSurfaceResponseCoverage(double output_index,
     const auto &cells = surface_response_measurement->resolution_cells;
     const bool write_header =
         surface_response_tables_with_header.insert(resolution_path.string()).second;
-    std::ofstream output(resolution_path, write_header ? std::ios::out | std::ios::trunc
-                                                       : std::ios::out | std::ios::app);
-    MFEM_VERIFY(output, "Unable to open " << resolution_path.string() << " for writing!");
-    output << (write_header ? ResolutionTableHeader(key_header) : "");
-    WriteResolutionRows(output, keys, cells);
+    WriteOutputFile(
+        resolution_path,
+        [&](std::ostream &output)
+        {
+          output << (write_header ? ResolutionTableHeader(key_header) : "");
+          WriteResolutionRows(output, keys, cells);
+        },
+        (write_header) ? std::ios::trunc : std::ios::app);
     for (const auto &cell : cells)
     {
       surface_response_op->GetResolutionRunRecord().entries.push_back({cell_keys, cell});
@@ -5204,88 +5258,92 @@ void PostOperator<solver_t>::PrintSurfaceResponsePortionEnergies(double output_i
     // is unchanged.
     const bool write_header =
         surface_response_tables_with_header.insert(path.string()).second;
-    std::ofstream output(path, write_header ? std::ios::out | std::ios::trunc
-                                            : std::ios::out | std::ios::app);
-    MFEM_VERIFY(output, "Unable to open " << path.filename().string() << " for writing!");
-    if (write_header)
-    {
-      output << (solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m")
-             << ",exc,evaluation,type,portions,length (m)," << extra_header;
-      for (const int interface : target_interfaces)
-      {
-        output << fmt::format(",{} raw energy[{}] (J),{} share[{}]", energy_label,
-                              interface, energy_label, interface);
-      }
-      output << '\n';
-    }
-    const bool extra_is_length = extra_header.find("(m)") != std::string::npos;
-    auto CorrectedEnergy = [&](int evaluation, int interface)
-    {
-      const auto it = result.interfaces.find(interface);
-      if (it == result.interfaces.end())
-      {
-        return nan;
-      }
-      return evaluation == 0   ? it->second.corrected_energy
-             : evaluation == 1 ? it->second.corrected_energy_fixed_flux
-                               : it->second.self_consistent_energy;
-    };
-    auto Append =
-        [&](int evaluation, const std::string &type, const PortionTypeRow &portions,
-            const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> &energies,
-            bool available)
-    {
-      if constexpr (solver_t == ProblemType::DRIVEN)
-      {
-        output << CsvNumber(output_index);
-      }
-      else
-      {
-        output << static_cast<int>(std::lround(output_index));
-      }
-      output << fmt::format(",{},{},{},{},{},", excitation, evaluation, type,
-                            portions.portions,
-                            CsvNumber(units.Dimensionalize<VT::LENGTH>(portions.length)));
-      if (extra_is_length)
-      {
-        output << CsvNumber(units.Dimensionalize<VT::LENGTH>(portions.extra));
-      }
-      else
-      {
-        output << fmt::format("{}", static_cast<int>(std::lround(portions.extra)));
-      }
-      for (const int interface : target_interfaces)
-      {
-        double energy = nan, share = nan;
-        const auto it = energies.find(interface);
-        if (available && it != energies.end())
+    WriteOutputFile(
+        path,
+        [&](std::ostream &output)
         {
-          if (type == "Total")
+          if (write_header)
           {
-            energy = it->second.energy;
+            output << (solver_t == ProblemType::DRIVEN ? "f (GHz)" : "m")
+                   << ",exc,evaluation,type,portions,length (m)," << extra_header;
+            for (const int interface : target_interfaces)
+            {
+              output << fmt::format(",{} raw energy[{}] (J),{} share[{}]", energy_label,
+                                    interface, energy_label, interface);
+            }
+            output << '\n';
           }
-          else
+          const bool extra_is_length = extra_header.find("(m)") != std::string::npos;
+          auto CorrectedEnergy = [&](int evaluation, int interface)
           {
-            const auto by_type = it->second.by_type.find(type);
-            energy = by_type != it->second.by_type.end() ? by_type->second : 0.0;
+            const auto it = result.interfaces.find(interface);
+            if (it == result.interfaces.end())
+            {
+              return nan;
+            }
+            return evaluation == 0   ? it->second.corrected_energy
+                   : evaluation == 1 ? it->second.corrected_energy_fixed_flux
+                                     : it->second.self_consistent_energy;
+          };
+          auto Append =
+              [&](int evaluation, const std::string &type, const PortionTypeRow &portions,
+                  const std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> &energies,
+                  bool available)
+          {
+            if constexpr (solver_t == ProblemType::DRIVEN)
+            {
+              output << CsvNumber(output_index);
+            }
+            else
+            {
+              output << static_cast<int>(std::lround(output_index));
+            }
+            output << fmt::format(
+                ",{},{},{},{},{},", excitation, evaluation, type, portions.portions,
+                CsvNumber(units.Dimensionalize<VT::LENGTH>(portions.length)));
+            if (extra_is_length)
+            {
+              output << CsvNumber(units.Dimensionalize<VT::LENGTH>(portions.extra));
+            }
+            else
+            {
+              output << fmt::format("{}", static_cast<int>(std::lround(portions.extra)));
+            }
+            for (const int interface : target_interfaces)
+            {
+              double energy = nan, share = nan;
+              const auto it = energies.find(interface);
+              if (available && it != energies.end())
+              {
+                if (type == "Total")
+                {
+                  energy = it->second.energy;
+                }
+                else
+                {
+                  const auto by_type = it->second.by_type.find(type);
+                  energy = by_type != it->second.by_type.end() ? by_type->second : 0.0;
+                }
+                const double corrected = CorrectedEnergy(evaluation, interface);
+                share = corrected > 0.0 ? energy / corrected : nan;
+                energy = units.Dimensionalize<VT::ENERGY>(energy);
+              }
+              output << fmt::format(",{},{}", CsvNumber(energy), CsvNumber(share));
+            }
+            output << '\n';
+          };
+          for (const auto &[type, portions] : portions_by_type)
+          {
+            Append(0, type, portions, raw_energies, result.has_postprocessed);
+            Append(1, type, portions, raw_energies, result.has_postprocessed);
+            Append(2, type, portions, corrected_energies, result.has_self_consistent);
           }
-          const double corrected = CorrectedEnergy(evaluation, interface);
-          share = corrected > 0.0 ? energy / corrected : nan;
-          energy = units.Dimensionalize<VT::ENERGY>(energy);
-        }
-        output << fmt::format(",{},{}", CsvNumber(energy), CsvNumber(share));
-      }
-      output << '\n';
-    };
-    for (const auto &[type, portions] : portions_by_type)
-    {
-      Append(0, type, portions, raw_energies, result.has_postprocessed);
-      Append(1, type, portions, raw_energies, result.has_postprocessed);
-      Append(2, type, portions, corrected_energies, result.has_self_consistent);
-    }
-    Append(0, "Total", portions_total, raw_energies, result.has_postprocessed);
-    Append(1, "Total", portions_total, raw_energies, result.has_postprocessed);
-    Append(2, "Total", portions_total, corrected_energies, result.has_self_consistent);
+          Append(0, "Total", portions_total, raw_energies, result.has_postprocessed);
+          Append(1, "Total", portions_total, raw_energies, result.has_postprocessed);
+          Append(2, "Total", portions_total, corrected_energies,
+                 result.has_self_consistent);
+        },
+        (write_header) ? std::ios::trunc : std::ios::app);
   };
   if (!surface_response_uncovered.empty())
   {
@@ -6996,17 +7054,15 @@ void PostOperator<solver_t>::WriteImpedanceRuleCandidateRecords() const
   const auto path = surface_response_op->DiagnosticsPath(
       post_dir, SurfaceResponseOperator::kImpedanceCandidateRecordsFile,
       SurfaceResponseOperator::kImpedanceCandidateDiagnosticsDirectory);
-  std::ofstream output(path);
-  MFEM_VERIFY(output.is_open(), "Unable to open the impedance-metal rule candidate's "
-                                "conductor-consistency records file \""
-                                    << path.string() << "\"!");
-  const bool written = StreamJsonMetadata(output, records, spill);
-  output.close();
-  MFEM_VERIFY(written && !output.fail(),
-              "Writing the impedance-metal rule candidate's conductor-consistency records "
-              "file \""
-                  << path.string()
-                  << "\" failed (a short write: the disk is full or an I/O error)!");
+  // A short write fails the stream, and WriteOutputFile aborts (as for palace.json).
+  WriteOutputFile(path,
+                  [&](std::ostream &output)
+                  {
+                    if (!StreamJsonMetadata(output, records, spill))
+                    {
+                      output.setstate(std::ios::failbit);
+                    }
+                  });
   MFEM_VERIFY(spill->Remove(), "Removing the impedance-metal rule candidate's "
                                "conductor-consistency records scratch file \""
                                    << spill->Path() << "\" failed!");

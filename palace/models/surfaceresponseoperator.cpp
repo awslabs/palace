@@ -22891,190 +22891,194 @@ void WriteResponseGeometryCache(const std::filesystem::path &path,
   {
     std::filesystem::create_directories(path.parent_path());
   }
-  std::ofstream output(path);
-  MFEM_VERIFY(output,
-              "Unable to write response-geometry cache \"" << path.string() << "\"!");
-  nlohmann::json cache = {{"Version", 25},
-                          {"MatchingRadius", config.matching_radius},
-                          {"Models", std::move(models)},
-                          {"Patches", std::move(patches)}};
-  {
-    // Corner-arm trim records (decision 394 F1): the cached patches are the trimmed ones.
-    nlohmann::json trims = nlohmann::json::array();
-    for (const auto &trim : config.corner_arm_trims)
-    {
-      nlohmann::json cells = nlohmann::json::array();
-      for (const auto &[patch, removed] : trim.cells)
+  WriteOutputFile(
+      path,
+      [&](std::ostream &output)
       {
-        cells.push_back({{"Patch", patch}, {"RemovedLength", removed}});
-      }
-      trims.push_back({{"Feature", trim.feature},
-                       {"Topology", trim.topology},
-                       {"AngleDegrees", trim.angle_degrees},
-                       {"ExitDistanceOverR", trim.exit_distance_over_radius},
-                       {"TrimmedLength", trim.trimmed_length},
-                       {"RemovedCellLength", trim.removed_cell_length},
-                       {"RemovedUncoveredLength", trim.removed_uncovered_length},
-                       {"Cells", std::move(cells)}});
-    }
-    cache["CornerArmTrims"] = std::move(trims);
-    // Corner-arm extension records (decision 511 O2 (i)): the cached patches are the
-    // extended ones.
-    nlohmann::json extensions = nlohmann::json::array();
-    for (const auto &extension : config.corner_arm_extensions)
-    {
-      nlohmann::json arms = nlohmann::json::array();
-      for (const auto &arm : extension.arms)
-      {
-        arms.push_back({{"Arm", arm.arm},
-                        {"Direction", arm.direction},
-                        {"ExitDistanceOverR", arm.exit_over_radius},
-                        {"ClaimEndOverR", arm.claim_end_over_radius},
-                        {"StretchLength", arm.stretch_length},
-                        {"ExtendedCellLength", arm.extended_cell_length},
-                        {"ExtendedUncoveredLength", arm.extended_uncovered_length},
-                        {"Hosted", arm.hosted}});
-      }
-      nlohmann::json cells = nlohmann::json::array();
-      for (const auto &[patch, extended] : extension.cells)
-      {
-        cells.push_back({{"Patch", patch}, {"ExtendedLength", extended}});
-      }
-      extensions.push_back({{"Feature", extension.feature},
-                            {"Topology", extension.topology},
-                            {"AngleDegrees", extension.angle_degrees},
-                            {"CornerRadiusOverR", extension.corner_radius_over_radius},
-                            {"HalfByMirror", extension.half_by_mirror},
-                            {"Arms", std::move(arms)},
-                            {"Cells", std::move(cells)}});
-    }
-    cache["CornerArmExtensions"] = std::move(extensions);
-    // Uncovered requirements (decision 394 F2).
-    nlohmann::json uncovered = nlohmann::json::array();
-    for (const auto &portion : config.uncovered_portions)
-    {
-      uncovered.push_back({{"Feature", portion.feature},
-                           {"Topology", portion.topology},
-                           {"Segment", portion.segment},
-                           {"P0", portion.p0},
-                           {"P1", portion.p1}});
-    }
-    cache["UncoveredPortions"] = std::move(uncovered);
-    // Lane L1 (ruling 1649 Q1): the uncovered features' key records, a required leaf of
-    // version 25.
-    nlohmann::json uncovered_keys = nlohmann::json::array();
-    for (const auto &key : config.uncovered_keys)
-    {
-      uncovered_keys.push_back({{"Feature", key.feature},
-                                {"Type", key.type},
-                                {"Hash", key.hash},
-                                {"Matched", key.matched},
-                                {"PlacementRejection", key.placement_rejection},
-                                {"Unboxable", key.unboxable}});
-    }
-    cache["UncoveredKeys"] = std::move(uncovered_keys);
-    // The exclusion-energy export's portions (idfix DESIGN section 8; decision 1072 Q3: a
-    // required leaf of version 22).
-    nlohmann::json exclusions = nlohmann::json::array();
-    for (const auto &portion : config.exclusion_portions)
-    {
-      exclusions.push_back({{"Feature", portion.feature},
-                            {"Topology", portion.topology},
-                            {"Segment", portion.segment},
-                            {"P0", portion.p0},
-                            {"P1", portion.p1}});
-    }
-    cache["ExclusionPortions"] = std::move(exclusions);
-    // 2B (fix round P2): the UnpatchedPair features' unpatched cells (a required leaf of
-    // version 23; empty on a run without one).
-    nlohmann::json unpatched = nlohmann::json::array();
-    for (const auto &portion : config.unpatched_pair_portions)
-    {
-      unpatched.push_back({{"Feature", portion.feature},
-                           {"Topology", portion.topology},
-                           {"Segment", portion.segment},
-                           {"P0", portion.p0},
-                           {"P1", portion.p1}});
-    }
-    cache["UnpatchedPairPortions"] = std::move(unpatched);
-    // Mirror band (boundary-cut DESIGN 2.2): the planes, the record and the virtual-corner
-    // trims.
-    nlohmann::json planes = nlohmann::json::array();
-    for (const auto &plane : config.mirror_planes)
-    {
-      planes.push_back({{"Attribute", plane.attribute},
-                        {"Normal", plane.normal},
-                        {"Offset", plane.offset},
-                        {"Status", plane.status},
-                        {"BoxMin", plane.box_min},
-                        {"BoxMax", plane.box_max}});
-    }
-    cache["MirrorPlanes"] = std::move(planes);
-    cache["MirrorBand"] = config.mirror_band;
-    cache["MirrorBandOverR"] = config.mirror_band_over_radius;
-    nlohmann::json unmerged_portions = nlohmann::json::array();
-    for (const auto &portion : config.mirror_unmerged_portions)
-    {
-      unmerged_portions.push_back({{"Topology", portion.topology},
-                                   {"P0", portion.p0},
-                                   {"P1", portion.p1},
-                                   {"Image", portion.image},
-                                   {"Identical", portion.identical},
-                                   {"Segment", portion.segment},
-                                   {"S0", portion.s0},
-                                   {"S1", portion.s1}});
-    }
-    cache["MirrorUnmergedPortions"] = std::move(unmerged_portions);
-    nlohmann::json mirror_trims = nlohmann::json::array();
-    for (const auto &trim : config.mirror_arm_trims)
-    {
-      nlohmann::json cells = nlohmann::json::array();
-      for (const auto &[patch, removed] : trim.cells)
-      {
-        cells.push_back({{"Patch", patch}, {"RemovedLength", removed}});
-      }
-      mirror_trims.push_back({{"Feature", trim.feature},
-                              {"Topology", trim.topology},
-                              {"AngleDegrees", trim.angle_degrees},
-                              {"ExitDistanceOverR", trim.exit_distance_over_radius},
-                              {"HalfStartOverR", trim.half_start_over_radius},
-                              {"TrimmedLength", trim.trimmed_length},
-                              {"VertexPatch", trim.vertex_patch},
-                              {"Arm", trim.arm},
-                              {"Cells", std::move(cells)}});
-    }
-    cache["MirrorArmTrims"] = std::move(mirror_trims);
-  }
-  if (!config.quantum_near_match.empty())
-  {
-    // Quantum near-matches resolved for this geometry (block (b) DESIGN section 4).
-    nlohmann::json near_matches = nlohmann::json::array();
-    for (const auto &entry : config.quantum_near_match)
-    {
-      near_matches.push_back({{"Model", entry.model},
-                              {"ModelKey", entry.model_key},
-                              {"FeatureKey", entry.feature_key},
-                              {"MaxDeltaQuanta", entry.max_delta_quanta},
-                              {"DifferingNumbers", entry.differing_numbers},
-                              {"Features", entry.features}});
-    }
-    cache["QuantumNearMatch"] = std::move(near_matches);
-  }
-  if (!config.legacy_contract.empty())
-  {
-    // Legacy-contract aliases resolved for this geometry (USER decision 283).
-    nlohmann::json aliases = nlohmann::json::array();
-    for (const auto &entry : config.legacy_contract)
-    {
-      aliases.push_back({{"Model", entry.model},
-                         {"Key", entry.key},
-                         {"ContextDigest", entry.context_digest},
-                         {"Reason", entry.reason},
-                         {"Features", entry.features}});
-    }
-    cache["LegacyContract"] = std::move(aliases);
-  }
-  output << cache.dump(2) << '\n';
+        nlohmann::json cache = {{"Version", 25},
+                                {"MatchingRadius", config.matching_radius},
+                                {"Models", std::move(models)},
+                                {"Patches", std::move(patches)}};
+        {
+          // Corner-arm trim records (decision 394 F1): the cached patches are the trimmed
+          // ones.
+          nlohmann::json trims = nlohmann::json::array();
+          for (const auto &trim : config.corner_arm_trims)
+          {
+            nlohmann::json cells = nlohmann::json::array();
+            for (const auto &[patch, removed] : trim.cells)
+            {
+              cells.push_back({{"Patch", patch}, {"RemovedLength", removed}});
+            }
+            trims.push_back({{"Feature", trim.feature},
+                             {"Topology", trim.topology},
+                             {"AngleDegrees", trim.angle_degrees},
+                             {"ExitDistanceOverR", trim.exit_distance_over_radius},
+                             {"TrimmedLength", trim.trimmed_length},
+                             {"RemovedCellLength", trim.removed_cell_length},
+                             {"RemovedUncoveredLength", trim.removed_uncovered_length},
+                             {"Cells", std::move(cells)}});
+          }
+          cache["CornerArmTrims"] = std::move(trims);
+          // Corner-arm extension records (decision 511 O2 (i)): the cached patches are the
+          // extended ones.
+          nlohmann::json extensions = nlohmann::json::array();
+          for (const auto &extension : config.corner_arm_extensions)
+          {
+            nlohmann::json arms = nlohmann::json::array();
+            for (const auto &arm : extension.arms)
+            {
+              arms.push_back({{"Arm", arm.arm},
+                              {"Direction", arm.direction},
+                              {"ExitDistanceOverR", arm.exit_over_radius},
+                              {"ClaimEndOverR", arm.claim_end_over_radius},
+                              {"StretchLength", arm.stretch_length},
+                              {"ExtendedCellLength", arm.extended_cell_length},
+                              {"ExtendedUncoveredLength", arm.extended_uncovered_length},
+                              {"Hosted", arm.hosted}});
+            }
+            nlohmann::json cells = nlohmann::json::array();
+            for (const auto &[patch, extended] : extension.cells)
+            {
+              cells.push_back({{"Patch", patch}, {"ExtendedLength", extended}});
+            }
+            extensions.push_back(
+                {{"Feature", extension.feature},
+                 {"Topology", extension.topology},
+                 {"AngleDegrees", extension.angle_degrees},
+                 {"CornerRadiusOverR", extension.corner_radius_over_radius},
+                 {"HalfByMirror", extension.half_by_mirror},
+                 {"Arms", std::move(arms)},
+                 {"Cells", std::move(cells)}});
+          }
+          cache["CornerArmExtensions"] = std::move(extensions);
+          // Uncovered requirements (decision 394 F2).
+          nlohmann::json uncovered = nlohmann::json::array();
+          for (const auto &portion : config.uncovered_portions)
+          {
+            uncovered.push_back({{"Feature", portion.feature},
+                                 {"Topology", portion.topology},
+                                 {"Segment", portion.segment},
+                                 {"P0", portion.p0},
+                                 {"P1", portion.p1}});
+          }
+          cache["UncoveredPortions"] = std::move(uncovered);
+          // Lane L1 (ruling 1649 Q1): the uncovered features' key records, a required leaf
+          // of version 25.
+          nlohmann::json uncovered_keys = nlohmann::json::array();
+          for (const auto &key : config.uncovered_keys)
+          {
+            uncovered_keys.push_back({{"Feature", key.feature},
+                                      {"Type", key.type},
+                                      {"Hash", key.hash},
+                                      {"Matched", key.matched},
+                                      {"PlacementRejection", key.placement_rejection},
+                                      {"Unboxable", key.unboxable}});
+          }
+          cache["UncoveredKeys"] = std::move(uncovered_keys);
+          // The exclusion-energy export's portions (idfix DESIGN section 8; decision 1072
+          // Q3: a required leaf of version 22).
+          nlohmann::json exclusions = nlohmann::json::array();
+          for (const auto &portion : config.exclusion_portions)
+          {
+            exclusions.push_back({{"Feature", portion.feature},
+                                  {"Topology", portion.topology},
+                                  {"Segment", portion.segment},
+                                  {"P0", portion.p0},
+                                  {"P1", portion.p1}});
+          }
+          cache["ExclusionPortions"] = std::move(exclusions);
+          // 2B (fix round P2): the UnpatchedPair features' unpatched cells (a required leaf
+          // of version 23; empty on a run without one).
+          nlohmann::json unpatched = nlohmann::json::array();
+          for (const auto &portion : config.unpatched_pair_portions)
+          {
+            unpatched.push_back({{"Feature", portion.feature},
+                                 {"Topology", portion.topology},
+                                 {"Segment", portion.segment},
+                                 {"P0", portion.p0},
+                                 {"P1", portion.p1}});
+          }
+          cache["UnpatchedPairPortions"] = std::move(unpatched);
+          // Mirror band (boundary-cut DESIGN 2.2): the planes, the record and the
+          // virtual-corner trims.
+          nlohmann::json planes = nlohmann::json::array();
+          for (const auto &plane : config.mirror_planes)
+          {
+            planes.push_back({{"Attribute", plane.attribute},
+                              {"Normal", plane.normal},
+                              {"Offset", plane.offset},
+                              {"Status", plane.status},
+                              {"BoxMin", plane.box_min},
+                              {"BoxMax", plane.box_max}});
+          }
+          cache["MirrorPlanes"] = std::move(planes);
+          cache["MirrorBand"] = config.mirror_band;
+          cache["MirrorBandOverR"] = config.mirror_band_over_radius;
+          nlohmann::json unmerged_portions = nlohmann::json::array();
+          for (const auto &portion : config.mirror_unmerged_portions)
+          {
+            unmerged_portions.push_back({{"Topology", portion.topology},
+                                         {"P0", portion.p0},
+                                         {"P1", portion.p1},
+                                         {"Image", portion.image},
+                                         {"Identical", portion.identical},
+                                         {"Segment", portion.segment},
+                                         {"S0", portion.s0},
+                                         {"S1", portion.s1}});
+          }
+          cache["MirrorUnmergedPortions"] = std::move(unmerged_portions);
+          nlohmann::json mirror_trims = nlohmann::json::array();
+          for (const auto &trim : config.mirror_arm_trims)
+          {
+            nlohmann::json cells = nlohmann::json::array();
+            for (const auto &[patch, removed] : trim.cells)
+            {
+              cells.push_back({{"Patch", patch}, {"RemovedLength", removed}});
+            }
+            mirror_trims.push_back({{"Feature", trim.feature},
+                                    {"Topology", trim.topology},
+                                    {"AngleDegrees", trim.angle_degrees},
+                                    {"ExitDistanceOverR", trim.exit_distance_over_radius},
+                                    {"HalfStartOverR", trim.half_start_over_radius},
+                                    {"TrimmedLength", trim.trimmed_length},
+                                    {"VertexPatch", trim.vertex_patch},
+                                    {"Arm", trim.arm},
+                                    {"Cells", std::move(cells)}});
+          }
+          cache["MirrorArmTrims"] = std::move(mirror_trims);
+        }
+        if (!config.quantum_near_match.empty())
+        {
+          // Quantum near-matches resolved for this geometry (block (b) DESIGN section 4).
+          nlohmann::json near_matches = nlohmann::json::array();
+          for (const auto &entry : config.quantum_near_match)
+          {
+            near_matches.push_back({{"Model", entry.model},
+                                    {"ModelKey", entry.model_key},
+                                    {"FeatureKey", entry.feature_key},
+                                    {"MaxDeltaQuanta", entry.max_delta_quanta},
+                                    {"DifferingNumbers", entry.differing_numbers},
+                                    {"Features", entry.features}});
+          }
+          cache["QuantumNearMatch"] = std::move(near_matches);
+        }
+        if (!config.legacy_contract.empty())
+        {
+          // Legacy-contract aliases resolved for this geometry (USER decision 283).
+          nlohmann::json aliases = nlohmann::json::array();
+          for (const auto &entry : config.legacy_contract)
+          {
+            aliases.push_back({{"Model", entry.model},
+                               {"Key", entry.key},
+                               {"ContextDigest", entry.context_digest},
+                               {"Reason", entry.reason},
+                               {"Features", entry.features}});
+          }
+          cache["LegacyContract"] = std::move(aliases);
+        }
+        output << cache.dump(2) << '\n';
+      });
 }
 
 ResponseCorrectionData ReadResponseGeometryCache(const std::filesystem::path &path,
@@ -23940,56 +23944,62 @@ void WriteSurfaceResponsePatches(const ResponseCorrectionData &data,
                                  const AutomaticResponseRequirements &requirements,
                                  const std::string &path)
 {
-  std::ofstream output(path);
-  MFEM_VERIFY(output, "Unable to open surface-response patch dry run \"" << path << "\"!");
-  std::map<int, const ResponseModelData *> models;
-  for (const auto &model : data.models)
-  {
-    models.emplace(model.idx, &model);
-  }
-  // DomainWeight (decision 559 MINOR-3 / rerun-3 plan O-14): the factor on the patch's
-  // DOMAIN correction only (0 for a cell on an excluded ForeignEdge of a Box + Context
-  // coupon, decision 553 sub-class (i)); information for the tabulation.
-  output << "Patch,Feature,Topology,Model,ModelIndex,Weight,ModelWeight,QuadratureWeight,"
-            "SideFactor,CouponDepth,Segment,S0,S1,OriginX,OriginY,OriginZ,AxisUX,AxisUY,"
-            "AxisUZ,AxisVX,AxisVY,AxisVZ,AxisWX,AxisWY,AxisWZ,StripBegin,StripEnd,"
-            "DomainWeight\n";
-  output << std::setprecision(17);
-  for (std::size_t i = 0; i < data.patches.size(); i++)
-  {
-    const auto &patch = data.patches[i];
-    const auto model = models.find(patch.model);
-    MFEM_VERIFY(model != models.end(), "A dry-run patch refers to an unknown model!");
-    const auto &provenance = patch.provenance;
-    // The weight of a longitudinal patch carries 1 / CouponDepth (mesh units); the exported
-    // weight is dimensionless in either unit system when the depth is scaled with it.
-    output << i << ',' << provenance.feature << ',' << model->second->topology << ','
-           << model->second->name << ',' << patch.model << ',' << patch.weight << ','
-           << provenance.model_weight << ',' << provenance.quadrature_weight << ','
-           << provenance.side_factor << ','
-           << requirements.ScaleLength(provenance.coupon_depth) << ',' << provenance.segment
-           << ',' << requirements.ScaleLength(provenance.s0) << ','
-           << requirements.ScaleLength(provenance.s1);
-    for (const double value : patch.origin)
-    {
-      output << ',' << requirements.ScaleLength(value);
-    }
-    for (const auto *axis : {&patch.axis_u, &patch.axis_v, &patch.axis_w})
-    {
-      for (const double value : *axis)
+  WriteOutputFile(
+      path,
+      [&](std::ostream &output)
       {
-        output << ',' << value;
-      }
-    }
-    // The longitudinal cell of the surface-mortar strip: offsets along AxisW from the
-    // origin; the cells of one portion tile it.
-    for (const double value : patch.longitudinal_cell)
-    {
-      output << ',' << requirements.ScaleLength(value);
-    }
-    output << ',' << patch.domain_weight << '\n';
-  }
-  MFEM_VERIFY(output.good(), "Failed writing the surface-response patch dry run!");
+        std::map<int, const ResponseModelData *> models;
+        for (const auto &model : data.models)
+        {
+          models.emplace(model.idx, &model);
+        }
+        // DomainWeight (decision 559 MINOR-3 / rerun-3 plan O-14): the factor on the
+        // patch's DOMAIN correction only (0 for a cell on an excluded ForeignEdge of a Box
+        // + Context coupon, decision 553 sub-class (i)); information for the tabulation.
+        output
+            << "Patch,Feature,Topology,Model,ModelIndex,Weight,ModelWeight,"
+               "QuadratureWeight,"
+               "SideFactor,CouponDepth,Segment,S0,S1,OriginX,OriginY,OriginZ,AxisUX,AxisUY,"
+               "AxisUZ,AxisVX,AxisVY,AxisVZ,AxisWX,AxisWY,AxisWZ,StripBegin,StripEnd,"
+               "DomainWeight\n";
+        output << std::setprecision(17);
+        for (std::size_t i = 0; i < data.patches.size(); i++)
+        {
+          const auto &patch = data.patches[i];
+          const auto model = models.find(patch.model);
+          MFEM_VERIFY(model != models.end(), "A dry-run patch refers to an unknown model!");
+          const auto &provenance = patch.provenance;
+          // The weight of a longitudinal patch carries 1 / CouponDepth (mesh units); the
+          // exported weight is dimensionless in either unit system when the depth is scaled
+          // with it.
+          output << i << ',' << provenance.feature << ',' << model->second->topology << ','
+                 << model->second->name << ',' << patch.model << ',' << patch.weight << ','
+                 << provenance.model_weight << ',' << provenance.quadrature_weight << ','
+                 << provenance.side_factor << ','
+                 << requirements.ScaleLength(provenance.coupon_depth) << ','
+                 << provenance.segment << ',' << requirements.ScaleLength(provenance.s0)
+                 << ',' << requirements.ScaleLength(provenance.s1);
+          for (const double value : patch.origin)
+          {
+            output << ',' << requirements.ScaleLength(value);
+          }
+          for (const auto *axis : {&patch.axis_u, &patch.axis_v, &patch.axis_w})
+          {
+            for (const double value : *axis)
+            {
+              output << ',' << value;
+            }
+          }
+          // The longitudinal cell of the surface-mortar strip: offsets along AxisW from the
+          // origin; the cells of one portion tile it.
+          for (const double value : patch.longitudinal_cell)
+          {
+            output << ',' << requirements.ScaleLength(value);
+          }
+          output << ',' << patch.domain_weight << '\n';
+        }
+        MFEM_VERIFY(output.good(), "Failed writing the surface-response patch dry run!");
+      });
 }
 
 namespace
@@ -24200,10 +24210,8 @@ static std::optional<std::string> WriteImpedanceRuleCandidateRequirements(
                                   .string();
   if (Mpi::Root(comm))
   {
-    std::ofstream output(candidate_path);
-    MFEM_VERIFY(output, "Unable to open the impedance-metal rule's candidate manifest \""
-                            << candidate_path << "\"!");
-    output << manifest.dump(2) << '\n';
+    WriteOutputFile(candidate_path,
+                    [&](std::ostream &output) { output << manifest.dump(2) << '\n'; });
   }
   Mpi::Barrier(comm);
   Mpi::Print(comm, " Candidate manifest (NOT OF RECORD): {} ({:d} patches)\n",
@@ -24814,10 +24822,8 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   }
   if (Mpi::Root(parallel_mesh.GetComm()))
   {
-    std::ofstream output(path);
-    MFEM_VERIFY(output, "Unable to open surface-response requirements manifest \""
-                            << path << "\"!");
-    output << manifest.dump(2) << '\n';
+    WriteOutputFile(path,
+                    [&](std::ostream &output) { output << manifest.dump(2) << '\n'; });
     if (parallel_mesh.Dimension() == 3)
     {
       WriteSurfaceResponsePatches(patches, requirements, patches_path);
@@ -34228,49 +34234,55 @@ void SurfaceResponseOperator::WriteResolutionPatchTable(const std::string &path)
   // level's file: removed first, so that this level never writes into the archive
   // (decision 1831; the pre-existing writers' form).
   std::filesystem::remove(path);
-  std::ofstream output(path);
-  MFEM_VERIFY(output, "Unable to open " << path << " for writing!");
-  output << "patch,model,origin x (m),origin y (m),origin z (m),axis u x,axis u y,axis u "
-            "z,axis v x,axis v y,axis v z,axis w x,axis w y,axis w z,spatial,cell length "
-            "(m),plane z (um),knots,located,h median (m),h/R,status\n";
-  const double nan = std::numeric_limits<double>::quiet_NaN();
-  auto Number = [](double value)
-  { return std::isnan(value) ? std::string("nan") : fmt::format("{:+.16e}", value); };
-  for (const std::size_t k : order)
-  {
-    const double *r = records.data() + stride * k;
-    const int global_index = static_cast<int>(std::llround(r[0]));
-    const auto assignment = assignments.find(global_index);
-    const PatchAssignment *a =
-        assignment != assignments.end() ? assignment->second : nullptr;
-    output << global_index + 1 << ',' << (a ? a->model : 0);
-    for (int d = 0; d < 3; d++)
-    {
-      output << ',' << Number(a ? a->origin[d] * resolution_length_scale : nan);
-    }
-    for (const auto *axis :
-         {a ? &a->axis_u : nullptr, a ? &a->axis_v : nullptr, a ? &a->axis_w : nullptr})
-    {
-      for (int d = 0; d < 3; d++)
+  WriteOutputFile(
+      path,
+      [&](std::ostream &output)
       {
-        output << ',' << Number(axis ? (*axis)[d] : nan);
-      }
-    }
-    const ResolutionPatchReading reading{static_cast<int>(std::llround(r[3])),
-                                         static_cast<int>(std::llround(r[4])), r[5]};
-    const double m = reading.Evaluated() && resolution_radius > 0.0
-                         ? reading.h / resolution_radius
-                         : nan;
-    output << ',' << static_cast<int>(r[1]) << ',' << Number(r[2] * resolution_length_scale)
-           << ',' << (std::isnan(r[6]) ? std::string("nan") : fmt::format("{:.1f}", r[6]))
-           << ',' << reading.knots << ',' << reading.located << ','
-           << Number(reading.Evaluated() ? reading.h * resolution_length_scale : nan) << ','
-           << Number(m) << ','
-           << ResolutionStatusName(ResolutionPatchStatus(
-                  m, resolution_order, resolution_bars, resolution_bars_hold))
-           << '\n';
-  }
-  MFEM_VERIFY(output.good(), "Failed writing " << path << "!");
+        output << "patch,model,origin x (m),origin y (m),origin z (m),axis u x,axis u "
+                  "y,axis u "
+                  "z,axis v x,axis v y,axis v z,axis w x,axis w y,axis w z,spatial,cell "
+                  "length "
+                  "(m),plane z (um),knots,located,h median (m),h/R,status\n";
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        auto Number = [](double value)
+        { return std::isnan(value) ? std::string("nan") : fmt::format("{:+.16e}", value); };
+        for (const std::size_t k : order)
+        {
+          const double *r = records.data() + stride * k;
+          const int global_index = static_cast<int>(std::llround(r[0]));
+          const auto assignment = assignments.find(global_index);
+          const PatchAssignment *a =
+              assignment != assignments.end() ? assignment->second : nullptr;
+          output << global_index + 1 << ',' << (a ? a->model : 0);
+          for (int d = 0; d < 3; d++)
+          {
+            output << ',' << Number(a ? a->origin[d] * resolution_length_scale : nan);
+          }
+          for (const auto *axis : {a ? &a->axis_u : nullptr, a ? &a->axis_v : nullptr,
+                                   a ? &a->axis_w : nullptr})
+          {
+            for (int d = 0; d < 3; d++)
+            {
+              output << ',' << Number(axis ? (*axis)[d] : nan);
+            }
+          }
+          const ResolutionPatchReading reading{static_cast<int>(std::llround(r[3])),
+                                               static_cast<int>(std::llround(r[4])), r[5]};
+          const double m = reading.Evaluated() && resolution_radius > 0.0
+                               ? reading.h / resolution_radius
+                               : nan;
+          output << ',' << static_cast<int>(r[1]) << ','
+                 << Number(r[2] * resolution_length_scale) << ','
+                 << (std::isnan(r[6]) ? std::string("nan") : fmt::format("{:.1f}", r[6]))
+                 << ',' << reading.knots << ',' << reading.located << ','
+                 << Number(reading.Evaluated() ? reading.h * resolution_length_scale : nan)
+                 << ',' << Number(m) << ','
+                 << ResolutionStatusName(ResolutionPatchStatus(
+                        m, resolution_order, resolution_bars, resolution_bars_hold))
+                 << '\n';
+        }
+        MFEM_VERIFY(output.good(), "Failed writing " << path << "!");
+      });
 }
 
 void SurfaceResponseOperator::ConfigureCoverage(const ResponseCorrectionData &request,
@@ -41128,37 +41140,41 @@ void SurfaceResponseOperator::WriteRegionShareRows(
   const int excitation = source >= 0 ? source : region_raw_records - 1;
   using VT = Units::ValueType;
   const auto path = DiagnosticsPath(post_dir, "surface-response-region-share.csv");
-  std::ofstream out(path, first ? std::ios::trunc : std::ios::app);
-  MFEM_VERIFY(out, "Unable to open " << path << " for writing!");
-  if (first)
-  {
-    out << "excitation,evaluation,target,patch,tier,placement,share,open_energy (J),"
-           "open_energy_in (J),energy (J),energy_in (J),area (m^2),area_in (m^2)\n";
-  }
-  const double area_unit =
-      units.Dimensionalize<VT::LENGTH>(units.Dimensionalize<VT::LENGTH>(1.0));
-  for (const auto &[target, list] : footprints)
-  {
-    const auto &target_shares = shares.at(target);
-    for (std::size_t p = 0; p < list.size(); p++)
-    {
-      const auto &f = list[p];
-      if (f.area <= 0.0 && !f.reference_in)
+  WriteOutputFile(
+      path,
+      [&](std::ostream &out)
       {
-        continue;
-      }
-      out << fmt::format("{:d},{:d},{:d},{:d},{:d},{:d},{:.17e},{:.17e},{:.17e},{:.17e},"
-                         "{:.17e},{:.17e},{:.17e}\n",
-                         excitation, evaluation, target, p + 1, target_shares.tier[p],
-                         static_cast<int>(target_shares.placement[p]),
-                         target_shares.share[p],
-                         units.Dimensionalize<VT::ENERGY>(f.open_energy),
-                         units.Dimensionalize<VT::ENERGY>(f.open_energy_in),
-                         units.Dimensionalize<VT::ENERGY>(f.energy),
-                         units.Dimensionalize<VT::ENERGY>(f.energy_in), f.area * area_unit,
-                         f.area_in * area_unit);
-    }
-  }
+        if (first)
+        {
+          out << "excitation,evaluation,target,patch,tier,placement,share,open_energy (J),"
+                 "open_energy_in (J),energy (J),energy_in (J),area (m^2),area_in (m^2)\n";
+        }
+        const double area_unit =
+            units.Dimensionalize<VT::LENGTH>(units.Dimensionalize<VT::LENGTH>(1.0));
+        for (const auto &[target, list] : footprints)
+        {
+          const auto &target_shares = shares.at(target);
+          for (std::size_t p = 0; p < list.size(); p++)
+          {
+            const auto &f = list[p];
+            if (f.area <= 0.0 && !f.reference_in)
+            {
+              continue;
+            }
+            out << fmt::format(
+                "{:d},{:d},{:d},{:d},{:d},{:d},{:.17e},{:.17e},{:.17e},{:.17e},"
+                "{:.17e},{:.17e},{:.17e}\n",
+                excitation, evaluation, target, p + 1, target_shares.tier[p],
+                static_cast<int>(target_shares.placement[p]), target_shares.share[p],
+                units.Dimensionalize<VT::ENERGY>(f.open_energy),
+                units.Dimensionalize<VT::ENERGY>(f.open_energy_in),
+                units.Dimensionalize<VT::ENERGY>(f.energy),
+                units.Dimensionalize<VT::ENERGY>(f.energy_in), f.area * area_unit,
+                f.area_in * area_unit);
+          }
+        }
+      },
+      (first) ? std::ios::trunc : std::ios::app);
 }
 
 SurfaceResponseOperator::ElectrostaticResponse

@@ -23,6 +23,7 @@
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
+#include "utils/outputfile.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -229,10 +230,7 @@ void RunMeshStatistics(IoData &iodata, MPI_Comm comm, int omp_threads, const cha
                                          : nlohmann::json(nullptr)},
         {"RefineCrackElements", iodata.model.refine_crack_elements}};
     const auto path = fs::path(iodata.problem.output) / "mesh-statistics.json";
-    std::ofstream output(path);
-    MFEM_VERIFY(output, "Cannot open mesh-statistics output!");
-    output << data.dump(2) << '\n';
-    MFEM_VERIFY(output.good(), "Failed writing mesh-statistics output!");
+    WriteOutputFile(path, [&](std::ostream &output) { output << data.dump(2) << '\n'; });
     Mpi::Print(comm, "Post-preprocessing H1 DOFs: {}, elements: {}\n", dofs, elements);
   }
 }

@@ -726,27 +726,19 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
-// P3-24 (SL5-RESOLUTION s10; the P3 stub of
-// resolutions/SL5/palace__drivers__basesolver.cpp.md): WriteMetadata = upstream's
-// palace.json.tmp + rename (#906) with ours' checked streamed write BEFORE the rename. A
-// short write (here: palace.json.tmp is a symbolic link to /dev/full, so the flush fails
-// with ENOSPC) aborts and leaves the previous palace.json byte-identical; the partial
-// temporary file is left behind, never renamed into place. The fault is injected THROUGH
-// the symbolic link, so the case relies on WriteMetadata opening its temporary file through
-// an existing link: if that writer is hardened to remove links before writing (as the other
-// outputs, SD-302), the injection must change (P3-C review m-5). REQUIRE (not CHECK) stops
-// the case on the defect it guards: a renamed link to /dev/full is never read back (P3-C
-// review m-7: the read would not end).
+// P3-24 (SL5-RESOLUTION s10), as of Palace 0.20.0 (#1256): WriteMetadata writes palace.json
+// through WriteOutputFile (our checked, streamed body inside it): a temporary file with a
+// random name, renamed over palace.json once written; a failed open, write or close aborts
+// and leaves the previous palace.json byte-identical. The fault is injected by a read-only
+// output directory (the temporary file cannot be created), since the temporary file's name
+// is no longer known in advance (the former injection, a link to /dev/full at
+// palace.json.tmp, foresaw this change: P3-C review m-5).
 TEST_CASE_METHOD(palace::test::SharedTempDir, "WriteMetadata short write keeps palace.json",
                  "[basesolver][Serial]")
 {
 #if !defined(MFEM_USE_EXCEPTIONS)
-  SKIP("The short-write abort is observed as an exception (MFEM_USE_EXCEPTIONS)");
+  SKIP("The failed-write abort is observed as an exception (MFEM_USE_EXCEPTIONS)");
 #else
-  if (!fs::exists("/dev/full"))
-  {
-    SKIP("No /dev/full on this host");
-  }
   MPI_Comm comm = MPI_COMM_WORLD;
 
   Units units(1.0, 1.0);
@@ -764,22 +756,26 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "WriteMetadata short write keeps p
   // The BaseSolver constructor writes the initial palace.json; SaveMetadata rewrites it.
   TestSolver solver(iodata, Mpi::Root(comm));
   const fs::path path = temp_dir / "palace.json";
-  const fs::path tmp_path = temp_dir / "palace.json.tmp";
   REQUIRE(fs::is_regular_file(path));
   const std::string before = ReadFile(path);
   REQUIRE_FALSE(before.empty());
-  fs::create_symlink("/dev/full", tmp_path);
-  REQUIRE_THROWS_WITH(solver.SaveMetadata(counts),
-                      Catch::Matchers::ContainsSubstring("a short write"));
+  fs::permissions(temp_dir, fs::perms::owner_read | fs::perms::owner_exec,
+                  fs::perm_options::replace);
+  if (std::ofstream(temp_dir / "probe").is_open())
+  {
+    fs::permissions(temp_dir, fs::perms::owner_all, fs::perm_options::replace);
+    fs::remove(temp_dir / "probe");
+    SKIP("A read-only directory is writable here (e.g. as root)");
+  }
+  CHECK_THROWS_WITH(solver.SaveMetadata(counts),
+                    Catch::Matchers::ContainsSubstring("Could not open output file"));
+  fs::permissions(temp_dir, fs::perms::owner_all, fs::perm_options::replace);
   REQUIRE_FALSE(fs::is_symlink(path));
   CHECK(ReadFile(path) == before);
-  CHECK(fs::is_symlink(tmp_path));
-  fs::remove(tmp_path);
 
-  // The control: the same call without the failing stream writes the block.
+  // The control: the same call in a writable directory writes the block.
   solver.SaveMetadata(counts);
   CHECK(nlohmann::json::parse(ReadFile(path)).contains("SavedAdaptedMesh"));
-  CHECK_FALSE(fs::exists(tmp_path));
 #endif
 }
 
