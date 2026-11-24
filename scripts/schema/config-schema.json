@@ -960,6 +960,7 @@
         },
         "Amplitude": {
           "type": "number",
+          "exclusiveMinimum": 0.0,
           "default": 1.0,
           "description": "Amplitude of the incident electric field, V/m."
         },

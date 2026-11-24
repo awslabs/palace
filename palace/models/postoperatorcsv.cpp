@@ -935,16 +935,29 @@ void PostOperatorCSV<solver_t>::InitializeFarFieldRCS(
   {
     return;
   }
+  // The scattered field of an infinite periodic structure is a set of Floquet orders,
+  // whose far field is not that of a bounded scatterer.
+  if (plane_wave_op.IsPeriodicCell())
+  {
+    Mpi::Warning("The radar cross section of plane waves is not written on a periodic "
+                 "cell: the scattered field of an infinite periodic structure is a set of "
+                 "Floquet orders!\n");
+    return;
+  }
+
+  // The radar cross section of the excitations with a plane wave only.
+  std::vector<std::size_t> ex_idx_v_pw;
   for (const auto ex_idx : ex_idx_v_all)
   {
-    if (std::ranges::none_of(plane_wave_op, [ex_idx](const auto &src)
-                             { return static_cast<std::size_t>(src.first) == ex_idx; }))
+    if (std::ranges::any_of(plane_wave_op, [ex_idx](const auto &src)
+                            { return static_cast<std::size_t>(src.first) == ex_idx; }))
     {
-      Mpi::Warning("Excitation {:d} has no plane wave: the radar cross section is only "
-                   "written when all excitations are plane waves!\n",
-                   ex_idx);
-      return;
+      ex_idx_v_pw.push_back(ex_idx);
     }
+  }
+  if (ex_idx_v_pw.empty())
+  {
+    return;
   }
 
   // Bistatic radar cross section in the far-field directions, with the same rows as
@@ -953,7 +966,7 @@ void PostOperatorCSV<solver_t>::InitializeFarFieldRCS(
   {
     farfield_rcs = TableWithCSVFile(post_dir / "farfield-rcs.csv", reload_table);
     Table t;  // Define table locally first due to potential reload.
-    t.reserve(static_cast<int>(surf_post_op.farfield.size() * ex_idx_v_all.size()), 7);
+    t.reserve(static_cast<int>(surf_post_op.farfield.size() * ex_idx_v_pw.size()), 7);
     t.insert("idx", "f (GHz)", -1, 0, PrecIndexCol(solver_t), "");
     {
       Column ex_col("exc", "exc", 0, PrecIndexCol(solver_t), {}, "");
@@ -972,9 +985,9 @@ void PostOperatorCSV<solver_t>::InitializeFarFieldRCS(
   // respect to the incident polarization.
   rcs_monostatic = TableWithCSVFile(post_dir / "rcs-monostatic.csv", reload_table);
   Table t;  // Define table locally first due to potential reload.
-  t.reserve(nr_expected_measurement_rows, 1 + 3 * ex_idx_v_all.size());
+  t.reserve(nr_expected_measurement_rows, 1 + 3 * ex_idx_v_pw.size());
   t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
-  for (const auto ex_idx : ex_idx_v_all)
+  for (const auto ex_idx : ex_idx_v_pw)
   {
     std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
     t.insert(fmt::format("sigma_{}", ex_idx), fmt::format("sigma{} (m²)", ex_label),
@@ -991,14 +1004,16 @@ template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::PrintFarFieldRCS(const SpaceOperator &fem_op)
   requires(solver_t == ProblemType::DRIVEN)
 {
-  if (!farfield_rcs && !rcs_monostatic)
+  if ((!farfield_rcs && !rcs_monostatic) ||
+      std::ranges::none_of(fem_op.GetPlaneWaveOp(), [this](const auto &src)
+                           { return static_cast<std::size_t>(src.first) == m_ex_idx; }))
   {
     return;
   }
   // sigma = 4 pi |r E_s|² / |E_0|² in the far zone, for the scattered field E_s of the
-  // incident plane wave of amplitude E_0.
+  // incident plane wave of amplitude E_0 (positive, see config::PlaneWaveData).
   const auto &ff = measurement_cache.farfield;
-  MFEM_VERIFY(ff.E0 > 0.0, "Missing plane wave amplitude for the radar cross section of "
+  MFEM_ASSERT(ff.E0 > 0.0, "Missing plane wave amplitude for the radar cross section of "
                            "excitation "
                                << m_ex_idx << "!");
   const double scale = 4.0 * std::numbers::pi / (ff.E0 * ff.E0);

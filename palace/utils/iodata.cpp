@@ -504,6 +504,16 @@ void IoData::CheckConfiguration()
   // problem type.
   if (problem.type == ProblemType::DRIVEN)
   {
+    // Surface current and current dipole sources are part of every excitation, so that
+    // they radiate in the scattered field of a plane wave.
+    if (!domains.plane_wave.empty() &&
+        (!boundaries.current.empty() || !domains.current_dipole.empty()))
+    {
+      Mpi::Warning(
+          "Surface current and current dipole sources are added to every "
+          "excitation, also to those with a plane wave: their radiation is part of "
+          "the scattered field, its far field and the radar cross section!\n");
+    }
     // Driven (frequency) solver itself has no unsupported domain or boundary objects.
     // Can't synthesize non-LRC circuit (same conditions as eigenmode solver)
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
@@ -517,6 +527,11 @@ void IoData::CheckConfiguration()
                     solver.driven.sample_f.size() >= 2,
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
                 "at least two distinct frequency samples!\n");
+    // A plane wave is not a port of the synthesized circuit, and its excitation is not
+    // linear in the frequency.
+    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || domains.plane_wave.empty(),
+                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
+                "support plane wave excitations (PlaneWave)!\n");
     MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis ||
                     !boundaries.lumpedport.empty() || !boundaries.waveport.empty(),
                 "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) requires "
@@ -526,11 +541,6 @@ void IoData::CheckConfiguration()
                 "yet support Floquet port boundaries. The Floquet Robin dispersion is "
                 "handled in the online PROM sweep but has not been folded into the "
                 "synthesised circuit pencil.\n");
-    // A plane wave is not a port of the synthesized circuit, and its excitation is not
-    // linear in the frequency.
-    MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis || domains.plane_wave.empty(),
-                "Driven system with circuit synthesis (AdaptiveCircuitSynthesis) does not "
-                "support plane wave excitations (PlaneWave)!\n");
     // The Floquet terms of a wave vector k make the system matrices Hermitian rather than
     // complex symmetric (the transpose of the problem for k is the one for -k), so that the
     // synthesized inverse inductance, inverse resistance, and capacitance matrices would
@@ -680,6 +690,20 @@ void IoData::CheckConfiguration()
       Mpi::Warning(
           "BoundaryMode problem type does not support surface current excitation!\n");
     }
+  }
+
+  // Plane waves are excitations of driven simulations (the eigenmode and transient solvers
+  // reject them when setting up the operators), which the other problem types ignore.
+  if (!domains.plane_wave.empty() && (problem.type == ProblemType::ELECTROSTATIC ||
+                                      problem.type == ProblemType::MAGNETOSTATIC ||
+                                      problem.type == ProblemType::BOUNDARYMODE))
+  {
+    Mpi::Warning("{} problem type does not support plane wave excitations "
+                 "(\"PlaneWave\")!\n",
+                 problem.type == ProblemType::ELECTROSTATIC
+                     ? "Electrostatic"
+                     : (problem.type == ProblemType::MAGNETOSTATIC ? "Magnetostatic"
+                                                                   : "BoundaryMode"));
   }
 
   // Superconductor sheet boundaries (kinetic inductance) are only meaningful for the

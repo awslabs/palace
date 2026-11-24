@@ -34,7 +34,9 @@ the right-hand side is
 where ``\mathbf{g}_T`` and ``\mathbf{g}_O`` are the restrictions of ``\mathbf{g}`` to
 the degrees of freedom of ``T`` and ``O``. Only the elements outside of ``T`` which touch
 ``S`` couple the two sets of degrees of freedom, so the incident field is only evaluated
-in that layer of elements: this is the discrete counterpart of the equivalent (Love)
+in that layer of elements. On a nonconforming mesh, the hanging degrees of freedom on
+``S`` are constrained to the ones of the coarse side, and the layer also takes the elements
+outside of ``T`` whose degrees of freedom are constrained to the ones of ``T``. This is the discrete counterpart of the equivalent (Love)
 electric and magnetic currents ``\mathbf{J} = \mathbf{n} \times \mathbf{H}_\text{inc}``
 and ``\mathbf{M} = -\mathbf{n} \times \mathbf{E}_\text{inc}`` on ``S``, which radiate the
 incident field inside ``S`` and nothing outside. The incident field is known in closed
@@ -42,6 +44,16 @@ form only in a homogeneous medium, so these elements must have one isotropic, lo
 material without a frequency-dependent permittivity, the background, which *Palace*
 checks at setup; inside ``S``, the materials and boundary conditions are arbitrary
 (conductors, lossy, dispersive, magnetic or anisotropic materials).
+
+The boundary conditions which touch the layer of elements around ``S`` would couple the
+incident field into the scattered-field region, so *Palace* rejects them at setup, for
+both the uniform and the adaptive frequency sweep. The exceptions are the symmetry planes
+of the plane wave: a `"PEC"` boundary with ``\hat{\mathbf{p}}`` along its normal, or a
+`"PMC"` boundary with ``\hat{\mathbf{k}} \times \hat{\mathbf{p}}`` along its normal, both
+with ``\hat{\mathbf{k}}`` tangent to it. Boundaries inside ``T`` which do not reach ``S``
+are part of the scatterer and arbitrary. With nonconforming adaptive mesh refinement,
+*Palace* refines the whole layer of elements around ``S`` when any of its elements is
+marked, so that the layer, and the incident field which it radiates, stays uniform.
 
 The incident field is
 
@@ -94,7 +106,7 @@ each frequency, from the incident field interpolated on the layer of elements ar
 ``S`` only. This requires that the frequency-dependent terms of the system matrix (wave
 and Floquet ports, `"Conductivity"` and rational `"Impedance"` boundaries, second-order
 `"Absorbing"` boundaries) do not couple ``T`` and the rest of the domain, that is, that
-these boundaries do not cross ``S``, which *Palace* checks at setup. The outputs of plane
+these boundaries do not cross ``S``, which the setup check above guarantees. The outputs of plane
 waves are computed from the full solution at every frequency of the online sweep, and
 circuit synthesis (`"AdaptiveCircuitSynthesis"`) does not support them.
 
@@ -108,9 +120,10 @@ always needs a Floquet wave vector. *Palace* checks this at setup for all the fr
 of the sweep, against the translation of each periodic boundary pair: it stops with an
 error for a phase mismatch above ``10^{-2}`` rad over a lattice translation, and warns
 above ``10^{-6}`` rad, since the source then leaks into the scattered field at the level of
-the mismatch. Periodic boundary pairs which are not translations are rejected, and for
-pairs without an explicit `"Translation"` (detected from the mesh) the check is done on
-the interpolated incident field at each frequency instead. A fixed ``\bm{k}_F`` matches an
+the mismatch. Periodic boundary pairs which are not translations are rejected. For pairs
+without an explicit `"Translation"` (detected from the mesh), the translation is taken
+from the bounding box of the mesh when the faces of the pair are normal to one coordinate
+axis; otherwise the check is done on the interpolated incident field at each frequency. A fixed ``\bm{k}_F`` matches an
 oblique plane wave only at isolated frequencies; with
 [`config["Boundaries"]["Periodic"]["FloquetReferenceFrequency"]`](../config/reference.md#config-boundaries-periodic)
 it scales with the frequency, as the wave vector of the plane wave does, and must then
@@ -143,9 +156,10 @@ scattered field outside, where only the scattered field propagates, both normali
 energy of the same fields; adaptive mesh refinement therefore does not refine the
 scattered-field region to resolve the incident wave.
 
-The far field in `farfield-rE.csv` is the far field of the scattered field. When all the
-excitations are plane waves, *Palace* also writes the bistatic radar cross section in
-`farfield-rcs.csv` and the monostatic radar cross section in `rcs-monostatic.csv`; see
+The far field in `farfield-rE.csv` is the far field of the scattered field. For the
+excitations with a plane wave, *Palace* also writes the bistatic radar cross section in
+`farfield-rcs.csv` and the monostatic radar cross section in `rcs-monostatic.csv` (not on
+periodic cells, where the far field of one cell is not the one of the structure); see
 [Radar cross section](farfield.md#Radar-cross-section) for their columns. The
 [coated sphere example](../examples/rcs_coated_sphere.md) shows a complete setup and its
 validation against the Mie series.

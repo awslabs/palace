@@ -5,6 +5,7 @@
 #define PALACE_MODELS_PLANE_WAVE_OPERATOR_HPP
 
 #include <map>
+#include <set>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
@@ -20,6 +21,7 @@ class Units;
 namespace config
 {
 
+struct BoundaryData;
 struct PeriodicBoundaryData;
 struct PlaneWaveData;
 
@@ -38,9 +40,12 @@ struct PlaneWaveData;
 // where g is the interpolant of the incident field and g_T, g_O its restrictions to T and
 // O. Only the elements outside of T which touch S couple T and O dofs, so b is the
 // discrete counterpart of the equivalent (Love) currents on S, and the incident field is
-// only evaluated in that layer of elements. These must be one homogeneous, isotropic,
-// lossless and non-dispersive material (the background), whose speed of light sets the
-// wavenumber of the incident field. The spaces, the mesh, and the operator are unchanged.
+// only evaluated in that layer of elements. On nonconforming meshes the coupling follows
+// the prolongation P: the layer takes the elements whose local dofs depend on both T and
+// O true dofs, through the hanging-entity constraints. These must be one homogeneous,
+// isotropic, lossless and non-dispersive material (the background), whose speed of light
+// sets the wavenumber of the incident field. The spaces, the mesh, and the operator are
+// unchanged.
 //
 class PlaneWaveOperator
 {
@@ -66,13 +71,28 @@ private:
   // Frequency in GHz of a unit nondimensional angular frequency, for the messages.
   double unit_GHz = 1.0;
 
+  // Whether the setup is printed.
+  bool print = true;
+
+  // Whether the domain has periodic boundaries (see CheckPeriodicity).
+  bool periodic_cell = false;
+
   // Whether the quasi-periodicity of the incident field is checked on the interpolated
   // field at every frequency, when some periodic boundary pair has no explicit translation.
   bool check_interpolated = false;
 
+  // The plane waves already warned of the jump of their interpolated field.
+  mutable std::set<int> warned_interpolated;
+
   // Cached true-dof marker (1 on the dofs of the closure of the total-field region, 0
   // elsewhere) for each source.
   mutable std::map<int, Vector> tf_markers;
+
+  // Marker of the local dofs of the elements which couple the closure of the total-field
+  // region and the rest of the domain (see GetLayer), and optionally these elements outside
+  // of the region.
+  void GetCoupling(int idx, const FiniteElementSpace &nd_fespace, mfem::Array<int> &l_c,
+                   mfem::Array<int> *coupling_elements = nullptr) const;
 
   // Marker of the local (vector) dofs of the closure of the total-field region, combined
   // across the processes sharing each dof.
@@ -95,13 +115,17 @@ public:
                         const mfem::Array<int> &elements, ComplexVector &g) const;
 
   // The local true dofs which enter the right-hand side of the plane wave with the given
-  // index (the dofs of the elements outside of the total-field region which touch its
-  // boundary), and the local elements which contain any of them, on every process.
+  // index, which the system matrix couples between the closure of the total-field region
+  // and the rest of the domain (on a nonconforming mesh, also through the constraints of
+  // hanging entities), and the local elements on which the incident field is interpolated
+  // for them. Optionally, the local elements outside of the total-field region which carry
+  // this coupling, the layer of elements around the region.
   void GetLayer(int idx, const FiniteElementSpace &nd_fespace, mfem::Array<int> &tdofs,
-                mfem::Array<int> &elements) const;
+                mfem::Array<int> &elements,
+                mfem::Array<int> *coupling_elements = nullptr) const;
 
   PlaneWaveOperator(const std::map<int, config::PlaneWaveData> &plane_wave,
-                    const Units &units, const mfem::ParMesh &mesh);
+                    const Units &units, const mfem::ParMesh &mesh, bool print = true);
 
   auto begin() const { return sources.begin(); }
   auto end() const { return sources.end(); }
@@ -140,7 +164,17 @@ public:
   // which is not a translation are rejected, and without an explicit translation the
   // check is done on the interpolated field at each frequency instead.
   void CheckPeriodicity(const config::PeriodicBoundaryData &periodic,
-                        const std::vector<double> &omega);
+                        const std::vector<double> &omega, mfem::ParMesh &mesh);
+
+  // Check that no boundary with a condition touches the layer of elements around the
+  // total-field region of any plane wave, where the incident field does not satisfy it,
+  // except PEC or PMC symmetry planes along the direction of propagation which it
+  // satisfies.
+  void CheckBoundaries(const config::BoundaryData &boundaries,
+                       const FiniteElementSpace &nd_fespace) const;
+
+  // Whether the domain is a periodic cell, with periodic boundaries.
+  bool IsPeriodicCell() const { return periodic_cell; }
 
   const PlaneWaveSource &GetSource(int idx) const { return sources.at(idx); }
 

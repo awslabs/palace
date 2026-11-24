@@ -283,7 +283,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
 
     // Mark.
-    const auto marked_elements = [&comm, &refinement](const auto &indicators)
+    auto marked_elements = [&comm, &refinement](const auto &indicators)
     {
       const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
           comm, indicators.Local(), refinement.update_fraction);
@@ -300,6 +300,10 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     // Refine.
     {
       mfem::ParMesh &fine_mesh = *mesh.back();
+      if (fine_mesh.Nonconforming())
+      {
+        AddMarkedElements(*mesh.back(), marked_elements);
+      }
       const auto initial_elem_count = fine_mesh.GetGlobalNE();
       fine_mesh.GeneralRefinement(marked_elements, -1, refinement.max_nc_levels);
       UpdateAfterMeshChange(*mesh.back());

@@ -446,6 +446,8 @@ PlaneWaveData::PlaneWaveData(const json &source)
   direction = ParseDirection(source.at("Direction"));        // Required
   polarization = ParseDirection(source.at("Polarization"));  // Required
   amplitude = source.value("Amplitude", amplitude);
+  MFEM_VERIFY(amplitude > 0.0 && std::isfinite(amplitude),
+              "\"Amplitude\" of a plane wave must be positive and finite!");
   origin = source.value("Origin", origin);
 }
 
