@@ -125,6 +125,7 @@ makedocs(
             "examples/cpw.md",
             "examples/microstrip.md",
             "examples/cpw2d.md",
+            "examples/superconducting_line.md",
             "examples/dielectric_grating.md",
             "examples/circular_hole.md"
         ],

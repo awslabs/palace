@@ -35,6 +35,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     electric field and the in-plane magnetic flux density, so that the magnetic energy of
     a quasi-TEM mode was nearly zero.
 
+#### Documentation
+
+  - Added the superconducting line example, which reproduces the propagation of
+    picosecond pulses on a Nb microstrip with the Mattis-Bardeen conductivity of the films,
+    meshed or as surface impedance boundaries.
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features
