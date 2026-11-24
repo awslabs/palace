@@ -11,6 +11,7 @@
 #include <mfem.hpp>
 #include "fem/brokenspace.hpp"
 #include "fem/libceed/ceed.hpp"
+#include "fem/libceed/restriction.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
@@ -86,17 +87,12 @@ private:
             fe.GetRangeType() != mfem::FiniteElement::VECTOR);
   }
 
-  bool HasUniqueInterpRangeRestriction(const mfem::FiniteElement &fe) const
+  bool HasUniqueInterpRangeRestriction(int e) const
   {
     // The range restriction for interpolation operators needs to use a special
-    // DofTransformation (not equal to the transpose of the domain restriction).
-    if (mesh.Dimension() < 3)
-    {
-      return false;
-    }
-    const auto geom = fe.GetGeomType();
-    const auto *dof_trans = fespace.FEColl()->DofTransformationForGeometry(geom);
-    return (dof_trans && !dof_trans->IsIdentity());
+    // DofTransformation (not equal to the transpose of the domain restriction). Local
+    // element e represents its geometry type.
+    return (mesh.Dimension() == 3 && ceed::HasElementDofTransformation(fespace, e));
   }
 
   const Operator &BuildDiscreteInterpolator() const;

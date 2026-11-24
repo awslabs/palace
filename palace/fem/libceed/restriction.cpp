@@ -260,6 +260,10 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
     {
       return false;
     }
+    if (!use_bdr)
+    {
+      return HasElementDofTransformation(fespace, indices[0]);
+    }
     const auto geom = fe->GetGeomType();
     const auto *dof_trans = fespace.FEColl()->DofTransformationForGeometry(geom);
     return (dof_trans && !dof_trans->IsIdentity());
@@ -406,6 +410,15 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
 }
 
 }  // namespace
+
+bool HasElementDofTransformation(const mfem::FiniteElementSpace &fespace, int e)
+{
+  mfem::Array<int> dofs;
+  mfem::DofTransformation dof_trans;
+  fespace.GetElementDofs(e, dofs, dof_trans);
+  const auto *trans = dof_trans.GetDofTransformation();
+  return (trans && !trans->IsIdentity());
+}
 
 void InitRestriction(const mfem::FiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,

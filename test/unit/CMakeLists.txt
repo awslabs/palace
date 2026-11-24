@@ -91,6 +91,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-memoryreporting.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-meshio.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-metadatafile.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-mixedelementfaces.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-mms-electrostatic-analytic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-nleps.cpp

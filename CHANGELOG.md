@@ -554,6 +554,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the libCEED element restrictions of H(curl) spaces of order 2 and higher on meshes
+    with pyramids, which left out the DOF transformation of the pyramids' triangular faces.
+    Every libCEED operator with such a space was wrong there: the system operators of
+    eigenmode, driven, transient and magnetostatic simulations, the discrete gradient and
+    curl used in postprocessing (the electric field of electrostatic simulations and every
+    surface and interface quantity computed from it), and the p-multigrid prolongation.
+    Meshes of tetrahedra, prisms and hexahedra are not affected.
   - The per-type portion tables and the loop-fit tables of the Maxwell correction write
     their header with their first rows whatever print that is (a table first written at a
     later mode or frequency, such as the conductor-consistency table, was appended without
