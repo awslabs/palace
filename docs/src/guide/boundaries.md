@@ -93,8 +93,9 @@ pole or permittivity zero; see [Eigenmode problems](problem.md#Eigenmode-problem
 A [perfectly matched layer (PML)](https://en.wikipedia.org/wiki/Perfectly_matched_layer) is
 an absorbing region surrounding the physical domain, which typically reflects much less
 than an absorbing boundary condition, at the cost of additional mesh elements. In *Palace*,
-a PML is available for 3D frequency domain driven and eigenmode simulations, and the layer
-can be:
+a PML is available for 3D frequency domain driven and eigenmode simulations (transient
+simulations reject PML regions, and electrostatic and magnetostatic simulations treat them
+as regular materials), and the layer can be:
 
   - Meshed with the model, as domains listed in
     [`config["Domains"]["PML"]`](../config/reference.md#config-domains-pml): a uniaxial PML

@@ -1466,6 +1466,28 @@ TEST_CASE("Config PML regions", "[config][Serial]")
   CHECK_THROWS(config::DomainData(domains));
 }
 
+TEST_CASE("Config PML regions in transient simulations", "[config][Serial]")
+{
+  // A PML region does not absorb in a transient simulation, which rejects it, while the
+  // static simulations treat it as a regular material.
+  const json config = {
+      {"Problem", {{"Type", "Transient"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials", {{{"Attributes", {1, 2}}}}},
+        {"PML", json::array({json{{"Attributes", {2}}}})}}},
+      {"Boundaries", json::object()},
+      {"Solver",
+       {{"Transient",
+         {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+  CHECK_THROWS_WITH(
+      IoData(config, false),
+      Catch::Matchers::ContainsSubstring("is not supported for transient simulations"));
+  auto without_pml = config;
+  without_pml["Domains"].erase("PML");
+  CHECK_NOTHROW(IoData(without_pml, false));
+}
+
 TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
 {
   CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 3}, {"Save", 2}}).n_post == 2);

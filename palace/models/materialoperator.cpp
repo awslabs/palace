@@ -557,10 +557,10 @@ void MaterialOperator::SetUpPML(const std::vector<config::PMLData> &pml,
     return;
   }
 
-  // The PML is only defined for 3D frequency domain problems. Otherwise, the PML regions
-  // are treated as regular materials: with a warning for other simulation types, and
-  // silently on 2D meshes, which are the wave port cross-section submeshes (SpaceOperator
-  // rejects PML regions for 2D simulations).
+  // The PML is only defined for 3D frequency domain problems (IoData rejects PML regions
+  // in transient simulations). Otherwise, the PML regions are treated as regular materials:
+  // with a warning for static simulations, and silently on 2D meshes, which are the wave
+  // port cross-section submeshes (SpaceOperator rejects PML regions for 2D simulations).
   if (problem_type != ProblemType::DRIVEN && problem_type != ProblemType::EIGENMODE)
   {
     Mpi::Warning(mesh.GetComm(),

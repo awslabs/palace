@@ -707,6 +707,15 @@ void IoData::CheckConfiguration()
       "Superconductor boundary \"TwoSided\" cannot be used with "
       "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
 
+  // A PML region only absorbs in frequency domain simulations. In a transient simulation
+  // it would be a regular material, terminated by the outer boundary of the layer, which
+  // reflects (static simulations treat PML regions as regular materials, see
+  // MaterialOperator).
+  MFEM_VERIFY(problem.type != ProblemType::TRANSIENT ||
+                  std::ranges::all_of(domains.pml,
+                                      [](const auto &pml) { return pml.IsExtruded(); }),
+              "config[\"Domains\"][\"PML\"] is not supported for transient simulations!");
+
   // The extruded PML of config["Boundaries"]["PML"] is built on the serial mesh, of prisms
   // and hexahedra, which only nonconformal adaptive refinement refines. Its boundary
   // becomes an interior boundary, between the physical region and the layer.
