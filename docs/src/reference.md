@@ -838,7 +838,8 @@ frequency. The propagation constant is part of the tangential wavenumber on the 
 the second-order condition is not passive on the edges where the effective index
 ``\text{Re}\{k_n\}/k_0`` of a mode exceeds ``\sqrt{2}`` times the refractive index of the
 material: for example, on edges in vacuum, for the quasi-TEM mode of a coplanar waveguide on
-a substrate with a relative permittivity above 3.
+a substrate with a relative permittivity above 3. A mode which then gains energy along the
+guide, with ``\text{Im}\{k_n\} > 0``, is reported with a warning.
 
 Additionally, while metals with finite conductivity can be modeled using an impedance
 boundary condition with constant impedance ``Z_s``, a more accurate model taking into

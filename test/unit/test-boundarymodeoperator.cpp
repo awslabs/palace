@@ -686,26 +686,27 @@ SolveParallelPlateMode(double t, double d, double freq_ghz, double n_target,
           ksp->NumTotalMultIterations()};
 }
 
-// The two modes nearest to the shift target kₙ = omega n_target of the cross-section
-// 0 < x < W, 0 < y < H, W = 1 m and H = 0.5 m, of a guide filled with one material (vacuum,
-// or as configured) at 0.5 GHz (the free-space wavenumber k = omega, in 1/m), with the
-// boundary conditions configured, on a mesh of n x n / 2 quadrilaterals of the given order,
-// solved through the 2D BoundaryModeOperator path of the BoundaryMode driver with a sparse
-// direct or p-multigrid (mg_max_levels > 1) preconditioner: their propagation constants,
-// and the numbers of linear solves and iterations. MakeCartesian2D boundary attributes:
-// bottom = 1, right = 2, top = 3, left = 4.
-constexpr double rectangle_freq_ghz = 0.5;
+// The modes of a cross-section solved through the 2D BoundaryModeOperator path of the
+// BoundaryMode driver, with a sparse direct or p-multigrid (mg_max_levels > 1)
+// preconditioner: their propagation constants, whether each gains energy along the guide
+// (ModeEigenSolver::GainsEnergy), and the numbers of linear solves and iterations.
 struct RectangleModes
 {
   std::vector<std::complex<double>> kn;
+  std::vector<bool> gains_energy;
   int num_solves, num_iterations;
 };
-RectangleModes
-SolveRectangleCrossSectionModes(const std::function<void(IoData &)> &configure,
-                                double n_target, int order, int n, int mg_max_levels,
-                                bool pc_mat_real)
+
+// The two modes nearest to the shift target kₙ = omega n_target of the cross-section of a
+// serial 2D mesh, with lengths in m, of a guide filled with one material of attribute 1
+// (vacuum, or as configured) at freq_ghz, with the boundary conditions configured, of the
+// given order.
+RectangleModes SolveCrossSectionModes(std::unique_ptr<mfem::Mesh> serial_mesh,
+                                      const std::function<void(IoData &)> &configure,
+                                      double freq_ghz, double n_target, int order,
+                                      int mg_max_levels, bool pc_mat_real)
 {
-  constexpr double W = 1.0, H = 0.5, freq_ghz = rectangle_freq_ghz, tol = 1.0e-10;
+  constexpr double tol = 1.0e-10;
   constexpr int num_modes = 2;
   MPI_Comm comm = Mpi::World();
   IoData iodata(Units(1.0, 1.0));
@@ -723,8 +724,6 @@ SolveRectangleCrossSectionModes(const std::function<void(IoData &)> &configure,
   iodata.solver.linear.mg_max_levels = mg_max_levels;
   iodata.solver.linear.pc_mat_real = pc_mat_real;
 
-  auto serial_mesh = std::make_unique<mfem::Mesh>(
-      mfem::Mesh::MakeCartesian2D(n, n / 2, mfem::Element::QUADRILATERAL, false, W, H));
   iodata.NondimensionalizeInputs(serial_mesh);
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(
@@ -753,12 +752,30 @@ SolveRectangleCrossSectionModes(const std::function<void(IoData &)> &configure,
   for (int i = 0; i < num_modes; i++)
   {
     modes.kn.push_back(mode_solver.GetPropagationConstant(i));
+    modes.gains_energy.push_back(mode_solver.GainsEnergy(modes.kn.back()));
   }
   const auto *ksp = mode_solver.GetLinearSolver();
   REQUIRE(ksp);
   modes.num_solves = ksp->NumTotalMult();
   modes.num_iterations = ksp->NumTotalMultIterations();
   return modes;
+}
+
+// The modes of SolveCrossSectionModes for the cross-section 0 < x < W, 0 < y < H, W = 1 m
+// and H = 0.5 m, at 0.5 GHz (the free-space wavenumber k = omega, in 1/m), on a mesh of
+// n x n / 2 quadrilaterals. MakeCartesian2D boundary attributes: bottom = 1, right = 2,
+// top = 3, left = 4.
+constexpr double rectangle_freq_ghz = 0.5;
+RectangleModes
+SolveRectangleCrossSectionModes(const std::function<void(IoData &)> &configure,
+                                double n_target, int order, int n, int mg_max_levels,
+                                bool pc_mat_real)
+{
+  constexpr double W = 1.0, H = 0.5;
+  return SolveCrossSectionModes(std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian2D(
+                                    n, n / 2, mfem::Element::QUADRILATERAL, false, W, H)),
+                                configure, rectangle_freq_ghz, n_target, order,
+                                mg_max_levels, pc_mat_real);
 }
 
 // PEC plates at y = 0 and y = H and absorbing boundaries of the given order at x = 0 and
@@ -1376,6 +1393,52 @@ TEST_CASE("ModeEigenSolver multigrid preconditioners of second-order absorbing b
     {
       CHECK(HasMode(modes.kn, kn, 1.0e-6));
     }
+  }
+}
+
+TEST_CASE("ModeEigenSolver slow modes on second-order absorbing edges",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // A slab of permittivity 11.45 and thickness d = 3 mm on a PMC plane (half of a symmetric
+  // slab), between PEC sides, under an absorbing boundary 2 mm above it, at 7 GHz: its TE0
+  // mode, with E along the slab and the effective index 2.71 of the open slab, above √2,
+  // loses energy along the guide with the first-order absorbing boundary condition, and
+  // gains it with the second-order one, which is then not passive on the edge
+  // (Im{kₙ} > 0). ModeEigenSolver::GainsEnergy, for the warnings of the BoundaryMode driver
+  // and of wave ports, flags only the latter.
+  constexpr double W = 1.0e-3, H = 5.0e-3, d = 3.0e-3, freq_ghz = 7.0, n_target = 2.7;
+  const double k0 =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  for (int abc_order : {1, 2})
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian2D(2, 10, mfem::Element::QUADRILATERAL, false, W, H));
+    mfem::Vector center(2);
+    for (int e = 0; e < serial_mesh->GetNE(); e++)
+    {
+      serial_mesh->GetElementCenter(e, center);
+      serial_mesh->SetAttribute(e, (center(1) < d) ? 1 : 2);
+    }
+    serial_mesh->SetAttributes();
+    const auto modes = SolveCrossSectionModes(
+        std::move(serial_mesh),
+        [&](IoData &iodata)
+        {
+          iodata.domains.materials[0].epsilon_r.s = {11.45, 11.45, 11.45};
+          iodata.domains.materials.emplace_back().attributes = {2};
+          iodata.boundaries.pec.attributes = {2, 4};
+          iodata.boundaries.farfield.attributes = {3};
+          iodata.boundaries.farfield.order = abc_order;
+        },
+        freq_ghz, n_target, 3, 1, false);
+    const std::vector<int> gains(modes.gains_energy.begin(), modes.gains_energy.end());
+    CAPTURE(abc_order, modes.kn, gains);
+    const auto te0 =
+        std::ranges::max_element(modes.kn, {}, [](auto kn) { return kn.real(); });
+    REQUIRE(te0->real() > std::sqrt(2.0) * k0);
+    CHECK((te0->imag() > 0.0) == (abc_order > 1));
+    CHECK(gains[std::distance(modes.kn.begin(), te0)] == (abc_order > 1));
   }
 }
 

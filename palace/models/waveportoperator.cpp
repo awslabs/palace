@@ -1000,6 +1000,7 @@ void WavePortData::Initialize(double omega)
   kn0 = mode_assembly::PropagationConstant(-sigma - 1.0 / lambda, omega);
   omega0 = omega;
   WarnEvanescent(kn0, omega);
+  WarnGain(kn0, omega);
 
   // Separate the computed field out into eₜ and eₙ and transform back to the physical
   // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·k_n). Order: load raw eigenvector,
@@ -1251,6 +1252,21 @@ void WavePortData::WarnEvanescent(std::complex<double> kn, std::complex<double> 
                "{:.3e}{:+.3e}i): the port is below cutoff, or \"Mode\" or \"Target\" does "
                "not select the intended mode!\n",
                fmt::join(attr_list, ", "), n_eff.real(), n_eff.imag());
+}
+
+void WavePortData::WarnGain(std::complex<double> kn, double omega)
+{
+  // kₙ is the same on all ranks.
+  if (warned_gain || !mode_solver->GainsEnergy(kn))
+  {
+    return;
+  }
+  warned_gain = true;
+  const std::complex<double> n_eff = kn / omega;
+  Mpi::Warning("Wave port with attributes {} selected a mode which gains energy along the "
+               "port (n_eff = {:.3e}{:+.3e}i, Im{{n_eff}} > 0). {}\n",
+               fmt::join(attr_list, ", "), n_eff.real(), n_eff.imag(),
+               ModeEigenSolver::SecondOrderFarfieldGainHint());
 }
 
 void WavePortData::WarnReaction()

@@ -970,6 +970,70 @@ TEST_CASE("WavePortOperator absorbing boundaries on the port edges",
   }
 }
 
+TEST_CASE("WavePortOperator mode which gains energy on second-order absorbing edges",
+          "[waveportoperator][Serial][Parallel]")
+{
+  // The ports z = 0 and z = L of a box with the cross-section of "ModeEigenSolver slow
+  // modes on second-order absorbing edges", a slab of permittivity 11.45 and thickness d on
+  // a PMC plane y = 0 under the absorbing boundary y = H, between PEC sides: with the
+  // second-order absorbing boundary condition, the port mode, the TE0 mode of the slab,
+  // gains energy along the port, and each port warns about it.
+  MPI_Comm comm = Mpi::World();
+  constexpr double W = 1.0e-3, H = 5.0e-3, L = 2.0e-3, d = 3.0e-3, freq_ghz = 7.0;
+  const int abc_order = GENERATE(1, 2);
+  // MakeCartesian3D boundary attributes: z = 0 is 1, y = 0 is 2, x = W is 3, y = H is 4,
+  // x = 0 is 5, and z = L is 6.
+  json setup = {
+      {"Problem", {{"Type", "Driven"}, {"Output", ""}}},
+      {"Model", {{"Mesh", "box.mesh"}, {"L0", 1.0}}},
+      {"Domains",
+       {{"Materials", json::array({{{"Attributes", {1}}, {"Permittivity", 11.45}},
+                                   {{"Attributes", {2}}}})}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {3, 5}}}},
+        {"Absorbing", {{"Attributes", {4}}, {"Order", abc_order}}},
+        {"WavePort", json::array({{{"Index", 1}, {"Attributes", {1}}, {"Excitation", true}},
+                                  {{"Index", 2}, {"Attributes", {6}}}})}}},
+      {"Solver",
+       {{"Order", 2},
+        {"Driven",
+         {{"Samples", json::array({{{"Type", "Point"}, {"Freq", {freq_ghz}}}})}}}}}};
+  IoData iodata(setup, /*print=*/false);
+  auto smesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 10, 2, mfem::Element::HEXAHEDRON, W, H, L));
+  mfem::Vector center(3);
+  for (int e = 0; e < smesh->GetNE(); e++)
+  {
+    smesh->GetElementCenter(e, center);
+    smesh->SetAttribute(e, (center(1) < d) ? 1 : 2);
+  }
+  smesh->SetAttributes();
+  iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+  iodata.NondimensionalizeInputs(smesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
+  SpaceOperator space_op(iodata, mesh);
+  auto &wp_op = space_op.GetWavePortOp();
+  REQUIRE(wp_op.Size() == 2);
+  const double omega =
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  const auto out = test::CaptureStdout([&] { wp_op.PrepareFrequency(omega); });
+  for (const auto &[idx, data] : wp_op)
+  {
+    const std::complex<double> n_eff = data.kn0 / omega;
+    CAPTURE(abc_order, idx, n_eff);
+    CHECK(n_eff.real() > std::sqrt(2.0));
+    CHECK((n_eff.imag() > 0.0) == (abc_order > 1));
+  }
+  if (Mpi::Root(comm))
+  {
+    CAPTURE(abc_order);
+    CHECK((out.find("selected a mode which gains energy") != std::string::npos) ==
+          (abc_order > 1));
+  }
+}
+
 TEST_CASE("WavePortOperator anisotropic permeability",
           "[waveportoperator][Serial][Parallel]")
 {

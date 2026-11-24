@@ -148,6 +148,11 @@ private:
   bool warned_evanescent = false;
   void WarnEvanescent(std::complex<double> kn, std::complex<double> omega);
 
+  // Warn once if the selected mode gains energy along the port at a real frequency, on the
+  // edges of second-order absorbing boundaries (ModeEigenSolver::GainsEnergy).
+  bool warned_gain = false;
+  void WarnGain(std::complex<double> kn, double omega);
+
   // Warn once if the unconjugated reaction of the normalized mode is small.
   bool warned_reaction = false;
   void WarnReaction();

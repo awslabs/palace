@@ -128,6 +128,14 @@ public:
   // Heuristic classifier: |Im kn| < 0.1*|Re kn| and Re kn > 0.
   static bool IsPropagating(std::complex<double> kn);
 
+  // Whether a mode at a real frequency gains energy along the guide, Im{kn} > 0 beyond the
+  // tolerance of the eigenvalue solve, on a cross-section with edges on second-order
+  // absorbing boundaries: as in 3D, these are not passive for a mode whose effective index
+  // exceeds √2 times the refractive index of the material there. The explanation for a
+  // warning about such a mode is SecondOrderFarfieldGainHint.
+  bool GainsEnergy(std::complex<double> kn) const;
+  static const char *SecondOrderFarfieldGainHint();
+
   int GetNDTrueVSize() const { return nd_size; }
   int GetH1TrueVSize() const { return h1_size; }
 

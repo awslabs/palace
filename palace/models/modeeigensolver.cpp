@@ -475,6 +475,26 @@ bool ModeEigenSolver::IsPropagating(std::complex<double> kn)
 {
   return std::abs(kn.imag()) < 0.1 * std::abs(kn.real()) && std::abs(kn.real()) > 0.0;
 }
+
+bool ModeEigenSolver::GainsEnergy(std::complex<double> kn) const
+{
+  // The components of second-order absorbing boundaries are those which make B depend on
+  // frequency, and only exist with boundary elements on some process.
+  return mode_op_model->HasFrequencyDependentB() &&
+         kn.imag() > 10.0 * eig_tol * std::abs(kn);
+}
+
+const char *ModeEigenSolver::SecondOrderFarfieldGainHint()
+{
+  return "The second-order absorbing boundary condition (\"Absorbing\" with \"Order\": 2) "
+         "is not passive on the edges of the cross-section where the effective index of a "
+         "mode exceeds √2 times the refractive index of the material: it then imposes a "
+         "negative effective wavenumber there and injects energy. The first-order "
+         "absorbing "
+         "boundary condition is passive, and an absorbing boundary further from the guide "
+         "carries less of the field of such a mode.";
+}
+
 ModeEigenSolver::ComplexHypreParMatrix ModeEigenSolver::BuildSystemMatrixB(
     const mfem::HypreParMatrix *Bttr, const mfem::HypreParMatrix *Btti,
     const mfem::HypreParMatrix *Btnr, const mfem::HypreParMatrix *Btni,
