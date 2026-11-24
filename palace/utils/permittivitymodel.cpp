@@ -6,11 +6,13 @@
 #include <algorithm>
 #include <cmath>
 #include <functional>
+#include <iterator>
 #include <limits>
 #include <optional>
 #include <utility>
 #include <variant>
 #include <mfem.hpp>
+#include "utils/conductivitymodel.hpp"
 
 namespace palace::permittivity
 {
@@ -24,40 +26,59 @@ struct Overloaded : Ts...
   using Ts::operator()...;
 };
 
+// χ(s) = σ(ω)/s of a conductor term, defined at s = iω with ω > 0 only.
+template <typename T>
+std::complex<double> ConductorSusceptibility(const T &t, std::complex<double> s)
+{
+  MFEM_VERIFY(s.real() == 0.0 && s.imag() > 0.0,
+              "MattisBardeen and TabulatedConductivity permittivity terms are only defined "
+              "at real, positive frequencies!");
+  return conductivity::Conductivity(t, s.imag()) / s;
+}
+
 std::complex<double> TermSusceptibility(const config::PermittivityTermData &term,
                                         std::complex<double> s)
 {
   return std::visit(
-      Overloaded{
-          [s](const config::DrudeData &t) -> std::complex<double>
-          { return t.omega_p * t.omega_p / (s * (s + t.gamma)); },
-          [s](const config::DebyeData &t) -> std::complex<double>
-          { return t.delta / (1.0 + s * t.tau); },
-          [s](const config::LorentzData &t) -> std::complex<double>
-          {
-            const double w0_2 = t.omega_0 * t.omega_0;
-            return t.delta * w0_2 / (s * s + t.gamma * s + w0_2);
-          },
-          [s](const config::PermittivityPoleData &t) -> std::complex<double>
-          {
-            std::complex<double> chi = t.residue / (s - t.pole);
-            if (t.pole.imag() > 0.0)
-            {
-              chi += std::conj(t.residue) / (s - std::conj(t.pole));
-            }
-            return chi;
-          },
-          [s](const config::DjordjevicSarkarData &t) -> std::complex<double>
-          { return t.strength * std::log((s + t.omega_upper) / (s + t.omega_lower)); }},
+      Overloaded{[s](const config::DrudeData &t) -> std::complex<double>
+                 { return t.omega_p * t.omega_p / (s * (s + t.gamma)); },
+                 [s](const config::DebyeData &t) -> std::complex<double>
+                 { return t.delta / (1.0 + s * t.tau); },
+                 [s](const config::LorentzData &t) -> std::complex<double>
+                 {
+                   const double w0_2 = t.omega_0 * t.omega_0;
+                   return t.delta * w0_2 / (s * s + t.gamma * s + w0_2);
+                 },
+                 [s](const config::PermittivityPoleData &t) -> std::complex<double>
+                 {
+                   std::complex<double> chi = t.residue / (s - t.pole);
+                   if (t.pole.imag() > 0.0)
+                   {
+                     chi += std::conj(t.residue) / (s - std::conj(t.pole));
+                   }
+                   return chi;
+                 },
+                 [s](const config::DjordjevicSarkarData &t) -> std::complex<double>
+                 {
+                   MFEM_VERIFY(s != -t.omega_lower && s != -t.omega_upper,
+                               "DjordjevicSarkar permittivity evaluation is singular at a "
+                               "frequency bound!");
+                   return t.strength * std::log((s + t.omega_upper) / (s + t.omega_lower));
+                 },
+                 [s](const config::MattisBardeenData &t) -> std::complex<double>
+                 { return ConductorSusceptibility(t, s); },
+                 [s](const config::TabulatedConductivityData &t) -> std::complex<double>
+                 { return ConductorSusceptibility(t, s); }},
       term);
 }
 
 // Time-averaged stored energy of a typed or Djordjevic-Sarkar term as a susceptibility
 // (see the header): a relaxation b₀/(s + a₀) stores a₀b₀/(ω² + a₀²) = Re χ, and an
 // oscillator b₀/(s² + a₁s + a₀) stores (b₀ω² + a₀b₀)/((a₀ − ω²)² + a₁²ω²), the averages
-// of W with ⟨x ẋ⟩ = 0. A PoleResidue term specifies no stored energy (HasStoredEnergy),
-// except an exact zero pole, which has zero additional stored energy by convention (see
-// the header).
+// of W with ⟨x ẋ⟩ = 0. A conductor term stores the kinetic energy of its carriers,
+// d(ω Re χ)/dω = −dσ₂/dω. A PoleResidue term specifies no stored energy
+// (HasStoredEnergy), except an exact zero pole, which has zero additional stored energy by
+// convention (see the header).
 double TermStoredEnergy(const config::PermittivityTermData &term, double omega)
 {
   const double w2 = omega * omega;
@@ -84,7 +105,11 @@ double TermStoredEnergy(const config::PermittivityTermData &term, double omega)
                    return 0.5 * t.strength *
                           std::log((w2 + t.omega_upper * t.omega_upper) /
                                    (w2 + t.omega_lower * t.omega_lower));
-                 }},
+                 },
+                 [omega](const config::MattisBardeenData &t)
+                 { return conductivity::ConductivityDerivative(t, omega).imag(); },
+                 [omega](const config::TabulatedConductivityData &t)
+                 { return conductivity::ConductivityDerivative(t, omega).imag(); }},
       term);
 }
 
@@ -139,6 +164,13 @@ void TermRates(const config::PermittivityTermData &term, std::vector<double> &ra
                         {
                           rates.push_back(t.omega_lower);
                           rates.push_back(t.omega_upper);
+                        },
+                        [&](const config::MattisBardeenData &t)
+                        { rates.push_back(t.omega_gap); },
+                        [&](const config::TabulatedConductivityData &t)
+                        {
+                          rates.push_back(t.omega.front());
+                          rates.push_back(t.omega.back());
                         }},
              term);
 }
@@ -228,25 +260,30 @@ PoleTerms(const std::vector<config::PermittivityTermData> &terms)
                             }
                           },
                           [&](const config::PermittivityPoleData &t)
-                          { AppendPole(t.pole, t.residue, poles); },
-                          [](const config::DjordjevicSarkarData &) {}},
+                          { AppendPole(t.pole, t.residue, poles); }, [](const auto &) {}},
                term);
   }
   return poles;
 }
 
-std::vector<config::DjordjevicSarkarData>
-DjordjevicSarkarTerms(const std::vector<config::PermittivityTermData> &terms)
+std::vector<config::PermittivityTermData>
+NonRationalTerms(const std::vector<config::PermittivityTermData> &terms)
 {
-  std::vector<config::DjordjevicSarkarData> ds;
-  for (const auto &term : terms)
-  {
-    if (const auto *t = std::get_if<config::DjordjevicSarkarData>(&term))
-    {
-      ds.push_back(*t);
-    }
-  }
-  return ds;
+  std::vector<config::PermittivityTermData> nonrational;
+  std::ranges::copy_if(terms, std::back_inserter(nonrational),
+                       [](const auto &term)
+                       {
+                         return std::holds_alternative<config::DjordjevicSarkarData>(
+                                    term) ||
+                                IsRealFrequencyTerm(term);
+                       });
+  return nonrational;
+}
+
+bool IsRealFrequencyTerm(const config::PermittivityTermData &term)
+{
+  return std::holds_alternative<config::MattisBardeenData>(term) ||
+         std::holds_alternative<config::TabulatedConductivityData>(term);
 }
 
 std::complex<double> Susceptibility(const std::vector<config::PermittivityTermData> &terms,
@@ -280,7 +317,9 @@ double StaticSusceptibility(const std::vector<config::PermittivityTermData> &ter
                      return (t.pole.imag() > 0.0) ? 2.0 * c.real() : c.real();
                    },
                    [](const config::DjordjevicSarkarData &t)
-                   { return t.strength * std::log(t.omega_upper / t.omega_lower); }},
+                   { return t.strength * std::log(t.omega_upper / t.omega_lower); },
+                   [](const config::MattisBardeenData &) { return inf; },
+                   [](const config::TabulatedConductivityData &) { return inf; }},
         term);
   }
   return chi;
@@ -384,6 +423,33 @@ void CheckTerms(double eps_inf, const std::vector<config::PermittivityTermData> 
                               t.omega_lower > 0.0 && t.omega_upper > t.omega_lower,
                           "DjordjevicSarkar frequencies must satisfy UpperFrequency > "
                           "LowerFrequency > 0!");
+            },
+            [](const config::MattisBardeenData &t)
+            {
+              MFEM_VERIFY(std::isfinite(t.sigma_n) && std::isfinite(t.omega_gap) &&
+                              std::isfinite(t.omega_T) && t.sigma_n > 0.0 &&
+                              t.omega_gap > 0.0 && t.omega_T >= 0.0,
+                          "MattisBardeen NormalConductivity and Gap must be positive and "
+                          "Temperature nonnegative!");
+            },
+            [](const config::TabulatedConductivityData &t)
+            {
+              const std::size_t n = t.omega.size();
+              MFEM_VERIFY(n >= 2 && t.sigma1.size() == n && t.sigma2.size() == n,
+                          "TabulatedConductivity Frequency, Sigma1, and Sigma2 must have "
+                          "the same size, at least 2!");
+              for (std::size_t i = 0; i < n; i++)
+              {
+                MFEM_VERIFY(std::isfinite(t.omega[i]) && t.omega[i] > 0.0 &&
+                                (i == 0 || t.omega[i] > t.omega[i - 1]),
+                            "TabulatedConductivity Frequency must be positive and "
+                            "strictly increasing!");
+                // The monotone interpolant of a nonnegative σ₁ is nonnegative: passive.
+                MFEM_VERIFY(std::isfinite(t.sigma1[i]) && std::isfinite(t.sigma2[i]) &&
+                                t.sigma1[i] >= 0.0,
+                            "TabulatedConductivity Sigma1 must be nonnegative: a negative "
+                            "real conductivity has gain!");
+              }
             }},
         term);
   }

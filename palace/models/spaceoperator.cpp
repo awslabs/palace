@@ -267,12 +267,12 @@ void SpaceOperator::GetFrequencyDependentPermittivityA2Coefficients(
   for (std::size_t i = 0; i < real.size(); i++)
   {
     // A material without mesh support contributes nothing and is not evaluated, since it
-    // may be singular at this frequency. Without the pole terms, only the
-    // Djordjevic-Sarkar terms remain.
+    // may be singular at this frequency. Without the pole terms, only the non-rational
+    // terms remain.
     const std::complex<double> value =
         !mat_op.HasFrequencyDependentPermittivitySupport(i) ? 0.0
         : include_poles ? mat_op.EvaluateFrequencyDependentPermittivityA2(i, s)
-                        : mat_op.EvaluateDjordjevicSarkarPermittivityA2(i, s);
+                        : mat_op.EvaluateNonRationalPermittivityA2(i, s);
     real[i] = value.real();
     imag[i] = value.imag();
   }

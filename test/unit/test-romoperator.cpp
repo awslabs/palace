@@ -33,6 +33,7 @@
 #include "models/spaceoperator.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -1100,7 +1101,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
     {
       if (term == Term::VOLUME)
       {
-        return mat_op.EvaluateDjordjevicSarkarPermittivityA2(0, i * w) / i;
+        return mat_op.EvaluateNonRationalPermittivityA2(0, i * w) / i;
       }
       const auto r = farfield_op.GetDispersiveScale(0, w);
       return (term == Term::CURL_CURL) ? 0.5 / (w * r) : w * r;
@@ -1380,6 +1381,73 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
         CHECK((out.find(warning) != std::string::npos) == (r < 0.0));
       }
     }
+  }
+}
+
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator synthesizes a conductor permittivity term",
+                 "[romoperator][Serial][Parallel]")
+{
+  // The lumped port mode of a 1 cm cube in a medium of conductivity 0.22 S/m, as a zero
+  // pole of the permittivity (r = σ/ε₀) and as a tabulated conductivity, which is fit over
+  // the band. The circuits have the same root, whose error on the full model is not
+  // evaluated for the conductor term, defined at real frequencies only.
+  const double r = 2.5e10, sigma = r * electromagnetics::epsilon0_;
+  auto Synthesize = [&](const json &term)
+  {
+    json config;
+    config["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+    config["Model"] = {{"Mesh", fs::path(PALACE_TEST_DATA_DIR) /
+                                    "lumpedport_mesh/cube_mesh_1_1_1_tet.msh"},
+                       {"L0", 1.0e-2},
+                       {"Refinement", json::object({})},
+                       {"CrackInternalBoundaryElements", false}};
+    config["Domains"] = {
+        {"Materials",
+         {{{"Attributes", {1}},
+           {"Permittivity", {{"HighFrequencyLimit", 1.0}, {"Terms", {term}}}}}}}};
+    config["Boundaries"] = {{"LumpedPort",
+                             {{{"Index", 1},
+                               {"R", 2000.0},
+                               {"Excitation", 1},
+                               {"Attributes", {100}},
+                               {"Direction", "+X"}}}}};
+    config["Solver"] = {{"Order", 1},
+                        {"Device", "CPU"},
+                        {"Driven",
+                         {{"AdaptiveTol", 1.0e-3},
+                          {"AdaptiveCircuitSynthesis", true},
+                          {"MinFreq", 1.0},
+                          {"MaxFreq", 1000.0},
+                          {"FreqStep", 10.0}}}};
+    IoData iodata(config, false);
+    auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+    SpaceOperator space_op(iodata, mesh_io);
+    RomOperatorTest prom_op(iodata, space_op, 10);
+    prom_op.AddLumpedPortModesForSynthesis();
+    const auto matrices = prom_op.CalculateNormalizedPROMMatrices(iodata.units);
+    const auto eigs = RomOperatorTest::ComputeEigenvalueEstimates(
+        *matrices.L_inv, matrices.R_inv.get(), *matrices.C, 1.0, 1000.0);
+    REQUIRE(eigs.size() == 1);
+    const auto out =
+        test::CaptureStdout([&] { prom_op.PrintPROMMatrices(iodata.units, temp_dir); });
+    return std::make_pair(eigs[0], out);
+  };
+  const auto [pole, pole_out] =
+      Synthesize({{"Type", "PoleResidue"}, {"Pole", 0.0}, {"Residue", r}});
+  const auto [table, table_out] = Synthesize({{"Type", "TabulatedConductivity"},
+                                              {"Frequency", {1.0, 1000.0}},
+                                              {"Sigma1", {sigma, sigma}},
+                                              {"Sigma2", {0.0, 0.0}}});
+  CHECK_THAT(table.freq_re_GHz, WithinRel(pole.freq_re_GHz, 1.0e-6));
+  CHECK_THAT(table.freq_im_GHz, WithinRel(pole.freq_im_GHz, 1.0e-6));
+  if (Mpi::Root(Mpi::World()))
+  {
+    const std::string warning =
+        "eigenvalue estimates not evaluated (NaN), as MattisBardeen "
+        "and TabulatedConductivity permittivity terms";
+    CHECK(table_out.find(warning) != std::string::npos);
+    CHECK(pole_out.find(warning) == std::string::npos);
   }
 }
 

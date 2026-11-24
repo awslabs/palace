@@ -9,6 +9,7 @@
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "utils/conductivitymodel.hpp"
 #include "utils/configfile.hpp"
 #include "utils/permittivitymodel.hpp"
 
@@ -158,9 +159,10 @@ TEST_CASE("Permittivity model pole form and susceptibility agree",
         chi += std::conj(term.residue) / (s - std::conj(term.pole));
       }
     }
-    for (const auto &term : permittivity::DjordjevicSarkarTerms(terms))
+    for (const auto &term : permittivity::NonRationalTerms(terms))
     {
-      chi += term.strength * std::log((s + term.omega_upper) / (s + term.omega_lower));
+      const auto &t = std::get<config::DjordjevicSarkarData>(term);
+      chi += t.strength * std::log((s + t.omega_upper) / (s + t.omega_lower));
     }
     CHECK(std::abs(chi - permittivity::Susceptibility(terms, s)) <=
           1.0e-12 * std::abs(chi));
@@ -170,6 +172,59 @@ TEST_CASE("Permittivity model pole form and susceptibility agree",
   CHECK_THAT(permittivity::StaticSusceptibility(bound),
              WithinRel(permittivity::Susceptibility(bound, 0.0).real(), 1.0e-12));
   CHECK(std::isinf(permittivity::StaticSusceptibility(terms)));
+}
+
+TEST_CASE("Permittivity model conductor terms", "[permittivitymodel][Serial]")
+{
+  // A conductor term is the current of its carriers, χ(iω) = σ(ω)/(iω): it dissipates σ₁/ω
+  // and stores the kinetic energy -dσ₂/dω of its carriers.
+  const config::MattisBardeenData mb{5.0, 2.0, 0.05};
+  const config::TabulatedConductivityData table{
+      {0.5, 1.0, 2.0, 4.0}, {0.0, 0.1, 0.4, 0.4}, {8.0, 4.0, 2.0, 1.0}};
+  const std::vector<config::PermittivityTermData> terms = {mb, table};
+  for (double omega : {0.6, 1.5, 3.0})
+  {
+    const std::complex<double> s(0.0, omega);
+    const auto sigma =
+        conductivity::Conductivity(mb, omega) + conductivity::Conductivity(table, omega);
+    const auto dsigma = conductivity::ConductivityDerivative(mb, omega) +
+                        conductivity::ConductivityDerivative(table, omega);
+    CHECK(std::abs(permittivity::Susceptibility(terms, s) - sigma / s) <=
+          1.0e-14 * std::abs(sigma / s));
+    CHECK_THAT(permittivity::DissipationSusceptibility(terms, omega),
+               WithinRel(sigma.real() / omega, 1.0e-12));
+    CHECK_THAT(permittivity::StoredEnergySusceptibility(terms, omega),
+               WithinRel(dsigma.imag(), 1.0e-12));
+  }
+
+  // ωσ₂ = 4 in the table is a London superconductor, which stores the kinetic energy of a
+  // Drude term with ω_p² = 4 and no collisions.
+  const std::vector<config::PermittivityTermData> drude = {config::DrudeData{2.0, 1.0e-9}};
+  CHECK_THAT(permittivity::StoredEnergySusceptibility({table}, 1.5),
+             WithinRel(permittivity::StoredEnergySusceptibility(drude, 1.5), 1.0e-12));
+
+  // Free carriers, without a pole-residue form, at real frequencies only.
+  CHECK(std::isinf(permittivity::StaticSusceptibility(terms)));
+  CHECK(permittivity::PoleTerms(terms).empty());
+  CHECK(permittivity::NonRationalTerms(terms).size() == 2);
+  CHECK(permittivity::IsRealFrequencyTerm(terms[0]));
+  CHECK(permittivity::IsRealFrequencyTerm(terms[1]));
+  CHECK_FALSE(permittivity::IsRealFrequencyTerm(drude[0]));
+  CHECK_THROWS(permittivity::Susceptibility(terms, {0.1, 1.0}));
+  CHECK(permittivity::IsPassiveByConstruction(terms));
+
+  // Parameter checks.
+  CHECK_NOTHROW(permittivity::CheckTerms(1.0, terms));
+  CHECK_THROWS(permittivity::CheckTerms(1.0, {config::MattisBardeenData{5.0, 0.0, 0.05}}));
+  auto bad = table;
+  bad.sigma1[1] = -0.1;
+  CHECK_THROWS(permittivity::CheckTerms(1.0, {bad}));
+  bad = table;
+  bad.omega[2] = 0.9;
+  CHECK_THROWS(permittivity::CheckTerms(1.0, {bad}));
+  bad = table;
+  bad.sigma2.pop_back();
+  CHECK_THROWS(permittivity::CheckTerms(1.0, {bad}));
 }
 
 TEST_CASE("Permittivity model defects", "[permittivitymodel][Serial]")

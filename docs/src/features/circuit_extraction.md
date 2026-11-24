@@ -124,6 +124,8 @@ of the driven solver as well as the following additional files:
     and imaginary parts of the corresponding eigenvectors in the synthesized node space. An
     HDM error is NaN when a wave port mode does not converge at the complex frequency of the
     estimate, so that the error is not evaluated; *Palace* warns which estimates these are.
+    The errors are also NaN with `MattisBardeen` or `TabulatedConductivity` permittivity
+    terms, which are defined at real frequencies only.
     A root with ``\mathrm{Im}~f < 0`` grows in time, which its quality factor, from
     ``|\mathrm{Im}~f|``, does not show: the poles of the AAA fits of frequency-dependent
     boundaries, for example of wave ports in lossy or frequency-dependent media, are not
@@ -144,8 +146,9 @@ There are several constraints and considerations for using this feature:
     resonance, the synthesized circuit can differ from the reduced model by much more than
     the tolerance, where the reduced model itself still agrees with the full model. Only the
     rational volume-permittivity terms are realized exactly in the retained reduced
-    directions. Native `DjordjevicSarkar` terms and material-dependent port and absorbing
-    boundary responses are fits; real-band fit control does not certify complex-plane or
+    directions. Native `DjordjevicSarkar` terms, the conductor terms (`MattisBardeen`,
+    `TabulatedConductivity`), and material-dependent port and absorbing boundary responses
+    are fits; real-band fit control does not certify complex-plane or
     resonance accuracy.
   - All `LumpedPort` attributes must be orthogonal to each other, since these are separated out as
     individual rows and columns in the circuit matrix. For *Palace*'s Nédélec meshes, this means

@@ -70,7 +70,7 @@ private:
     // cached spatial mass operator for each material. The poles are distinct: terms with a
     // common pole are one term with the sum of their residues.
     std::vector<PermittivityPoleTerm> pole_terms;
-    std::vector<config::DjordjevicSarkarData> djordjevic_sarkar_terms;
+    std::vector<config::PermittivityTermData> nonrational_terms;
     // The terms as configured, for the complete susceptibility and the stored energy (the
     // same on every process).
     std::vector<config::PermittivityTermData> terms;
@@ -224,7 +224,7 @@ public:
   bool HasFrequencyDependentPermittivityA2(std::size_t material_idx) const
   {
     const auto &fd = frequency_dependent_materials.at(material_idx);
-    return !fd.pole_terms.empty() || !fd.djordjevic_sarkar_terms.empty();
+    return !fd.pole_terms.empty() || !fd.nonrational_terms.empty();
   }
   // Whether the nonlinear terms (A2) of the material have mesh support on any process. This
   // is the predicate of the operators that hold A2, not of the complete permittivity.
@@ -252,14 +252,15 @@ public:
                                            std::complex<double> s) const;
   // The two parts of EvaluateFrequencyDependentPermittivityA2: the pole terms, with complex
   // poles expanded into conjugate pairs and each contributing r·s²/(s − p), at distinct
-  // poles, and the remaining non-rational Djordjevic-Sarkar contribution.
+  // poles, and the remaining non-rational contribution (Djordjevic-Sarkar and conductor
+  // terms, the latter at real frequencies only).
   const std::vector<PermittivityPoleTerm> &
   GetPermittivityPoleTerms(std::size_t material_idx) const
   {
     return frequency_dependent_materials.at(material_idx).pole_terms;
   }
-  std::complex<double> EvaluateDjordjevicSarkarPermittivityA2(std::size_t material_idx,
-                                                              std::complex<double> s) const;
+  std::complex<double> EvaluateNonRationalPermittivityA2(std::size_t material_idx,
+                                                         std::complex<double> s) const;
   // The resonances of a frequency-dependent material within the given number of half-widths
   // of [omega_min, omega_max]: Im p of each pole p of its pole terms in the upper
   // half-plane (of Lorentz terms and complex PoleResidue poles), whose half-width is −Re p.
@@ -278,8 +279,9 @@ public:
   EvaluateFrequencyDependentWavePermittivity(std::size_t material_idx,
                                              std::complex<double> s) const;
   // Whether the stored electric energy of a material is specified
-  // (permittivity::HasStoredEnergy): for a constant material and for typed and
-  // Djordjevic-Sarkar terms, not for a material with a PoleResidue term of nonzero pole.
+  // (permittivity::HasStoredEnergy): for a constant material and for typed,
+  // Djordjevic-Sarkar, and conductor terms, not for a material with a PoleResidue term of
+  // nonzero pole.
   // This is a property of the configured model, fixed for the run and the same on every
   // process; the field solve is unaffected. The reason states why a material has none.
   bool HasStoredElectricEnergy(std::size_t material_idx) const;
@@ -370,14 +372,17 @@ public:
   // The frequency-dependent material with a nonlinear term on the given domain attribute,
   // or -1 if there is none.
   int GetFrequencyDependentPermittivityMaterial(int attr) const;
-  bool HasDjordjevicSarkarPermittivity(std::size_t material_idx) const
+  bool HasNonRationalPermittivity(std::size_t material_idx) const
   {
-    return !frequency_dependent_materials.at(material_idx).djordjevic_sarkar_terms.empty();
+    return !frequency_dependent_materials.at(material_idx).nonrational_terms.empty();
   }
   // True when a globally supported material has a nonlinear permittivity term. This is
   // deliberately frequency independent: valid additive contributions can cancel at an
   // interpolation or ROM probe frequency without ceasing to be nonlinear.
   bool HasFrequencyDependentPermittivityA2() const;
+  // True when a globally supported material has a conductor term, whose permittivity is
+  // defined at real frequencies only.
+  bool HasRealFrequencyPermittivity() const;
   // Distinct poles (in s = iω) of the nonlinear permittivity terms of all globally
   // supported materials, i.e. the poles of their contribution to A2(s).
   std::vector<std::complex<double>> GetFrequencyDependentPermittivityPoles() const;

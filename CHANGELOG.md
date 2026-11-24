@@ -17,6 +17,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### New Features
+
+  - Added `MattisBardeen` and `TabulatedConductivity` terms to frequency-dependent
+    `Permittivity` objects, which describe superconductors and other conductors by their
+    complex conductivity `σ(ω) = σ₁ - iσ₂`: the Mattis-Bardeen theory in the local limit,
+    with the weak-coupling BCS gap at the temperature, or tabulated `σ₁` and `σ₂`. They are
+    supported for driven simulations, with wave ports, adaptive frequency sweeps, and
+    circuit synthesis, and for boundary mode simulations; their stored energy is the
+    kinetic energy of the carriers. SchemaVer 6-1-0
+
 #### Bug Fixes
 
   - Fixed the domain energies of boundary mode simulations, which omitted the out-of-plane

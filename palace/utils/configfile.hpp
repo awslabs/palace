@@ -289,8 +289,28 @@ public:
   double omega_upper = 0.0;
 };
 
-using PermittivityTermData = std::variant<DrudeData, DebyeData, LorentzData,
-                                          PermittivityPoleData, DjordjevicSarkarData>;
+struct MattisBardeenData
+{
+public:
+  // Superconductor in the dirty limit: χ(s) = σ(ω)/(ε₀s), with σ(ω) = σₙ r(ħω/Δ, kB T/Δ)
+  // of Mattis and Bardeen. Normal-state conductivity σₙ/ε₀, gap Δ/ħ, and temperature
+  // kB T/ħ, as angular rates.
+  double sigma_n = 0.0;
+  double omega_gap = 0.0;
+  double omega_T = 0.0;
+};
+
+struct TabulatedConductivityData
+{
+public:
+  // Conductor with tabulated σ(ω) = σ₁ - iσ₂: χ(s) = σ(ω)/(ε₀s). Strictly increasing
+  // angular frequencies ω, and σ₁/ε₀ and σ₂/ε₀ as angular rates.
+  std::vector<double> omega = {}, sigma1 = {}, sigma2 = {};
+};
+
+using PermittivityTermData =
+    std::variant<DrudeData, DebyeData, LorentzData, PermittivityPoleData,
+                 DjordjevicSarkarData, MattisBardeenData, TabulatedConductivityData>;
 
 struct MaterialData
 {

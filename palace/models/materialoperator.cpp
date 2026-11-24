@@ -208,8 +208,7 @@ void MaterialOperator::SetUpMaterialProperties(
         }
       }
     }
-    fd.djordjevic_sarkar_terms =
-        permittivity::DjordjevicSarkarTerms(data.permittivity_terms);
+    fd.nonrational_terms = permittivity::NonRationalTerms(data.permittivity_terms);
   }
 
   // Set up material properties of the different domain regions, represented with element-
@@ -242,7 +241,7 @@ void MaterialOperator::SetUpMaterialProperties(
   {
     const auto &fd = frequency_dependent_materials[i];
     model_support[i] =
-        mat_marker[i] && (!fd.pole_terms.empty() || !fd.djordjevic_sarkar_terms.empty());
+        mat_marker[i] && (!fd.pole_terms.empty() || !fd.nonrational_terms.empty());
     model_support[nm + i] = mat_marker[i] && !fd.terms.empty();
   }
   Mpi::GlobalOr(static_cast<int>(2 * nm), model_support.get(), mesh.GetComm());
@@ -551,24 +550,15 @@ MaterialOperator::EvaluateFrequencyDependentPermittivityA2(std::size_t material_
                 "Material permittivity pole-residue evaluation is singular at s = pole!");
     value += term.residue * s * s / (s - term.pole);
   }
-  return value + EvaluateDjordjevicSarkarPermittivityA2(material_idx, s);
+  return value + EvaluateNonRationalPermittivityA2(material_idx, s);
 }
 
 std::complex<double>
-MaterialOperator::EvaluateDjordjevicSarkarPermittivityA2(std::size_t material_idx,
-                                                         std::complex<double> s) const
+MaterialOperator::EvaluateNonRationalPermittivityA2(std::size_t material_idx,
+                                                    std::complex<double> s) const
 {
-  std::complex<double> value = 0.0;
-  for (const auto &term :
-       frequency_dependent_materials.at(material_idx).djordjevic_sarkar_terms)
-  {
-    MFEM_VERIFY(s != -term.omega_lower && s != -term.omega_upper,
-                "DjordjevicSarkar permittivity evaluation is singular at a frequency "
-                "bound!");
-    value +=
-        term.strength * s * s * std::log((s + term.omega_upper) / (s + term.omega_lower));
-  }
-  return value;
+  const auto &terms = frequency_dependent_materials.at(material_idx).nonrational_terms;
+  return terms.empty() ? 0.0 : s * s * permittivity::Susceptibility(terms, s);
 }
 
 std::vector<std::complex<double>>
@@ -611,12 +601,20 @@ std::vector<double> MaterialOperator::GetPermittivityResonances(std::size_t mate
 
 bool MaterialOperator::HasFrequencyDependentPermittivityA2() const
 {
-  return std::ranges::any_of(frequency_dependent_materials,
-                             [](const auto &fd)
-                             {
-                               return fd.support && (!fd.pole_terms.empty() ||
-                                                     !fd.djordjevic_sarkar_terms.empty());
-                             });
+  return std::ranges::any_of(
+      frequency_dependent_materials, [](const auto &fd)
+      { return fd.support && (!fd.pole_terms.empty() || !fd.nonrational_terms.empty()); });
+}
+
+bool MaterialOperator::HasRealFrequencyPermittivity() const
+{
+  return std::ranges::any_of(
+      frequency_dependent_materials,
+      [](const auto &fd)
+      {
+        return fd.support &&
+               std::ranges::any_of(fd.nonrational_terms, permittivity::IsRealFrequencyTerm);
+      });
 }
 
 double MaterialOperator::GetMaxMuEpsilon() const

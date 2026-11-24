@@ -498,6 +498,44 @@ void IoData::CheckConfiguration()
                 "Frequency-dependent material Permittivity is not supported for Transient "
                 "simulations!");
     WarnPermittivityModelDefects();
+
+    // The conductor terms are defined at real frequencies, within their table.
+    std::vector<double> freqs;  // GHz
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      freqs = solver.driven.sample_f;
+    }
+    else if (problem.type == ProblemType::BOUNDARYMODE)
+    {
+      freqs = {solver.boundary_mode.freq};
+    }
+    for (const auto &material : domains.materials)
+    {
+      for (const auto &term : material.permittivity_terms)
+      {
+        if (!permittivity::IsRealFrequencyTerm(term))
+        {
+          continue;
+        }
+        MFEM_VERIFY(problem.type == ProblemType::DRIVEN ||
+                        problem.type == ProblemType::BOUNDARYMODE ||
+                        problem.type == ProblemType::ELECTROSTATIC ||
+                        problem.type == ProblemType::MAGNETOSTATIC,
+                    "MattisBardeen and TabulatedConductivity permittivity terms are only "
+                    "supported for Driven and BoundaryMode simulations!");
+        const auto *table = std::get_if<config::TabulatedConductivityData>(&term);
+        for (double f : freqs)
+        {
+          const double omega = 2.0 * std::numbers::pi * 1.0e9 * f;
+          MFEM_VERIFY(omega > 0.0 &&
+                          (!table || (omega >= table->omega.front() * (1.0 - 1.0e-9) &&
+                                      omega <= table->omega.back() * (1.0 + 1.0e-9))),
+                      "Frequency " << f
+                                   << " GHz is not positive or lies outside a "
+                                      "TabulatedConductivity permittivity term!");
+        }
+      }
+    }
   }
 
   // Check that the provided domain and boundary objects are all supported by the requested

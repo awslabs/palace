@@ -19,6 +19,7 @@
 
 #include "permittivitymodel.hpp"
 #include "units.hpp"
+#include "utils/conductivitymodel.hpp"
 #include "utils/constants.hpp"
 #include "utils/enum_string.hpp"
 
@@ -374,6 +375,48 @@ MaterialData::MaterialData(const json &domain)
           ParseFiniteNumber(term, "Strength"),
           ghz_to_angular_si * ParseFiniteNumber(term, "LowerFrequency"),
           ghz_to_angular_si * ParseFiniteNumber(term, "UpperFrequency")});
+    }
+    else if (type == "MattisBardeen")
+    {
+      // The gap Δ(T) [eV], or that of the weak-coupling BCS theory at the critical
+      // temperature [K].
+      constexpr double ev_to_angular = electromagnetics::e_ / electromagnetics::hbar_;
+      constexpr double kelvin_to_angular = electromagnetics::kB_ / electromagnetics::hbar_;
+      const double T = ParseFiniteNumber(term, "Temperature");
+      MFEM_VERIFY(term.contains("Gap") != term.contains("CriticalTemperature"),
+                  "MattisBardeen permittivity term requires one of \"Gap\" and "
+                  "\"CriticalTemperature\"!");
+      double omega_gap;
+      if (term.contains("Gap"))
+      {
+        omega_gap = ev_to_angular * ParseFiniteNumber(term, "Gap");
+      }
+      else
+      {
+        const double Tc = ParseFiniteNumber(term, "CriticalTemperature");
+        MFEM_VERIFY(Tc > 0.0 && T >= 0.0 && T < Tc,
+                    "MattisBardeen Temperature must be below the CriticalTemperature!");
+        omega_gap = kelvin_to_angular * conductivity::BCS_GAP_RATIO * Tc *
+                    conductivity::BCSGapRatio(T / Tc);
+      }
+      permittivity_terms.push_back(MattisBardeenData{
+          ParseFiniteNumber(term, "NormalConductivity") / electromagnetics::epsilon0_,
+          omega_gap, kelvin_to_angular * T});
+    }
+    else if (type == "TabulatedConductivity")
+    {
+      TabulatedConductivityData data;
+      data.omega = term.at("Frequency").get<std::vector<double>>();
+      data.sigma1 = term.at("Sigma1").get<std::vector<double>>();
+      data.sigma2 = term.at("Sigma2").get<std::vector<double>>();
+      std::ranges::transform(data.omega, data.omega.begin(),
+                             [](double f) { return ghz_to_angular_si * f; });
+      for (auto *sigma : {&data.sigma1, &data.sigma2})
+      {
+        std::ranges::transform(*sigma, sigma->begin(),
+                               [](double x) { return x / electromagnetics::epsilon0_; });
+      }
+      permittivity_terms.push_back(std::move(data));
     }
     else
     {
@@ -2025,10 +2068,25 @@ void Nondimensionalize(const Units &units, MaterialData &data)
             t.pole *= tc_seconds;
             t.residue *= tc_seconds;
           }
-          else
+          else if constexpr (std::is_same_v<T, DjordjevicSarkarData>)
           {
             t.omega_lower *= tc_seconds;
             t.omega_upper *= tc_seconds;
+          }
+          else if constexpr (std::is_same_v<T, MattisBardeenData>)
+          {
+            t.sigma_n *= tc_seconds;
+            t.omega_gap *= tc_seconds;
+            t.omega_T *= tc_seconds;
+          }
+          else
+          {
+            static_assert(std::is_same_v<T, TabulatedConductivityData>);
+            for (auto *v : {&t.omega, &t.sigma1, &t.sigma2})
+            {
+              std::ranges::transform(*v, v->begin(),
+                                     [tc_seconds](double x) { return x * tc_seconds; });
+            }
           }
         },
         term);
