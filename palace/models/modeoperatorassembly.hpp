@@ -87,6 +87,9 @@ private:
   // absorbing boundaries, without elimination of essential DOFs, and their term index.
   std::vector<std::pair<int, std::unique_ptr<mfem::HypreParMatrix>>> farfield_lower_blocks;
 
+  // Largest light speed of the materials next to second-order absorbing boundaries.
+  double farfield_light_speed_max = 0.0;
+
 public:
   ModeOperatorModel(const FiniteElementSpace &nd_fespace,
                     const FiniteElementSpace &h1_fespace, const MaterialOperator &mat_op,
@@ -115,6 +118,24 @@ public:
   void AddSecondOrderFarfieldLowerBlock(std::complex<double> omega, double sigma,
                                         std::unique_ptr<mfem::HypreParMatrix> &real,
                                         std::unique_ptr<mfem::HypreParMatrix> &imag) const;
+
+  // In the real-valued approximation Ar + Ai of A(ω, σ), replace the terms of second-order
+  // absorbing boundaries, β(ω) (kₙ² [M, 0; Gᵀ, 0] - [0, G; 0, D]) with kₙ² = -σ, by the
+  // magnitude |β(ω)| of their coefficient, when the shift is above the passivity limit
+  // of the boundaries (MPI collective on the FE space communicator). Their blocks have the
+  // signs of the stiffness of the blocks of A, the curl-curl and shift terms of the ND
+  // block, the coupling terms, and the negative diffusion of the H1 block, so that with
+  // |β| they add to it, while with the imaginary part of β = 1/(2iω), which is negative,
+  // they cancel part of it. In the ND block, the first-order condition adds ω/c to the
+  // -kₙ²c/(2ω) of the second-order one on the edges, times the same edge mass, for the
+  // light speed c of the material there: below the passivity limit kₙ = √2 ω/c, their sum
+  // is positive, and Ar + Ai keeps its magnitude. Above it, for the slow modes of a
+  // cross-section whose edges are in a material of lower index, the sum is negative, as in
+  // the real-valued coarse solve of the 3D problem (SpaceOperator::AssemblePreconditioner),
+  // and the solves need many more iterations or stall.
+  void
+  AddSecondOrderFarfieldRealPreconditioner(std::complex<double> omega, double sigma,
+                                           std::unique_ptr<mfem::HypreParMatrix> &P) const;
 };
 
 // The inverse permeability of the terms of the mode eigenproblem which come from the

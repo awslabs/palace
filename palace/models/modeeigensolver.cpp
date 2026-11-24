@@ -253,7 +253,10 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   // the coarse solve of MfemWrapperSolver, rather than Ar alone: the loss terms, which are
   // imaginary at a real frequency, have the sign of the stiffness term of their block, so
   // Ar + Ai keeps their magnitude. The conductivity term dominates the system matrix in a
-  // conductor meshed as a volume, where Ar is that of vacuum.
+  // conductor meshed as a volume, where Ar is that of vacuum. The terms of second-order
+  // absorbing boundaries have the opposite sign: above their passivity limit at the shift,
+  // where they would cancel part of the stiffness, they take their magnitude
+  // (ModeOperatorModel::AddSecondOrderFarfieldRealPreconditioner).
   direct_pc_op.reset();
   direct_pc_block_form = false;
   if (!block_pc_ptr)
@@ -289,7 +292,8 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
     }
     else if (Ar && Ai)
     {
-      std::unique_ptr<Operator> P(mfem::Add(1.0, *Ar, 1.0, *Ai));
+      std::unique_ptr<mfem::HypreParMatrix> P(mfem::Add(1.0, *Ar, 1.0, *Ai));
+      mode_op_model->AddSecondOrderFarfieldRealPreconditioner(omega, sigma, P);
       direct_pc_op = std::make_unique<ComplexWrapperOperator>(std::move(P), nullptr);
     }
     else

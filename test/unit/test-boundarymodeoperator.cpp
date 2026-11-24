@@ -378,15 +378,12 @@ public:
     return *it;
   }
 
-  // Pairing xᴴ A x of a component A with x = [Eₜ; Eₙ] for the in-plane field Eₜ = eₜ ŷ,
-  // tangential to the sides x = 0 and x = W, and a constant out-of-plane field Eₙ = eₙ.
-  // Returns the pairing with the real and the imaginary part of the component.
-  std::complex<double> Pairing(const mode_assembly::OperatorComponent &component, double et,
-                               double en) const
+  // The block vector x = [Eₜ; Eₙ] of the in-plane field Eₜ = eₜ ŷ, tangential to the sides
+  // x = 0 and x = W, and a constant out-of-plane field Eₙ = eₙ.
+  Vector Field(double et, double en) const
   {
-    MPI_Comm comm = Mpi::World();
     const int nd_size = nd_fespace->GetTrueVSize(), h1_size = h1_fespace->GetTrueVSize();
-    ComplexVector x(nd_size + h1_size), y(nd_size + h1_size);
+    Vector x(nd_size + h1_size);
     x = 0.0;
     {
       mfem::ParGridFunction E(&nd_fespace->Get());
@@ -397,15 +394,37 @@ public:
       E.ProjectCoefficient(coeff);
       Vector t(nd_size);
       E.GetTrueDofs(t);
-      x.Real().SetVector(t, 0);
+      x.SetVector(t, 0);
     }
-    auto *X = x.Real().HostReadWrite();
+    auto *X = x.HostReadWrite();
     for (int i = nd_size; i < nd_size + h1_size; i++)
     {
       X[i] = en;
     }
+    return x;
+  }
+
+  // Pairing xᴴ A x of a component A with the field x of Field. Returns the pairing with the
+  // real and the imaginary part of the component.
+  std::complex<double> Pairing(const mode_assembly::OperatorComponent &component, double et,
+                               double en) const
+  {
+    MPI_Comm comm = Mpi::World();
+    const auto field = Field(et, en);
+    ComplexVector x(field.Size()), y(field.Size());
+    x = 0.0;
+    x.Real() = field;
     component.op->Mult(x, y);
     return {linalg::Dot(comm, x.Real(), y.Real()), linalg::Dot(comm, x.Real(), y.Imag())};
+  }
+
+  // Pairing xᵀ A x of a real block matrix A with the field x of Field.
+  double Pairing(const mfem::HypreParMatrix &A, double et, double en) const
+  {
+    const auto x = Field(et, en);
+    Vector y(x.Size());
+    A.Mult(x, y);
+    return linalg::Dot(Mpi::World(), x, y);
   }
 };
 // Exact mode index of the TM0 mode of a parallel plate guide with a PEC plate at y = 0, a
@@ -1411,6 +1430,48 @@ TEST_CASE("ModeEigenSolver anisotropic permeability",
     {
       CHECK(HasMode(multigrid.kn, kn, 1.0e-8));
     }
+  }
+}
+
+TEST_CASE("ModeOperatorModel real preconditioner of second-order absorbing boundaries",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The absorbing side x = W of RectangleModeModel runs along the substrate, of light speed
+  // 1/2, and the vacuum above it, of light speed 1. In the real-valued preconditioner
+  // Ar + Ai of A(ω, σ), the second-order terms keep their coefficient up to the passivity
+  // limit kₙ = √2 ω of the vacuum, and above it take the magnitude |β| instead: for the
+  // unit field ŷ tangential to the side, the edge mass -(0.5 0.25 + 0.75) H of the
+  // component -[M, 0; Gᵀ, 0] (see the second-order components test), whose coefficient
+  // σβ adds Im{σβ} times it to Ar + Ai, has σ|β| times it instead, positive as the ND
+  // stiffness.
+  using RMM = RectangleModeModel;
+  RMM rect(
+      [](IoData &iodata)
+      {
+        iodata.boundaries.farfield.attributes = {2};
+        iodata.boundaries.farfield.order = 2;
+      });
+  const double omega = 2.0 * std::numbers::pi *
+                       rect.GetUnits().Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
+  const std::complex<double> beta = 0.5 / (std::complex<double>(0.0, 1.0) * omega);
+  const double edge_mass = -(0.5 * 0.25 + 0.75) * RMM::H;
+  for (double n : {1.4, 1.5})
+  {
+    CAPTURE(n);
+    const double sigma = -n * n * omega * omega;
+    std::unique_ptr<mfem::HypreParMatrix> P;
+    rect.GetModel().AddSecondOrderFarfieldRealPreconditioner(omega, sigma, P);
+    if (n < std::sqrt(2.0))
+    {
+      CHECK(!P);
+      continue;
+    }
+    REQUIRE(P);
+    const double before = (sigma * beta).imag() * edge_mass;
+    const double after = sigma * std::abs(beta) * edge_mass;
+    CHECK(before < 0.0);
+    CHECK(after > 0.0);
+    CHECK_THAT(rect.Pairing(*P, 1.0, 0.0), WithinRel(after - before, 1.0e-12));
   }
 }
 

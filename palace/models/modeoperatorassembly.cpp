@@ -401,7 +401,22 @@ ModeOperatorModel::ModeOperatorModel(
   }
 
   // Second-order absorbing boundary terms, the components -[0, G; 0, D] and -[M, 0; Gᵀ, 0]
-  // (see ModeOperatorModel), for the terms with boundary elements on any process.
+  // (see ModeOperatorModel), for the terms with boundary elements on any process, and the
+  // largest light speed of the materials next to these boundaries.
+  if (surface_terms.GetNumSecondOrderFarfieldTerms() > 0)
+  {
+    const auto bdr_attr_mat = mat_op.GetBdrAttributeToMaterial();
+    for (auto attr :
+         mat_op.GetCeedBdrAttributes(surface_terms.GetFarfieldOp().GetAttrList()))
+    {
+      if (const int mat = bdr_attr_mat[attr - 1]; mat >= 0)
+      {
+        farfield_light_speed_max =
+            std::max(farfield_light_speed_max, mat_op.GetLightSpeedMax()[mat]);
+      }
+    }
+    Mpi::GlobalMax(1, &farfield_light_speed_max, nd_fespace.GetComm());
+  }
   for (int i = 0; i < surface_terms.GetNumSecondOrderFarfieldTerms(); i++)
   {
     MaterialPropertyCoefficient unit(max_bdr_attr);
@@ -446,6 +461,37 @@ void ModeOperatorModel::AddSecondOrderFarfieldLowerBlock(
   {
     AddScaledComplex(real, imag, block.get(), nullptr,
                      sigma * surface_terms.GetSecondOrderFarfieldTermScale(i, omega));
+  }
+}
+
+void ModeOperatorModel::AddSecondOrderFarfieldRealPreconditioner(
+    std::complex<double> omega, double sigma,
+    std::unique_ptr<mfem::HypreParMatrix> &P) const
+{
+  // Below the passivity limit at the shift, kₙ² = -σ ≤ 2 (ω/c)² for the largest light
+  // speed c next to the boundaries, Ar + Ai keeps the magnitude of the terms of the edges
+  // in the ND block. Above it, the components -[0, G; 0, D] with the coefficient β and
+  // -[M, 0; Gᵀ, 0] with σβ replace Re{c} + Im{c} of their coefficient c in Ar + Ai by |β|
+  // and σ|β|, all four blocks together (with only some of them, the solves need more
+  // iterations than with none).
+  if (farfield_light_speed_max <= 0.0 ||
+      -sigma * farfield_light_speed_max * farfield_light_speed_max <=
+          2.0 * std::norm(omega))
+  {
+    return;
+  }
+  for (const auto &component : components)
+  {
+    const bool shift = (component.type == CoefficientType::SECOND_ORDER_FARFIELD_SHIFT);
+    if (!shift && component.type != CoefficientType::SECOND_ORDER_FARFIELD)
+    {
+      continue;
+    }
+    const auto beta = surface_terms.GetSecondOrderFarfieldTermScale(component.index, omega);
+    const double factor = shift ? sigma : 1.0;
+    const auto coeff = factor * beta;
+    AddScaled(P, component.Ar.get(),
+              factor * std::abs(beta) - (coeff.real() + coeff.imag()));
   }
 }
 
