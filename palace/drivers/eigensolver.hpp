@@ -4,6 +4,7 @@
 #ifndef PALACE_DRIVERS_EIGEN_SOLVER_HPP
 #define PALACE_DRIVERS_EIGEN_SOLVER_HPP
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 #include "drivers/basesolver.hpp"
@@ -57,6 +58,41 @@ public:
 };
 
 //
+// Decides the Krylov subspace dimension of the eigenvalue solves of an adaptive run. On a
+// dense cluster of modes, the solves with the default dimension, max(2 N, N + 15), can
+// stall for tens of Krylov cycles, and the quality factor region changes for how long,
+// while a few more basis vectors resolve the cluster in a third of the cycles. The solves
+// which converge in a few cycles pay for more vectors, since every cycle does more linear
+// solves: with the region, the solves after one which took more than 10 cycles use 6 more
+// vectors than the default, unless another dimension is set.
+//
+class SubspaceGrowth
+{
+private:
+  bool grow = false;
+
+public:
+  static constexpr int max_cycles = 10, extra_vectors = 6;
+
+  // The subspace dimension of the next solve for num_modes modes, from the configured one
+  // (the configuration resolves an unset dimension to the default), at most the size of
+  // the problem.
+  int GetMaxSize(int num_modes, int max_size, long long int size) const
+  {
+    const int n = std::max(2 * num_modes, num_modes + 15);
+    if (!grow || max_size != n)
+    {
+      return max_size;
+    }
+    return static_cast<int>(std::min(static_cast<long long int>(n + extra_vectors), size));
+  }
+
+  // Records a solve: whether it used the quality factor region, and its number of Krylov
+  // cycles.
+  void Update(bool q_region, int its) { grow = grow || (q_region && its > max_cycles); }
+};
+
+//
 // Driver class for eigenmode simulations.
 //
 class EigenSolver : public BaseSolver
@@ -68,9 +104,10 @@ private:
   mutable std::unique_ptr<VectorFieldTransfer> prev_eigenvectors;
   mutable int prev_num_eigenvectors = 0;
 
-  // Warm starts of the next solves, and number of solves so far (the initial one, then one
-  // per adaptation iteration).
+  // Warm starts and subspace dimensions of the next solves, and number of solves so far
+  // (the initial one, then one per adaptation iteration).
   mutable WarmStartGate warm_start_gate;
+  mutable SubspaceGrowth subspace_growth;
   mutable int num_solves = 0;
 
   std::pair<ErrorIndicator, long long int>

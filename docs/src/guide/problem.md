@@ -36,7 +36,9 @@ which starts from the eigenmodes of the previous adaptation iteration then accep
 eigenpair at its first Krylov restart only if its error estimate is below a tenth of the
 tolerance: the eigenvalue errors of damped modes can be several times their error
 estimates, and without the strongly damped Ritz values nothing else delays these first
-acceptances.
+acceptances. After a solve which takes more than 10 Krylov cycles, as on a dense cluster of
+modes, the later solves use 6 more basis vectors than the default
+[`config["Solver"]["Eigenmode"]["MaxSize"]`](../config/reference.md#config-solver-eigenmode-maxsize).
 
 With a [frequency-dependent permittivity](model.md#Frequency-dependent-permittivity), the
 eigenvalue problem is nonlinear in the frequency. When the `Drude`, `Debye`, `Lorentz`, and
