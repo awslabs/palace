@@ -323,6 +323,90 @@ ParticipationVerdictBars InterimBars()
   return bars;
 }
 
+// The previous point a current mode joined, or -1 (UNMATCHED).
+int JoinedPoint(const std::map<int, ParticipationModeJoin> &joins, int point)
+{
+  const auto &join = joins.at(point);
+  return join.joined ? join.nearest : -1;
+}
+
+// The five modes of the CTX-002 window at Order 2 (lane v1table, run KA-X1-EIG-O2, level 1:
+// Re{f} in GHz, p raw of the six whole interfaces of surface-participation.csv, |p| of the
+// six lumped ports of port-EPR.csv). The participation vectors of the same field are nearly
+// parallel: modes 1 / 3 / 5 overlap by 0.9976 to 0.9993, modes 2 / 4 by 0.9986 (the others
+// 0.82 to 0.86); with the ports, modes 1 / 3 / 5 overlap by 0.02 to 0.33.
+const std::vector<ParticipationModeSignature> kCtx002Modes = {
+    {1,
+     4.374736052950,
+     {{1, 5.346838568654e-05},
+      {2, 5.012625975262e-07},
+      {3, 2.757530528807e-07},
+      {4, 3.201838700776e-05},
+      {5, 4.294285846984e-06},
+      {6, 9.195304920505e-07}},
+     {{64, 8.710769076445e-01},
+      {65, 9.297285364748e-02},
+      {102, 8.806376256590e-03},
+      {103, 4.672794159397e-03},
+      {106, 6.856868476300e-03},
+      {107, 4.110182175216e-03}}},
+    {2,
+     5.178263320190,
+     {{1, 2.916394745738e-04},
+      {2, 8.413334801103e-16},
+      {3, 3.226557865179e-12},
+      {4, 7.690297228123e-11},
+      {5, 8.697349620206e-13},
+      {6, 7.431932309097e-06}},
+     {{64, 7.742537815721e-12},
+      {65, 9.463552451136e-13},
+      {102, 1.033464678425e-13},
+      {103, 6.295862344434e-14},
+      {106, 1.068016472258e-13},
+      {107, 1.022488263987e-13}}},
+    {3,
+     8.149317590894,
+     {{1, 3.980883957009e-05},
+      {2, 9.015407081454e-07},
+      {3, 7.042438274160e-08},
+      {4, 2.770620737767e-05},
+      {5, 3.190179135131e-06},
+      {6, 8.906149957107e-07}},
+     {{64, 3.524733544933e-03},
+      {65, 3.771214526963e-04},
+      {102, 5.330668929498e-01},
+      {103, 2.832213915417e-01},
+      {106, 9.088414177334e-02},
+      {107, 5.437473814845e-02}}},
+    {4,
+     8.401627481141,
+     {{1, 2.883555069063e-04},
+      {2, 2.850960474239e-12},
+      {3, 1.727104660860e-12},
+      {4, 2.657675987983e-10},
+      {5, 1.314763608845e-11},
+      {6, 2.247437334546e-05}},
+     {{64, 6.863474646239e-09},
+      {65, 7.138848223163e-10},
+      {102, 1.193013135173e-09},
+      {103, 6.328275548649e-10},
+      {106, 1.858444104225e-06},
+      {107, 1.111279022132e-06}}},
+    {5,
+     8.657838609138,
+     {{1, 3.917593757516e-05},
+      {2, 1.440679618318e-06},
+      {3, 8.325456791519e-08},
+      {4, 2.496962367196e-05},
+      {5, 2.976096390633e-06},
+      {6, 9.341052094816e-07}},
+     {{64, 1.496896460086e-02},
+      {65, 1.596508402998e-03},
+      {102, 8.279085554538e-02},
+      {103, 4.401219694469e-02},
+      {106, 4.998011524404e-01},
+      {107, 2.988103910093e-01}}}};
+
 }  // namespace
 
 TEST_CASE("Surface participation verdicts against the VERDICT-INPUT test vectors",
@@ -345,10 +429,10 @@ TEST_CASE("Surface participation verdicts against the VERDICT-INPUT test vectors
       CHECK(indicator.per_doubling == Catch::Approx(v.per_doubling).margin(1.0e-6));
     }
     CHECK(ParticipationConvergenceName(indicator, bars, "Electrostatic") == v.convergence);
-    CHECK(ParticipationResolutionWord(v.m90, v.order, indicator.settled, bars,
+    CHECK(ParticipationResolutionWord(v.m90, v.order, indicator.settled, false, bars,
                                       "Electrostatic") == v.resolution);
     // The interim data print the same rule with the INTERIM words.
-    const auto word = ParticipationResolutionWord(v.m90, v.order, indicator.settled,
+    const auto word = ParticipationResolutionWord(v.m90, v.order, indicator.settled, false,
                                                   interim, "Electrostatic");
     CHECK(word == (std::string(v.resolution) == "RESOLVED" ? "RESOLVED-INTERIM"
                                                            : std::string(v.resolution)));
@@ -415,20 +499,34 @@ TEST_CASE("Surface participation verdict edge cases", "[surfaceparticipation][Se
   CHECK(ComputeParticipationIndicator(1.005, 1.0, 4000, H{{2000, 1.0, 2.0}}, bars).settled);
   // The resolution word: no bar at Orders 1 and >= 5; no reading; the bars' edges (census =
   // bar with g < T is RESOLVED).
-  CHECK(ParticipationResolutionWord(0.1, 1, true, bars, es) == "NO-BARS");
-  CHECK(ParticipationResolutionWord(0.1, 5, true, bars, es) == "NO-BARS");
-  CHECK(ParticipationResolutionWord(kNaN, 3, true, bars, es) == "NOT-EVALUATED");
-  CHECK(ParticipationResolutionWord(2.0, 3, true, bars, es) == "RESOLVED");
-  CHECK(ParticipationResolutionWord(2.0, 3, false, bars, es) == "MARGINAL");
-  CHECK(ParticipationResolutionWord(4.0, 3, true, bars, es) == "MARGINAL");
-  CHECK(ParticipationResolutionWord(4.000001, 3, false, bars, es) == "UNDER-RESOLVED");
-  CHECK(ParticipationResolutionWord(0.1, 2, false, bars, es) == "MARGINAL");
+  CHECK(ParticipationResolutionWord(0.1, 1, true, false, bars, es) == "NO-BARS");
+  CHECK(ParticipationResolutionWord(0.1, 5, true, false, bars, es) == "NO-BARS");
+  CHECK(ParticipationResolutionWord(kNaN, 3, true, false, bars, es) == "NOT-EVALUATED");
+  CHECK(ParticipationResolutionWord(2.0, 3, true, false, bars, es) == "RESOLVED");
+  CHECK(ParticipationResolutionWord(2.0, 3, false, false, bars, es) == "MARGINAL");
+  CHECK(ParticipationResolutionWord(4.0, 3, true, false, bars, es) == "MARGINAL");
+  CHECK(ParticipationResolutionWord(4.000001, 3, false, false, bars, es) ==
+        "UNDER-RESOLVED");
+  CHECK(ParticipationResolutionWord(0.1, 2, false, false, bars, es) == "MARGINAL");
   // A single solve never reads RESOLVED.
   const auto first = ComputeParticipationIndicator(1.0, 0.1, 1000, {}, bars);
-  CHECK(ParticipationResolutionWord(0.1, 3, first.settled, bars, es) == "MARGINAL");
+  CHECK(ParticipationResolutionWord(0.1, 3, first.settled, false, bars, es) == "MARGINAL");
   // The rule is untested on eigenmode and driven values: their words say so.
-  CHECK(ParticipationResolutionWord(2.0, 3, true, bars, "Eigenmode") ==
+  CHECK(ParticipationResolutionWord(2.0, 3, true, false, bars, "Eigenmode") ==
         "RESOLVED-UNTESTED");
+  // A region (box) value reads its own patches' census, which the bars were not graded
+  // with: its graded words read -UNTESTED (once, also on an untested problem); the words
+  // without a grading stay.
+  CHECK(ParticipationResolutionWord(2.0, 3, true, true, bars, es) == "RESOLVED-UNTESTED");
+  CHECK(ParticipationResolutionWord(2.0, 3, false, true, bars, es) == "MARGINAL-UNTESTED");
+  CHECK(ParticipationResolutionWord(4.000001, 3, true, true, bars, es) ==
+        "UNDER-RESOLVED-UNTESTED");
+  CHECK(ParticipationResolutionWord(2.0, 3, true, true, bars, "Eigenmode") ==
+        "RESOLVED-UNTESTED");
+  CHECK(ParticipationResolutionWord(2.0, 3, true, true, InterimBars(), es) ==
+        "RESOLVED-INTERIM-UNTESTED");
+  CHECK(ParticipationResolutionWord(0.1, 1, true, true, bars, es) == "NO-BARS");
+  CHECK(ParticipationResolutionWord(kNaN, 3, true, true, bars, es) == "NOT-EVALUATED");
   CHECK(ParticipationConvergenceName(exact, bars, "Driven") == "SETTLED-UNTESTED");
   CHECK(ParticipationConvergenceName(exact, bars, es) == "SETTLED");
   CHECK(ParticipationConvergenceName(exact, InterimBars(), es) == "SETTLED-INTERIM");
@@ -445,6 +543,9 @@ TEST_CASE("Surface participation verdict data from the built-in file and a bars 
   CHECK_FALSE(built_in.interim);  // the supervisor's word once the 19 vectors passed
   CHECK(built_in.WordSuffix("Electrostatic").empty());
   CHECK(built_in.WordSuffix("Eigenmode") == "-UNTESTED");
+  // The box values were graded with their cell's census: region words read -UNTESTED.
+  CHECK(built_in.tested_scopes == std::vector<std::string>{"Type"});
+  CHECK_FALSE(built_in.RegionScopeTested());
   CHECK(built_in.sha256.size() == 64);
   CHECK(built_in.provenance.find("VERDICT-INPUT") != std::string::npos);
   const std::string resolution = R"("RadiusMicrons": 1.9, "Bars": {
@@ -461,7 +562,8 @@ TEST_CASE("Surface participation verdict data from the built-in file and a bars 
   std::ofstream(full) << "{" << resolution << R"(, "Verdict": {"MinUnknownsRatio": 1.5,
     "MaxCensusRatio": 0.9, "MaxChangePerDoublingPercent": 0.5, "CensusBarOverR": {"1": 0.5,
     "2": 1.0, "3": 1.5, "4": null}, "UnderResolvedFactor": 3.0, "TestedProblems":
-    ["Electrostatic", "Eigenmode"], "Provenance": "unit test"}})";
+    ["Electrostatic", "Eigenmode"], "TestedScopes": ["Type", "Region"], "Provenance":
+    "unit test"}})";
   const auto read = ReadParticipationVerdictBars(full.string());
   CHECK_FALSE(read.built_in);
   CHECK_FALSE(read.interim);
@@ -473,17 +575,32 @@ TEST_CASE("Surface participation verdict data from the built-in file and a bars 
   CHECK(read.max_census_ratio == 0.9);
   CHECK(read.WordSuffix("Eigenmode").empty());
   CHECK(read.WordSuffix("Driven") == "-UNTESTED");
+  CHECK(read.RegionScopeTested());
   CHECK(read.provenance == "unit test");
   CHECK(read.sha256.size() == 64);
   CHECK(ReadResolutionBars(full.string()).B10(3) == 2.0);
-  CHECK(ParticipationResolutionWord(4.4, 3, false, read, "Electrostatic") == "MARGINAL");
-  CHECK(ParticipationResolutionWord(4.6, 3, false, read, "Electrostatic") ==
+  CHECK(ParticipationResolutionWord(4.4, 3, false, false, read, "Electrostatic") ==
+        "MARGINAL");
+  CHECK(ParticipationResolutionWord(4.6, 3, false, false, read, "Electrostatic") ==
         "UNDER-RESOLVED");
+  // A file naming the Region scope: region words plain.
+  CHECK(ParticipationResolutionWord(4.4, 3, false, true, read, "Electrostatic") ==
+        "MARGINAL");
+  CHECK(ParticipationResolutionWord(1.0, 3, true, true, read, "Eigenmode") == "RESOLVED");
   // Malformed members are refused.
   const std::string good_tail =
       R"("CensusBarOverR": {"1": null, "2": 1.7, "3": 2.0, "4": 4.0}, "UnderResolvedFactor": 2,
-      "TestedProblems": ["Electrostatic"])";
+      "TestedProblems": ["Electrostatic"], "TestedScopes": ["Type"])";
   const std::string g12 = R"("MinUnknownsRatio": 1.2, )";
+  const std::string g12_f_t =
+      g12 + R"("MaxCensusRatio": 0.95, )" + R"("MaxChangePerDoublingPercent": 1.0, )";
+  // The good member is read.
+  {
+    const auto good = dir / "good.json";
+    std::ofstream(good) << "{" << resolution << R"(, "Verdict": {)" << g12_f_t << good_tail
+                        << "}}";
+    CHECK_FALSE(ReadParticipationVerdictBars(good.string()).RegionScopeTested());
+  }
   for (
       const std::string member :
       {std::string(R"("MinUnknownsRatio": 1.0, "MaxCensusRatio": 0.95, )") +
@@ -498,7 +615,12 @@ TEST_CASE("Surface participation verdict data from the built-in file and a bars 
           "CensusBarOverR": {"1": null, "2": 1.7, "3": 2.0, "4": 4.0}, "UnderResolvedFactor": 2)",
        g12 +
            R"("MaxCensusRatio": 0.95, "MaxChangePerDoublingPercent": 1.0, "Interim": 1, )" +
-           good_tail})
+           good_tail,
+       g12_f_t + R"("CensusBarOverR": {"1": null, "2": 1.7, "3": 2.0, "4": 4.0},
+          "UnderResolvedFactor": 2, "TestedProblems": ["Electrostatic"])",
+       g12_f_t + R"("CensusBarOverR": {"1": null, "2": 1.7, "3": 2.0, "4": 4.0},
+          "UnderResolvedFactor": 2, "TestedProblems": ["Electrostatic"],
+          "TestedScopes": ["Type", "Box"])"})
   {
     const auto bad = dir / "bad.json";
     std::ofstream(bad) << "{" << resolution << R"(, "Verdict": {)" << member << "}}";
@@ -518,12 +640,12 @@ TEST_CASE("Surface participation eigenmode match across levels",
     const std::vector<S> previous = {{1, 5.0, qubit}, {2, 7.0, resonator}};
     const std::vector<S> current = {{1, 6.98, resonator}, {2, 7.4, qubit}};
     const auto match = MatchParticipationModes(previous, current);
-    CHECK(match.at(1) == 2);
-    CHECK(match.at(2) == -1);  // 7.4 GHz is nearest to mode 2, which mode 1 holds
+    CHECK(JoinedPoint(match, 1) == 2);
+    CHECK(JoinedPoint(match, 2) == -1);  // 7.4 GHz is nearest to mode 2, which mode 1 holds
     const std::vector<S> swapped = {{1, 7.01, resonator}, {2, 5.02, qubit}};
     const auto match_swapped = MatchParticipationModes(previous, swapped);
-    CHECK(match_swapped.at(1) == 2);
-    CHECK(match_swapped.at(2) == 1);
+    CHECK(JoinedPoint(match_swapped, 1) == 2);
+    CHECK(JoinedPoint(match_swapped, 2) == 1);
   }
   // A near-degenerate pair whose fields swap: the frequency rule pairs them crosswise and
   // the overlap refuses it: UNMATCHED, never the wrong mode.
@@ -531,19 +653,127 @@ TEST_CASE("Surface participation eigenmode match across levels",
     const std::vector<S> previous = {{1, 5.000, qubit}, {2, 5.010, resonator}};
     const std::vector<S> current = {{1, 5.002, resonator}, {2, 5.008, qubit}};
     const auto match = MatchParticipationModes(previous, current);
-    CHECK(match.at(1) == -1);
-    CHECK(match.at(2) == -1);
+    CHECK(JoinedPoint(match, 1) == -1);
+    CHECK(JoinedPoint(match, 2) == -1);
   }
   // A mode that enters the computed window, and one beyond half the gap: UNMATCHED.
   {
     const std::vector<S> previous = {{1, 5.0, qubit}};
     const std::vector<S> current = {{1, 5.01, qubit}, {2, 6.5, resonator}};
     const auto match = MatchParticipationModes(previous, current);
-    CHECK(match.at(1) == 1);
-    CHECK(match.at(2) == -1);
+    CHECK(JoinedPoint(match, 1) == 1);
+    CHECK(JoinedPoint(match, 2) == -1);
     const std::vector<S> pair = {{1, 5.0, qubit}, {2, 5.2, qubit}};
-    CHECK(MatchParticipationModes(pair, {{1, 5.35, qubit}}).at(1) == -1);
-    CHECK(MatchParticipationModes(pair, {{1, 5.25, qubit}}).at(1) == 2);
+    CHECK(JoinedPoint(MatchParticipationModes(pair, {{1, 5.35, qubit}}), 1) == -1);
+    // One mode of that field left: the remaining one is UNMATCHED for this level (its rank
+    // among the previous modes of its field is 2, among the current ones 1).
+    const auto left = MatchParticipationModes(pair, {{1, 5.25, qubit}});
+    CHECK(JoinedPoint(left, 1) == -1);
+    CHECK(left.at(1).nearest == 2);
+    CHECK(left.at(1).failed == "same-field rank differs");
+    // Not unique: a second previous mode of the same field lies within twice the gap.
+    const auto ambiguous = MatchParticipationModes(pair, {{1, 5.12, qubit}});
+    CHECK(JoinedPoint(ambiguous, 1) == -1);
+    CHECK(ambiguous.at(1).nearest == 2);
+    CHECK(ambiguous.at(1).failed == "not unique");
+  }
+}
+
+TEST_CASE("Surface participation eigenmode join on the real CTX-002 vectors",
+          "[surfaceparticipation][Serial]")
+{
+  auto Shifted = [](std::vector<ParticipationModeSignature> modes, double shift)
+  {
+    for (auto &mode : modes)
+    {
+      mode.frequency += shift;
+    }
+    return modes;
+  };
+  for (const bool ports : {false, true})
+  {
+    INFO("fingerprint with the ports: " << ports);
+    auto modes = kCtx002Modes;
+    for (auto &mode : modes)
+    {
+      mode.ports = ports ? mode.ports : std::map<int, double>{};
+    }
+    // No shift and small shifts: every mode joins itself.
+    for (const double shift : {0.0, 1.0e-3, -1.0e-3, 0.01, -0.01, 0.05, 0.1})
+    {
+      INFO("shift " << shift << " GHz");
+      const auto joins = MatchParticipationModes(modes, Shifted(modes, shift));
+      for (int point = 1; point <= 5; point++)
+      {
+        CHECK(JoinedPoint(joins, point) == point);
+      }
+    }
+    // +0.40 GHz, beyond half the spacing of modes 3 and 5 (0.51 GHz; mode 4 lies between):
+    // the rule without the rank condition joins mode 3 to mode 5 on the participations
+    // alone; now mode 3 is UNMATCHED, 4 and 5 too (gap), 1 and 2 join themselves.
+    {
+      const auto joins = MatchParticipationModes(modes, Shifted(modes, 0.40));
+      CHECK(JoinedPoint(joins, 1) == 1);
+      CHECK(JoinedPoint(joins, 2) == 2);
+      CHECK(joins.at(3).nearest == 5);
+      CHECK(JoinedPoint(joins, 3) == -1);
+      CHECK(joins.at(3).failed ==
+            (ports ? "overlap below 0.9" : "same-field rank differs"));
+      CHECK(JoinedPoint(joins, 4) == -1);
+      CHECK(JoinedPoint(joins, 5) == -1);
+    }
+    // The sweep of the lane's tools (fix/tools/joinsim_v2.py, joinsim_ports_v1.py): 801
+    // uniform shifts from 0 to 4 GHz, 4005 joins: 0 wrong (the rule without the rank
+    // condition: 152 on the participations alone, 50 with the ports), 240 right and 3765
+    // UNMATCHED with either fingerprint.
+    int right = 0, wrong = 0, unmatched = 0;
+    for (int k = 0; k <= 800; k++)
+    {
+      for (const auto &[point, join] :
+           MatchParticipationModes(modes, Shifted(modes, 0.005 * k)))
+      {
+        (join.joined ? (join.nearest == point ? right : wrong) : unmatched)++;
+      }
+    }
+    CHECK(wrong == 0);
+    CHECK(right == 240);
+    CHECK(unmatched == 3765);
+    // A mode of the field of mode 3 enters above the window: the others keep their joins.
+    {
+      auto current = modes;
+      current.push_back({6, 9.2, modes[2].participation, modes[2].ports});
+      const auto joins = MatchParticipationModes(modes, current);
+      for (int point = 1; point <= 5; point++)
+      {
+        CHECK(JoinedPoint(joins, point) == point);
+      }
+      CHECK(JoinedPoint(joins, 6) == -1);
+    }
+    // The lowest mode leaves the window (the others renumbered, +1 MHz): on the
+    // participations alone modes 3 and 5 (the field of mode 1) are UNMATCHED for this
+    // level; with the ports they keep their joins.
+    {
+      std::vector<ParticipationModeSignature> current(modes.begin() + 1, modes.end());
+      for (auto &mode : current)
+      {
+        mode.point--;
+        mode.frequency += 1.0e-3;
+      }
+      const auto joins = MatchParticipationModes(modes, current);
+      CHECK(JoinedPoint(joins, 1) == 2);
+      CHECK(JoinedPoint(joins, 2) == (ports ? 3 : -1));
+      CHECK(JoinedPoint(joins, 3) == 4);
+      CHECK(JoinedPoint(joins, 4) == (ports ? 5 : -1));
+    }
+    // The reviewer's case: two modes of one field (3 and 5) shifted beyond half their
+    // spacing (+0.28 of 0.51 GHz): the old rule joined mode 3 to mode 5.
+    {
+      const std::vector<ParticipationModeSignature> pair = {modes[2], modes[4]};
+      const auto joins = MatchParticipationModes(pair, Shifted(pair, 0.28));
+      CHECK(JoinedPoint(joins, 3) == -1);
+      CHECK(JoinedPoint(joins, 5) == -1);
+      CHECK(joins.at(3).failed == (ports ? "overlap below 0.9" : "not unique"));
+    }
   }
 }
 
@@ -660,12 +890,34 @@ TEST_CASE("Surface participation join, history, words and flags across levels",
   {
     row.m90 = 0.3;
   }
-  JoinParticipationLevel(eig_first, nullptr, bars, 3);
-  JoinParticipationLevel(eig_second, &eig_first, bars, 3);
+  CHECK(JoinParticipationLevel(eig_first, nullptr, bars, 3).empty());
+  const auto joins = JoinParticipationLevel(eig_second, &eig_first, bars, 3);
+  CHECK(JoinedPoint(joins, 1) == 2);
+  CHECK(JoinedPoint(joins, 2) == 1);
   CHECK(eig_second[0].change_corrected == Catch::Approx(0.0).margin(1e-15));  // 1 <- 2
   CHECK(eig_second[0].convergence == "SETTLED-INTERIM");
   CHECK(eig_second[2].change_corrected == Catch::Approx(0.99 / 0.9 - 1.0));  // 2 <- 1
   CHECK(eig_second[2].convergence == "MOVING");
+  // The log block prints every join with the two frequencies and the overlap.
+  const auto block = ParticipationLogBlock(eig_second, 2, 5000, 1000, bars, 3, joins);
+  CHECK(
+      block.find(" mode 1 <- mode 2 of iteration 1: 7 -> 7.001 GHz, overlap 1.000000\n") !=
+      std::string::npos);
+  CHECK(block.find(" mode 2 <- mode 1 of iteration 1: 5 -> 5.001 GHz, overlap 0.999") !=
+        std::string::npos);
+  // A third level whose mode 2 moved by more than half the spacing: UNMATCHED, printed so.
+  auto eig_third = eig_second;
+  for (auto &row : eig_third)
+  {
+    row.frequency = row.point == 2 ? 3.9 : row.frequency;
+  }
+  const auto third_joins = JoinParticipationLevel(eig_third, &eig_second, bars, 3);
+  CHECK(JoinedPoint(third_joins, 2) == -1);
+  CHECK(eig_third[2].convergence == "MOVING: UNMATCHED");
+  CHECK(ParticipationLogBlock(eig_third, 3, 5000, 5000, bars, 3, third_joins)
+            .find(" mode 2 UNMATCHED (gap not below half the spacing): nearest mode 2 of "
+                  "iteration 2: 5.001 -> 3.9 GHz, overlap 1.000000\n") !=
+        std::string::npos);
 }
 
 TEST_CASE("Surface participation region rows read their own patches",
@@ -727,13 +979,13 @@ TEST_CASE("Surface participation region rows read their own patches",
   SetParticipationCoverage(box, &coverage.interface_cells.at(7));
   const auto final_bars = FinalBars();
   CHECK(whole.m90 == ResolutionHistogramCentre(ResolutionHistogramBin(0.4)));
-  CHECK(ParticipationResolutionWord(whole.m90, 3, true, final_bars, "Electrostatic") ==
-        "RESOLVED");
+  CHECK(ParticipationResolutionWord(whole.m90, 3, true, false, final_bars,
+                                    "Electrostatic") == "RESOLVED");
   CHECK(whole.coverage == "OK");
   CHECK(whole.uncovered_share == Catch::Approx(5.0 / 1010.0));
   CHECK(box.m90 == ResolutionHistogramCentre(ResolutionHistogramBin(17.0)));
-  CHECK(ParticipationResolutionWord(box.m90, 3, true, final_bars, "Electrostatic") ==
-        "UNDER-RESOLVED");
+  CHECK(ParticipationResolutionWord(box.m90, 3, true, true, final_bars, "Electrostatic") ==
+        "UNDER-RESOLVED-UNTESTED");
   CHECK(box.m50 == ResolutionHistogramCentre(ResolutionHistogramBin(17.0)));
   CHECK(box.coverage == "NOT-ACHIEVABLE");
   CHECK(box.uncovered_share == 0.5);
@@ -746,7 +998,7 @@ TEST_CASE("Surface participation region rows read their own patches",
   SetParticipationResolution(box, nullptr);
   SetParticipationCoverage(box, nullptr);
   CHECK(std::isnan(box.m90));
-  CHECK(ParticipationResolutionWord(box.m90, 3, true, final_bars, "Electrostatic") ==
+  CHECK(ParticipationResolutionWord(box.m90, 3, true, true, final_bars, "Electrostatic") ==
         "NOT-EVALUATED");
   CHECK(box.coverage == "NOT-MEASURED");
   CHECK(box.regime == "NO-MODEL");
@@ -785,14 +1037,16 @@ TEST_CASE("Surface participation box rows are guarded by their own census",
   CHECK(second[1].convergence == "SETTLED");  // its Type's word
   CHECK(second[2].convergence == "MOVING: CELL-NOT-REFINED");
   CHECK(std::isnan(second[2].per_doubling));
-  CHECK(second[2].resolution == "UNDER-RESOLVED");
+  CHECK(second[2].resolution == "UNDER-RESOLVED-UNTESTED");
   // Once the box's own patches are refined (17 -> 1.8 R), the box is evaluated and
-  // RESOLVED.
+  // RESOLVED on its own census, a scope the bars were not graded with: flagged.
   auto third = Level(4000000, 1.4, 1.8);
   JoinParticipationLevel(third, &second, bars, 3);
   CHECK(third[2].convergence == "SETTLED");
-  CHECK(third[2].resolution == "RESOLVED");
-  CHECK(third[2].flags.empty());
+  CHECK(third[2].resolution == "RESOLVED-UNTESTED");
+  CHECK(third[2].flags == "RESOLVED-UNTESTED");
+  CHECK(third[0].resolution == "RESOLVED");
+  CHECK(third[0].flags.empty());
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -815,7 +1069,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(text.find("previous run") == std::string::npos);
   CHECK(text.find("convergence (INTERIM)") != std::string::npos);
   CHECK(text.find("resolution (INTERIM; RESOLVED needs SETTLED)") != std::string::npos);
-  CHECK(text.find("change per doubling (%)") != std::string::npos);
+  CHECK(text.find("change per doubling (%; an interface row: its Type's)") !=
+        std::string::npos);
+  CHECK(text.find("change corrected (fraction)") != std::string::npos);
+  CHECK(text.find("change raw (fraction)") != std::string::npos);
   CHECK(text.find("h/R m90") != std::string::npos);
   CHECK(text.find("FIRST") != std::string::npos);
   for (auto row : {Row(1, 1, "SA", 1.1e-4, 1.21e-4), Row(1, 2, "MS", 2.2e-4, 2.6e-4)})
@@ -889,8 +1146,23 @@ TEST_CASE("Surface participation log block", "[surfaceparticipation][Serial]")
   CHECK(block.find("built-in palace/models/surfaceparticipationverdict.json") !=
         std::string::npos);
   CHECK(block.find("a single solve never reads RESOLVED") != std::string::npos);
+  CHECK(block.find("region resolution words -UNTESTED") != std::string::npos);
   CHECK(CountLines(block) == 1 + 2 + 1 + rows.size());
-  // Above kParticipationLogRows rows: one line per (Type, whole | region).
+  // Only the targeted values count: 45 untargeted region rows (raw only) leave the block
+  // in its per-value form with the same two values.
+  auto with_untargeted = rows;
+  for (int interface = 10; interface < 55; interface++)
+  {
+    auto raw_only = Row(1, interface, "SA", 1.0e-7, kNaN, true);
+    SetParticipationNotTarget(raw_only);
+    with_untargeted.push_back(raw_only);
+  }
+  CHECK(ParticipationLogBlock(with_untargeted, 2, 3000, 1000, bars, 3) == block);
+  // No region value, no region note.
+  CHECK(ParticipationLogBlock({rows[0]}, 2, 3000, 1000, bars, 3)
+            .find("region resolution words") == std::string::npos);
+  // Above kParticipationLogRows values: one line per (Type, whole | region), with the raw
+  // and the corrected ranges.
   std::vector<SurfaceParticipationRow> many;
   for (int point = 1; point <= 30; point++)
   {
@@ -901,5 +1173,8 @@ TEST_CASE("Surface participation log block", "[surfaceparticipation][Serial]")
   const auto grouped = ParticipationLogBlock(many, 1, 1000, 0, bars, 1);
   CHECK(grouped.find("NO-BARS") != std::string::npos);
   CHECK(grouped.find("60 values") != std::string::npos);
+  CHECK(grouped.find(
+            "SA      Type   30 values: p raw 1.00000e-04 .. 1.00000e-04, p corrected "
+            "1.10000e-04 .. 1.10000e-04, corr/raw 1.1000 .. 1.1000") != std::string::npos);
   CHECK(CountLines(grouped) == 1 + 2 + 1 + 2);
 }

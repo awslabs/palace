@@ -72,6 +72,24 @@ json HalfSpaceRegion(bool lower, double wall = kBoxWall)
           {"BoxMax", {lower ? wall : 10.0, 10.0, 10.0}}};
 }
 
+// The island mesh with a plane every 0.0625 across y (the cells' longest edge is then their
+// in-plane size) with the cells at the right edge x = 0.75 stretched to 0.2 in x: the
+// vertices x = 0.625 and 0.875 move to 0.55 and 0.95; the island, the domain and the lower
+// box x < kBoxWall are unchanged. The lower box's knots read a longest edge of 0.125, the
+// right edge's 0.2: the box's own census is finer than the rest of its Type's. (A
+// conforming refinement of one side does not do it: on this structured mesh its closure
+// refines the whole island's neighbourhood.)
+void StretchRightEdgeCells(mfem::Mesh &serial)
+{
+  for (int v = 0; v < serial.GetNV(); v++)
+  {
+    double *x = serial.GetVertex(v);
+    x[0] = std::abs(x[0] - 0.625) < 1.0e-12   ? 0.55
+           : std::abs(x[0] - 0.875) < 1.0e-12 ? 0.95
+                                              : x[0];
+  }
+}
+
 // The values of `header` on the rows where every (header, value) of `keys` holds (integer
 // key columns; a key value below 0 matches every row).
 std::vector<double> Select(const Table &table, const std::string &header,
@@ -151,7 +169,94 @@ double RecomposedFabricated(const fs::path &dir, int source, int evaluation, boo
   return sum;
 }
 
-// The share rows of target 4 at (excitation, evaluation), each checked against ruling
+// The census cell of target 4 recomposed from the per-patch files: each patch's reading
+// (surface-response-resolution-patches.csv) weighted by its fabricated energy of (source,
+// evaluation 0) (surface-response-patch-energy.csv; source below 0: the table's first
+// source), counted with its region share of (excitation, evaluation 0) for a box (`region`)
+// and whole otherwise: the product's census of a region row, or of the whole target.
+ResolutionCell RecomposedCensus(const fs::path &dir, int source, bool region,
+                                int excitation)
+{
+  std::map<long, double> shares;
+  if (region)
+  {
+    const Table table = test::LoadCsv(dir / "surface-response-region-share.csv");
+    const std::vector<std::pair<std::string, int>> keys = {
+        {"excitation", excitation}, {"evaluation", 0}, {"target", 4}};
+    const auto patches = Select(table, "patch", keys);
+    const auto values = Select(table, "share", keys);
+    for (std::size_t i = 0; i < patches.size(); i++)
+    {
+      shares[std::lround(patches[i])] = values[i];
+    }
+  }
+  const Table readings = test::LoadCsv(dir / "surface-response-resolution-patches.csv");
+  const Column &patch_column = test::ColumnByHeader(readings, "patch");
+  const Column &m_column = test::ColumnByHeader(readings, "h/R");
+  const Column &status_column = test::ColumnByHeader(readings, "status");
+  std::map<long, std::pair<ResolutionStatus, double>> census;
+  bool bars_hold = true;
+  for (std::size_t i = 0; i < patch_column.data.size(); i++)
+  {
+    auto status = ResolutionStatus::NOT_EVALUATED;
+    for (const auto candidate :
+         {ResolutionStatus::RESOLVED, ResolutionStatus::MARGINAL,
+          ResolutionStatus::UNDER_RESOLVED, ResolutionStatus::NO_BARS})
+    {
+      status =
+          ResolutionStatusName(candidate) == status_column.text[i] ? candidate : status;
+    }
+    bars_hold = bars_hold && status != ResolutionStatus::NO_BARS;
+    census[std::lround(patch_column.data[i])] = {status, m_column.data[i]};
+  }
+  const Table energies = test::LoadCsv(dir / "surface-response-patch-energy.csv");
+  if (source < 0)
+  {
+    REQUIRE(energies.n_rows() > 0);
+    source =
+        static_cast<int>(std::lround(test::ColumnByHeader(energies, "source").data[0]));
+  }
+  const std::vector<std::pair<std::string, int>> keys = {{"source", source},
+                                                         {"evaluation", 0}};
+  const auto patches = Select(energies, "patch", keys);
+  const auto fabricated = Select(energies, "fabricated surface energy[4] (J)", keys);
+  ResolutionAccumulator sums;
+  sums.Reset(1, 1);
+  for (std::size_t i = 0; i < patches.size(); i++)
+  {
+    const long patch = std::lround(patches[i]);
+    const auto reading = census.at(patch);
+    const auto share = shares.find(patch);
+    const double s = !region ? 1.0 : share != shares.end() ? share->second : 0.0;
+    if (s > 0.0)
+    {
+      sums.AddRegion(4, reading.first, reading.second, s * fabricated[i]);
+    }
+  }
+  REQUIRE(sums.regions.count(4) == 1);
+  return ComputeResolutionCell(sums.regions.at(4).data(), "SA", true, 0.0, bars_hold, 1.0,
+                               "");
+}
+
+// The m90 of the census cell of `type` over every plane of surface-response-resolution.csv
+// at `point` (the `index` column: "i" electrostatic, "m" eigenmode): the Type's cell.
+double TypeCellM90(const fs::path &dir, const std::string &index, int point,
+                   const std::string &type)
+{
+  const auto table = test::ReadTextCsv(dir / "surface-response-resolution.csv");
+  const std::size_t points = table.Column(index), types = table.Column("Type"),
+                    planes = table.Column("plane z (um)"), m90 = table.Column("m90 h/R");
+  for (const auto &row : table.rows)
+  {
+    if (std::stoi(row.at(points)) == point && row.at(types) == type &&
+        row.at(planes) == "all")
+    {
+      return std::stod(row.at(m90));
+    }
+  }
+  FAIL("no census cell of Type " << type << " at " << index << " = " << point);
+  return 0.0;
+}
 // 2251's tiers: the tier is the first of (1) the points no kept class holds, (2) every
 // point of the claim by energy, (3) by area that has a denominator, (4) none (the reference
 // point; a tier-4 patch is listed only when that point lies in the box: share 1), and the
@@ -1105,7 +1210,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const fs::path mesh_path = temp.temp_dir / "region-target-island.mesh";
   if (Mpi::Root(Mpi::World()))
   {
-    mfem::Mesh serial = MakeSerialIslandMesh();
+    mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, false, false, false, 16);
+    StretchRightEdgeCells(serial);
     std::ofstream output(mesh_path);
     serial.Print(output);
   }
@@ -1173,68 +1279,127 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(Text(rows, "scope", 0) == (region ? "region" : "Type"));
     CHECK(Text(rows, "convergence", row4) == "MOVING: FIRST-ITERATION");
     // The census of the row: the Type's cell (no Region) or the box's own patches, each
-    // fabricated energy counted with its share.
-    const Table readings = test::LoadCsv(dir / "surface-response-resolution-patches.csv");
-    const Table energies = test::LoadCsv(dir / "surface-response-patch-energy.csv");
-    std::map<long, double> shares;
-    if (region)
-    {
-      const Table table = test::LoadCsv(dir / "surface-response-region-share.csv");
-      const std::vector<std::pair<std::string, int>> keys = {
-          {"excitation", 1}, {"evaluation", 0}, {"target", 4}};
-      const auto patches = Select(table, "patch", keys);
-      const auto values = Select(table, "share", keys);
-      for (std::size_t i = 0; i < patches.size(); i++)
-      {
-        shares[std::lround(patches[i])] = values[i];
-      }
-    }
-    std::map<long, std::pair<ResolutionStatus, double>> census;
-    const Column &patch_column = test::ColumnByHeader(readings, "patch");
-    const Column &m_column = test::ColumnByHeader(readings, "h/R");
-    bool bars_hold = true;
-    for (std::size_t i = 0; i < patch_column.data.size(); i++)
-    {
-      const std::string name = Text(readings, "status", i);
-      auto status = ResolutionStatus::NOT_EVALUATED;
-      for (const auto candidate :
-           {ResolutionStatus::RESOLVED, ResolutionStatus::MARGINAL,
-            ResolutionStatus::UNDER_RESOLVED, ResolutionStatus::NO_BARS})
-      {
-        status = ResolutionStatusName(candidate) == name ? candidate : status;
-      }
-      bars_hold = bars_hold && status != ResolutionStatus::NO_BARS;
-      census[std::lround(patch_column.data[i])] = {status, m_column.data[i]};
-    }
-    const auto patches = Select(energies, "patch", {{"source", 1}, {"evaluation", 0}});
-    const auto fabricated = Select(energies, "fabricated surface energy[4] (J)",
-                                   {{"source", 1}, {"evaluation", 0}});
-    ResolutionAccumulator sums;
-    sums.Reset(1, 1);
-    for (std::size_t i = 0; i < patches.size(); i++)
-    {
-      const long patch = std::lround(patches[i]);
-      const auto reading = census.at(patch);
-      const auto share = shares.find(patch);
-      const double s = !region ? 1.0 : share != shares.end() ? share->second : 0.0;
-      if (s > 0.0)
-      {
-        sums.AddRegion(4, reading.first, reading.second, s * fabricated[i]);
-      }
-    }
-    REQUIRE(sums.regions.count(4) == 1);
-    const auto cell = ComputeResolutionCell(sums.regions.at(4).data(), "SA", true, 0.0,
-                                            bars_hold, 1.0, "");
+    // fabricated energy counted with its share. The cells at the right edge are stretched
+    // (StretchRightEdgeCells), so the box's own census is finer than its Type's cell: a box
+    // row that inherited its Type's census would fail here.
+    const auto cell = RecomposedCensus(dir, 1, region, 1);
     const double m90 = Select(rows, "h/R m90", {{"point", 1}, {"interface", 4}}).at(0);
     const double m50 = Select(rows, "h/R m50", {{"point", 1}, {"interface", 4}}).at(0);
-    CHECK((std::isnan(cell.quantiles[2]) ? std::isnan(m90)
-                                         : m90 == Catch::Approx(cell.quantiles[2])));
-    CHECK((std::isnan(cell.quantiles[1]) ? std::isnan(m50)
-                                         : m50 == Catch::Approx(cell.quantiles[1])));
+    REQUIRE(std::isfinite(cell.quantiles[2]));
+    CHECK(m90 == Catch::Approx(cell.quantiles[2]));
+    CHECK(m50 == Catch::Approx(cell.quantiles[1]));
+    const double type_m90 = TypeCellM90(dir, "i", 1, "SA");
+    if (region)
+    {
+      CHECK(m90 < 0.9 * type_m90);
+    }
+    else
+    {
+      CHECK(m90 == Catch::Approx(type_m90));
+    }
     // One solve: never SETTLED, so never RESOLVED (Order 1 has no census bar: NO-BARS).
     CHECK(Text(rows, "resolution (RESOLVED needs SETTLED)", row4) ==
-          ParticipationResolutionWord(cell.quantiles[2], 1, false,
+          ParticipationResolutionWord(cell.quantiles[2], 1, false, region,
                                       BuiltInParticipationVerdictBars(), "Electrostatic"));
+  }
+#endif
+}
+
+// The same on the Maxwell path (postoperator.cpp's rows): on the mesh whose right-edge
+// cells are stretched, the eigenmode rows of the lower box read the census of its own
+// patches, finer than the Type's cell, and a whole target reads its Type's cell.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Region target rows of surface-participation.csv read their own patches "
+                 "(eigenmode)",
+                 "[regiontarget][surfaceparticipation][eigensolver]"
+                 "[surfaceresponseoperator][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "region-target-maxwell-island-stretched.mesh";
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh(false, false, false, false, false, false, 16);
+    StretchRightEdgeCells(serial);
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  Mpi::Barrier(comm);
+  json config = ConvexMaxwellIslandConfig(test::CrackPolicy::Default);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  UseDefaultConstruction(
+      config["Solver"]["SurfaceResponseCorrection"],
+      WriteDefaultConstructionLibrary(convex_library_3d_path, temp.temp_dir), false);
+  config["Solver"]["SurfaceResponseCorrection"]["PatchEnergy"] = true;
+  config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
+  auto Run = [&](const std::string &stem, const json &region)
+  {
+    json run = config;
+    if (!region.is_null())
+    {
+      run["Boundaries"]["Postprocessing"]["Dielectric"][0]["Region"] = region;
+    }
+    const fs::path output = temp.temp_dir / ("participation-maxwell-" + stem);
+    run["Problem"]["Output"] = output.string();
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    palace::Run(iodata, comm, utils::ConfigureOmp(), /*git_tag=*/nullptr);
+    Mpi::Barrier(comm);
+    return output;
+  };
+  const fs::path window = Run("window", json());
+  const fs::path lower = Run("lower", HalfSpaceRegion(true));
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const int order = config["Solver"].value("Order", 1);
+  for (const auto &[dir, region] : {std::pair{window, false}, std::pair{lower, true}})
+  {
+    INFO("run " << dir.filename().string());
+    const Table rows = test::LoadCsv(dir / "surface-participation.csv");
+    const std::vector<std::pair<std::string, int>> mode1 = {{"point", 1}, {"interface", 4}};
+    REQUIRE(Select(rows, "h/R m90", mode1).size() == 1);
+    const double m90 = Select(rows, "h/R m90", mode1).at(0);
+    CHECK(Select(rows, "p corrected (fixed-trace)", mode1).at(0) ==
+          Catch::Approx(Single(test::LoadCsv(dir / "surface-Q-corrected.csv"),
+                               "p_surf corrected", {{"m", 1}, {"interface", 4}}))
+              .epsilon(1.0e-9));
+    // Mode 1 is the construction's first measurement: excitation 0 of the share rows.
+    const auto cell = RecomposedCensus(dir, -1, region, 0);
+    REQUIRE(std::isfinite(cell.quantiles[2]));
+    CHECK(m90 == Catch::Approx(cell.quantiles[2]));
+    const double type_m90 = TypeCellM90(dir, "m", 1, "SA");
+    if (region)
+    {
+      CHECK(m90 < type_m90);
+      CHECK(m90 != Catch::Approx(type_m90));
+    }
+    else
+    {
+      CHECK(m90 == Catch::Approx(type_m90));
+    }
+    std::size_t row = 0;
+    const Column &interfaces = test::ColumnByHeader(rows, "interface");
+    const Column &points = test::ColumnByHeader(rows, "point");
+    while (row < interfaces.data.size() &&
+           !(std::lround(interfaces.data[row]) == 4 && std::lround(points.data[row]) == 1))
+    {
+      row++;
+    }
+    REQUIRE(row < interfaces.data.size());
+    CHECK(test::ColumnByHeader(rows, "scope").text[row] ==
+          (region ? "region" : "interface"));
+    CHECK(test::ColumnByHeader(rows, "resolution (NOT YET TESTED here; RESOLVED needs "
+                                     "SETTLED)")
+              .text[row] ==
+          ParticipationResolutionWord(cell.quantiles[2], order, false, region,
+                                      BuiltInParticipationVerdictBars(), "Eigenmode"));
   }
 #endif
 }

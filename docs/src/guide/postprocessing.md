@@ -425,8 +425,11 @@ participation side by side, then in the same row the resolution verdict (with th
 size near the metal edges over ``R``), the coverage and regime verdicts, the confidence
 flag, the change since the previous level and the convergence indicator. A box target (an
 entry with a `Region`) gets verdicts of its own patches, so a box on coarse elements is
-flagged even when the rest of the device is resolved. Nothing is withheld: a value whose
-verdicts are not met is printed with them listed in `flags`.
+flagged even when the rest of the device is resolved. A box's resolution words read
+`-UNTESTED` for now (`MARGINAL-UNTESTED`, for example): the bars were measured with the
+census of the box's whole cell, which reads coarser than a junction box's own patches, and
+are re-measured on the box's own census before its words lose the suffix. Nothing is
+withheld: a value whose verdicts are not met is printed with them listed in `flags`.
 
 Read the rows whose `scope` is `Type` (the corrected participation of a `Type`, summed over
 its interfaces) or `region` (a box value): their verdicts are of that value; an
@@ -447,14 +450,25 @@ thick and 26 of the 39 RESOLVED values were beyond 2 %, so a 2 % target is not s
 SETTLED cannot see a bias of the library or of the reference: one design settled at -2.8 % at
 all three orders. MARGINAL values were within 5 % in 61 % of the cases and outside in 39 %;
 RESOLVED came 1-2 rounds after a value was within 5 %, at 3-13 times its unknowns. The bars
-are the edge of the tested domain, not sizes that give 5 %. For an eigenmode the history must
-follow the same physical mode across rounds (match the mode, not its index: the table
-matches modes by frequency and participation and prints `UNMATCHED` otherwise); this was
-tested on one mode of one design only, and no eigenmode value has yet settled or read
-RESOLVED in the tests: eigenmode and driven rows read `SETTLED-UNTESTED` /
-`RESOLVED-UNTESTED` until the rule is tested there. Data marked interim make the words read
+are the edge of the tested domain, not sizes that give 5 %. No eigenmode value has yet
+settled or read RESOLVED in the tests: eigenmode and driven rows read `SETTLED-UNTESTED` /
+`RESOLVED-UNTESTED` until the rule is tested there.
+
+For an eigenmode the history must follow the same physical mode across rounds, not the same
+index. The table joins a mode to the previous level's mode nearest in frequency only when
+that match is clear: the two are each other's nearest, the frequency moved by less than half
+the spacing to the next mode, their participations (with the junction ports' energy
+participations, the sharpest mark of a qubit mode) agree, no second mode of the same kind is
+nearly as close, and the modes of that kind keep their order. A mode whose match is not
+unique reads `UNMATCHED` for that level and its indicator `MOVING: UNMATCHED`: the safe side,
+it never borrows a neighbour's history. A mode of the same kind entering or leaving the
+solved window (for example a mode below it moving out of the `Target` range) unmatches its
+neighbours for one level. The log lists every join and every `UNMATCHED` mode with both
+frequencies. Data marked interim make the words read
 `-INTERIM`. The thresholds are data (see
 [the reference](../reference.md#The-per-iteration-table-of-the-response-correction)). The
 log prints the values in short form after each level. `PreflightOnly` does not evaluate the
 resolution census; every corrected run prints it before its first solve and in the first
-rows of this table.
+rows of this table. A run restarted from a saved adapted mesh starts a new history (its first
+level reads `MOVING: FIRST-ITERATION`) and replaces the table in its output directory: give
+it another `Output` directory to keep the earlier table.

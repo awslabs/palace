@@ -59,18 +59,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
-  - A surface-response-corrected run (electrostatic, eigenmode, driven) writes the
-    per-iteration table `surface-participation.csv`: per adaptive level, point, excitation and
-    interface the raw and the fixed-trace corrected participation with, in the same row, the
-    resolution, coverage, regime and confidence verdicts (a `Region` target's over its own
-    patches), the change since the previous level and the change per doubling of the unknowns
-    (SETTLED below 1 %/doubling, read only where the value's own edges were refined; RESOLVED
-    needs SETTLED and the cell census within its order's bar, so a single solve never reads
-    RESOLVED; per `Type` total and box value; eigenmode and driven words read -UNTESTED until
-    the rule is tested there). The numbers are data
-    (`palace/models/surfaceparticipationverdict.json`, or the `Resolution.BarsFile` file's
-    optional `"Verdict"` member); the log prints the table per level and `palace.json` records
-    `SurfaceResponse.ParticipationTable`. No other output changes.
+  - Surface-response-corrected runs write `surface-participation.csv`: per adaptive level the
+    raw and corrected participations with their verdicts and a convergence indicator.
   - Added the configuration keys of the surface-response correction and of the features
     below to the schema, all optional (a configuration accepted before is accepted with the
     same meaning): `Solver.SurfaceResponseCorrection`; `Solver.Electrostatic`

@@ -4243,6 +4243,16 @@ void PostOperator<solver_t>::AddSurfaceParticipationRows(int point, double frequ
     indices.insert(index);
   }
   const auto regions = surf_post_op.GetRegionInterfaces(indices);
+  // An eigenmode's join fingerprint beside its participations: the |EPR| of its lumped
+  // ports (0 without an inductance; the EPR's sign follows the eigenvector's phase).
+  std::map<int, double> mode_ports;
+  if constexpr (solver_t == ProblemType::EIGENMODE)
+  {
+    for (const auto &[index, vi] : measurement_cache.lumped_port_vi)
+    {
+      mode_ports[index] = std::abs(vi.inductive_energy_participation.value_or(0.0));
+    }
+  }
   auto NewRow = [&](int interface)
   {
     SurfaceParticipationRow row;
@@ -4253,6 +4263,7 @@ void PostOperator<solver_t>::AddSurfaceParticipationRows(int point, double frequ
     const auto type = types.find(interface);
     row.type = type != types.end() ? type->second : std::string("Default");
     row.region = regions.count(interface) > 0;
+    row.mode_ports = mode_ports;
     return row;
   };
   const double nan = std::numeric_limits<double>::quiet_NaN();
