@@ -696,6 +696,13 @@ void IoData::CheckConfiguration()
       "Superconductor boundary \"TwoSided\" cannot be used with "
       "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
 
+  // The equilibrated error estimator is implemented for electrostatics, with host loops.
+  MFEM_VERIFY(
+      solver.linear.estimator_type == ErrorEstimator::L2ZZ ||
+          (problem.type == ProblemType::ELECTROSTATIC && solver.device == Device::CPU),
+      "config[\"Solver\"][\"Linear\"][\"EstimatorType\"] \"Equilibrated\" is only "
+      "available for electrostatic simulations on the CPU!");
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {

@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <type_traits>
+#include <vector>
 #include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
@@ -58,9 +59,11 @@ protected:
   bool use_timer;
 
 public:
+  // The solver and preconditioner of the linear solver data. Without timer, their time is
+  // not counted in the linear solver timers (for solvers inside other phases).
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,
                 int verbose, FiniteElementSpaceHierarchy &fespaces,
-                FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
+                FiniteElementSpaceHierarchy *aux_fespaces = nullptr, bool timer = true);
   BaseKspSolver(const IoData &iodata, FiniteElementSpaceHierarchy &fespaces,
                 FiniteElementSpaceHierarchy *aux_fespaces = nullptr);
   BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
@@ -78,9 +81,16 @@ public:
   void SetRelTol(double tol) { ksp->SetRelTol(tol); }
   void SetAbsTol(double tol) { ksp->SetAbsTol(tol); }
 
-  // Set ‖d‖² for the least-squares convergence test of the CG solver (see
-  // CgSolver::SetLeastSquaresNorm). The iterative solver must be a CgSolver.
+  // The least-squares convergence test of the CG solver: its tolerance and ‖d‖² (see
+  // CgSolver::SetLeastSquaresTol), and the decrease of the objective over the iterations of
+  // the most recent Mult (see CgSolver::GetLeastSquaresDecrease). The iterative solver must
+  // be a CgSolver.
+  void SetLeastSquaresTol(double tol);
   void SetLeastSquaresNorm(double norm2);
+  std::vector<double> GetLeastSquaresDecrease() const;
+
+  // Number of iterations of the most recent Mult.
+  int GetNumIterations() const { return ksp->GetNumIterations(); }
 
   void SetOperators(const OperType &op, const OperType &pc_op);
 

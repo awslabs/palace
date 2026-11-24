@@ -12,6 +12,11 @@ namespace palace::memory_reporting
 
 // Per-process memory usage in bytes.
 long GetCurrentMemory();
+
+// Return the memory which the allocator keeps after it has been freed to the system
+// (glibc's malloc_trim; no-op elsewhere), so that a stage after the release of large
+// objects does not keep their pages resident.
+void ReleaseFreedMemory();
 long GetPeakMemory();
 
 // Aggregated memory statistics, in bytes.

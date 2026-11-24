@@ -159,14 +159,16 @@ namespace fem
 void GetElementDofEntities(const mfem::FiniteElementSpace &fespace, int e,
                            mfem::Array<int> &entities);
 
-// Prolongation of a broken space as a HypreParMatrix, with the global offsets of its rows
-// and columns (in the format of mfem::ParFiniteElementSpace::GetDofOffsets) and the column
-// map of its off-diagonal block, which the matrix references.
+// Prolongation of a broken space, with the global offsets of its rows and columns (in the
+// format of mfem::ParFiniteElementSpace::GetDofOffsets). The HypreParMatrix (with the
+// column map of its off-diagonal block, which it references) is assembled from the
+// prolongation of the underlying space on first use, collectively, as MFEM assembles the
+// prolongation of a space: a broken space whose elements are only read, such as the flux
+// space of the equilibrated error estimator, never holds it.
 struct BrokenProlongationMatrix
 {
   mfem::Array<HYPRE_BigInt> row_offsets, col_offsets;
-  std::vector<HYPRE_BigInt> col_map;
-  std::unique_ptr<mfem::HypreParMatrix> P;
+  int ncols = 0;
 
   // Number of versions of each local true DOF of the underlying space, and the local
   // column of its first copy (or -1 without copies).
@@ -174,23 +176,36 @@ struct BrokenProlongationMatrix
 
   // Local column of version v of the local true DOF t (t itself for v = 0).
   int GetVersionTrueDof(int t, int v) const { return (v == 0) ? t : copy_col[t] + v - 1; }
+
+  // The matrix (see InitBrokenProlongation). Collective on first use.
+  const mfem::HypreParMatrix &Matrix() const;
+
+  // The data of the assembly: the mesh, the prolongation of the underlying space and the
+  // copied L-DOFs with the versions of their entries (see InitBrokenProlongation).
+  const mfem::ParMesh *mesh = nullptr;
+  mfem::HypreParMatrix *parent = nullptr;
+  std::vector<int> copy_ldofs, copy_offsets;
+  std::vector<std::uint8_t> copy_versions;
+  mutable std::vector<HYPRE_BigInt> col_map;
+  mutable std::unique_ptr<mfem::HypreParMatrix> P;
 };
 
-// Build the prolongation of a broken space from the prolongation P of the underlying space
-// (from its true DOFs to its L-vector). The true DOFs of each process are its true DOFs
-// followed by the copies of its true DOFs with several versions (num_versions[t] - 1 copies
-// of the local true DOF t, contiguous), and the L-vector is the L-vector of the underlying
-// space followed by the copied L-DOFs. The row of the copied L-DOF c is the row of its
-// original L-DOF copy_ldofs[c], with the version given for each of its entries (in the
-// order of the diagonal then off-diagonal entries of the row of P) in
-// copy_versions[copy_offsets[c], copy_offsets[c + 1]), the L-DOFs of constrained entities
-// depending on several true DOFs, possibly in different versions. Collective.
-void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
-                             const std::vector<int> &copy_ldofs,
-                             const std::vector<int> &copy_offsets,
-                             const std::vector<std::uint8_t> &copy_versions,
-                             const std::vector<int> &num_versions,
-                             BrokenProlongationMatrix &out);
+// The prolongation of a broken space from the prolongation P of the underlying space (from
+// its true DOFs to its L-vector), which must outlive it. The true DOFs of each process are
+// its true DOFs followed by the copies of its true DOFs with several versions
+// (num_versions[t] - 1 copies of the local true DOF t, contiguous), and the L-vector is the
+// L-vector of the underlying space followed by the copied L-DOFs. The row of the copied
+// L-DOF c is the row of its original L-DOF copy_ldofs[c], with the version given for each
+// of its entries (in the order of the diagonal then off-diagonal entries of the row of P)
+// in copy_versions[copy_offsets[c], copy_offsets[c + 1]), the L-DOFs of constrained
+// entities depending on several true DOFs, possibly in different versions. Sets the
+// layout; the matrix is assembled by AssembleBrokenProlongation on first use. Collective.
+void InitBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
+                            std::vector<int> &&copy_ldofs, std::vector<int> &&copy_offsets,
+                            std::vector<std::uint8_t> &&copy_versions,
+                            const std::vector<int> &num_versions,
+                            BrokenProlongationMatrix &out);
+void AssembleBrokenProlongation(const BrokenProlongationMatrix &out);
 
 }  // namespace fem
 

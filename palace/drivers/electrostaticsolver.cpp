@@ -3,9 +3,11 @@
 
 #include "electrostaticsolver.hpp"
 
+#include <memory>
 #include <mfem.hpp>
 #include "fem/errorindicator.hpp"
 #include "fem/mesh.hpp"
+#include "linalg/equilibratedestimator.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
@@ -13,10 +15,43 @@
 #include "models/postoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
+#include "utils/memoryreporting.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
+
+namespace
+{
+
+// Write a matrix over the terminals to a CSV file in post_dir (root only).
+void PrintTerminalMatrix(const fs::path &post_dir,
+                         const std::map<int, mfem::Array<int>> &terminal_sources,
+                         const std::string &file, const std::string &name,
+                         const std::string &unit, const mfem::DenseMatrix &mat,
+                         double scale)
+{
+  TableWithCSVFile output(post_dir / file);
+  output.table.insert(Column("i", "i", 0, 0, 2, ""));
+  int j = 0;
+  for (const auto &[idx2, data2] : terminal_sources)
+  {
+    output.table.insert(fmt::format("i2{}", idx2),
+                        fmt::format("{}[i][{}] {}", name, idx2, unit));
+    // Use the fact that iterator over i and j is the same span.
+    output.table["i"] << idx2;
+
+    auto &col = output.table[fmt::format("i2{}", idx2)];
+    for (std::size_t i = 0; i < terminal_sources.size(); i++)
+    {
+      col << mat(i, j) * scale;
+    }
+    j++;
+  }
+  output.WriteFullTableTrunc();
+}
+
+}  // namespace
 
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
@@ -32,8 +67,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   SaveMetadata(laplace_op.GetH1Spaces());
 
   // Set up the linear solver.
-  KspSolver ksp(iodata, laplace_op.GetH1Spaces());
-  ksp.SetOperators(*K, *K);
+  auto ksp = std::make_unique<KspSolver>(iodata, laplace_op.GetH1Spaces());
+  ksp->SetOperators(*K, *K);
 
   // Terminal indices are the set of boundaries over which to compute the capacitance
   // matrix. Terminal boundaries are aliases for ports.
@@ -45,12 +80,22 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Vector RHS(Grad.Width()), E(Grad.Height());
   std::vector<Vector> V(n_step);
 
-  // Initialize structures for storing and reducing the results of error estimation.
-  GradFluxErrorEstimator estimator(
-      laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
-      iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_error_tol,
-      iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg,
-      iodata.boundaries.GetSheetAttributes());
+  // Initialize structures for storing and reducing the results of error estimation. The
+  // equilibrated estimator evaluates the solves of all terminals together, after them, from
+  // the potentials, their intended Dirichlet values and their energies.
+  const bool equilibrated =
+      (iodata.solver.linear.estimator_type == ErrorEstimator::EQUILIBRATED);
+  std::unique_ptr<GradFluxErrorEstimator<Vector>> estimator;
+  if (!equilibrated)
+  {
+    estimator = std::make_unique<GradFluxErrorEstimator<Vector>>(
+        laplace_op.GetMaterialOp(), laplace_op.GetNDSpace(), laplace_op.GetRTSpaces(),
+        iodata.solver.linear.estimator_tol, iodata.solver.linear.estimator_error_tol,
+        iodata.solver.linear.estimator_max_it, 0, iodata.solver.linear.estimator_mg,
+        iodata.boundaries.GetSheetAttributes());
+  }
+  std::vector<Vector> G;
+  std::vector<double> energies;
   ErrorIndicator indicator;
 
   // Main loop over terminal boundaries.
@@ -67,7 +112,11 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     // terminal.
     Mpi::Print("\n");
     laplace_op.GetExcitationVector(idx, *K, V[step], RHS);
-    ksp.Mult(RHS, V[step]);
+    if (equilibrated)
+    {
+      G.push_back(V[step]);
+    }
+    ksp->Mult(RHS, V[step]);
 
     // Start Post-processing.
     BlockTimer bt2(Timer::POSTPRO);
@@ -83,8 +132,15 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     auto total_domain_energy = post_op.MeasureAndPrintAll(step, V[step], E, idx);
 
     // Calculate and record the error indicators.
-    Mpi::Print(" Updating solution error estimates\n");
-    estimator.AddErrorIndicator(E, total_domain_energy, indicator);
+    if (equilibrated)
+    {
+      energies.push_back(total_domain_energy);
+    }
+    else
+    {
+      Mpi::Print(" Updating solution error estimates\n");
+      estimator->AddErrorIndicator(E, total_domain_energy, indicator);
+    }
 
     // Next terminal.
     step++;
@@ -92,10 +148,102 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Postprocess the capacitance matrix from the computed field solutions.
   BlockTimer bt1(Timer::POSTPRO);
-  SaveMetadata(ksp);
+  SaveMetadata(*ksp);
   PostprocessTerminals(post_op, laplace_op.GetSources(), V);
+  if (equilibrated)
+  {
+    // The equilibrated estimator needs neither the field solver nor the domain energy
+    // operators nor the gradient, nor the geometry factors which they read (its operators
+    // compute the geometry on the fly), nor the coarse levels of the field solve and the
+    // libCEED objects of its spaces (rebuilt on demand): release them first, so that it
+    // does not add to their memory.
+    ksp.reset();
+    K.reset();
+    post_op.ReleaseDomainEnergyOperators();
+    laplace_op.GetNDSpace().ReleaseDiscreteInterpolator();
+    laplace_op.GetH1Spaces().ReleaseCoarseLevels();
+    laplace_op.GetH1Spaces().GetFinestFESpace().ResetCeedObjects();
+    laplace_op.GetNDSpace().ResetCeedObjects();
+    for (std::size_t l = 0; l < laplace_op.GetRTSpaces().GetNumLevels(); l++)
+    {
+      laplace_op.GetRTSpaces().GetFESpaceAtLevel(l).ResetCeedObjects();
+    }
+    laplace_op.GetMesh().ReleaseGeometryFactors();
+    memory_reporting::ReleaseFreedMemory();
+    EstimateEquilibrated(laplace_op, V, G, energies, indicator);
+  }
   post_op.MeasureFinalize(indicator);
   return {indicator, laplace_op.GlobalTrueVSize()};
+}
+
+void ElectrostaticSolver::EstimateEquilibrated(LaplaceOperator &laplace_op,
+                                               const std::vector<Vector> &V,
+                                               const std::vector<Vector> &G,
+                                               const std::vector<double> &energies,
+                                               ErrorIndicator &indicator) const
+{
+  Mpi::Print("\nComputing the equilibrated error estimate\n");
+  const auto &linear = iodata.solver.linear;
+  EquilibratedFluxErrorEstimator estimator(
+      laplace_op.GetMaterialOp(), laplace_op.GetH1Space(), laplace_op.GetRTSpace(),
+      laplace_op.GetNDSpace(), laplace_op.GetDirichletAttributes(),
+      (linear.estimator_flux_order == EstimatorFluxOrder::PRIMAL) ? 0 : -1, linear);
+  const auto summaries = estimator.AddErrorIndicators(V, G, energies, indicator);
+  Mpi::Print(" Dirichlet boundary: {:d} connected components, {:d} harmonic fields besides "
+             "the terminal fields ({:d} corrected)\n",
+             estimator.GetNumDirichletComponents(), estimator.GetNumHarmonicFields(),
+             estimator.GetNumCorrectedHarmonicFields());
+
+  // Guaranteed bounds of the relative error of each solve, and guaranteed brackets of each
+  // entry of the capacitance matrix and of the mutual capacitance matrix.
+  const auto &C_lower = estimator.GetCapacitanceLower();
+  const auto &C_upper = estimator.GetCapacitanceUpper();
+  const auto &Cm_lower = estimator.GetMutualCapacitanceLower();
+  const auto &Cm_upper = estimator.GetMutualCapacitanceUpper();
+  using VT = Units::ValueType;
+  const double F = iodata.units.Dimensionalize<VT::CAPACITANCE>(1.0);
+  std::vector<int> index;
+  for (const auto &[idx, data] : laplace_op.GetSources())
+  {
+    index.push_back(idx);
+  }
+  for (std::size_t i = 0; i < index.size(); i++)
+  {
+    const auto &s = summaries[i];
+    const int idx = index[i];
+    Mpi::Print(
+        " Index = {:d}: relative error <= {:.3e}, {:.6e} F <= C[{:d}][{:d}] <= {:.6e} F\n",
+        idx, s.relative, C_lower(i, i) * F, idx, idx, C_upper(i, i) * F);
+    Mpi::Print("  (|||u - u_h||| <= {:.3e}: eta = {:.3e} (vertex patches {:.3e}, {:d} CG "
+               "iterations), divergence {:.3e}, Neumann {:.3e}, lifting {:.3e})\n",
+               s.bound, s.eta, s.initial, s.iterations, s.divergence, s.neumann, s.lifting);
+  }
+  Mpi::Print(" Capacitance brackets (problem as meshed, any solver tolerance):\n");
+  for (std::size_t i = 0; i < index.size(); i++)
+  {
+    for (std::size_t j = i + 1; j < index.size(); j++)
+    {
+      Mpi::Print("  {:.6e} F <= C[{:d}][{:d}] <= {:.6e} F\n", C_lower(i, j) * F, index[i],
+                 index[j], C_upper(i, j) * F);
+    }
+  }
+  for (std::size_t i = 0; i < index.size(); i++)
+  {
+    Mpi::Print("  {:.6e} F <= C_m[{:d}][{:d}] <= {:.6e} F\n", Cm_lower(i, i) * F, index[i],
+               index[i], Cm_upper(i, i) * F);
+  }
+  if (root)
+  {
+    const auto &sources = laplace_op.GetSources();
+    PrintTerminalMatrix(post_dir, sources, "terminal-C-lower.csv", "C_lower", "(F)",
+                        C_lower, F);
+    PrintTerminalMatrix(post_dir, sources, "terminal-C-upper.csv", "C_upper", "(F)",
+                        C_upper, F);
+    PrintTerminalMatrix(post_dir, sources, "terminal-Cm-lower.csv", "C_m_lower", "(F)",
+                        Cm_lower, F);
+    PrintTerminalMatrix(post_dir, sources, "terminal-Cm-upper.csv", "C_m_upper", "(F)",
+                        Cm_upper, F);
+  }
 }
 
 void ElectrostaticSolver::PostprocessTerminals(
@@ -148,34 +296,11 @@ void ElectrostaticSolver::PostprocessTerminals(
   using VT = Units::ValueType;
 
   // Write capacitance matrix data.
-  auto PrintMatrix = [&terminal_sources, this](const std::string &file,
-                                               const std::string &name,
-                                               const std::string &unit,
-                                               const mfem::DenseMatrix &mat, double scale)
-  {
-    TableWithCSVFile output(post_dir / file);
-    output.table.insert(Column("i", "i", 0, 0, 2, ""));
-    int j = 0;
-    for (const auto &[idx2, data2] : terminal_sources)
-    {
-      output.table.insert(fmt::format("i2{}", idx2),
-                          fmt::format("{}[i][{}] {}", name, idx2, unit));
-      // Use the fact that iterator over i and j is the same span.
-      output.table["i"] << idx2;
-
-      auto &col = output.table[fmt::format("i2{}", idx2)];
-      for (std::size_t i = 0; i < terminal_sources.size(); i++)
-      {
-        col << mat(i, j) * scale;
-      }
-      j++;
-    }
-    output.WriteFullTableTrunc();
-  };
   const double F = iodata.units.Dimensionalize<VT::CAPACITANCE>(1.0);
-  PrintMatrix("terminal-C.csv", "C", "(F)", C, F);
-  PrintMatrix("terminal-Cinv.csv", "C⁻¹", "(1/F)", Cinv, 1.0 / F);
-  PrintMatrix("terminal-Cm.csv", "C_m", "(F)", Cm, F);
+  PrintTerminalMatrix(post_dir, terminal_sources, "terminal-C.csv", "C", "(F)", C, F);
+  PrintTerminalMatrix(post_dir, terminal_sources, "terminal-Cinv.csv", "C⁻¹", "(1/F)", Cinv,
+                      1.0 / F);
+  PrintTerminalMatrix(post_dir, terminal_sources, "terminal-Cm.csv", "C_m", "(F)", Cm, F);
 
   // Also write out a file with terminal voltage excitations.
   {

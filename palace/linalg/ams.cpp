@@ -17,7 +17,7 @@ namespace palace
 HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
                                FiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
                                bool vector_interp, bool singular_op, bool agg_coarsen,
-                               int agglomeration_target, int print)
+                               int agglomeration_target, int print, bool direct_interp)
   : mfem::HypreSolver(),
     // From the Hypre docs for AMS: cycles 1, 5, 8, 11, 13 are fastest, 7 yields fewest its
     // (MFEM default is 13). 14 is similar to 11/13 but is cheaper in that is uses additive
@@ -32,7 +32,7 @@ HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
     // For positive (SPD) operators, we will use aggressive coarsening but not for frequency
     // domain problems when the preconditioner matrix is not SPD.
     agg_coarsen(agg_coarsen), agglomeration_target(agglomeration_target),
-    print((print > 1) ? print - 1 : 0)
+    direct_interp(direct_interp), print((print > 1) ? print - 1 : 0)
 {
   // From MFEM: The AMS preconditioner may sometimes require inverting singular matrices
   // with BoomerAMG, which are handled correctly in Hypre's Solve method, but can produce
@@ -189,8 +189,8 @@ void HypreAmsSolver::InitializeSolver()
   double theta = 0.5;       // AMG strength parameter = 0.25 is 2D optimal (0.5-0.8 for 3D)
   int amg_relax_type = 18;  // 3 = GS, 6 = symm. GS, 8 = l1-symm. GS, 13 = l1-GS,
                             // 18 = l1-Jacobi, 16 = Chebyshev
-  int interp_type = 6;      // 6 = Extended+i, 0 = Classical, 13 = FF1
-  int Pmax = 4;             // Interpolation width
+  int interp_type = direct_interp ? 3 : 6;  // 6 = Extended+i, 3 = Direct, 0 = Classical
+  int Pmax = 4;                             // Interpolation width
   int relax_type = 2;  // 2 = l1-SSOR, 4 = trunc. l1-SSOR, 1 = l1-Jacobi, 16 = Chebyshev
   double weight = 1.0;
   double omega = 1.0;

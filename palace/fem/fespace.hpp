@@ -64,10 +64,43 @@ private:
     std::vector<std::int64_t> version_label;
     std::vector<std::array<std::int64_t, 3>> resolved;
     std::vector<HYPRE_BigInt> col_starts;
+    // The pairs of rows of the restriction R = Pᵀ W which W couples, and their 2 x 2
+    // blocks (row major), see GetRestrictionWeights.
+    std::vector<int> restriction_pairs;
+    std::vector<double> restriction_blocks;
+    // Undetermined true DOFs of the last restriction (global), and whether a restriction
+    // which leaves them at zero is accepted (see SetUndeterminedRestriction).
+    int restriction_undetermined = 0;
+    bool allow_undetermined = false;
+    // The restriction of the true DOFs which no single row or pair of rows of P determines
+    // (copies of master DOFs which the elements of a side read only through the constraints
+    // of hanging entities with several masters), see GetRestrictionWeights: for an
+    // interpolated field y = P t, the values y_c at the constraint rows with entries on
+    // such DOFs (rows), less P_c t_d (the entries of these rows on the determined true DOFs
+    // t_d), are A_c t_u, with A_c of full column rank, and t_u = X (y_c - P_c t_d) for a
+    // left inverse X of A_c: for each DOF, the pseudo-inverse of the small group of rows
+    // which determines it (see BuildHangingRestriction, setup only). Ct holds the
+    // coefficients of X (transposed) on the rows of each process, Pc the entries of P on
+    // the determined columns, both with the compact rows (one per entry of rows) as their
+    // rows. For the transpose, M = (P Pcᵀ) on the L-DOFs affected, with their rows.
+    struct HangingRestriction
+    {
+      std::vector<int> rows, affected;
+      std::unique_ptr<mfem::HypreParMatrix> Ct, Pc, M;
+      mutable Vector yc, mc;
+      int recovered = 0, unresolved = 0;  // Global numbers of true DOFs.
+    };
+    std::unique_ptr<HangingRestriction> hanging;
+    int restriction_hanging = 0;
   };
   std::unique_ptr<BrokenData> broken;
 
   void InitBroken(const CrackSides &sides);
+
+  // Build the restriction of the true DOFs undetermined by single rows and pairs (those
+  // with c < 1/2, c the determinations of each true DOF), from the rows read by local
+  // elements (read). Collective.
+  void BuildHangingRestriction(const std::vector<char> &read, const Vector &c) const;
 
   // For the given (global true DOF of the underlying space, side label) pairs, return the
   // global true DOF of this broken space read by the elements with that side label (the
@@ -100,6 +133,11 @@ private:
   }
 
   const Operator &BuildDiscreteInterpolator() const;
+
+  CeedElemRestriction BuildBrokenCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                                     const std::vector<int> &indices,
+                                                     bool is_interp,
+                                                     bool is_interp_range) const;
 
 public:
   template <typename... T>
@@ -160,14 +198,14 @@ public:
 
   const Operator *GetProlongationMatrix() const
   {
-    return broken ? broken->P.P.get() : Get().GetProlongationMatrix();
+    return broken ? &broken->P.Matrix() : Get().GetProlongationMatrix();
   }
 
   // The prolongation as a HypreParMatrix, and the global offsets of the L-DOFs and of the
   // true DOFs, as for mfem::ParFiniteElementSpace (for the parallel assembly of operators).
   const mfem::HypreParMatrix *Dof_TrueDof_Matrix() const
   {
-    return broken ? broken->P.P.get() : Get().Dof_TrueDof_Matrix();
+    return broken ? &broken->P.Matrix() : Get().Dof_TrueDof_Matrix();
   }
   HYPRE_BigInt *GetDofOffsets() const
   {
@@ -184,6 +222,67 @@ public:
   }
 
   bool IsBroken() const { return broken != nullptr; }
+
+  // The restriction of a broken space from its L-vector to its true DOFs for interpolated
+  // fields (which have the same value at every L-DOF of a true DOF, in the orientation of
+  // its row of P), R = Pᵀ W, as diagonal weights w and the 2 x 2 blocks of W on pairs of
+  // rows (applied by ApplyRestrictionPairs, w = 1 there). A true DOF is determined by the
+  // L-DOFs read by local elements whose row of P is a single entry of magnitude 1, or by
+  // two such rows on the same two true DOFs (a triangular face shared with another process,
+  // or a hanging edge), and W averages over all determinations on all processes. Unlike
+  // MFEM's restriction matrix, which selects a local L-DOF of each owned true DOF, this
+  // needs no L-DOF on the owning process (a process can own copies which only other
+  // processes read). The true DOFs which no such row or pair determines (copies of master
+  // DOFs which the elements of a side read only through constraint rows with several
+  // masters, on nonconforming meshes at ND(3), RT(1) and above) are recovered from these
+  // constraint rows: R = (I - Ctᵀ Pc) Pᵀ Z + Ctᵀ S (see BrokenData::HangingRestriction
+  // and BrokenRestrictionMult; w = 1 on these rows). Returns false (and an empty w) when
+  // some true DOF is still not determined, unless SetUndeterminedRestriction(true). Sets
+  // the pairs and the hanging restriction of the space. Collective.
+  bool GetRestrictionWeights(Vector &w) const;
+
+  // Accept a restriction (and so partially assembled interpolators into this broken space)
+  // which leaves the undetermined true DOFs at zero, instead of the assembled
+  // interpolators: for operators which only enter a preconditioner, such as the
+  // prolongations of a multigrid hierarchy (its V-cycle stays symmetric positive definite,
+  // with a smaller coarse space). Returns the number of undetermined true DOFs of the last
+  // restriction.
+  void SetUndeterminedRestriction(bool allow)
+  {
+    MFEM_VERIFY(broken, "Restriction settings are only used for broken spaces!");
+    broken->allow_undetermined = allow;
+  }
+  int GetUndeterminedRestrictionDofs() const
+  {
+    return broken ? broken->restriction_undetermined : 0;
+  }
+  // The true DOFs of the last restriction recovered from the constraint rows of hanging
+  // entities (global).
+  int GetHangingRestrictionDofs() const { return broken ? broken->restriction_hanging : 0; }
+
+  // ty = R ly (the restriction of a broken space, see GetRestrictionWeights, with the
+  // diagonal of W already applied to ly, which is overwritten), and ly = Rᵀ ty (without the
+  // diagonal of W).
+  void BrokenRestrictionMult(Vector &ly, Vector &ty) const;
+  void BrokenRestrictionMultTranspose(const Vector &ty, Vector &ly) const;
+  const BrokenData::HangingRestriction *GetHangingRestriction() const
+  {
+    return broken ? broken->hanging.get() : nullptr;
+  }
+
+  // lx <- W lx on the pairs of rows of the restriction (W is symmetric), see
+  // GetRestrictionWeights.
+  void ApplyRestrictionPairs(Vector &lx) const;
+  const std::vector<int> &GetRestrictionPairs() const
+  {
+    MFEM_VERIFY(broken, "Restriction pairs are only used for broken spaces!");
+    return broken->restriction_pairs;
+  }
+  const std::vector<double> &GetRestrictionBlocks() const
+  {
+    MFEM_VERIFY(broken, "Restriction pairs are only used for broken spaces!");
+    return broken->restriction_blocks;
+  }
 
   // The space a broken space is a view of (this space when it is not broken).
   const FiniteElementSpace &GetUnbroken() const
@@ -255,6 +354,14 @@ public:
     return G ? *G : BuildDiscreteInterpolator();
   }
 
+  // Release the cached discrete interpolator (rebuilt on demand; references to it become
+  // invalid).
+  void ReleaseDiscreteInterpolator() const
+  {
+    G.reset();
+    aux_fespace = nullptr;
+  }
+
   // Return the basis object for elements of the given element geometry type.
   CeedBasis GetCeedBasis(Ceed ceed, mfem::Geometry::Type geom) const;
 
@@ -287,8 +394,10 @@ public:
     ResetCeedObjects();
   }
 
+  // The libCEED basis at the points of the quadrature rule of the given order, by default
+  // that of fem::DefaultIntegrationOrder.
   static CeedBasis BuildCeedBasis(const mfem::FiniteElementSpace &fespace, Ceed ceed,
-                                  mfem::Geometry::Type geom);
+                                  mfem::Geometry::Type geom, int q_order = -1);
   static CeedElemRestriction
   BuildCeedElemRestriction(const mfem::FiniteElementSpace &fespace, Ceed ceed,
                            mfem::Geometry::Type geom, const std::vector<int> &indices,
@@ -297,13 +406,14 @@ public:
   template <typename VecType>
   auto &GetTVector() const
   {
-    tx.SetSize(GetTrueVSize());
     if constexpr (std::is_same_v<VecType, ComplexVector>)
     {
+      tx.SetSize(GetTrueVSize());
       return tx;
     }
     else
     {
+      tx.Real().SetSize(GetTrueVSize());  // The imaginary part only for complex use.
       return tx.Real();
     }
   }
@@ -311,13 +421,14 @@ public:
   template <typename VecType>
   auto &GetLVector() const
   {
-    lx.SetSize(GetVSize());
     if constexpr (std::is_same_v<VecType, ComplexVector>)
     {
+      lx.SetSize(GetVSize());
       return lx;
     }
     else
     {
+      lx.Real().SetSize(GetVSize());  // The imaginary part only for complex use.
       return lx.Real();
     }
   }
@@ -325,13 +436,14 @@ public:
   template <typename VecType>
   auto &GetLVector2() const
   {
-    ly.SetSize(GetVSize());
     if constexpr (std::is_same_v<VecType, ComplexVector>)
     {
+      ly.SetSize(GetVSize());
       return ly;
     }
     else
     {
+      ly.Real().SetSize(GetVSize());  // The imaginary part only for complex use.
       return ly.Real();
     }
   }
@@ -347,7 +459,9 @@ public:
 class FiniteElementSpaceHierarchy
 {
 protected:
-  std::vector<std::unique_ptr<FiniteElementSpace>> fespaces;
+  // The levels, owned (owned_fespaces) or not (a space which outlives the hierarchy).
+  std::vector<std::unique_ptr<FiniteElementSpace>> owned_fespaces;
+  std::vector<FiniteElementSpace *> fespaces;
   mutable std::vector<std::unique_ptr<Operator>> P;
 
   const Operator &BuildProlongationAtLevel(std::size_t l) const;
@@ -363,7 +477,42 @@ public:
 
   void AddLevel(std::unique_ptr<FiniteElementSpace> &&fespace)
   {
-    fespaces.push_back(std::move(fespace));
+    fespaces.push_back(fespace.get());
+    owned_fespaces.push_back(std::move(fespace));
+    P.push_back(nullptr);
+  }
+
+  // Add a level which is not owned (the space must outlive the hierarchy).
+  void AddLevel(FiniteElementSpace &fespace)
+  {
+    fespaces.push_back(&fespace);
+    P.push_back(nullptr);
+  }
+
+  // Release the levels but the finest, and the prolongations, once only the finest space
+  // is needed.
+  void ReleaseCoarseLevels()
+  {
+    if (GetNumLevels() < 2)
+    {
+      return;
+    }
+    FiniteElementSpace *finest = fespaces.back();
+    std::unique_ptr<FiniteElementSpace> keep;
+    for (auto &fespace : owned_fespaces)
+    {
+      if (fespace.get() == finest)
+      {
+        keep = std::move(fespace);
+      }
+    }
+    P.clear();
+    owned_fespaces.clear();
+    if (keep)
+    {
+      owned_fespaces.push_back(std::move(keep));
+    }
+    fespaces.assign(1, finest);
     P.push_back(nullptr);
   }
 

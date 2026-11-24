@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-1-0",
+  "$id": "urn:palace:schema:6-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3361,6 +3361,18 @@
           "minimum": 0,
           "default": 1000
         },
+        "EstimatorType": {
+          "type": "string",
+          "enum": ["L2ZZ", "Equilibrated"],
+          "default": "L2ZZ",
+          "description": "Spatial error estimator for the error indicators used by adaptive mesh refinement. `\"L2ZZ\"` recovers a smooth flux by a global L2 projection onto the Raviart-Thomas or Nédélec space of the solution order less one. `\"Equilibrated\"` (electrostatic simulations on the CPU only) recovers in the same space a flux which also satisfies the divergence constraint of the exact flux, which makes the estimate a guaranteed upper bound of the energy error, up to quadrature on curved elements: it starts from lowest-order vertex patch fluxes and is improved by a global curl correction (the linear solver of the magnetostatic simulation, stopped by `\"EstimatorTol\"`, `\"EstimatorErrorTol\"` and `\"EstimatorMaxIts\"`), every iterate of which is a guaranteed bound. The error indicators are normalized by a guaranteed lower bound of the exact energy, so that an adaptive refinement stops at [`\"Tol\"`](@ref config-model-refinement-tol) only when the root mean square of the true relative errors of the terminal solves is below it. Guaranteed brackets of every entry of the capacitance and mutual capacitance matrices of the problem as meshed (exact on straight-sided elements, up to quadrature on curved ones), at any linear solver tolerance, are written to `terminal-C-lower.csv`, `terminal-C-upper.csv`, `terminal-Cm-lower.csv` and `terminal-Cm-upper.csv`; those of mutual capacitances can be wide relative to them."
+        },
+        "EstimatorFluxOrder": {
+          "type": "string",
+          "enum": ["Reduced", "Primal"],
+          "default": "Reduced",
+          "description": "Flux space of the `\"Equilibrated\"` error estimator for solution [`\"Order\"`](@ref config-solver-order) p: `\"Reduced\"` is the Raviart-Thomas space of order p - 1 of the `\"L2ZZ\"` recovered flux, corrected by the curl of the Nédélec space of order p, and `\"Primal\"` the Raviart-Thomas space of order p, corrected by the curl of the Nédélec space of order p + 1 (a sharper bound, at more cost)."
+        },
         "EstimatorTol": {
           "type": "number",
           "description": "Relative tolerance for the flux projection solve used in the error estimate calculation.",
@@ -3369,7 +3381,7 @@
         },
         "EstimatorErrorTol": {
           "type": "number",
-          "description": "Tolerance for the error of the flux projection solve used in the error estimate calculation, relative to the estimate. The projection stops once its error in the norm of the estimate, estimated from the decrease of the estimate over the iterations, is below this tolerance times the estimate, or at the relative residual `\"EstimatorTol\"`, whichever comes first. The element indicators then differ from those of the converged projection by about this tolerance times the estimate or less in the ℓ² norm over the elements. A tolerance of zero disables this test.",
+          "description": "Tolerance for the error of the flux projection solve used in the error estimate calculation, relative to the estimate. The projection stops once its error in the norm of the estimate, estimated from the decrease of the estimate over the iterations, is below this tolerance times the estimate, or at the relative residual `\"EstimatorTol\"`, whichever comes first. The element indicators then differ from those of the converged projection by about this tolerance times the estimate or less in the ℓ² norm over the elements. With `\"EstimatorType\": \"Equilibrated\"`, for which every iterate gives a guaranteed bound, the tolerance applies to the bound instead: the curl correction stops once the bound is estimated to be within this tolerance (relative) of the bound of the converged correction. A tolerance of zero disables this test.",
           "minimum": 0.0,
           "default": 0.01
         },

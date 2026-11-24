@@ -4,6 +4,7 @@
 #include "bilinearform.hpp"
 
 #include <algorithm>
+#include <set>
 #include "fem/fespace.hpp"
 #include "fem/libceed/basis.hpp"
 #include "fem/libceed/ceed.hpp"
@@ -106,6 +107,11 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
         // Assemble domain or boundary integrators on this element geometry type.
         CeedBasis trial_basis = trial_fespace.GetCeedBasis(ceed, geom);
         CeedBasis test_basis = test_fespace.GetCeedBasis(ceed, geom);
+        mfem::IsoparametricTransformation T;  // The coordinate map of the domain elements.
+        if (!use_bdr && mesh.Get().GetNodes())
+        {
+          T.SetFE(mesh.Get().GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom));
+        }
 
         MFEM_ASSERT(subsets.size() == integs.size(), "Missing integrator subset data!");
         for (std::size_t i = 0; i < integs.size(); i++)
@@ -124,8 +130,48 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
 
           CeedOperator sub_op;
           integ->SetMapTypes(trial_map_type, test_map_type);
-          integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
-                          data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
+          const int q_order = (use_bdr || !T.GetFE()) ? -1 : integ->GetIntegrationOrder(T);
+          if (q_order >= 0 && q_order != fem::DefaultIntegrationOrder::Get(T))
+          {
+            // The bases, the mesh nodes basis and the attribute basis at the points of the
+            // integrator's quadrature (the sub-operator keeps references to them).
+            MFEM_VERIFY(*subset == ceed::CeedElementSubset::Full,
+                        "An integrator with a quadrature order of its own must be "
+                        "assembled on every element!");
+            const auto &nodes = *mesh.Get().GetNodes()->FESpace();
+            CeedBasis q_trial = FiniteElementSpace::BuildCeedBasis(trial_fespace.Get(),
+                                                                   ceed, geom, q_order);
+            CeedBasis q_test = (&trial_fespace == &test_fespace)
+                                   ? q_trial
+                                   : FiniteElementSpace::BuildCeedBasis(
+                                         test_fespace.Get(), ceed, geom, q_order);
+            ceed::CeedGeomFactorData q_data = data;
+            q_data.nodes_basis =
+                FiniteElementSpace::BuildCeedBasis(nodes, ceed, geom, q_order);
+            CeedInt num_qpts;
+            PalaceCeedCall(ceed,
+                           CeedBasisGetNumQuadraturePoints(q_data.nodes_basis, &num_qpts));
+            ceed::InitConstantLineBasis(ceed, 1, num_qpts, &q_data.attr_basis);
+            MFEM_VERIFY(integ->AssembleOnTheFly(ceed, trial_restr, test_restr, q_trial,
+                                                q_test, q_data, &sub_op),
+                        "An integrator with a quadrature order of its own must compute the "
+                        "geometry factors on the fly!");
+            PalaceCeedCall(ceed, CeedBasisDestroy(&q_data.nodes_basis));
+            PalaceCeedCall(ceed, CeedBasisDestroy(&q_data.attr_basis));
+            if (q_test != q_trial)
+            {
+              PalaceCeedCall(ceed, CeedBasisDestroy(&q_test));
+            }
+            PalaceCeedCall(ceed, CeedBasisDestroy(&q_trial));
+          }
+          else if (*subset != ceed::CeedElementSubset::Full ||
+                   !integ->AssembleOnTheFly(ceed, trial_restr, test_restr, trial_basis,
+                                            test_basis, data, &sub_op))
+          {
+            mesh.EnsureGeometryFactors(ceed, data);
+            integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
+                            data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
+          }
           // Sub-operator owned by ceed::Operator.
           op->AddSubOperator(sub_op);
         }
@@ -205,12 +251,37 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
     skip_zero_coeff_elems =
         !UseFullAssembly(fespaces.GetFESpaceAtLevel(l), pa_order_threshold);
   }
+  // An integrator with a quadrature order of its own on an element geometry of the mesh
+  // (see BilinearFormIntegrator::GetIntegrationOrder) is assembled on each level at that
+  // order: a coarsened operator would use the bases of the coarse space at the default
+  // quadrature.
+  bool own_order = false;
+  {
+    const auto &pmesh = trial_fespace.GetParMesh();
+    std::set<mfem::Geometry::Type> geoms;
+    for (int e = 0; e < pmesh.GetNE() && pmesh.GetNodes(); e++)
+    {
+      geoms.insert(pmesh.GetElementGeometry(e));
+    }
+    for (const auto geom : geoms)
+    {
+      mfem::IsoparametricTransformation T;
+      T.SetFE(pmesh.GetNodalFESpace()->FEColl()->FiniteElementForGeometry(geom));
+      for (const auto &integ : domain_integs)
+      {
+        const int q_order = integ->GetIntegrationOrder(T);
+        own_order =
+            own_order || (q_order >= 0 && q_order != fem::DefaultIntegrationOrder::Get(T));
+      }
+    }
+  }
   std::vector<std::unique_ptr<ceed::Operator>> pa_ops;
   pa_ops.reserve(fespaces.GetNumLevels() - l0);
   for (std::size_t l = l0; l < fespaces.GetNumLevels(); l++)
   {
-    if (l > l0 && &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
-                      &fespaces.GetFESpaceAtLevel(l - 1).GetMesh())
+    if (l > l0 && !own_order &&
+        &fespaces.GetFESpaceAtLevel(l).GetMesh() ==
+            &fespaces.GetFESpaceAtLevel(l - 1).GetMesh())
     {
       pa_ops.push_back(
           ceed::CeedOperatorCoarsen(*pa_ops.back(), fespaces.GetFESpaceAtLevel(l)));
@@ -297,10 +368,12 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
   op->Finalize();
 
   // Construct dof multiplicity vector for scaling to account for dofs shared between
-  // elements (on host, then copy to device).
+  // elements (on host, then copy to device). The elements of a broken space read the copies
+  // of their side.
   Vector test_multiplicity(test_fespace.GetVSize());
   test_multiplicity = 0.0;
   auto *h_mult = test_multiplicity.HostReadWrite();
+  const bool broken = test_fespace.IsBroken();
   PalacePragmaOmp(parallel)
   {
     mfem::Array<int> dofs;
@@ -308,7 +381,14 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
     PalacePragmaOmp(for schedule(static))
     for (int i = 0; i < test_fespace.GetMesh().GetNE(); i++)
     {
-      test_fespace.Get().GetElementVDofs(i, dofs, dof_trans);
+      if (broken)
+      {
+        test_fespace.GetElementDofs(i, dofs, dof_trans);
+      }
+      else
+      {
+        test_fespace.Get().GetElementVDofs(i, dofs, dof_trans);
+      }
       for (int j = 0; j < dofs.Size(); j++)
       {
         const int k = dofs[j];
@@ -317,8 +397,26 @@ std::unique_ptr<ceed::Operator> DiscreteLinearOperator::PartialAssemble() const
       }
     }
   }
+  for (int i = 0; i < test_multiplicity.Size(); i++)
+  {
+    // L-DOFs read by no element (copies of other processes' elements in a broken L-vector
+    // do not occur, every L-DOF is read by a local element) keep a zero scaling.
+    h_mult[i] = (h_mult[i] > 0.0) ? 1.0 / h_mult[i] : 0.0;
+  }
+  if (broken)
+  {
+    // A broken test space has no restriction matrix: its restriction is R = Pᵀ diag(w) (see
+    // FiniteElementSpace::GetRestrictionWeights), whose weights are applied here, with the
+    // multiplicity, so that the ParOperator applies Pᵀ (see ParOperator). Without weights
+    // (a copy read only through constraints) the interpolator cannot be applied element by
+    // element (see FiniteElementSpaceHierarchy::BuildProlongationAtLevel).
+    Vector w;
+    MFEM_VERIFY(test_fespace.GetRestrictionWeights(w),
+                "Matrix-free interpolation into a broken space with copies read only "
+                "through constraints!");
+    test_multiplicity *= w;
+  }
   test_multiplicity.UseDevice(true);
-  test_multiplicity.Reciprocal();
   op->SetDofMultiplicity(std::move(test_multiplicity));
 
   return op;

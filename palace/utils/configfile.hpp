@@ -1299,11 +1299,23 @@ public:
   // auxiliary space AMG hierarchies of the AMS solver during the solve (0: disabled).
   int ams_agglomeration_target = 2048;
 
+  // Direct (distance-one) instead of extended+i (distance-two) interpolation in the
+  // auxiliary space AMG hierarchies of the AMS solver. Extended+i exchanges the rows of the
+  // distance-two neighbours, whose communication package hypre finds through its assumed
+  // partition: on the coarse levels, and where the partition of the auxiliary spaces is
+  // uneven, this reaches most processes and costs MPI buffers on each process. Set by the
+  // equilibrated error estimator, not a configuration option.
+  bool ams_aux_direct_interp = false;
+
   // Relative tolerance for solving linear systems in divergence-free projector.
   double divfree_tol = 1.0e-12;
 
   // Maximum number of iterations for solving linear systems in divergence-free projector.
   int divfree_max_it = 1000;
+
+  // Spatial error estimator, and the flux space of the equilibrated one.
+  ErrorEstimator estimator_type = ErrorEstimator::L2ZZ;
+  EstimatorFluxOrder estimator_flux_order = EstimatorFluxOrder::REDUCED;
 
   // Relative tolerance for solving linear systems in the error estimator.
   double estimator_tol = 1.0e-6;

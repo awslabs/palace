@@ -1412,15 +1412,13 @@ void GetElementDofEntities(const mfem::FiniteElementSpace &fespace, int e,
   }
 }
 
-void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
-                             const std::vector<int> &copy_ldofs,
-                             const std::vector<int> &copy_offsets,
-                             const std::vector<std::uint8_t> &copy_versions,
-                             const std::vector<int> &num_versions,
-                             BrokenProlongationMatrix &out)
+void InitBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
+                            std::vector<int> &&copy_ldofs, std::vector<int> &&copy_offsets,
+                            std::vector<std::uint8_t> &&copy_versions,
+                            const std::vector<int> &num_versions,
+                            BrokenProlongationMatrix &out)
 {
-  MPI_Comm comm = mesh.GetComm();
-  const int vsize = P.Height(), tsize = P.Width();
+  const int tsize = P.Width();
   MFEM_VERIFY(static_cast<int>(num_versions.size()) == tsize &&
                   copy_offsets.size() == copy_ldofs.size() + 1,
               "Invalid copies for the prolongation of a broken space!");
@@ -1438,12 +1436,42 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
   }
   out.num_versions = num_versions;
   out.copy_col = copy_col;
-  const int nrows = vsize + static_cast<int>(copy_ldofs.size());
+  out.ncols = ncols;
+  const int nrows = P.Height() + static_cast<int>(copy_ldofs.size());
   {
     HYPRE_BigInt sizes[2] = {nrows, ncols};
     mfem::Array<HYPRE_BigInt> *offsets[2] = {&out.row_offsets, &out.col_offsets};
     mesh.GenerateOffsets(2, sizes, offsets);
   }
+  out.mesh = &mesh;
+  out.parent = &P;
+  out.copy_ldofs = std::move(copy_ldofs);
+  out.copy_offsets = std::move(copy_offsets);
+  out.copy_versions = std::move(copy_versions);
+  out.P.reset();
+}
+
+const mfem::HypreParMatrix &BrokenProlongationMatrix::Matrix() const
+{
+  if (!P)
+  {
+    AssembleBrokenProlongation(*this);
+  }
+  return *P;
+}
+
+void AssembleBrokenProlongation(const BrokenProlongationMatrix &out)
+{
+  const mfem::ParMesh &mesh = *out.mesh;
+  mfem::HypreParMatrix &P = *out.parent;
+  const auto &copy_ldofs = out.copy_ldofs;
+  const auto &copy_offsets = out.copy_offsets;
+  const auto &copy_versions = out.copy_versions;
+  const auto &num_versions = out.num_versions;
+  const auto &copy_col = out.copy_col;
+  MPI_Comm comm = mesh.GetComm();
+  const int vsize = P.Height(), ncols = out.ncols;
+  const int nrows = vsize + static_cast<int>(copy_ldofs.size());
   const bool assumed = HYPRE_AssumedPartitionCheck();
   const int rank = Mpi::Rank(comm), nprocs = Mpi::Size(comm);
   const HYPRE_BigInt col_begin = out.col_offsets[assumed ? 0 : rank];
@@ -1569,8 +1597,9 @@ void BuildBrokenProlongation(const mfem::ParMesh &mesh, mfem::HypreParMatrix &P,
   auto *new_offd = new mfem::SparseMatrix(offd_i, offd_jj, offd_aa, nrows,
                                           static_cast<int>(out.col_map.size()));
   out.P = std::make_unique<mfem::HypreParMatrix>(
-      comm, global_rows, global_cols, out.row_offsets.GetData(), out.col_offsets.GetData(),
-      new_diag, new_offd, out.col_map.data(), true);
+      comm, global_rows, global_cols, const_cast<HYPRE_BigInt *>(out.row_offsets.GetData()),
+      const_cast<HYPRE_BigInt *>(out.col_offsets.GetData()), new_diag, new_offd,
+      out.col_map.data(), true);
 }
 
 }  // namespace fem

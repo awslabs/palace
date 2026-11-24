@@ -1088,6 +1088,122 @@ of the iterations before it, the estimate is extrapolated from the ratio of the 
 With a frequency-dependent permittivity, whose indicator is not measured in the norm of the
 projection, only the residual test applies.
 
+### Equilibrated error estimate
+
+For electrostatic simulations, `config["Solver"]["Linear"]["EstimatorType"]: "Equilibrated"`
+recovers the flux ``\bm{D}`` in the same Raviart-Thomas space, of order ``p-1`` for solution
+order ``p`` (or ``p`` with `config["Solver"]["Linear"]["EstimatorFluxOrder"]: "Primal"`), with
+the constraints of the exact flux added: ``\nabla\cdot\bm{D}=0``, and ``\bm{D}\cdot\bm{n}=0``
+on the boundaries without a Dirichlet condition. For any such flux, the theorem of Prager and
+Synge [[14]](#References) gives
+
+```math
+\|\varepsilon_r^{1/2}\nabla(V-V_h)\|^2 \leq \|\varepsilon_r^{-1/2}(\bm{D}+\varepsilon_r\nabla V_h)\|^2
+```
+
+for the computed potential ``V_h``: the estimate is an upper bound of the energy error. The
+flux is built in three steps:
+
+ 1. For each vertex with the lowest-order hat function ``\psi_a``, a lowest-order flux on the
+    elements around the vertex which is closest to ``\psi_a\bm{D}_h`` and has the divergence
+    ``\nabla\psi_a\cdot\bm{D}_h`` [[15, 16]](#References). The hat functions sum to one, so
+    the sum of these fluxes is divergence free.
+ 2. Two fluxes with the same divergence and normal trace differ by the curl of a Nédélec
+    field ``\bm{A}`` (of order ``p``) whose tangential trace vanishes on the boundaries without
+    a Dirichlet condition. The correction ``\bm{A}`` which minimizes the estimate solves a
+    curl-curl problem, with ``\varepsilon_r^{-1}`` in place of ``\mu_r^{-1}``, by the conjugate
+    gradient method with the multigrid preconditioner of magnetostatic simulations (with
+    distance-one interpolation in the auxiliary space AMG of AMS). Every iterate gives an
+    admissible flux, so the estimate is an upper bound at every iteration, and it decreases
+    monotonically: stopping early costs tightness, never reliability. As the estimate
+    ``\eta`` of an iterate ``\bm{D}`` exceeds the converged one by
+    ``\eta^2-\eta_*^2 = \|\bm{D}-\bm{D}_*\|^2``, the tolerance
+    `config["Solver"]["Linear"]["EstimatorErrorTol"]` applies to the bound: the iterations
+    stop once the test of the projection above, with the tolerance
+    ``(2\,\mathrm{tol}+\mathrm{tol}^2)^{1/2}/(1+\mathrm{tol})`` on ``\|\bm{D}-\bm{D}_*\|``,
+    estimates that ``\eta\leq(1+\mathrm{tol})\,\eta_*``, once the decrease of ``\eta^2`` is
+    below its rounding error, or at the relative residual
+    `config["Solver"]["Linear"]["EstimatorTol"]`. The corrected flux is kept only if its
+    bound, evaluated as the estimate itself, is not above that of the uncorrected flux. With
+    `config["Solver"]["Linear"]["EstimatorErrorTol"]: 0`, each correction is converged
+    fully, to the rounding error of ``\eta^2`` or to the relative residual: on models with
+    thin layers this can take about 20 times as long as the default tolerance (an estimate
+    of 2254 s instead of 96 s), while the default tolerance keeps each bound, by the test
+    above, within 1% of the converged one.
+ 3. A curl does not change the net flux into a connected part of the Dirichlet boundary.
+    The flux of each terminal solve is therefore replaced by the best combination of the
+    corrected fluxes of all terminal solves and, when a ground or a terminal consists of
+    several disconnected parts, of the fluxes of order-one potentials (one per part which the
+    terminal data do not distinguish), corrected as far as the tolerance requires for their
+    weight in the combination. Converged, the flux is the dual mixed solution.
+
+The divergence of the flux which the algebraic error of the linear solve leaves, and the
+Dirichlet values at the essential degrees of freedom, are accounted for in the bound by the
+maximum principle. The element indicators are normalized by a guaranteed lower bound of the
+exact energy instead of the computed one, so that the indicator norm of each terminal solve
+is an upper bound of its relative error ``\|\varepsilon_r^{1/2}\nabla(V-V_h)\| / \|\varepsilon_r^{1/2}\nabla V\|``: an adaptive mesh refinement then stops at
+`config["Model"]["Refinement"]["Tol"]` only when the root mean square over the terminals of
+the true relative errors is below it. The bounds are guaranteed up to the quadrature on
+curved elements.
+
+#### Capacitance brackets
+
+With the equilibrated error estimate, an electrostatic simulation also writes guaranteed
+brackets of every entry of the capacitance matrix ``\bm{C}`` and of the mutual capacitance
+matrix ``\bm{C}_m``, in the layout of `terminal-C.csv` and `terminal-Cm.csv`:
+
+  - `terminal-C-lower.csv` and `terminal-C-upper.csv`: for each pair of terminals ``i``,
+    ``j``, a lower and an upper bound of ``C_{ij}``.
+  - `terminal-Cm-lower.csv` and `terminal-Cm-upper.csv`: the same for ``C_{m,ij}``.
+
+The brackets are entrywise: each entry lies in its own interval, and the intervals do not
+bound the matrices as a whole (in the sense of positive semidefinite matrices). They bound
+the capacitances of the problem as meshed, the geometry of the mesh with the configured
+materials and boundary conditions, not those of the CAD model. They hold at any
+`config["Solver"]["Linear"]["Tol"]`, and are exact on straight-sided elements and only as
+good as the quadrature on curved elements. `terminal-C.csv` and `terminal-Cm.csv` keep the
+capacitances of the computed solution, and the log prints the brackets.
+
+The potentials ``V_i`` of the terminal solves, with the terminal voltages imposed on the
+Dirichlet boundaries, have the energy matrix
+``\bm{C}_h=(\varepsilon_r\nabla V_i,\nabla V_j)`` (the upper bounds of the diagonal), and ``\bm{C}_h-\bm{C}=\bm{E}`` is the Gram matrix of
+their errors in the energy inner product. The error of any combination ``\sum_i x_iV_i`` is
+bounded by the estimate ``L`` of the combined flux, including the balance term of the
+divergence which the algebraic error of the solves leaves. So ``0\leq E_{ii}\leq L_i^2``
+with the bound ``L_i`` of solve ``i``, and for ``i\neq j`` both ``|E_{ij}|\leq L_iL_j`` and,
+with the bounds of the combinations ``sV_i\pm V_j/s``,
+``-L(sV_i-V_j/s)^2/4\leq E_{ij}\leq L(sV_i+V_j/s)^2/4``. The diagonal entries of
+``\bm{C}_m``, the row sums of ``\bm{C}``, are bracketed in the same way with the combination
+of all the terminals. The inverse ``\bm{C}^{-1}`` (`terminal-Cinv.csv`) is not bracketed:
+``\bm{C}\preceq\bm{C}_h`` only gives ``(\bm{C}^{-1})_{ii}\geq(\bm{C}_h^{-1})_{ii}``, and
+its other bounds would need a positive definite lower bound of ``\bm{C}`` in the Loewner
+order, which is not computed.
+
+Reading the width of a bracket:
+
+  - The bracket of ``C_{ii}`` is at most ``L_i^2`` wide, so at most ``\rho_i^2C_{ii}`` for
+    the bound ``\rho_i`` of the relative error of solve ``i`` (printed in the log; the
+    indicator norm is their root mean square): a relative error bound of 1% brackets
+    ``C_{ii}`` to within about ``10^{-4}`` of it. Refining the mesh narrows it as the square
+    of the error.
+  - `config["Solver"]["Linear"]["EstimatorErrorTol"]` stops the curl correction once each
+    bound is within that tolerance of the one of the converged correction (step 2 above),
+    so a bracket is at most about twice that tolerance (relative) wider than the narrowest
+    one the flux space gives: about 2% at the default `1e-2`, none with `0`, at the cost of
+    a longer correction.
+  - The algebraic error of the terminal solves widens the brackets through the balance
+    term instead of invalidating them. On the two spheres of the
+    [example](examples/spheres.md), at order 3 with the corrections converged, they are
+    0.01% to 0.04% of each entry wide at `config["Solver"]["Linear"]["Tol"]: 1e-10`, and
+    0.03% to 0.4% at `1e-6`. Brackets which narrow when the linear solver tolerance is
+    tightened are dominated by the algebraic error; otherwise only a finer mesh or a higher
+    order narrows them.
+  - The bracket of a mutual capacitance ``C_{ij}``, ``i\neq j``, is at most ``2L_iL_j``
+    wide (about half of that for unrelated errors), so relative to ``|C_{ij}|`` it is about
+    ``\rho_i\rho_j\sqrt{C_{ii}C_{jj}}/|C_{ij}|``: wide for weakly coupled terminals. Bounds
+    in the energy norm cannot do better; tighter brackets of a pair would need a
+    goal-oriented bound for it.
+
 ## Far-field extraction
 
 This feature is based upon Stratton-Chu's transformations [6] in the limit of ``kr \gg 1``
@@ -1206,4 +1322,11 @@ Analysis_ 58 (2020) 2265-2293. doi:
 [10.1137/19M1269695](https://doi.org/10.1137/19M1269695).\
 [11] R. B. Marks and D. F. Williams, A general waveguide circuit theory, *J. Res. Natl. Inst. Stan.* 97, 533 (1992).\
 [12] D. M. Pozar, *Microwave engineering*, Fourth edition. John Wiley & Sons, Hoboken, NJ, 2012.\
-[13] Y. Su and Z. Bai, Solving rational eigenvalue problems via linearization, *SIAM Journal on Matrix Analysis and Applications* 32 (2011) 201-216.
+[13] Y. Su and Z. Bai, Solving rational eigenvalue problems via linearization, *SIAM Journal on Matrix Analysis and Applications* 32 (2011) 201-216.\
+[14] W. Prager and J. L. Synge, Approximations in elasticity based on the concept of function
+space, *Quarterly of Applied Mathematics* 5 (1947) 241-269.\
+[15] D. Braess and J. Schöberl, Equilibrated residual error estimator for edge elements,
+*Mathematics of Computation* 77 (2008) 651-672.\
+[16] A. Ern and M. Vohralík, Polynomial-degree-robust a posteriori estimates in a unified
+setting for conforming, nonconforming, discontinuous Galerkin, and mixed discretizations,
+*SIAM Journal on Numerical Analysis* 53 (2015) 1058-1081.

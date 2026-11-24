@@ -8,6 +8,7 @@
 #include <complex>
 #include <cstdint>
 #include <limits>
+#include <vector>
 #include <fmt/color.h>
 #include <fmt/format.h>
 #include <fmt/printf.h>
@@ -442,6 +443,43 @@ private:
     Instance();
   }
 };
+
+namespace mpi
+{
+
+// Exchange arrays between all processes (send[p] is sent to process p), returning the
+// concatenation of the arrays received, in the order of the sending processes, with their
+// sizes. Collective.
+template <typename T>
+std::vector<T> ExchangeAll(MPI_Comm comm, const std::vector<std::vector<T>> &send,
+                           std::vector<int> &recv_counts)
+{
+  const int nprocs = Mpi::Size(comm);
+  std::vector<int> send_counts(nprocs), send_displs(nprocs, 0), recv_displs(nprocs, 0);
+  recv_counts.assign(nprocs, 0);
+  for (int p = 0; p < nprocs; p++)
+  {
+    send_counts[p] = static_cast<int>(send[p].size());
+  }
+  MPI_Alltoall(send_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT, comm);
+  for (int p = 1; p < nprocs; p++)
+  {
+    send_displs[p] = send_displs[p - 1] + send_counts[p - 1];
+    recv_displs[p] = recv_displs[p - 1] + recv_counts[p - 1];
+  }
+  std::vector<T> send_buf, recv_buf(recv_displs[nprocs - 1] + recv_counts[nprocs - 1]);
+  send_buf.reserve(send_displs[nprocs - 1] + send_counts[nprocs - 1]);
+  for (int p = 0; p < nprocs; p++)
+  {
+    send_buf.insert(send_buf.end(), send[p].begin(), send[p].end());
+  }
+  MPI_Alltoallv(send_buf.data(), send_counts.data(), send_displs.data(), DataType<T>(),
+                recv_buf.data(), recv_counts.data(), recv_displs.data(), DataType<T>(),
+                comm);
+  return recv_buf;
+}
+
+}  // namespace mpi
 
 }  // namespace palace
 

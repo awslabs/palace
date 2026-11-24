@@ -31,7 +31,8 @@ namespace
 
 template <OperatorType OperType>
 std::unique_ptr<IterativeSolver<OperType>>
-ConfigureKrylovSolver(const config::LinearSolverData &linear, int verbose, MPI_Comm comm)
+ConfigureKrylovSolver(const config::LinearSolverData &linear, int verbose, MPI_Comm comm,
+                      bool timer)
 {
   // Create the solver.
   std::unique_ptr<IterativeSolver<OperType>> ksp;
@@ -102,7 +103,10 @@ ConfigureKrylovSolver(const config::LinearSolverData &linear, int verbose, MPI_C
   }
 
   // Configure timing for the primary linear solver.
-  ksp->EnableTimer();
+  if (timer)
+  {
+    ksp->EnableTimer();
+  }
 
   return ksp;
 }
@@ -147,7 +151,7 @@ std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                               MatrixSymmetry pc_mat_sym, int verbose, MPI_Comm comm,
                               FiniteElementSpaceHierarchy &fespaces,
-                              FiniteElementSpaceHierarchy *aux_fespaces)
+                              FiniteElementSpaceHierarchy *aux_fespaces, bool timer)
 {
   // Create the real-valued solver first.
   std::unique_ptr<Solver<OperType>> pc;
@@ -178,7 +182,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             linear, fespaces.GetFESpaceAtLevel(0), aux_fespaces->GetFESpaceAtLevel(0),
             coarse_solver ? linear.ams_max_it : linear.mg_cycle_it, smooth_it,
             linear.ams_vector_interp, linear.ams_singular_op, linear.amg_agg_coarsen,
-            linear.ams_agglomeration_target, print);
+            linear.ams_agglomeration_target, print, linear.ams_aux_direct_interp);
       }
       break;
     case LinearSolver::BOOMER_AMG:
@@ -351,7 +355,10 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
             linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
       }
     }();
-    gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
+    if (timer)
+    {
+      gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
+    }
     return gmg;
   }
   else
@@ -391,14 +398,15 @@ template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(const config::LinearSolverData &linear,
                                        MatrixSymmetry pc_mat_sym, int verbose,
                                        FiniteElementSpaceHierarchy &fespaces,
-                                       FiniteElementSpaceHierarchy *aux_fespaces)
-  : BaseKspSolver(ConfigureKrylovSolver<OperType>(linear, verbose,
-                                                  fespaces.GetFinestFESpace().GetComm()),
+                                       FiniteElementSpaceHierarchy *aux_fespaces,
+                                       bool timer)
+  : BaseKspSolver(ConfigureKrylovSolver<OperType>(
+                      linear, verbose, fespaces.GetFinestFESpace().GetComm(), timer),
                   ConfigurePreconditionerSolver<OperType>(
                       linear, pc_mat_sym, verbose, fespaces.GetFinestFESpace().GetComm(),
-                      fespaces, aux_fespaces))
+                      fespaces, aux_fespaces, timer))
 {
-  use_timer = true;
+  use_timer = timer;
 }
 
 template <OperatorType OperType>
@@ -458,11 +466,28 @@ bool BaseKspSolver<OperType>::GetCorrectionExceeded() const
 }
 
 template <OperatorType OperType>
+void BaseKspSolver<OperType>::SetLeastSquaresTol(double tol)
+{
+  auto *cg = dynamic_cast<CgSolver<OperType> *>(ksp.get());
+  MFEM_VERIFY(cg, "The least-squares convergence test requires a CG solver!");
+  cg->SetLeastSquaresTol(tol);
+}
+
+template <OperatorType OperType>
 void BaseKspSolver<OperType>::SetLeastSquaresNorm(double norm2)
 {
   auto *cg = dynamic_cast<CgSolver<OperType> *>(ksp.get());
   MFEM_VERIFY(cg, "The least-squares convergence test requires a CG solver!");
   cg->SetLeastSquaresNorm(norm2);
+}
+
+template <OperatorType OperType>
+std::vector<double> BaseKspSolver<OperType>::GetLeastSquaresDecrease() const
+{
+  const auto *cg = dynamic_cast<const CgSolver<OperType> *>(ksp.get());
+  MFEM_VERIFY(cg, "The least-squares convergence test requires a CG solver!");
+  const auto &decrease = cg->GetLeastSquaresDecrease();
+  return {decrease.begin(), decrease.end()};
 }
 
 template <OperatorType OperType>

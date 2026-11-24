@@ -52,6 +52,17 @@ struct CeedGeomFactorData
   CeedElemRestriction geom_data_restr;
   CeedElemRestriction active_geom_data_restr = nullptr;
 
+  // For operators which compute the geometry factors at the quadrature points on the fly
+  // instead of reading geom_data (domain elements of 3D meshes): the mesh nodes with their
+  // element restriction and basis (at the quadrature points of geom_data), and the element
+  // attributes with theirs (null otherwise). Their libCEED work vectors are copies of
+  // these (a few values per element) instead of a copy of geom_data (2 + space_dim dim
+  // values per quadrature point). With these, geom_data can be released (null, see
+  // Mesh::ReleaseGeometryFactors) and computed again when an operator reads it.
+  CeedVector nodes = nullptr, elem_attr = nullptr;
+  CeedElemRestriction nodes_restr = nullptr, attr_restr = nullptr;
+  CeedBasis nodes_basis = nullptr, attr_basis = nullptr;
+
   CeedElemRestriction GetGeomDataRestriction(CeedElementSubset subset) const
   {
     if (subset == CeedElementSubset::Active && active_indices.size() < indices.size())
@@ -231,6 +242,13 @@ public:
   }
 
   void ResetCeedObjects();
+
+  // Release the geometry factor data of the element groups which keep the mesh nodes (see
+  // ceed::CeedGeomFactorData), for example once the operators which read it are destroyed
+  // and the next ones compute the geometry on the fly. EnsureGeometryFactors computes it
+  // again for a reader.
+  void ReleaseGeometryFactors() const;
+  void EnsureGeometryFactors(Ceed ceed, const ceed::CeedGeomFactorData &data) const;
 
   void Update();
 
