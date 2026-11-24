@@ -26,6 +26,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     preconditioner solves the PML regions with a sparse direct solver, and `eig.csv` reports
     the fraction of the energy of each mode in the PML regions. SchemaVer 6-1-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Incident plane wave excitations (`Domains.PlaneWave`) for driven simulations, with the
+    total-field/scattered-field formulation, in the uniform and adaptive frequency sweeps.
+    The outputs use the total field, the far field the scattered field, and with a
+    far-field surface the bistatic and monostatic radar cross sections are written
+    (`farfield-rcs.csv`, `rcs-monostatic.csv`). See the new example
+    `examples/rcs_coated_sphere`. SchemaVer 6-2-0
+    [PR 1212](https://github.com/awslabs/palace/pull/1212).
 
 #### Interface Changes
 
@@ -50,6 +57,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     is now unsymmetric for the sparse direct solvers, which were told that it is symmetric
     positive definite: with MUMPS, the linear solver did not converge and gave wrong
     S-parameters. [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Fixed the partial assembly of nonsymmetric square operators (Floquet periodic boundary
+    conditions, nonsymmetric material tensors), whose transpose was taken equal to the
+    operator itself: the transposes are now assembled from the transposed integrators.
+    [PR 1212](https://github.com/awslabs/palace/pull/1212).
 
 #### Documentation
 
