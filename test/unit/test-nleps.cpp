@@ -662,3 +662,164 @@ TEST_CASE("Quasi-Newton updates a stale preconditioner below PreconditionerLagTo
     CHECK(std::stoi(m[2].str()) < 40);
   }
 }
+
+namespace
+{
+
+// Quasi-Newton on a DiagonalLorentzProblem from the initial guesses (eigenvalue estimate,
+// global dof of the eigenvector), with num modes requested above the target σ = i s.
+// T(λ) is diagonal, so the iteration from the eigenvector of a dof stays on that dof: it
+// converges to a root of that dof, whatever the eigenvalue estimate.
+struct QuasiNewtonResult
+{
+  std::vector<std::complex<double>> eig;
+  std::vector<double> backward_error;
+  std::vector<double> weight;  // Weight of the expected dof in each eigenvector
+  std::string out;
+};
+
+QuasiNewtonResult
+RunQuasiNewton(const DiagonalLorentzProblem &p,
+               const std::vector<std::pair<std::complex<double>, long long>> &guesses,
+               int num, double s, double tol)
+{
+  std::vector<std::complex<double>> theta;
+  std::vector<ComplexVector> vecs;
+  for (const auto &[l, j] : guesses)
+  {
+    ComplexVector x0(p.LocalSize());
+    x0 = 0.0;
+    for (int i = 0; i < p.LocalSize(); i++)
+    {
+      x0.Real()(i) = (p.gid[i] == j) ? 1.0 : 0.0;
+    }
+    theta.push_back(l);
+    vecs.push_back(std::move(x0));
+  }
+  const auto num_guesses = static_cast<int>(theta.size());
+  QuasiNewtonSolver qn(Mpi::World(),
+                       std::make_unique<SeedEigenpairs>(std::move(theta), std::move(vecs)),
+                       num_guesses, 1, true);
+  qn.SetTol(tol);
+  qn.SetMaxIter(100);
+  qn.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
+  qn.SetExtraSystemMatrix([&p](std::complex<double> l) { return p.A2(l); });
+  qn.SetPreconditionerUpdate([&p](std::complex<double> a0, std::complex<double>,
+                                  std::complex<double> a2, std::complex<double> a3)
+                             { return p.Preconditioner(a0, a2, a3); });
+  qn.SetNumModes(num, num);
+  qn.SetPreconditionerLag(10, 1.0e-4);
+  qn.SetMaxRestart(2);
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-12);
+  gmres->SetMaxIter(100);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
+  qn.SetLinearSolver(ksp);
+  qn.SetShiftInvert(std::complex<double>(0.0, s));
+  QuasiNewtonResult r;
+  int nconv = 0;
+  r.out = test::CaptureStdout([&] { nconv = qn.Solve(); });
+  ComplexVector x(p.LocalSize());
+  for (int m = 0; m < nconv; m++)
+  {
+    r.eig.push_back(qn.GetEigenvalue(m));
+    r.backward_error.push_back(qn.GetError(m, EigenvalueSolver::ErrorType::BACKWARD));
+    // The dof of the eigenvector: its largest entry, and the fraction of ‖x‖² there.
+    qn.GetEigenvector(m, x);
+    double norm2 = 0.0, max2 = 0.0;
+    for (int i = 0; i < p.LocalSize(); i++)
+    {
+      const double a2 = std::norm(std::complex<double>(x.Real()(i), x.Imag()(i)));
+      norm2 += a2;
+      max2 = std::max(max2, a2);
+    }
+    Mpi::GlobalSum(1, &norm2, Mpi::World());
+    Mpi::GlobalMax(1, &max2, Mpi::World());
+    r.weight.push_back(max2 / norm2);
+  }
+  return r;
+}
+
+// The root of dof k with the larger (upper) or smaller (lower) imaginary part.
+std::complex<double> UpperRoot(const DiagonalLorentzProblem &p, double k)
+{
+  const auto roots = p.Roots(k);
+  return *std::ranges::max_element(roots,
+                                   [](auto a, auto b) { return a.imag() < b.imag(); });
+}
+
+std::complex<double> LowerRoot(const DiagonalLorentzProblem &p, double k)
+{
+  const auto roots = p.Roots(k);
+  return *std::ranges::min_element(roots,
+                                   [](auto a, auto b) { return a.imag() < b.imag(); });
+}
+
+}  // namespace
+
+// The iteration from an initial guess can converge to an eigenvalue other than the one the
+// guess approximates, farther from the target. Here the guess nearest the target 1.5i (at
+// 2.16i, with the eigenvector of dof 1) converges to the upper root of dof 1 at 2.567i,
+// and the next one (at 2.30i, with the eigenvector of dof 0) to the upper root of dof 0
+// at 2.153i, nearer the target. The guesses nearer the target than the eigenvalues found
+// are refined too, and the nearest eigenvalue is returned: stopping at the first converged
+// eigenvalue would return the root of dof 1.
+TEST_CASE("Quasi-Newton returns the eigenvalue nearest the target of those found",
+          "[nleps][Serial][Parallel]")
+{
+  constexpr double tol = 1.0e-10;
+  std::vector<double> k = {4.0, 6.0, 9.0};
+  AddDecoupledDofs(k, 1.0e4);
+  const DiagonalLorentzProblem p(k);
+  const auto l0 = UpperRoot(p, 4.0), l1 = UpperRoot(p, 6.0);
+  REQUIRE(l0.imag() < 2.16);
+  REQUIRE(l1.imag() > 2.30);
+  const auto r = RunQuasiNewton(
+      p, {{std::complex<double>(0.0, 2.16), 1}, {std::complex<double>(0.0, 2.30), 0}}, 1,
+      1.5, tol);
+  CAPTURE(r.out);
+  REQUIRE(r.eig.size() == 1);
+  CAPTURE(r.eig[0], l0, l1);
+  CHECK(std::abs(r.eig[0] - l0) <= 1.0e-8 * std::abs(l0));
+  CHECK(r.backward_error[0] <= tol);
+  CHECK(r.weight[0] >= 1.0 - 1.0e-12);
+}
+
+// The eigenvectors of distinct eigenvalues of a nonlinear eigenvalue problem can be
+// linearly dependent: here every dof has two roots above the target 0.5i (one on each side
+// of the Lorentz pole at |λ| = 1) with the same eigenvector. The lower roots of dofs 0 and
+// 1 are found and deflated first; the eigenvector of each upper root is then in the span
+// of the deflated eigenvectors. Such an eigenpair cannot be deflated with minimality index
+// 1 (its part orthogonal to the deflated eigenvectors is rounding error), but it is an
+// eigenpair of T(λ): all four are returned, converged, each on its dof. Deflating them
+// corrupted the deflated problem: the fourth eigenpair was returned with a backward error
+// above the tolerance.
+TEST_CASE("Quasi-Newton finds eigenpairs with linearly dependent eigenvectors",
+          "[nleps][Serial][Parallel]")
+{
+  constexpr double tol = 1.0e-10;
+  std::vector<double> k = {4.0, 9.0};
+  AddDecoupledDofs(k, 1.0e4);
+  const DiagonalLorentzProblem p(k);
+  const std::vector<std::pair<std::complex<double>, long long>> roots = {
+      {LowerRoot(p, 4.0), 0},
+      {LowerRoot(p, 9.0), 1},
+      {UpperRoot(p, 4.0), 0},
+      {UpperRoot(p, 9.0), 1}};
+  // The initial guesses are the roots, off by 1e-3, with the eigenvectors of their dofs.
+  std::vector<std::pair<std::complex<double>, long long>> guesses;
+  for (const auto &[l, j] : roots)
+  {
+    guesses.emplace_back(l + std::complex<double>(1.0e-3, 1.0e-3), j);
+  }
+  const auto r = RunQuasiNewton(p, guesses, 4, 0.5, tol);
+  CAPTURE(r.out);
+  REQUIRE(r.eig.size() == 4);
+  for (std::size_t m = 0; m < roots.size(); m++)
+  {
+    CAPTURE(m, r.eig[m], roots[m].first);
+    CHECK(std::abs(r.eig[m] - roots[m].first) <= 1.0e-8 * std::abs(roots[m].first));
+    CHECK(r.backward_error[m] <= tol);
+    CHECK(r.weight[m] >= 1.0 - 1.0e-12);
+  }
+}
