@@ -3653,10 +3653,11 @@ electrostatics), `exc` (the driven excitation; 0 otherwise), `interface`, `Type`
 the `p_surf corrected` column of a Maxwell one: the same values; never another corrected
 column), `corrected / raw`, `Q raw`, `Q corrected`, `resolution`,
 `h/R m90`, `h/R m50` (the row's census cell), `coverage`, `uncovered+pending share of W`,
-`regime` (the coverage cell), `confidence` (`pass` / `fail`), `change corrected`,
-`change raw` (``p_k / p_{k-1} - 1`` against the joined row of the previous level,
-information only), `change per doubling (%)` (the indicator below), `convergence`, `flags`
-and `reason`. `scope` names THE VALUE a row's verdicts are of: `Type` (interface 0: the sum
+`regime` (the coverage cell), `confidence` (`pass` / `fail`), `change corrected (fraction)`,
+`change raw (fraction)` (``p_k / p_{k-1} - 1`` against the joined row of the previous level,
+a fraction, information only; the log prints it in %), `change per doubling (%; an interface
+row: its Type's)` (the indicator below; an `interface` row prints its `Type`'s, the value its
+words are of, beside its own plain change), `convergence`, `flags` and `reason`. `scope` names THE VALUE a row's verdicts are of: `Type` (interface 0: the sum
 over the `Type`'s whole target interfaces of the point, ``Q = 1 / \sum 1/Q_i``; the value the
 rule was measured on), `region` (an entry with a `Region`: its box value) or `interface`
 (one whole interface: its own p and change, and its `Type`'s indicator and words). A `Type`
@@ -3669,11 +3670,27 @@ response target, reason `NOT-TARGET: raw only`, and on a raw fallback run, reaso
 `RawFallback: <classes>`); `flags` lists the verdicts not met (resolution, coverage,
 `regime`, `confidence`, convergence, and `developer: MarkNotApplied` where that policy
 marked the cell). Rows join the previous level's row of the same point, excitation and
-interface; a driven row only at the same frequency (10⁻¹² relative); an eigenmode matches the
-previous level's mode nearest in Re{f} when the gap is below half the distance from that
-mode to its nearest neighbour, the match is mutual and the raw participation vectors
-overlap by at least 0.9 (cosine). Each row keeps the history of its value through these
-joins.
+interface; a driven row only at the same frequency (10⁻¹² relative). Each row keeps the
+history of its value through these joins.
+
+An eigenmode's index can change between levels, so its rows join the previous level's mode
+that is the same physical mode, by its fingerprint: the raw participations of its whole
+interfaces with the magnitudes of its lumped ports' energy participations (`port-EPR.csv`;
+a junction mode sits on its own junction, while the surface participations of modes of one
+field are nearly parallel, cosines 0.997-0.9993 on a measured device). Mode ``m`` joins the
+previous mode ``j`` nearest to it in Re{f} when (1) ``|f_m - f_j|`` is below half the
+distance from ``f_j`` to its nearest other previous mode, (2) ``m`` is the current mode
+nearest to ``f_j``, (3) their fingerprints overlap by at least 0.9 (cosine), (4) the join is
+unique: no other previous mode whose fingerprint overlaps ``m``'s by 0.9 lies within
+``2 |f_m - f_j|`` of ``f_m``, and (5) ``j``'s rank in frequency among the previous modes of
+``m``'s field (overlap at least 0.9) equals ``m``'s among the current modes of ``j``'s field.
+A mode whose match is not unique is UNMATCHED for that level and its indicator reads
+`MOVING: UNMATCHED`: the safe side, never the neighbour's history. A mode of the same field
+entering or leaving the solved window below a mode changes its rank, so it is UNMATCHED for
+one level. The log prints every join and every UNMATCHED mode with the two frequencies and
+the overlap. On the five modes of one design shifted uniformly by 0 to 4 GHz (801 shifts,
+4005 joins), these conditions made no wrong join (conditions (1)-(3) with the surface
+participations alone made 152) and kept the 240 right ones.
 
 The verdicts. The indicator of a value ``p_k`` at a level of ``N_k`` unknowns is the change
 per doubling of the unknowns against the LATEST earlier level ``j`` of its history with
@@ -3683,8 +3700,10 @@ doubling).
 `convergence` reads `SETTLED` when ``g_k < T`` and `MOVING` otherwise; ``g_k`` is not
 evaluated, and the word reads `MOVING: FIRST-ITERATION` (the first level, every fixed mesh),
 `MOVING: UNKNOWNS-GREW-<20%` (no earlier level that much smaller: rounds that refine a few
-elements say nothing about the error), `MOVING: UNMATCHED` (an eigenmode with no match),
-`MOVING: NO-VALUE` (no finite value, or ``p_j = 0``) or `MOVING: CELL-NOT-REFINED` (the
+elements say nothing about the error), `MOVING: UNMATCHED` (no row of the previous level
+joined: an eigenmode with no match, a new driven frequency or interface),
+`MOVING: ZERO-ANCHOR-VALUE` (``p_j = 0``), `MOVING: NO-VALUE` (``p_k`` or ``p_j`` not
+finite) or `MOVING: CELL-NOT-REFINED` (the
 value's own census did not fall: on a large device the unknowns can grow elsewhere while
 this value's edges stay as they were, and no change then means nothing); ``g_k = T`` reads
 MOVING (strict). The plain change is not a stopping rule. `resolution` reads RESOLVED
@@ -3700,11 +3719,18 @@ build time), ``G = 1.2``, ``F = 0.95``, ``T = 1.0`` % per doubling, ``B = 1.7 / 
 (electrostatic); the optional `"Verdict"` member of the `Resolution.BarsFile` file replaces
 them (`{"MinUnknownsRatio": G, "MaxCensusRatio": F, "MaxChangePerDoublingPercent": T,
 "CensusBarOverR": {"1": null | B, ..., "4": ...}, "UnderResolvedFactor": 2,
-"TestedProblems": ["Electrostatic"], "Interim": false, "Provenance": "..."}`). While data
+"TestedProblems": ["Electrostatic"], "TestedScopes": ["Type"], "Interim": false,
+"Provenance": "..."}`). While data
 are interim the words read `SETTLED-INTERIM` and `RESOLVED-INTERIM` and the headers say
 INTERIM; on a problem type the rule was not tested on (eigenmode, driven) they read
 `SETTLED-UNTESTED` and `RESOLVED-UNTESTED` and the headers say NOT YET TESTED; such rows stay
-flagged. They were
+flagged. `TestedScopes` names the census the bars were graded with: the box values of the
+data were graded with their cell's census, while a `region` row reads the census of its own
+patches, which reads finer for junction boxes (2.85 against 3.27 ``R`` on one measured
+level), so with `["Type"]` the resolution words of `region` rows read `RESOLVED-UNTESTED`,
+`MARGINAL-UNTESTED` and `UNDER-RESOLVED-UNTESTED` (their convergence word and its guard on
+the box's own census are unchanged) until the box values are graded with their own census.
+They were
 measured on 634 values of three designs (two electrostatic windows and the junction boxes of
 a third; one eigenmode design; perfect conductors; ``R = 1.9`` µm): SETTLED values
 within the bar were within 5 % of a thick-metal reference in every case (39 values), the
@@ -3717,8 +3743,9 @@ pocket; whole chips; stretched elements (the census reads the longest edge); ord
 and above; box values other than junction boxes; per-interface values (the rule was
 measured on `Type` totals and box values); designs beyond those three. For an eigenmode the
 history must follow the same physical mode across the rounds (the match above). The log
-prints the values (the `Type` and `region` rows) in short form at the end of each level
-(above 40 values, one line per `Type` and scope), and `palace.json` records
+prints the eigenmode joins and the values (the `Type` rows and the targeted `region` rows) in
+short form at the end of each level (above 40 values, one line per `Type` and scope with the
+ranges of the raw and the corrected values), and `palace.json` records
 `SurfaceResponse.ParticipationTable` (the file, the levels, the rows and the verdict data
 with their source).
 

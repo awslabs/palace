@@ -49,6 +49,12 @@ std::string ParticipationVerdictBars::WordSuffix(const std::string &problem) con
              : std::string("-UNTESTED");
 }
 
+bool ParticipationVerdictBars::RegionScopeTested() const
+{
+  return std::find(tested_scopes.begin(), tested_scopes.end(), "Region") !=
+         tested_scopes.end();
+}
+
 ParticipationVerdictBars ParseParticipationVerdictBars(const std::string &text,
                                                        const std::string &source,
                                                        bool built_in)
@@ -103,6 +109,19 @@ ParticipationVerdictBars ParseParticipationVerdictBars(const std::string &text,
               "The verdict data \""
                   << source << "\" requires Verdict.TestedProblems (problem names)!");
   bars.tested_problems = tested->get<std::vector<std::string>>();
+  const auto scopes = verdict.find("TestedScopes");
+  MFEM_VERIFY(scopes != verdict.end() && scopes->is_array() &&
+                  std::all_of(scopes->begin(), scopes->end(),
+                              [](const nlohmann::json &name)
+                              {
+                                return name.is_string() &&
+                                       (name.get<std::string>() == "Type" ||
+                                        name.get<std::string>() == "Region");
+                              }),
+              "The verdict data \""
+                  << source
+                  << "\" requires Verdict.TestedScopes (\"Type\" and / or \"Region\")!");
+  bars.tested_scopes = scopes->get<std::vector<std::string>>();
   const auto interim = verdict.find("Interim");
   MFEM_VERIFY(interim == verdict.end() || interim->is_boolean(),
               "The verdict data \"" << source
@@ -225,7 +244,7 @@ std::string ParticipationConvergenceName(const ParticipationIndicator &indicator
   return "MOVING";
 }
 
-std::string ParticipationResolutionWord(double m90, int order, bool settled,
+std::string ParticipationResolutionWord(double m90, int order, bool settled, bool region,
                                         const ParticipationVerdictBars &bars,
                                         const std::string &problem)
 {
@@ -238,15 +257,22 @@ std::string ParticipationResolutionWord(double m90, int order, bool settled,
   {
     return std::string(ResolutionStatusName(ResolutionStatus::NO_BARS));
   }
+  // A box value's census is its own patches', which the bars were not graded with.
+  auto Scoped = [&](std::string word)
+  {
+    const bool untested =
+        region && !bars.RegionScopeTested() && word.find("-UNTESTED") == std::string::npos;
+    return untested ? word + "-UNTESTED" : word;
+  };
   if (m90 > bars.under_resolved_factor * bar)
   {
-    return std::string(ResolutionStatusName(ResolutionStatus::UNDER_RESOLVED));
+    return Scoped(std::string(ResolutionStatusName(ResolutionStatus::UNDER_RESOLVED)));
   }
   if (m90 <= bar && settled)
   {
-    return "RESOLVED" + bars.WordSuffix(problem);
+    return Scoped("RESOLVED" + bars.WordSuffix(problem));
   }
-  return std::string(ResolutionStatusName(ResolutionStatus::MARGINAL));
+  return Scoped(std::string(ResolutionStatusName(ResolutionStatus::MARGINAL)));
 }
 
 void SetParticipationResolution(SurfaceParticipationRow &row, const ResolutionCell *cell)
@@ -287,7 +313,7 @@ void SetParticipationNotTarget(SurfaceParticipationRow &row)
   row.reason = not_target + ": raw only";
 }
 
-std::map<int, int>
+std::map<int, ParticipationModeJoin>
 MatchParticipationModes(const std::vector<ParticipationModeSignature> &previous,
                         const std::vector<ParticipationModeSignature> &current)
 {
@@ -305,44 +331,96 @@ MatchParticipationModes(const std::vector<ParticipationModeSignature> &previous,
     }
     return best;
   };
-  auto Overlap = [](const std::map<int, double> &a, const std::map<int, double> &b)
+  // The cosine of two fingerprints: the interfaces' raw participations and the ports'
+  // |EPR|.
+  auto Overlap =
+      [](const ParticipationModeSignature &a, const ParticipationModeSignature &b)
   {
     double ab = 0.0, aa = 0.0, bb = 0.0;
-    for (const auto &[interface, value] : a)
+    auto Add = [&](const std::map<int, double> &x, const std::map<int, double> &y)
     {
-      aa += value * value;
-      const auto other = b.find(interface);
-      ab += other != b.end() ? value * other->second : 0.0;
-    }
-    for (const auto &[interface, value] : b)
-    {
-      bb += value * value;
-    }
+      for (const auto &[key, value] : x)
+      {
+        aa += value * value;
+        const auto other = y.find(key);
+        ab += other != y.end() ? value * other->second : 0.0;
+      }
+      for (const auto &[key, value] : y)
+      {
+        bb += value * value;
+      }
+    };
+    Add(a.participation, b.participation);
+    Add(a.ports, b.ports);
     return aa > 0.0 && bb > 0.0 ? ab / std::sqrt(aa * bb) : 0.0;
   };
-  std::map<int, int> match;
+  auto SameField =
+      [&](const ParticipationModeSignature &a, const ParticipationModeSignature &b)
+  { return Overlap(a, b) >= kParticipationModeMinOverlap; };
+  std::map<int, ParticipationModeJoin> joins;
   for (std::size_t m = 0; m < current.size(); m++)
   {
-    match[current[m].point] = -1;
+    auto &join = joins[current[m].point];
+    join.point = current[m].point;
+    join.frequency = current[m].frequency;
     const std::size_t j = Nearest(previous, current[m].frequency, previous.size());
     if (j == previous.size())
     {
+      join.failed = "no previous mode";
       continue;
     }
+    join.nearest = previous[j].point;
+    join.nearest_frequency = previous[j].frequency;
+    join.overlap = Overlap(current[m], previous[j]);
     const double gap = std::abs(current[m].frequency - previous[j].frequency);
     const std::size_t neighbour = Nearest(previous, previous[j].frequency, j);
-    const bool isolated =
-        neighbour == previous.size() ||
-        gap < 0.5 * std::abs(previous[neighbour].frequency - previous[j].frequency);
-    const bool mutual = Nearest(current, previous[j].frequency, current.size()) == m;
-    if (isolated && mutual &&
-        Overlap(current[m].participation, previous[j].participation) >=
-            kParticipationModeMinOverlap)
+    if (neighbour != previous.size() &&
+        !(gap < 0.5 * std::abs(previous[neighbour].frequency - previous[j].frequency)))
     {
-      match[current[m].point] = previous[j].point;
+      join.failed = "gap not below half the spacing";
+      continue;
     }
+    if (Nearest(current, previous[j].frequency, current.size()) != m)
+    {
+      join.failed = "not mutual";
+      continue;
+    }
+    if (!(join.overlap >= kParticipationModeMinOverlap))
+    {
+      join.failed = fmt::format("overlap below {:g}", kParticipationModeMinOverlap);
+      continue;
+    }
+    bool unique = true;
+    int previous_rank = 0, current_rank = 0;
+    for (std::size_t k = 0; k < previous.size(); k++)
+    {
+      if (k != j && SameField(current[m], previous[k]))
+      {
+        unique = unique && std::abs(current[m].frequency - previous[k].frequency) >
+                               kParticipationModeAmbiguityRatio * gap;
+        previous_rank += previous[k].frequency < previous[j].frequency;
+      }
+    }
+    for (std::size_t n = 0; n < current.size(); n++)
+    {
+      if (n != m && SameField(current[n], previous[j]))
+      {
+        current_rank += current[n].frequency < current[m].frequency;
+      }
+    }
+    if (!unique)
+    {
+      join.failed = "not unique";
+      continue;
+    }
+    if (previous_rank != current_rank)
+    {
+      join.failed = "same-field rank differs";
+      continue;
+    }
+    join.joined = true;
   }
-  return match;
+  return joins;
 }
 
 std::vector<SurfaceParticipationRow>
@@ -403,9 +481,10 @@ AddParticipationTypeTotals(const std::vector<SurfaceParticipationRow> &rows)
   return out;
 }
 
-void JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
-                            const std::vector<SurfaceParticipationRow> *previous,
-                            const ParticipationVerdictBars &bars, int order)
+std::map<int, ParticipationModeJoin>
+JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
+                       const std::vector<SurfaceParticipationRow> *previous,
+                       const ParticipationVerdictBars &bars, int order)
 {
   using Key = std::tuple<int, int, int, std::string>;  // point, excitation, interface, Type
   std::map<Key, const SurfaceParticipationRow *> previous_rows;
@@ -417,7 +496,7 @@ void JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
     }
   }
   const bool eigenmode = !rows.empty() && rows.front().problem == "Eigenmode";
-  std::map<int, int> mode_match;
+  std::map<int, ParticipationModeJoin> mode_joins;
   if (previous && eigenmode)
   {
     auto Signatures = [](const std::vector<SurfaceParticipationRow> &level)
@@ -428,6 +507,7 @@ void JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
         auto &signature = by_point[row.point];
         signature.point = row.point;
         signature.frequency = row.frequency;
+        signature.ports = row.mode_ports;
         if (!row.region && !row.type_total && std::isfinite(row.p_raw))
         {
           signature.participation[row.interface] = row.p_raw;
@@ -441,7 +521,7 @@ void JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
       }
       return signatures;
     };
-    mode_match = MatchParticipationModes(Signatures(*previous), Signatures(rows));
+    mode_joins = MatchParticipationModes(Signatures(*previous), Signatures(rows));
   }
   const std::string not_target(CoverageStatusName(CoverageStatus::NOT_TARGET));
   std::map<std::tuple<int, int, std::string>, const SurfaceParticipationRow *> type_rows;
@@ -453,12 +533,12 @@ void JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
     if (previous)
     {
       const SurfaceParticipationRow *match = nullptr;
-      const auto mode = mode_match.find(row.point);
+      const auto mode = mode_joins.find(row.point);
       const bool point_matched =
-          !eigenmode || (mode != mode_match.end() && mode->second >= 0);
+          !eigenmode || (mode != mode_joins.end() && mode->second.joined);
       if (point_matched)
       {
-        const int point = eigenmode ? mode->second : row.point;
+        const int point = eigenmode ? mode->second.nearest : row.point;
         const auto found =
             previous_rows.find({point, row.excitation, row.interface, row.type});
         match = found != previous_rows.end() ? found->second : nullptr;
@@ -497,8 +577,8 @@ void JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
     row.convergence = ParticipationConvergenceName(indicator, bars, row.problem);
     if (row.coverage != not_target)
     {
-      row.resolution =
-          ParticipationResolutionWord(row.m90, order, indicator.settled, bars, row.problem);
+      row.resolution = ParticipationResolutionWord(row.m90, order, indicator.settled,
+                                                   row.region, bars, row.problem);
     }
     if (row.type_total)
     {
@@ -519,6 +599,7 @@ void JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
     }
     row.flags = ParticipationFlags(row);
   }
+  return mode_joins;
 }
 
 std::string ParticipationFlags(const SurfaceParticipationRow &row)
@@ -564,13 +645,15 @@ std::string ParticipationFlags(const SurfaceParticipationRow &row)
 std::string ParticipationLogBlock(const std::vector<SurfaceParticipationRow> &level,
                                   int iteration, long long int unknowns,
                                   long long int previous_unknowns,
-                                  const ParticipationVerdictBars &bars, int order)
+                                  const ParticipationVerdictBars &bars, int order,
+                                  const std::map<int, ParticipationModeJoin> &joins)
 {
-  // The values of the verdicts: the Type totals and the region values.
+  // The values of the verdicts: the Type totals and the targeted region values.
+  const std::string not_target(CoverageStatusName(CoverageStatus::NOT_TARGET));
   std::vector<SurfaceParticipationRow> rows;
   std::copy_if(level.begin(), level.end(), std::back_inserter(rows),
-               [](const SurfaceParticipationRow &row)
-               { return row.type_total || row.region; });
+               [&](const SurfaceParticipationRow &row)
+               { return row.type_total || (row.region && row.coverage != not_target); });
   const std::string growth =
       previous_unknowns > 0
           ? fmt::format(" (x{:.3f} over iteration {})",
@@ -587,16 +670,40 @@ std::string ParticipationLogBlock(const std::vector<SurfaceParticipationRow> &le
       bars.interim || bars.WordSuffix(problem).empty()
           ? std::string()
           : fmt::format("; NOT YET TESTED on {} values (words -UNTESTED)", problem);
+  const bool regions =
+      std::any_of(rows.begin(), rows.end(),
+                  [](const SurfaceParticipationRow &row) { return row.region; });
+  const std::string region_text =
+      regions && !bars.RegionScopeTested()
+          ? std::string(
+                "; region resolution words -UNTESTED (the bars were graded with the "
+                "cell's census, not a box's own)")
+          : std::string();
   std::string out = fmt::format(
       "\nSurface participation (surface-participation.csv; p corrected = the fixed-trace "
       "value), iteration {:d}: {:d} unknowns{}, Order {:d}\n Verdicts{}: SETTLED iff the "
       "change per doubling of the unknowns (against the latest level with x{:g} fewer, "
       "the value's own census m90 fallen to x{:g} of it) < {:g} %; {}; a single solve "
-      "never reads RESOLVED{} (data: {}{})\n",
+      "never reads RESOLVED{}{} (data: {}{})\n",
       iteration, unknowns, growth, order, bars.interim ? " (INTERIM)" : "",
       bars.min_unknowns_ratio, bars.max_census_ratio, bars.max_change_per_doubling,
-      bar_text, tested, bars.source,
+      bar_text, tested, region_text, bars.source,
       bars.sha256.empty() ? "" : ", sha256 " + bars.sha256.substr(0, 16));
+  for (const auto &[point, join] : joins)
+  {
+    out += join.joined
+               ? fmt::format(" mode {:d} <- mode {:d} of iteration {:d}: {:.9g} -> {:.9g} "
+                             "GHz, overlap {:.6f}\n",
+                             point, join.nearest, iteration - 1, join.nearest_frequency,
+                             join.frequency, join.overlap)
+           : join.nearest < 0
+               ? fmt::format(" mode {:d} UNMATCHED ({}): {:.9g} GHz\n", point, join.failed,
+                             join.frequency)
+               : fmt::format(" mode {:d} UNMATCHED ({}): nearest mode {:d} of iteration "
+                             "{:d}: {:.9g} -> {:.9g} GHz, overlap {:.6f}\n",
+                             point, join.failed, join.nearest, iteration - 1,
+                             join.nearest_frequency, join.frequency, join.overlap);
+  }
   auto Percent = [](double value, bool sign)
   {
     return std::isfinite(value) ? (sign ? fmt::format("{:+.3f}", 100.0 * value)
@@ -622,11 +729,12 @@ std::string ParticipationLogBlock(const std::vector<SurfaceParticipationRow> &le
     }
     return out;
   }
-  // Above kParticipationLogRows rows: one line per (Type, whole | region).
+  // Above kParticipationLogRows values: one line per (Type, whole | region).
   struct Group
   {
     std::size_t rows = 0;
-    double p_min = kNaN, p_max = kNaN, ratio_min = kNaN, ratio_max = kNaN, g_max = kNaN;
+    double raw_min = kNaN, raw_max = kNaN, p_min = kNaN, p_max = kNaN, ratio_min = kNaN,
+           ratio_max = kNaN, g_max = kNaN;
     std::map<std::string, int> resolution, coverage, convergence;
   };
   std::map<std::pair<std::string, bool>, Group> groups;
@@ -642,6 +750,7 @@ std::string ParticipationLogBlock(const std::vector<SurfaceParticipationRow> &le
   {
     auto &group = groups[{row.type, row.region}];
     group.rows++;
+    Widen(group.raw_min, group.raw_max, row.p_raw);
     Widen(group.p_min, group.p_max, row.p_corrected);
     Widen(group.ratio_min, group.ratio_max, row.p_corrected / row.p_raw);
     double unused = kNaN;
@@ -665,11 +774,13 @@ std::string ParticipationLogBlock(const std::vector<SurfaceParticipationRow> &le
   for (const auto &[key, group] : groups)
   {
     out += fmt::format(
-        " {:<7} {:<6} {:d} rows: p corrected {:.5e} .. {:.5e}, corr/raw {:.4f} .. {:.4f}, "
-        "largest %/dbl {}; resolution {}; coverage {}; convergence {}\n",
-        key.first, key.second ? "region" : "Type", group.rows, group.p_min, group.p_max,
-        group.ratio_min, group.ratio_max, Percent(group.g_max, false),
-        Counts(group.resolution), Counts(group.coverage), Counts(group.convergence));
+        " {:<7} {:<6} {:d} values: p raw {:.5e} .. {:.5e}, p corrected {:.5e} .. {:.5e}, "
+        "corr/raw {:.4f} .. {:.4f}, largest %/dbl {}; resolution {}; coverage {}; "
+        "convergence {}\n",
+        key.first, key.second ? "region" : "Type", group.rows, group.raw_min, group.raw_max,
+        group.p_min, group.p_max, group.ratio_min, group.ratio_max,
+        Percent(group.g_max, false), Counts(group.resolution), Counts(group.coverage),
+        Counts(group.convergence));
   }
   return out;
 }
@@ -708,9 +819,9 @@ SurfaceParticipationTable::SurfaceParticipationTable(std::string path, std::stri
   table.insert("uncovered_share", "uncovered+pending share of W");
   table.insert(Column::Text("regime", "regime"));
   table.insert(Column::Text("confidence", "confidence"));
-  table.insert("change_corrected", "change corrected");
-  table.insert("change_raw", "change raw");
-  table.insert("per_doubling", "change per doubling (%)");
+  table.insert("change_corrected", "change corrected (fraction)");
+  table.insert("change_raw", "change raw (fraction)");
+  table.insert("per_doubling", "change per doubling (%; an interface row: its Type's)");
   table.insert(Column::Text(
       "convergence", label.empty()
                          ? "convergence"
@@ -747,7 +858,8 @@ void SurfaceParticipationTable::FinishLevel(int iteration, long long int unknown
     row.problem = problem;
   }
   current = AddParticipationTypeTotals(current);
-  JoinParticipationLevel(current, iterations > 0 ? &previous : nullptr, bars, order);
+  const auto joins =
+      JoinParticipationLevel(current, iterations > 0 ? &previous : nullptr, bars, order);
   auto &table = file.table;
   for (const auto &row : current)
   {
@@ -785,7 +897,8 @@ void SurfaceParticipationTable::FinishLevel(int iteration, long long int unknown
   started = true;
   Mpi::Print(comm, "{}",
              ParticipationLogBlock(current, iteration, unknowns,
-                                   iterations > 0 ? previous_unknowns : 0, bars, order));
+                                   iterations > 0 ? previous_unknowns : 0, bars, order,
+                                   joins));
   rows_written += current.size();
   iterations++;
   previous = std::move(current);
@@ -804,6 +917,7 @@ nlohmann::json SurfaceParticipationTable::Metadata() const
   verdict["MaxCensusRatio"] = bars.max_census_ratio;
   verdict["MaxChangePerDoublingPercent"] = bars.max_change_per_doubling;
   verdict["TestedProblems"] = bars.tested_problems;
+  verdict["TestedScopes"] = bars.tested_scopes;
   for (int order_ = 1; order_ <= 4; order_++)
   {
     const double bar = bars.census_bar[order_ - 1];

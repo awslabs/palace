@@ -36,7 +36,11 @@ inline constexpr const char *kSurfaceParticipationFile = "surface-participation.
 // the unknowns that reads SETTLED; B = per FE order 1-4 the largest cell census m90 (h / R)
 // of a RESOLVED value (NaN = none; orders >= 5 have none); a census above
 // `under_resolved_factor` x B reads UNDER-RESOLVED. `tested_problems`: the problem types
-// the rule was tested on; the words of any other read -UNTESTED.
+// the rule was tested on; the words of any other read -UNTESTED. `tested_scopes`: the
+// values whose census the bars were graded with ("Type": a Type's cell census; "Region": a
+// box's own patches); the resolution words of a region row read -UNTESTED unless "Region"
+// is named (the bars were graded with the cell's census, which reads coarser than a
+// junction box's own).
 struct ParticipationVerdictBars
 {
   double min_unknowns_ratio = 0.0;
@@ -44,7 +48,7 @@ struct ParticipationVerdictBars
   double max_change_per_doubling = 0.0;  // % per doubling
   std::array<double, 4> census_bar{};
   double under_resolved_factor = 0.0;
-  std::vector<std::string> tested_problems;
+  std::vector<std::string> tested_problems, tested_scopes;
   bool built_in = true;
   bool interim = true;
   std::string source, sha256, provenance;
@@ -53,10 +57,13 @@ struct ParticipationVerdictBars
   // The suffix of the SETTLED / RESOLVED words: -INTERIM while the data are interim,
   // -UNTESTED for a problem type the rule was not tested on, else none.
   std::string WordSuffix(const std::string &problem) const;
+  // Whether the bars were graded on the census of region (box) values.
+  bool RegionScopeTested() const;
 };
 // The "Verdict" member of a JSON text: {"MinUnknownsRatio": G > 1, "MaxCensusRatio": F in
 // (0, 1], "MaxChangePerDoublingPercent": T > 0, "CensusBarOverR": {"1": null | B > 0, ...,
-// "4": ...}, "UnderResolvedFactor": >= 1, "TestedProblems": [names], "Interim": bool
+// "4": ...}, "UnderResolvedFactor": >= 1, "TestedProblems": [names], "TestedScopes":
+// ["Type" and / or "Region"], "Interim": bool
 // (default false), "Provenance": text}.
 ParticipationVerdictBars ParseParticipationVerdictBars(const std::string &text,
                                                        const std::string &source,
@@ -114,7 +121,9 @@ std::string ParticipationConvergenceName(const ParticipationIndicator &indicator
 // RESOLVED (+ WordSuffix) iff m90 <= B AND the value is SETTLED, UNDER-RESOLVED iff
 // m90 > factor x B, MARGINAL otherwise; NO-BARS without a B at the order (orders 1 and >=
 // 5), NOT-EVALUATED without a reading. A single solve is never SETTLED, so never RESOLVED.
-std::string ParticipationResolutionWord(double m90, int order, bool settled,
+// A `region` value's RESOLVED, MARGINAL and UNDER-RESOLVED read -UNTESTED unless the bars
+// name the "Region" scope.
+std::string ParticipationResolutionWord(double m90, int order, bool settled, bool region,
                                         const ParticipationVerdictBars &bars,
                                         const std::string &problem);
 
@@ -151,9 +160,11 @@ struct SurfaceParticipationRow
   // 0, scope Type): THE value of the verdicts, which its interface rows carry.
   bool type_total = false;
   // Not columns: the developer policy MarkNotApplied marked the row's cell (a flag); the
-  // value's earlier levels through its join chain, oldest first.
+  // value's earlier levels through its join chain, oldest first; an eigenmode row's |p| of
+  // the mode's inductive lumped ports (lumped port index -> |EPR|; the join fingerprint).
   bool marked = false;
   std::vector<ParticipationHistoryEntry> history;
+  std::map<int, double> mode_ports;
 };
 
 // The verdict inputs of a target row from its cells (nullptr = no cell: no census reading /
@@ -167,20 +178,41 @@ void SetParticipationNotTarget(SurfaceParticipationRow &row);
 const ResolutionCell *FindParticipationCensusCell(const std::vector<ResolutionCell> &cells,
                                                   const std::string &type);
 
-// The eigenmode join (DESIGN-NOTE s3): mode m of the current level matches mode j of the
-// previous level iff j is the previous mode nearest to f_m, |f_m - f_j| is below half the
-// distance from f_j to its nearest other previous mode, m is the current mode nearest to
-// f_j, and the overlap of their raw participation vectors is at least
-// kParticipationModeMinOverlap.
+// The eigenmode join (DESIGN-NOTE s3). A mode's fingerprint is the raw participations of
+// its whole interfaces with the |EPR| of its inductive lumped ports (the EPR's sign follows
+// the eigenvector's phase); the overlap of two modes is the cosine of their fingerprints.
+// Mode m of the current level joins mode j of the previous level iff (1) j is the previous
+// mode nearest to f_m, (2) |f_m - f_j| is below half the distance from f_j to its nearest
+// other previous mode, (3) m is the current mode nearest to f_j, (4) their overlap is at
+// least kParticipationModeMinOverlap, (5) the join is unique: no other previous mode whose
+// overlap with m passes lies within kParticipationModeAmbiguityRatio |f_m - f_j| of f_m,
+// and (6) the same-field ranks agree: j's rank in frequency among the previous modes whose
+// overlap with m passes equals m's rank among the current modes whose overlap with j
+// passes (same-field fingerprints are nearly parallel, so a shift of the spectrum would
+// otherwise join a mode to its neighbour).
 inline constexpr double kParticipationModeMinOverlap = 0.9;
+inline constexpr double kParticipationModeAmbiguityRatio = 2.0;
 struct ParticipationModeSignature
 {
   int point = 0;
   double frequency = 0.0;
   std::map<int, double> participation;  // interface -> p raw of the mode's whole rows
+  std::map<int, double> ports;          // inductive lumped port -> |EPR|
 };
-// For every current mode (by point), the matched previous point, or -1 (UNMATCHED).
-std::map<int, int>
+// The join of a current mode: the previous mode nearest in frequency (-1: none), the two
+// frequencies and the overlap, and whether conditions (1)-(6) hold (else the first that
+// failed, in words).
+struct ParticipationModeJoin
+{
+  int point = 0, nearest = -1;
+  double frequency = std::numeric_limits<double>::quiet_NaN();
+  double nearest_frequency = std::numeric_limits<double>::quiet_NaN();
+  double overlap = std::numeric_limits<double>::quiet_NaN();
+  bool joined = false;
+  std::string failed;
+};
+// For every current mode (by point), its join.
+std::map<int, ParticipationModeJoin>
 MatchParticipationModes(const std::vector<ParticipationModeSignature> &previous,
                         const std::vector<ParticipationModeSignature> &current);
 
@@ -193,21 +225,26 @@ AddParticipationTypeTotals(const std::vector<SurfaceParticipationRow> &rows);
 // their history, change, indicator, convergence, resolution word and flags; a whole
 // interface row then carries its Type total's indicator and words. ES and driven
 // rows join by (point, excitation, interface; a driven frequency must agree to 1e-12
-// relative); eigenmode rows through MatchParticipationModes.
-void JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
-                            const std::vector<SurfaceParticipationRow> *previous,
-                            const ParticipationVerdictBars &bars, int order);
+// relative); eigenmode rows through MatchParticipationModes, whose joins it returns (empty
+// for the other problems and the first level).
+std::map<int, ParticipationModeJoin>
+JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
+                       const std::vector<SurfaceParticipationRow> *previous,
+                       const ParticipationVerdictBars &bars, int order);
 // The flags column: the verdicts not met, in the order resolution, coverage, regime,
 // confidence, convergence, then the developer mark; empty only when every verdict is met
 // with final (not interim) data.
 std::string ParticipationFlags(const SurfaceParticipationRow &row);
-// The log block of a finished level (DESIGN-NOTE s5): a header line, then one line per
-// row up to kParticipationLogRows rows, else one line per (Type, whole | region).
+// The log block of a finished level (DESIGN-NOTE s5): a header line, the eigenmode joins
+// (one line per mode: joined or UNMATCHED, the two frequencies and the overlap), then the
+// values (the Type totals and the targeted region rows): one line per value up to
+// kParticipationLogRows values, else one line per (Type, whole | region).
 inline constexpr std::size_t kParticipationLogRows = 40;
 std::string ParticipationLogBlock(const std::vector<SurfaceParticipationRow> &rows,
                                   int iteration, long long int unknowns,
                                   long long int previous_unknowns,
-                                  const ParticipationVerdictBars &bars, int order);
+                                  const ParticipationVerdictBars &bars, int order,
+                                  const std::map<int, ParticipationModeJoin> &joins = {});
 
 class SurfaceParticipationTable
 {
