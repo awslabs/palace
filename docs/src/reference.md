@@ -1044,6 +1044,109 @@ trapping flux. Then, the entries of the inductance matrix, ``\bm{M}``, are given
 where ``I_i`` is the excitation current for port ``i``, computed by integrating the source
 surface current ``\bm{J}_s^{inc}`` over the surface of the port.
 
+## Block Jacobi smoothers for the geometric multigrid preconditioner
+
+The levels of the geometric multigrid preconditioner are smoothed with Chebyshev
+polynomials of ``\bm{M}^{-1}\bm{A}``, where ``\bm{A}`` is the operator of the level and
+``\bm{M}`` a relaxation method: the diagonal of ``\bm{A}`` (point Jacobi, the default), or
+a block diagonal part of it (block Jacobi) with blocks of at most
+`config["Solver"]["Linear"]["MGSmoothBlockSize"]` degrees of freedom. The blocks are an
+option: a value of 64 is recommended for meshes with thin layers.
+
+On elements which are much thinner in one direction than in the others, such as those of a
+thin film or of the gap between two conductors, the operator splits into a strong part,
+which penalizes the variation of a function across the elements, and a weak part. A
+smoother is effective for all aspect ratios only if its relaxation solves exactly for the
+functions which the strong part does not see, and these are not local to a degree of
+freedom: across a stack of thin elements, they are constant along the lines of degrees of
+freedom through the stack. The point Jacobi method does not, and the number of iterations
+of the linear solver then grows with the aspect ratio. This affects every simulation type,
+and most of all those whose cost is that of their linear solves (eigenmode, transient and
+driven simulations).
+
+The blocks follow these directions, which are found from the operator. On the lowest order
+nodal space of the mesh, an element is flat when the nonzero eigenvalues of its Laplacian
+element matrix, scaled by the assembled diagonal, are separated by a gap, and the projector
+onto the eigenvectors above the gap ties the vertices which the strong part couples. The
+connected components of these ties are aggregates of vertices: lines through stacks of thin
+elements, sheets where thin elements have no such structure, single vertices elsewhere. For
+the finite element space of a level, of any type and order, the degrees of freedom of the
+mesh entities (vertices, edges, faces, elements) whose vertices belong to the same
+aggregates form a group, and groups are merged where the constraints of a nonconforming
+mesh couple them. The aggregates follow the shape of the elements only (the Laplacian has
+unit coefficients), not the material properties, and a mesh without flat elements has no
+groups: its smoothers are those of the point Jacobi method.
+
+A group of at most `"MGSmoothBlockSize"` degrees of freedom is a block, with the exact
+diagonal block of ``\bm{A}`` as its matrix. The blocks are dense, at most 64 by 64, and are
+stored in the size classes 1, 2, 4, ..., 64 (a block between two classes is padded), as
+their inverses, which are applied class by class. A larger group is treated by the type of
+the space:
+
+  - In a Nédélec space it is split into connected blocks of at most the given size, which
+    cuts first where the degrees of freedom are not tied across the thin direction. The
+    pieces of such a group are local to a process. The smoother then depends on the
+    partitioning of the mesh and loses part of its effect, more so for smaller blocks.
+  - In a nodal space (the electrostatic problem, and the auxiliary space of the smoothers
+    for Nédélec spaces) it is not split, and is solved approximately as a whole once per
+    smoothing sweep, by a fixed Chebyshev polynomial of its matrix preconditioned by one
+    algebraic multigrid cycle. The degree of the polynomial targets a reduction of the
+    error of the group by ``1/(2k+1)``, the bound of the smoother of order ``k``, on an
+    interval which is estimated by the Lanczos method: it is a target for the estimated
+    interval, not a guarantee. The work is bounded: the degree is at most the one for a
+    condition number of ``(2k+1)^2`` (13 for ``k=4``), which is used when the estimate
+    is larger or the Lanczos method has not converged in the number of steps which that
+    condition number allows, and reported. The block size therefore bounds the dense
+    blocks, not the size of such a group: its memory is that of the sparse matrix of the
+    group and of its multigrid hierarchy, and its work that of up to 13 multigrid cycles
+    on the group per smoothing sweep.
+
+The inverse of a block comes from its symmetric eigenvalue decomposition, with the
+eigenvalues which cannot be told from zero in double precision left out (a pseudo-inverse):
+the blocks of a curl-curl operator without a mass term are singular, with the gradients
+inside the block as kernel. The operator of an eigenmode or driven simulation without a
+shift is not definite, and complex with losses or ports. Its blocks are those of its
+definite counterpart (the real matrix with the mass term taken positive, as with
+`config["Solver"]["Linear"]["PCMatShifted"]`) with the signs of the operator itself: with
+``\bm{M}_b`` the block of the counterpart, ``\bm{A}_b`` the block of the real part of the
+operator, and the eigenpairs ``\bm{A}_b\bm{u}=\mu\bm{M}_b\bm{u}``,
+``\bm{U}^T\bm{M}_b\bm{U}=\bm{I}``, the inverse is
+``\bm{U}\,\mathrm{sign}(\mu)\,\bm{U}^T``, so that the relaxed operator has the eigenvalues
+``|\mu|\le 1`` inside the block at every frequency. This is the block form of the sign
+which the point Jacobi method gives to a negative diagonal entry. For a complex operator
+the real blocks are applied between the phases of its diagonal. The Chebyshev smoother is
+scaled by an estimate of the spectral radius of ``\bm{M}^{-1}\bm{A}`` from an Arnoldi
+iteration. A block of the definite counterpart which is not definite is an error.
+
+With an algebraic multigrid coarse solver (AMS or BoomerAMG) on a mesh with flat elements,
+the same smoother is applied before and after the coarse solve, also when the multigrid
+hierarchy has a single level. The blocks require a 3D mesh, and only the entries of the
+operator within the groups are assembled, from element matrices which are obtained by
+applying the operator element by element. They are constructed and applied on the host,
+and are not available with `config["Solver"]["Device"]` set to `"GPU"`. The setup of the
+blocks gathers the ties between the mesh vertices and the sizes of the groups on one
+process, and is repeated when the operator changes (at every frequency of a sweep).
+
+The blocks change the preconditioner, not the linear system. With the same tolerance of
+the linear solver the results agree to the accuracy which that tolerance gives them, not
+digit for digit: the residual of the default (left-preconditioned) GMRES solver is
+measured in the norm of the preconditioner.
+
+With `config["Problem"]["Verbose"]` above 0, each smoother reports its blocks when the
+operator is set (and again only if the result changes), for example
+
+```
+ Block Jacobi smoother (ND_3D_P2, 6832 unknowns): 598 blocks of 1/2/4/8/16/32/64 unknowns: 0/407/49/18/31/45/48 (5196 unknowns, 1.04 MB, at most 0.57 MB on a process, 1 group split, 34 gathered from several processes, 78 negative directions)
+ Block Jacobi smoother (H1_3D_P2, 1481 unknowns): 78 blocks of 1/2/4/8/16/32/64 unknowns: 0/8/10/56/4/0/0 (374 unknowns, 0.02 MB, at most 0.01 MB on a process, 25 gathered from several processes, 374 negative directions), 1 large group solved approximately (561 unknowns, degree 13 at its limit, 0.34 MB)
+```
+
+with the number of blocks in each size class, their degrees of freedom and memory, the
+groups which were split, the blocks with degrees of freedom on several processes, the
+singular directions which were left out and those with a negative sign, and the large
+groups which are solved approximately (with the degree of the polynomial, whether that is
+its limit, and the memory of the multigrid hierarchy). On a mesh without flat elements the
+smoothers are those of the point Jacobi method and nothing is reported.
+
 ## Error estimation and adaptive mesh refinement (AMR)
 
 Error estimation is used to provide element-wise error estimates for AMR, as well as a

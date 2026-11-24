@@ -15,6 +15,21 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### New Features
+
+  - Added an optional block Jacobi relaxation to the Chebyshev smoothers of the geometric
+    multigrid preconditioner, with `config["Solver"]["Linear"]["MGSmoothBlockSize"]` for the
+    largest number of degrees of freedom of a block (1, 2, 4, ..., 64). The default, 1, is
+    the point Jacobi method as before. Larger blocks follow the directions in which the
+    mesh elements are thin (found from the element matrices of the operator, which is not
+    assembled, not from the geometry), and on meshes with thin layers, for which 64 is
+    recommended, remove most of the growth of the number of linear solver iterations with
+    the aspect ratio of the elements. The blocks are applied on the host and are not
+    available with `"Device": "GPU"`. SchemaVer 6-1-0
+    [PR NNNN](https://github.com/awslabs/palace/pull/NNNN).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features
