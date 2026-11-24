@@ -4,20 +4,95 @@
 #include "gmg.hpp"
 
 #include <mfem.hpp>
+#include "fem/fespace.hpp"
+#include "fem/mesh.hpp"
+#include "linalg/blockjacobi.hpp"
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
+#include "linalg/jacobi.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/relaxation.hpp"
+#include "linalg/vertexaggregates.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
 {
 
+namespace
+{
+
+// The smoother of a multigrid level for the given options: the Chebyshev polynomial
+// smoother of the relaxation method (point Jacobi or block Jacobi), or with the discrete
+// gradient G into the space of the level, the distributive relaxation smoother, which
+// applies that smoother to the operator of the level and to its projection GᵀAG.
+template <OperatorType OperType>
+std::unique_ptr<Solver<OperType>> MakeSmoother(MPI_Comm comm,
+                                               const config::SmootherData &smoother,
+                                               bool print, const Operator *G = nullptr)
+{
+  if (G)
+  {
+    // The outer iterations of the distributive relaxation apply one iteration of the
+    // smoother on each space.
+    config::SmootherData single(smoother);
+    single.smooth_it = 1;
+    return std::make_unique<DistRelaxationSmoother<OperType>>(
+        *G, smoother.smooth_it, MakeSmoother<OperType>(comm, single, print),
+        MakeSmoother<OperType>(comm, single, print));
+  }
+  std::unique_ptr<Relaxation<OperType>> relaxation;
+  if (smoother.block_size > 1)
+  {
+    relaxation = std::make_unique<BlockJacobiSmoother<OperType>>(
+        comm, smoother.block_size, smoother.cheby_order, print);
+  }
+  else
+  {
+    relaxation = std::make_unique<JacobiSmoother<OperType>>(comm);
+  }
+  if (smoother.cheby_4th_kind)
+  {
+    return std::make_unique<ChebyshevSmoother<OperType>>(
+        std::move(relaxation), smoother.smooth_it, smoother.cheby_order,
+        smoother.cheby_sf_max);
+  }
+  return std::make_unique<ChebyshevSmoother1stKind<OperType>>(
+      std::move(relaxation), smoother.smooth_it, smoother.cheby_order,
+      smoother.cheby_sf_max, smoother.cheby_sf_min);
+}
+
+}  // namespace
+
+config::SmootherData ResolveSmoother(const config::SmootherData &smoother,
+                                     const FiniteElementSpaceHierarchy &fespaces)
+{
+  // A hierarchy of a single level whose coarse solve is not smoothed (a sparse direct
+  // solver) has no smoother: its meshes are not examined.
+  bool blocks =
+      (smoother.block_size > 1 && (fespaces.GetNumLevels() > 1 || smoother.coarse));
+  if (blocks)
+  {
+    blocks = false;
+    for (std::size_t l = 0; l < fespaces.GetNumLevels() && !blocks; l++)
+    {
+      const auto &mesh = fespaces.GetFESpaceAtLevel(l).GetMesh();
+      blocks = (mesh.Dimension() == 3 && GetVertexAggregates(mesh).any);
+    }
+  }
+  config::SmootherData resolved(smoother);
+  if (!blocks)
+  {
+    resolved.block_size = 1;
+    resolved.coarse = false;
+  }
+  return resolved;
+}
+
 template <OperatorType OperType>
 GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
     const std::vector<const Operator *> &P, const std::vector<const Operator *> *G,
-    int cycle_it, int smooth_it, int cheby_order, double cheby_sf_max, double cheby_sf_min,
-    bool cheby_4th_kind)
+    int cycle_it, const config::SmootherData &smoother, bool print)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
     R(P.size() + 1), use_timer(false)
@@ -31,34 +106,21 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
               "Invalid input for distributive relaxation smoother auxiliary space transfer "
               "operators (mismatch in number of levels)!");
 
-  // Use the supplied level 0 (coarse) solver.
+  // Use the supplied level 0 (coarse) solver, with a smoother before and after it if
+  // requested.
   B[0] = std::move(coarse_solver);
+  if (smoother.coarse)
+  {
+    MFEM_VERIFY(!G || (*G)[0], "Smoothing around the coarse solver requires the discrete "
+                               "gradient of the coarsest level!");
+    B0 = MakeSmoother<OperType>(comm, smoother, print, G ? (*G)[0] : nullptr);
+  }
 
   // Configure level smoothers. Use distributive relaxation smoothing if an auxiliary
   // finite element space was provided.
   for (std::size_t l = 1; l < n_levels; l++)
   {
-    if (G)
-    {
-      const int cheby_smooth_it = 1;
-      B[l] = std::make_unique<DistRelaxationSmoother<OperType>>(
-          comm, *(*G)[l], smooth_it, cheby_smooth_it, cheby_order, cheby_sf_max,
-          cheby_sf_min, cheby_4th_kind);
-    }
-    else
-    {
-      const int cheby_smooth_it = smooth_it;
-      if (cheby_4th_kind)
-      {
-        B[l] = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it,
-                                                             cheby_order, cheby_sf_max);
-      }
-      else
-      {
-        B[l] = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
-            comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
-      }
-    }
+    B[l] = MakeSmoother<OperType>(comm, smoother, print, G ? (*G)[l] : nullptr);
   }
 }
 
@@ -95,7 +157,16 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
       dbc_tdof_lists[l] = PtAP_l->GetEssentialTrueDofs();
     }
 
-    auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(B[l].get());
+    // The coarse solver is set first: it assembles the matrix of the coarsest level, which
+    // a ParOperator then also applies for its smoother.
+    if (l == 0 && B0)
+    {
+      B[0]->SetOperator(mg_op->GetOperatorAtLevel(0));
+      Z0.SetSize(A[0]->Height());
+      Z0.UseDevice(true);
+    }
+    auto &smoother = (l == 0 && B0) ? B0 : B[l];
+    auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(smoother.get());
     if (dist_smoother)
     {
       MFEM_VERIFY(mg_op->HasAuxiliaryOperators(),
@@ -106,7 +177,7 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
     }
     else
     {
-      B[l]->SetOperator(mg_op->GetOperatorAtLevel(l));
+      smoother->SetOperator(mg_op->GetOperatorAtLevel(l));
     }
 
     X[l].SetSize(A[l]->Height());
@@ -174,6 +245,23 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   // level 0. Important to note that the smoothers must respect the initial guess flag
   // correctly (given X, Y, compute Y <- Y + B (X - A Y)) .
   B[l]->SetInitialGuess(initial_guess);
+  if (l == 0 && B0)
+  {
+    // Pre-smooth, solve for the residual, and post-smooth.
+    B0->SetInitialGuess(initial_guess);
+    B0->Mult2(X[0], Y[0], R[0]);
+    A[0]->Mult(Y[0], R[0]);
+    linalg::AXPBY(1.0, X[0], -1.0, R[0]);
+    {
+      BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);
+      B[0]->SetInitialGuess(false);
+      B[0]->Mult(R[0], Z0);
+    }
+    Y[0] += Z0;
+    B0->SetInitialGuess(true);
+    B0->MultTranspose2(X[0], Y[0], R[0]);
+    return;
+  }
   if (l == 0)
   {
     BlockTimer bt(Timer::KSP_COARSE_SOLVE, use_timer);

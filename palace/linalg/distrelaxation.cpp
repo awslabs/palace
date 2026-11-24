@@ -4,7 +4,6 @@
 #include "distrelaxation.hpp"
 
 #include <mfem.hpp>
-#include "linalg/chebyshev.hpp"
 #include "linalg/rap.hpp"
 
 namespace palace
@@ -12,27 +11,14 @@ namespace palace
 
 template <OperatorType OperType>
 DistRelaxationSmoother<OperType>::DistRelaxationSmoother(
-    MPI_Comm comm, const Operator &G, int smooth_it, int cheby_smooth_it, int cheby_order,
-    double cheby_sf_max, double cheby_sf_min, bool cheby_4th_kind)
+    const Operator &G, int smooth_it, std::unique_ptr<Solver<OperType>> &&B,
+    std::unique_ptr<Solver<OperType>> &&B_G)
   : Solver<OperType>(), pc_it(smooth_it), G(&G), A(nullptr), A_G(nullptr),
-    dbc_tdof_list_G(nullptr)
+    dbc_tdof_list_G(nullptr), B(std::move(B)), B_G(std::move(B_G))
 {
-  // Initialize smoothers.
-  if (cheby_4th_kind)
-  {
-    B = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it, cheby_order,
-                                                      cheby_sf_max);
-    B_G = std::make_unique<ChebyshevSmoother<OperType>>(comm, cheby_smooth_it, cheby_order,
-                                                        cheby_sf_max);
-  }
-  else
-  {
-    B = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
-        comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
-    B_G = std::make_unique<ChebyshevSmoother1stKind<OperType>>(
-        comm, cheby_smooth_it, cheby_order, cheby_sf_max, cheby_sf_min);
-  }
-  B_G->SetInitialGuess(false);
+  MFEM_VERIFY(this->B && this->B_G,
+              "DistRelaxationSmoother requires a smoother for each space!");
+  this->B_G->SetInitialGuess(false);
 }
 
 template <OperatorType OperType>

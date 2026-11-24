@@ -24,6 +24,9 @@ namespace palace
 class ParOperator : public Operator
 {
 private:
+  // Definite counterpart of the operator (see GetDefiniteCounterpart), if any.
+  std::unique_ptr<ParOperator> definite;
+
   // Storage and access for the local operator.
   std::unique_ptr<Operator> data_A;
   const Operator *A;
@@ -93,6 +96,17 @@ public:
     return dbc_tdof_list.Size() ? &dbc_tdof_list : nullptr;
   }
 
+  // The definite counterpart of an operator which is not definite: a real symmetric
+  // positive (semi)definite operator on the same space which bounds this one (for
+  // K - ω² M + i ω C, the operator K + ω² M), for relaxation methods which need definite
+  // blocks (see linalg/blockjacobi.hpp). May be nullptr: the operator is then taken to be
+  // real and definite itself.
+  void SetDefiniteCounterpart(std::unique_ptr<ParOperator> &&op)
+  {
+    definite = std::move(op);
+  }
+  const ParOperator *GetDefiniteCounterpart() const { return definite.get(); }
+
   // Get the diagonal policy that was most recently used. If there are no essential dofs,
   // and thus no valid policy, will error.
   DiagonalPolicy GetDiagonalPolicy() const;
@@ -134,6 +148,9 @@ public:
 class ComplexParOperator : public ComplexOperator
 {
 private:
+  // Definite counterpart of the operator (see GetDefiniteCounterpart), if any.
+  std::unique_ptr<ParOperator> definite;
+
   // Storage and access for the local operator.
   std::unique_ptr<ComplexWrapperOperator> data_A;
   const ComplexWrapperOperator *A;
@@ -210,6 +227,17 @@ public:
   {
     return dbc_tdof_list.Size() ? &dbc_tdof_list : nullptr;
   }
+
+  // The definite counterpart of an operator which is not definite: a real symmetric
+  // positive (semi)definite operator on the same space which bounds this one (for
+  // K - ω² M + i ω C, the operator K + ω² M), for relaxation methods which need definite
+  // blocks (see linalg/blockjacobi.hpp). May be nullptr: the operator is then taken to be
+  // real and definite itself.
+  void SetDefiniteCounterpart(std::unique_ptr<ParOperator> &&op)
+  {
+    definite = std::move(op);
+  }
+  const ParOperator *GetDefiniteCounterpart() const { return definite.get(); }
 
   // Get the diagonal policy that was most recently used. If there are no essential dofs,
   // and thus no valid policy, will error.

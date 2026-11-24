@@ -7,8 +7,10 @@
 
 target_sources(${LIB_TARGET_NAME}
   PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/aggregateblocks.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/amg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/ams.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/blockjacobi.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/blockprecond.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/arpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
@@ -40,13 +42,13 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlucomplex.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/vertexaggregates.cpp
 )
 
 # Handle device source code
 set(TARGET_SOURCES_DEVICE
   ${TARGET_SOURCES_DEVICE}
   ${CMAKE_CURRENT_SOURCE_DIR}/blockprecond.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/cudss.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/jacobi.cpp

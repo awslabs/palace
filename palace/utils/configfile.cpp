@@ -1761,6 +1761,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   mg_smooth_sf_max = linear.value("MGSmoothEigScaleMax", mg_smooth_sf_max);
   mg_smooth_sf_min = linear.value("MGSmoothEigScaleMin", mg_smooth_sf_min);
   mg_smooth_cheby_4th = linear.value("MGSmoothChebyshev4th", mg_smooth_cheby_4th);
+  mg_smooth_block_size = linear.value("MGSmoothBlockSize", mg_smooth_block_size);
 
   // Preconditioner-specific options.
   pc_mat_real = linear.value("PCMatReal", pc_mat_real);

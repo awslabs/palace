@@ -75,6 +75,65 @@ double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector
   return linalg::SpectralNorm(comm, DinvA, false);
 }
 
+// The same estimates for the polynomial smoothers, which start from the vector x0 (if it
+// has the size of the operator) and return the dominant vector in it.
+double LambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0)
+{
+  // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
+  // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
+  // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
+  // A with essential DOFs eliminated using a unit diagonal.
+  Vector dinv_sqrt(dinv);
+  dinv_sqrt.Abs();
+  linalg::Sqrt(dinv_sqrt);
+  DiagonalOperator DinvSqrt(dinv_sqrt);
+  ProductOperator ADinvSqrt(A, DinvSqrt);
+  ProductOperator S(DinvSqrt, ADinvSqrt);
+  return linalg::SpectralNorm(comm, S, true, &x0);
+}
+
+double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0)
+{
+  MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv),
+              "Chebyshev smoother spectral estimation requires a finite, nonzero operator "
+              "diagonal!");
+  return LambdaMax(comm, A, dinv, x0);
+}
+
+double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
+                    ComplexVector &x0)
+{
+  if (A.IsReal())
+  {
+    MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
+                "Chebyshev smoother spectral estimation requires a finite, nonzero real "
+                "operator diagonal!");
+
+    // Estimate in real arithmetic, which halves the cost, starting from and returning the
+    // real part of x0.
+    const int n = A.Height();
+    Vector x0r;
+    if (x0.Size() == n)
+    {
+      x0r.SetSize(n);
+      x0r.UseDevice(true);
+      x0r = x0.Real();
+    }
+    const double lambda_max = LambdaMax(comm, *A.Real(), dinv.Real(), x0r);
+    if (x0r.Size() == n)
+    {
+      x0.SetSize(n);
+      x0.UseDevice(true);
+      x0.Real() = x0r;
+      x0.Imag() = 0.0;
+    }
+    return lambda_max;
+  }
+  ComplexDiagonalOperator Dinv(dinv);
+  ComplexProductOperator DinvA(Dinv, A);
+  return linalg::SpectralNorm(comm, DinvA, false, &x0);
+}
+
 template <bool Transpose = false>
 inline void Apply(const Vector &dinv, const Vector &x, Vector &y)
 {
@@ -113,6 +172,95 @@ inline void Apply(const ComplexVector &dinv, const ComplexVector &x, ComplexVect
                         {
                           YR[i] = DIR[i] * XR[i] + DII[i] * XI[i];
                           YI[i] = -DII[i] * XR[i] + DIR[i] * XI[i];
+                        });
+  }
+}
+
+template <bool Transpose = false>
+inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &d)
+{
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
+  const int N = d.Size();
+  const auto *DI = dinv.Read(use_dev);
+  const auto *R = r.Read(use_dev);
+  auto *D = d.Write(use_dev);
+  mfem::forall_switch(use_dev, N,
+                      [=] MFEM_HOST_DEVICE(int i) { D[i] = sr * DI[i] * R[i]; });
+}
+
+template <bool Transpose = false>
+inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const ComplexVector &r,
+                        ComplexVector &d)
+{
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
+  const int N = dinv.Size();
+  const auto *DIR = dinv.Real().Read(use_dev);
+  const auto *DII = dinv.Imag().Read(use_dev);
+  const auto *RR = r.Real().Read(use_dev);
+  const auto *RI = r.Imag().Read(use_dev);
+  auto *DR = d.Real().Write(use_dev);
+  auto *DI = d.Imag().Write(use_dev);
+  if constexpr (!Transpose)
+  {
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
+                          DI[i] = sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
+                        });
+  }
+  else
+  {
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          DR[i] = sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
+                          DI[i] = sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
+                        });
+  }
+}
+
+template <bool Transpose = false>
+inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
+                        const Vector &r, Vector &d)
+{
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
+  const int N = dinv.Size();
+  const auto *DI = dinv.Read(use_dev);
+  const auto *R = r.Read(use_dev);
+  auto *D = d.ReadWrite(use_dev);
+  mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i)
+                      { D[i] = sd * D[i] + sr * DI[i] * R[i]; });
+}
+
+template <bool Transpose = false>
+inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &dinv,
+                        const ComplexVector &r, ComplexVector &d)
+{
+  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
+  const int N = dinv.Size();
+  const auto *DIR = dinv.Real().Read(use_dev);
+  const auto *DII = dinv.Imag().Read(use_dev);
+  const auto *RR = r.Real().Read(use_dev);
+  const auto *RI = r.Imag().Read(use_dev);
+  auto *DR = d.Real().ReadWrite(use_dev);
+  auto *DI = d.Imag().ReadWrite(use_dev);
+  if constexpr (!Transpose)
+  {
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
+                          DI[i] = sd * DI[i] + sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
+                        });
+  }
+  else
+  {
+    mfem::forall_switch(use_dev, N,
+                        [=] MFEM_HOST_DEVICE(int i)
+                        {
+                          DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
+                          DI[i] = sd * DI[i] + sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
                         });
   }
 }
@@ -183,6 +331,25 @@ void JacobiSmoother<OperType>::Mult(const VecType &x, VecType &y) const
 {
   MFEM_ASSERT(!this->initial_guess, "JacobiSmoother does not use initial guess!");
   Apply(dinv, x, y);
+}
+
+template <OperatorType OperType>
+void JacobiSmoother<OperType>::ScaledMult(double s, const VecType &r, VecType &d) const
+{
+  ApplyOrder0(s, dinv, r, d);
+}
+
+template <OperatorType OperType>
+void JacobiSmoother<OperType>::ScaledAddMult(double sd, double sr, const VecType &r,
+                                             VecType &d) const
+{
+  ApplyOrderK(sd, sr, dinv, r, d);
+}
+
+template <OperatorType OperType>
+double JacobiSmoother<OperType>::EstimateMaxEigenvalue(const OperType &A, VecType &x0) const
+{
+  return GetLambdaMax(comm, A, dinv, x0);
 }
 
 template class JacobiSmoother<Operator>;

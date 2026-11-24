@@ -14,6 +14,7 @@
 #include <complex>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
 #include <functional>
 #include <limits>
 #include <map>
@@ -3884,4 +3885,99 @@ TEST_CASE("cpw_wave_2dmode", "[Serial][Parallel][GPU][Regression]")
   // The energies are below atol, so compare them with the relative tolerance only.
   opts.custom_checks["domain-E.csv"] = CompareComplexMagnitudes(opts.rtol, 0.0);
   palace::test::RunRegressionCase("cpw", "cpw_wave_2dmode.json", "wave_2dmode", opts);
+}
+
+// The thin_film cases have what the blocks of the multigrid smoothers are for (they set
+// "MGSmoothBlockSize" to 64): a film of two layers of cells of aspect ratio 1000 between a
+// substrate and vacuum, on a mesh with hanging nodes, so that the film is one group of
+// unknowns which is split into blocks in the Nédélec spaces and solved approximately as a
+// whole in the nodal spaces. The blocks are applied on the host, so none of these cases
+// runs on a GPU. They also bound the number of linear solver iterations, which the point
+// Jacobi smoother exceeds several times over: a run in which the blocks are not
+// constructed, or are wrong, fails.
+namespace
+{
+
+// The default comparison of a file, and a bound on the total number of linear solver
+// iterations of the run (from the metadata written next to the file).
+palace::test::CustomCheck CheckLinearSolverIterations(palace::test::RegressionOptions opts,
+                                                      int max_its)
+{
+  return [opts, max_its](palace::Table &actual, palace::Table &reference,
+                         const std::filesystem::path &actual_path)
+  {
+    palace::test::CompareCSVFiles(actual, reference, opts);
+    std::ifstream file(actual_path.parent_path() / "palace.json");
+    REQUIRE(file.good());
+    const auto metadata = nlohmann::json::parse(file);
+    const int total_its = metadata.at("LinearSolver").at("TotalIts").get<int>();
+    CAPTURE(total_its, max_its);
+    CHECK(total_its <= max_its);
+  };
+}
+
+}  // namespace
+
+// Nodal levels, a real positive definite operator, the smoother around the AMG coarse
+// solve: 16 iterations for the two solves (point Jacobi: 164).
+TEST_CASE("thin_film_electrostatic", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.custom_checks["domain-E.csv"] = CheckLinearSolverIterations(opts, 40);
+  palace::test::RunRegressionCase("thin_film", "thin_film_electrostatic.json",
+                                  "electrostatic", opts);
+}
+
+// Nédélec levels with their auxiliary space smoothers and a sparse direct coarse solve,
+// for a real preconditioner without a shift ("PCMatReal"): the operator is indefinite,
+// and negative definite in the auxiliary space, and the blocks are those of its definite
+// counterpart with the signs of the operator. About 2100 iterations for the 33 solves
+// (point Jacobi: 7400).
+TEST_CASE("thin_film_eigenmode", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.max_rows = 2;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  opts.custom_checks["domain-E.csv"] = CheckLinearSolverIterations(opts, 3500);
+  palace::test::RunRegressionCase("thin_film", "thin_film_eigenmode.json", "eigenmode",
+                                  opts);
+}
+
+// A complex symmetric operator without a shift (a lossy film and a lumped port), and a
+// second frequency: 19 iterations for the two solves (point Jacobi: 134).
+TEST_CASE("thin_film_driven", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.custom_checks["domain-E.csv"] = CheckLinearSolverIterations(opts, 60);
+  palace::test::RunRegressionCase("thin_film", "thin_film_driven.json", "driven", opts);
+}
+
+// A dispersive film (a Lorentz material) and a preconditioner without a shift: the real
+// part of the dispersive mass term is negative, and the definite counterpart of the
+// preconditioner matrix has to take it with its magnitude like the constant mass term. 10
+// iterations (point Jacobi: 106).
+TEST_CASE("thin_film_driven_lorentz", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  opts.custom_checks["domain-E.csv"] = CheckLinearSolverIterations(opts, 40);
+  palace::test::RunRegressionCase("thin_film", "thin_film_driven_lorentz.json",
+                                  "driven_lorentz", opts);
 }

@@ -4,7 +4,9 @@
 #ifndef PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP
 #define PALACE_LINALG_CHEBYSHEV_SMOOTHER_HPP
 
+#include <memory>
 #include "linalg/operator.hpp"
+#include "linalg/relaxation.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 
@@ -12,7 +14,8 @@ namespace palace
 {
 
 //
-// Matrix-free diagonally-scaled Chebyshev smoothing. This is largely the same as
+// Matrix-free Chebyshev smoothing, scaled by a relaxation M⁻¹ (diagonally-scaled for the
+// point Jacobi method, which is the default). This is largely the same as
 // mfem::OperatorChebyshevSmoother allows a nonzero initial guess and uses alternative
 // methods to estimate the largest eigenvalue. We use a smoother based on Chebyshev
 // polynomials of the 4th-kind as proposed in recent work.
@@ -25,19 +28,16 @@ class ChebyshevSmoother : public Solver<OperType>
   using VecType = typename Solver<OperType>::VecType;
 
 private:
-  // MPI communicator associated with the solver operator and vectors.
-  MPI_Comm comm;
-
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
   // System matrix (not owned).
   const OperType *A;
 
-  // Inverse diagonal scaling of the operator (real-valued for now).
-  VecType dinv;
+  // Relaxation M⁻¹ which scales the operator in the polynomial.
+  std::unique_ptr<Relaxation<OperType>> M;
 
-  // Maximum operator eigenvalue for Chebyshev polynomial smoothing.
+  // Maximum eigenvalue of M⁻¹A for Chebyshev polynomial smoothing.
   double lambda_max, sf_max;
 
   // Dominant vector of the latest maximum eigenvalue estimate, from which the estimate for
@@ -47,8 +47,16 @@ private:
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
+  // Apply the polynomial to the residual r of y: y = y + p(M⁻¹A) M⁻¹ r.
+  void Polynomial(VecType &y, VecType &r) const;
+
 public:
+  // Diagonally-scaled smoother (point Jacobi relaxation).
   ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order, double sf_max);
+
+  // Smoother scaled by the given relaxation.
+  ChebyshevSmoother(std::unique_ptr<Relaxation<OperType>> &&M, int smooth_it,
+                    int poly_order, double sf_max);
 
   void SetOperator(const OperType &op) override;
 
@@ -74,16 +82,14 @@ public:
 
   void Mult2(const VecType &x, VecType &y, VecType &r) const override;
 
-  void MultTranspose2(const VecType &x, VecType &y, VecType &r) const override
-  {
-    Mult2(x, y, r);  // Assumes operator symmetry
-  }
+  // Assumes operator symmetry.
+  void MultTranspose2(const VecType &x, VecType &y, VecType &r) const override;
 };
 
 //
-// Matrix-free diagonally-scaled Chebyshev smoothing using standard 1st-kind Chebyshev
-// polynomials.
-// Reference: Adams et al., Parallel multigrid smoothing: polynomial versus Gauss–Seidel,
+// Matrix-free Chebyshev smoothing scaled by a relaxation (see above) using standard
+// 1st-kind Chebyshev polynomials. Reference: Adams et al., Parallel multigrid smoothing:
+// polynomial versus Gauss–Seidel,
 //            JCP (2003).
 //
 template <OperatorType OperType>
@@ -92,17 +98,14 @@ class ChebyshevSmoother1stKind : public Solver<OperType>
   using VecType = typename Solver<OperType>::VecType;
 
 private:
-  // MPI communicator associated with the solver operator and vectors.
-  MPI_Comm comm;
-
   // Number of smoother iterations and polynomial order.
   const int pc_it, order;
 
   // System matrix (not owned).
   const OperType *A;
 
-  // Inverse diagonal scaling of the operator (real-valued for now).
-  VecType dinv;
+  // Relaxation M⁻¹ which scales the operator in the polynomial.
+  std::unique_ptr<Relaxation<OperType>> M;
 
   // Parameters depending on maximum and minimum operator eigenvalue estimates for Chebyshev
   // polynomial smoothing.
@@ -115,9 +118,17 @@ private:
   // Temporary vector for smoother application.
   mutable VecType d, r;
 
+  // Apply the polynomial to the residual r of y: y = y + p(M⁻¹A) M⁻¹ r.
+  void Polynomial(VecType &y, VecType &r) const;
+
 public:
+  // Diagonally-scaled smoother (point Jacobi relaxation).
   ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it, int poly_order, double sf_max,
                            double sf_min);
+
+  // Smoother scaled by the given relaxation.
+  ChebyshevSmoother1stKind(std::unique_ptr<Relaxation<OperType>> &&M, int smooth_it,
+                           int poly_order, double sf_max, double sf_min);
 
   void SetOperator(const OperType &op) override;
 
@@ -143,10 +154,8 @@ public:
 
   void Mult2(const VecType &x, VecType &y, VecType &r) const override;
 
-  void MultTranspose2(const VecType &x, VecType &y, VecType &r) const override
-  {
-    Mult2(x, y, r);  // Assumes operator symmetry
-  }
+  // Assumes operator symmetry.
+  void MultTranspose2(const VecType &x, VecType &y, VecType &r) const override;
 };
 
 }  // namespace palace

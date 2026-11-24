@@ -325,30 +325,38 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
   }
 
   // Construct the actual solver, which has the right value type.
-  if (fespaces.GetNumLevels() > 1)
+  const auto smoother = ResolveSmoother(linear.mg_smoother, fespaces);
+  const bool smooth_coarse = smoother.coarse;
+  if (fespaces.GetNumLevels() > 1 || smooth_coarse)
   {
     // This will construct the multigrid hierarchy using pc as the coarse solver
     // (ownership of pc is transferred to the GeometricMultigridSolver). When a special
     // auxiliary space smoother for pre-/post-smoothing is not desired, the auxiliary
-    // space is a nullptr here.
+    // space is a nullptr here. With a smoother around the coarse solve, a single level is
+    // a multigrid solver too, with one cycle of smoothing and coarse solve.
+    const int cycle_it = (fespaces.GetNumLevels() > 1) ? linear.mg_cycle_it : 1;
     auto gmg = [&]()
     {
       if (linear.mg_smooth_aux)
       {
         MFEM_VERIFY(aux_fespaces, "Multigrid with auxiliary space smoothers requires both "
                                   "primary space and auxiliary spaces for construction!");
-        const auto G = fespaces.GetDiscreteInterpolators(*aux_fespaces);
+        auto G = fespaces.GetDiscreteInterpolators(*aux_fespaces);
+        if (smooth_coarse)
+        {
+          // The smoother of the coarsest level needs its discrete gradient as well.
+          G[0] = &fespaces.GetDiscreteInterpolatorAtLevel(
+              0, aux_fespaces->GetFESpaceAtLevel(0));
+        }
         return std::make_unique<GeometricMultigridSolver<OperType>>(
-            comm, std::move(pc), fespaces.GetProlongationOperators(), &G,
-            linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
-            linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+            comm, std::move(pc), fespaces.GetProlongationOperators(), &G, cycle_it,
+            smoother, verbose > 0);
       }
       else
       {
         return std::make_unique<GeometricMultigridSolver<OperType>>(
-            comm, std::move(pc), fespaces.GetProlongationOperators(), nullptr,
-            linear.mg_cycle_it, linear.mg_smooth_it, linear.mg_smooth_order,
-            linear.mg_smooth_sf_max, linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th);
+            comm, std::move(pc), fespaces.GetProlongationOperators(), nullptr, cycle_it,
+            smoother, verbose > 0);
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
