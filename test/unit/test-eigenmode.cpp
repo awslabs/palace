@@ -9,6 +9,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include "drivers/eigensolver.hpp"
 #include "fem/fieldtransfer.hpp"
 #include "linalg/eps.hpp"
 #include "linalg/iterative.hpp"
@@ -108,6 +109,47 @@ TEST_CASE("Vector field transfer through refinement and rebalancing",
     tv -= ref;
     const double err = linalg::Norml2(comm, tv), norm = linalg::Norml2(comm, ref);
     CHECK(err <= 1.0e-12 * norm);
+  }
+}
+
+TEST_CASE("Eigenmode warm-start gate", "[eigenmode][Serial]")
+{
+  // Records the solves of an adaptive run, cold (false) or warm-started (true) as the gate
+  // decided, with their numbers of Krylov cycles, and returns the decision before each
+  // solve and after the last.
+  auto Run = [](bool q_region, const std::vector<std::pair<bool, int>> &solves)
+  {
+    WarmStartGate gate;
+    std::vector<bool> next = {gate.Next(q_region)};
+    for (const auto &[warm, its] : solves)
+    {
+      REQUIRE(warm == next.back());
+      gate.Update(warm, its);
+      next.push_back(gate.Next(q_region));
+    }
+    return next;
+  };
+  using V = std::vector<bool>;
+
+  SECTION("Without the quality factor region")
+  {
+    // Only the cold solves of three cycles or more are followed by a warm start, whatever
+    // the warm-started solves take.
+    CHECK(Run(false, {{false, 2}, {false, 1}, {false, 3}, {true, 2}, {true, 1}}) ==
+          V{false, false, false, true, true, true});
+  }
+
+  SECTION("With the quality factor region")
+  {
+    // Cold solves of two cycles are also followed by a warm start, as long as each
+    // warm-started solve after one converges in one cycle.
+    CHECK(Run(true, {{false, 1}, {false, 2}, {true, 1}, {true, 1}}) ==
+          V{false, false, true, true, true});
+
+    // After the first which does not, only cold solves of three cycles or more are.
+    CHECK(
+        Run(true, {{false, 2}, {true, 2}, {false, 2}, {false, 3}, {true, 2}, {true, 1}}) ==
+        V{false, true, false, false, true, true, true});
   }
 }
 
