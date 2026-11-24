@@ -78,6 +78,45 @@ NonzeroCoefficientAttributes(std::initializer_list<const MaterialPropertyCoeffic
 
 }  // namespace
 
+// The forms of these integrators are symmetric for symmetric coefficients, and their
+// transposes are the same integrators with the transposed coefficients.
+#define PALACE_DEFINE_SYMMETRIC_FORM_INTEGRATOR(Integrator)                \
+  bool Integrator::IsSymmetric() const                                     \
+  {                                                                        \
+    return !Q || Q->IsSymmetric();                                         \
+  }                                                                        \
+  std::unique_ptr<BilinearFormIntegrator> Integrator::GetTranspose() const \
+  {                                                                        \
+    auto integ = std::make_unique<Integrator>(*this);                      \
+    integ->transpose = !transpose;                                         \
+    return integ;                                                          \
+  }
+#define PALACE_DEFINE_SYMMETRIC_FORM_PAIR_INTEGRATOR(Integrator)           \
+  bool Integrator::IsSymmetric() const                                     \
+  {                                                                        \
+    return (!Q || Q->IsSymmetric()) && (!Q_mass || Q_mass->IsSymmetric()); \
+  }                                                                        \
+  std::unique_ptr<BilinearFormIntegrator> Integrator::GetTranspose() const \
+  {                                                                        \
+    auto integ = std::make_unique<Integrator>(*this);                      \
+    integ->transpose = !transpose;                                         \
+    integ->transpose_mass = !transpose_mass;                               \
+    return integ;                                                          \
+  }
+
+PALACE_DEFINE_SYMMETRIC_FORM_INTEGRATOR(MassIntegrator)
+PALACE_DEFINE_SYMMETRIC_FORM_INTEGRATOR(VectorFEMassIntegrator)
+PALACE_DEFINE_SYMMETRIC_FORM_INTEGRATOR(RotatedVectorFEMassIntegrator)
+PALACE_DEFINE_SYMMETRIC_FORM_INTEGRATOR(DiffusionIntegrator)
+PALACE_DEFINE_SYMMETRIC_FORM_INTEGRATOR(CurlCurlIntegrator)
+PALACE_DEFINE_SYMMETRIC_FORM_INTEGRATOR(DivDivIntegrator)
+PALACE_DEFINE_SYMMETRIC_FORM_PAIR_INTEGRATOR(DiffusionMassIntegrator)
+PALACE_DEFINE_SYMMETRIC_FORM_PAIR_INTEGRATOR(CurlCurlMassIntegrator)
+PALACE_DEFINE_SYMMETRIC_FORM_PAIR_INTEGRATOR(DivDivMassIntegrator)
+
+#undef PALACE_DEFINE_SYMMETRIC_FORM_INTEGRATOR
+#undef PALACE_DEFINE_SYMMETRIC_FORM_PAIR_INTEGRATOR
+
 std::optional<std::vector<int>>
 BilinearFormIntegrator::GetNonzeroCoefficientAttributes() const
 {

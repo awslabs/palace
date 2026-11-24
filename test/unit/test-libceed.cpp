@@ -2002,6 +2002,114 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
 // Test the 31 (SpaceDim=3, Dim=1) libCEED qfunctions for boundary integrators on a 2D
 // mesh embedded in 3D. Uses the standard RunCeedIntegratorTests with embed_in_3d=true.
 // Matrix coefficients are excluded (need sdim x sdim, not dim x dim).
+// The partial assembly of a square form which is not symmetric, as the Floquet terms of the
+// curl, -(k x u, curl v) + (curl u, k x v) with an antisymmetric cross-product matrix, has
+// the transposes of its integrators: its transpose is that of its full assembly, also after
+// coarsening. A symmetric form keeps a symmetric operator.
+TEMPLATE_TEST_CASE_SIG("3D libCEED Transposes of Nonsymmetric Forms",
+                       "[libCEED][Serial][Parallel]", ((const char *Mesh), Mesh),
+                       FicheraHex, FicheraTet)
+{
+  auto amr = GENERATE(false, true);
+  auto order = GENERATE(1, 2, 3);
+  auto mesh = Initialize(MPI_COMM_WORLD, TestMeshPath(Mesh), 0, amr);
+  fem::DefaultIntegrationOrder::p_trial = order;
+  fem::DefaultIntegrationOrder::q_order_jac = true;
+  fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
+  fem::DefaultIntegrationOrder::q_order_extra_qk = 0;
+  mesh.ResetCeedObjects();
+
+  // The cross-product matrix of a wave vector, and a general nonsymmetric matrix.
+  mfem::DenseMatrix k_x(3), A(3);
+  const double k[3] = {0.3, -0.7, 1.1};
+  k_x = 0.0;
+  k_x(0, 1) = -k[2];
+  k_x(0, 2) = k[1];
+  k_x(1, 0) = k[2];
+  k_x(1, 2) = -k[0];
+  k_x(2, 0) = -k[1];
+  k_x(2, 1) = k[0];
+  for (int i = 0; i < 3; i++)
+  {
+    for (int j = 0; j < 3; j++)
+    {
+      A(i, j) = 1.0 + i + 0.5 * j * j + ((i == j) ? 4.0 : 0.0);
+    }
+  }
+  auto MakeCoefficient = [&mesh](bool bdr, const mfem::DenseMatrix &M)
+  {
+    mfem::Array<int> attr_mat(bdr ? mesh.MaxCeedBdrAttribute() : mesh.MaxCeedAttribute());
+    attr_mat = 0;
+    mfem::DenseTensor mat_coeff(3, 3, 1);
+    mat_coeff(0) = M;
+    return MaterialPropertyCoefficient(attr_mat, mat_coeff);
+  };
+  const auto Qk = MakeCoefficient(false, k_x), Qa = MakeCoefficient(false, A),
+             Qkb = MakeCoefficient(true, k_x), Qab = MakeCoefficient(true, A);
+  REQUIRE_FALSE(Qk.IsSymmetric());
+  REQUIRE_FALSE(Qa.IsSymmetric());
+
+  enum class Form
+  {
+    Floquet,
+    NonsymmetricMass,
+    Boundary,
+    Symmetric
+  };
+  const auto form =
+      GENERATE(Form::Floquet, Form::NonsymmetricMass, Form::Boundary, Form::Symmetric);
+  auto AddIntegrators = [&](BilinearForm &a)
+  {
+    switch (form)
+    {
+      case Form::Floquet:
+        a.AddDomainIntegrator<CurlCurlIntegrator>();
+        a.AddDomainIntegrator<MixedVectorWeakCurlIntegrator>(Qk);
+        a.AddDomainIntegrator<MixedVectorCurlIntegrator>(Qk, true);
+        break;
+      case Form::NonsymmetricMass:
+        a.AddDomainIntegrator<CurlCurlMassIntegrator>(Qa, Qa);
+        break;
+      case Form::Boundary:
+        a.AddDomainIntegrator<VectorFEMassIntegrator>();
+        a.AddBoundaryIntegrator<RotatedVectorFEMassIntegrator>(Qab);
+        a.AddBoundaryIntegrator<MixedVectorWeakCurlIntegrator>(Qkb);
+        a.AddBoundaryIntegrator<MixedVectorCurlIntegrator>(Qkb, true);
+        break;
+      case Form::Symmetric:
+        a.AddDomainIntegrator<CurlCurlIntegrator>();
+        a.AddDomainIntegrator<VectorFEMassIntegrator>();
+        break;
+    }
+  };
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  BilinearForm a(nd_fespace);
+  AddIntegrators(a);
+  auto op = a.PartialAssemble();
+  if (form == Form::Symmetric)
+  {
+    CHECK(typeid(*op) == typeid(ceed::SymmetricOperator));
+  }
+  else
+  {
+    CHECK(typeid(*op) == typeid(ceed::Operator));
+  }
+  auto mat = a.FullAssemble(*op, false);
+  TestCeedOperatorMult(*op, *mat, true);
+
+  if (order > 1)
+  {
+    mfem::ND_FECollection nd_fec_coarse(order - 1, 3);
+    FiniteElementSpace nd_fespace_coarse(mesh, &nd_fec_coarse);
+    auto op_coarse = ceed::CeedOperatorCoarsen(*op, nd_fespace_coarse);
+    CHECK(typeid(*op_coarse) == typeid(*op));
+    auto mat_coarse = a.FullAssemble(*op_coarse, false);
+    TestCeedOperatorMult(*op_coarse, *mat_coarse, true);
+  }
+}
+
 TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
 {
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh");

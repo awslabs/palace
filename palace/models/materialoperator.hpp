@@ -437,6 +437,10 @@ public:
   // compare exactly equal to zero. This deliberately has no tolerance.
   bool IsExactlyZero() const;
 
+  // Whether every material property tensor is symmetric (scalars are), up to a relative
+  // round-off of its largest entry, as for a symmetric tensor rotated into a local frame.
+  bool IsSymmetric() const;
+
   // Append the (libCEED, 1-based) attributes whose material property tensor has at least
   // one entry which is not exactly zero. Attributes with no assigned material, or an
   // exactly zero tensor, contribute exactly zero and are not appended. The output is not
