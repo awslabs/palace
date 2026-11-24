@@ -41,7 +41,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the operations of the factorization. On a model with 115M unknowns on 3072 processes
     a coarse solve takes 43 ms instead of 72 ms; on the other models measured it is
     between 14% faster and 5% slower.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1306](https://github.com/awslabs/palace/pull/1306).
 
 #### Bug Fixes
 
