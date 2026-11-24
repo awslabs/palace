@@ -1510,6 +1510,14 @@ void RomOperator::TruncatePROM(std::size_t n)
     Cr.conservativeResize(ne, ne);
   }
   Mr.conservativeResize(ne, ne);
+  if (response_mass)
+  {
+    response_mass_r.conservativeResize(ne, ne);
+  }
+  if (response_stiffness)
+  {
+    response_stiffness_r.conservativeResize(ne, ne);
+  }
   for (auto &term : bdr_terms)
   {
     term.Ar.conservativeResize(ne, ne);
@@ -1650,6 +1658,13 @@ void RomOperator::SolvePROM(double omega)
   Ar += (-omega * omega) * Mr;
   if (response_mass)
   {
+    // TruncatePROM shrinks the projected response matrices with the basis; an update that
+    // adds no vector after it leaves them at that size.
+    MFEM_ASSERT(response_mass_r.rows() == Kr.rows() &&
+                    response_mass_r.cols() == Kr.cols() &&
+                    (!response_stiffness || (response_stiffness_r.rows() == Kr.rows() &&
+                                             response_stiffness_r.cols() == Kr.cols())),
+                "Projected response matrices do not match the PROM basis!");
     Ar += (-omega * omega) * response_mass_r;
   }
   if (response_stiffness)

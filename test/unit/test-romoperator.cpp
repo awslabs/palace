@@ -100,6 +100,8 @@ public:
   auto &GetCr() const { return Cr; }
   auto &GetMr() const { return Mr; }
   auto &GetAr() const { return Ar; }
+  auto &GetResponseMassR() const { return response_mass_r; }
+  auto &GetResponseStiffnessR() const { return response_stiffness_r; }
   auto &GetKsp() { return *ksp; }
   const ComplexOperator *GetHDMOperator() const { return hdm_A.get(); }
   double GetHDMOmega() const { return hdm_omega; }
@@ -2452,6 +2454,177 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseMass-SystemOp
   corrected_mf->SolvePROM(omega);
   corrected_mf->ExpandPROMSolution(excitation, prom_mf);
   CHECK(RelativeToCorrected(prom_mf, hdm_mf) < 1.0e-8);
+}
+
+// AddSamplePROM removes a sample it does not reproduce (TruncatePROM) and adds it again
+// refined (RefineHDM). On a response-corrected PROM the truncation shrinks the projected
+// response matrices with the basis: a refined sample that then adds no basis vector (it is
+// in the span of the kept basis, so UpdatePROM returns early) leaves the PROM of the kept
+// vectors, with response matrices of their size. The refinement applies the
+// response-corrected operator of the sample's solve. (Review of the sync with Palace
+// 0.20.0, MAJOR-1 / MAJOR-2.)
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator-ResponseMass-AddSamplePROM",
+                 "[romoperator][Serial][Parallel]")
+{
+  auto mesh_path =
+      fs::path(PALACE_TEST_DATA_DIR) / "lumpedport_mesh/cube_mesh_1_1_1_tet.msh";
+
+  json setup_json;
+  setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  setup_json["Model"] = {{"Mesh", mesh_path},
+                         {"L0", 1.0e-6},
+                         {"Refinement", json::object()},
+                         {"CrackInternalBoundaryElements", false}};
+  setup_json["Domains"] = {
+      {"Materials", json::array({json::object({{"Attributes", json::array({1})},
+                                               {"Permeability", 1.0},
+                                               {"Permittivity", 1.0},
+                                               {"LossTan", 0.0}})})}};
+  setup_json["Boundaries"] = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"R", 50.0},
+                                                {"Excitation", uint(1)},
+                                                {"Attributes", json::array({100})},
+                                                {"Direction", "+X"}})})}};
+  setup_json["Solver"] = {
+      {"Order", 1},
+      {"Device", "CPU"},
+      {"Driven",
+       {{"Samples", json::array({json::object({{"Type", "Linear"},
+                                               {"MinFreq", 2.0},
+                                               {"MaxFreq", 4.0},
+                                               {"FreqStep", 2.0}})})},
+        {"AdaptiveTol", 1.0e-3},
+        {"AdaptiveMaxSamples", 4}}},
+      {"Linear",
+       {{"Type", "Default"}, {"KSPType", "GMRES"}, {"MaxIts", 200}, {"Tol", 1.0e-10}}},
+      {"SurfaceResponseCorrection",
+       {{"Library", (temp_dir / "unused-process-library.json").string()},
+        {"Developer", true},
+        {"CorrectionMode", "Both"},
+        {"SolveTol", 1.0e-10}}}};
+
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh);
+  MPI_Comm comm = space_op.GetComm();
+
+  // The response mass and stiffness stand-ins of RomOperator-ResponseStiffness (both the
+  // DIAG_ZERO mass), so that the truncation of each projected response matrix is checked.
+  auto MakeCorrected = [&]()
+  {
+    auto response_mass = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto response_stiffness = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    REQUIRE(response_mass);
+    REQUIRE(response_stiffness);
+    return std::make_unique<RomOperatorTest>(iodata, space_op, 4, std::move(response_mass),
+                                             std::move(response_stiffness));
+  };
+  auto op = MakeCorrected(), ref = MakeCorrected();
+
+  const int excitation = 1;
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  const double omega = sample_f.back(), omega_other = sample_f.front();
+  auto NewVector = [&]()
+  {
+    ComplexVector v(space_op.GetNDSpace().GetTrueVSize());
+    v.UseDevice(true);
+    v = 0.0;
+    return v;
+  };
+  auto RelDiff = [&](const ComplexVector &a, const ComplexVector &b)
+  {
+    ComplexVector d(a);
+    linalg::AXPY(-1.0, b, d);
+    return linalg::Norml2(comm, d) / linalg::Norml2(comm, b);
+  };
+  auto Expand = [&](RomOperatorTest &rom_op, double w)
+  {
+    rom_op.SolvePROM(w);
+    auto x = NewVector();
+    rom_op.ExpandPROMSolution(excitation, x);
+    return x;
+  };
+  // The projected response matrices have the size of the basis.
+  auto CheckResponseSize = [](const RomOperatorTest &rom_op)
+  {
+    const auto n = static_cast<Eigen::Index>(rom_op.GetReducedDimension());
+    CHECK(rom_op.GetResponseMassR().rows() == n);
+    CHECK(rom_op.GetResponseMassR().cols() == n);
+    CHECK(rom_op.GetResponseStiffnessR().rows() == n);
+    CHECK(rom_op.GetResponseStiffnessR().cols() == n);
+  };
+  // The projected response matrices and the PROM solution at ω equal those of ref.
+  auto CheckSamePROM = [&](double tol)
+  {
+    CheckResponseSize(*op);
+    REQUIRE(op->GetReducedDimension() == ref->GetReducedDimension());
+    const auto &Rm = op->GetResponseMassR(), &Rm_ref = ref->GetResponseMassR();
+    const auto &Rs = op->GetResponseStiffnessR(), &Rs_ref = ref->GetResponseStiffnessR();
+    if (Rm.rows() == Rm_ref.rows() && Rm.cols() == Rm_ref.cols())
+    {
+      CHECK((Rm - Rm_ref).norm() <= tol * Rm_ref.norm());
+    }
+    if (Rs.rows() == Rs_ref.rows() && Rs.cols() == Rs_ref.cols())
+    {
+      CHECK((Rs - Rs_ref).norm() <= tol * Rs_ref.norm());
+    }
+    const auto x = Expand(*op, omega), x_ref = Expand(*ref, omega);
+    CHECK(RelDiff(x, x_ref) <= tol);
+    CHECK((op->GetAr() - ref->GetAr()).norm() <= tol * ref->GetAr().norm());
+  };
+
+  SECTION("Refined sample in the span of the kept basis")
+  {
+    // The steps of AddSamplePROM for a sample it does not reproduce whose refinement adds
+    // no basis vector: u1 in the basis, u2 added, TruncatePROM(n0) removes u2, and the
+    // refined sample (u1: in the span of the kept basis) adds no vector. ref is the PROM
+    // built from the kept vectors.
+    auto u1 = NewVector(), u2 = NewVector();
+    op->SolveHDM(excitation, omega, u1);
+    op->SolveHDM(excitation, omega_other, u2);
+    op->UpdatePROM(u1, "u1");
+    ref->UpdatePROM(u1, "u1");
+    const std::size_t n0 = op->GetReducedDimension();
+    REQUIRE(n0 > 0);
+    op->UpdatePROM(u2, "u2");
+    REQUIRE(op->GetReducedDimension() > n0);
+    CheckResponseSize(*op);
+    Expand(*op, omega);  // The PROM system of the larger basis
+    op->TruncatePROM(n0);
+    REQUIRE(op->GetReducedDimension() == n0);
+    CheckResponseSize(*op);
+    op->UpdatePROM(u1, "u1_refined", false);
+    REQUIRE(op->GetReducedDimension() == n0);
+    CheckSamePROM(1.0e-12);
+  }
+
+  SECTION("Inexact corrected sample refined by AddSamplePROM")
+  {
+    // RefineHDM corrects the residual of the response-corrected system the sample was
+    // solved with: the corrected HDM solution perturbed by 1e-3 is not reproduced, is
+    // refined towards the corrected solution (not the raw one), and the PROM equals the
+    // PROM built from the refined sample.
+    constexpr double tol = 1.0e-8;
+    RomOperatorTest raw(iodata, space_op, 4);
+    auto u = NewVector(), u_corrected = NewVector(), u_raw = NewVector(), w = NewVector();
+    raw.SolveHDM(excitation, omega, u_raw);
+    op->SolveHDM(excitation, omega, u_corrected);
+    w.Real().Randomize(51);
+    w.Imag().Randomize(53);
+    u = u_corrected;
+    linalg::AXPY(1.0e-3 * linalg::Norml2(comm, u_corrected) / linalg::Norml2(comm, w), w,
+                 u);
+    const double err_perturbed = RelDiff(u, u_corrected);
+    const auto update = op->AddSamplePROM(excitation, omega, u, "sample", tol);
+    CHECK(update.num_refined >= 1);
+    CHECK(update.num_refined <= RomOperator::max_refine);
+    CHECK(update.reproduced);
+    CHECK(RelDiff(u, u_corrected) <= 1.0e-2 * err_perturbed);
+    CHECK(RelDiff(u, u_corrected) <= 1.0e-2 * RelDiff(u_raw, u_corrected));
+    ref->UpdatePROM(u, "sample");
+    CheckSamePROM(1.0e-10);
+  }
 }
 
 namespace
