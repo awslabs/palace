@@ -60,6 +60,11 @@ const MmsCase &TrigCase();
 
 }  // namespace analytic
 
+// Test 1 (mass projection): only electric_field, curl, and epsilon_r are used.
+void CheckMassProjectionExactness(const MmsCase &polynomial);
+void CheckMassProjectionConvergence(const MmsCase &smooth);
+
+// Test 3 (curl-curl + mass).
 void CheckPolynomialExactness(const MmsCase &polynomial);
 void CheckOptimalConvergence(const MmsCase &smooth);
 void CheckBackendAgreement(const MmsCase &candidate, const MmsCase &reference);

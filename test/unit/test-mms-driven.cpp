@@ -23,6 +23,15 @@
 // eigenvalue, so E is unique and both the field error ‖E_h − E_mms‖ and the curl error
 // ‖∇×E_h − ∇×E_mms‖ (absolute versions of the paper's e_f and e_c) are asserted.
 //
+// The same setup also runs the paper's Test 1 (eqs. 15–17), which turns every differential
+// operator off and checks the mass term, the volume source, and the PEC elimination in
+// isolation. It is the ε-weighted L2 projection of E_mms onto ND_p,
+//   ∫ εE·φ dΩ = ∫ εE_mms·φ dΩ,   n×E = n×E_mms = 0 on ∂Ω,
+// with Palace's driven mass matrix M (the paper's version is the ε = 1 case). There are no
+// derivatives, so strong and weak forms coincide, and μ and ω play no part. Only the field
+// error is asserted: the L2 projection is the best ε-weighted approximation of E_mms, so
+// ‖E_h − E_mms‖ = O(h^p), but nothing controls its curl, which is only reported.
+//
 // Backend-specific tests supply E_mms, ∇×E_mms, and ∇×(μ⁻¹∇×E_mms) through MmsCase; this
 // file owns the common Palace solve and error checks.
 
@@ -55,6 +64,13 @@ namespace palace::testing::mms::driven
 {
 namespace
 {
+
+// Which of the paper's tests to run on the common setup.
+enum class Problem
+{
+  MASS_PROJECTION,  // Test 1: M E = b, the ε-weighted L2 projection.
+  CURL_CURL_MASS    // Test 3: (K − ω²M) E = b, the driven operator.
+};
 
 struct MmsError
 {
@@ -109,6 +125,55 @@ ComplexVector SolveManufactured(const IoData &iodata, SpaceOperator &space_op, d
   return E;
 }
 
+// Solve the mass-only system of Test 1 with SpaceOperator's mass matrix,
+//   M = ∫ εE·φ dΩ,   assembled with DIAG_ONE so the PEC rows are the identity,
+// and the same right-hand side treatment as SolveManufactured:
+//   RHS = R_ndᵀ [ ∫ εE_mms·φ dΩ ],   with the PEC entries zeroed.
+// This is the real instantiation GetMassMatrix<Operator>. For a lossless material it
+// equals the driven M: both share the real-part assembly, and the complex instantiation
+// only adds an imaginary part for lossy materials. Its complex form is exercised by
+// Test 3, inside K − ω²M.
+//
+// M is SPD, and on a quasi-uniform mesh its Jacobi-scaled condition number is bounded
+// independently of h, so CG with a Jacobi preconditioner (configured by the caller) needs
+// a mesh-independent number of iterations. That number still grows with p, steeply for the
+// tetrahedral Nédélec basis. Measured: 3–6 iterations on hexahedra at every order; on
+// tetrahedra about 20, 65, and 115 for orders 1–3 at the 1e-9 convergence tolerance, and
+// about 800 for order 5 at the 1e-13 exactness tolerance (reduction factor ≈0.96 per
+// iteration). The solution is returned as a complex vector with zero imaginary part, so
+// the error computation is shared with Test 3.
+ComplexVector SolveMassProjection(const IoData &iodata, SpaceOperator &space_op,
+                                  mfem::VectorCoefficient &source,
+                                  const mfem::IntegrationRule &ir)
+{
+  auto M = space_op.GetMassMatrix<Operator>(Operator::DIAG_ONE);
+  REQUIRE(M);
+  KspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+  ksp.SetOperators(*M, *M);
+
+  auto &nd = space_op.GetNDSpace();
+  mfem::ParLinearForm b(&nd.Get());
+  b.AddDomainIntegrator(new mfem::VectorFEDomainLFIntegrator(source, &ir));
+  b.Assemble();
+
+  Vector X(nd.GetTrueVSize()), RHS(nd.GetTrueVSize());
+  X.UseDevice(true);
+  RHS.UseDevice(true);
+  X = 0.0;
+  RHS = 0.0;
+  nd.GetProlongationMatrix()->MultTranspose(b, RHS);
+  linalg::SetSubVector(RHS, space_op.GetNDDbcTDofLists().back(), 0.0);
+
+  ksp.Mult(RHS, X);
+  REQUIRE(ksp.GetConverged());
+
+  ComplexVector E(nd.GetTrueVSize());
+  E.UseDevice(true);
+  E = 0.0;
+  E.Real() = X;
+  return E;
+}
+
 // L2 error of a complex ND (or RT) true-dof vector against a real exact field: the real
 // part is compared with the exact field and the imaginary part with zero.
 double ComplexL2Error(FiniteElementSpace &fespace, const ComplexVector &x,
@@ -140,15 +205,21 @@ MmsError ComputeMmsErrors(SpaceOperator &space_op, const ComplexVector &E,
           ComplexL2Error(space_op.GetRTSpace(), curl_E, curl_exact)};
 }
 
-MmsError SolveMmsError(const MmsCase &mms, std::unique_ptr<mfem::Mesh> serial_mesh,
-                       int order, double linear_tol = 1.0e-9)
+MmsError SolveMmsError(const MmsCase &mms, Problem problem,
+                       std::unique_ptr<mfem::Mesh> serial_mesh, int order,
+                       double linear_tol = 1.0e-9)
 {
   MPI_Comm comm = Mpi::World();
 
   // Every face is PEC, so n×E = 0 is imposed on all of ∂Ω. The default frequency-domain
-  // linear solver is a sparse direct solver when one is built in, so pin AMS (GMRES with
-  // the shifted AMS preconditioner) to solve the same way on every build and keep the
-  // finest meshes affordable.
+  // linear solver is a sparse direct solver when one is built in, so pin an iterative
+  // solver to solve the same way on every build and keep the finest meshes affordable:
+  // AMS (GMRES with the shifted AMS preconditioner) for the driven operator, and CG with
+  // Jacobi on a single level for the mass matrix, which needs neither the auxiliary-space
+  // correction (there is no curl-curl null space to handle) nor multigrid (the condition
+  // number of M does not grow with refinement). The default max_it of 100 is too few for
+  // high-order tetrahedra (see SolveMassProjection): order 5 at 1e-13 takes about 800, so
+  // 2000 leaves margin, and each CG iteration on M is cheap.
   Units units(1.0, 1.0);
   IoData iodata(units);
   iodata.model.Lc = 1.0;
@@ -162,17 +233,28 @@ MmsError SolveMmsError(const MmsCase &mms, std::unique_ptr<mfem::Mesh> serial_me
     iodata.boundaries.pec.attributes.push_back(serial_mesh->bdr_attributes[i]);
   }
   iodata.solver.order = order;
-  iodata.solver.linear.type = LinearSolver::AMS;
   iodata.solver.linear.tol = linear_tol;
+  switch (problem)
+  {
+    case Problem::MASS_PROJECTION:
+      iodata.solver.linear.type = LinearSolver::JACOBI;
+      iodata.solver.linear.krylov_solver = KrylovSolver::CG;
+      iodata.solver.linear.mg_max_levels = 1;
+      iodata.solver.linear.max_it = 2000;
+      break;
+    case Problem::CURL_CURL_MASS:
+      iodata.solver.linear.type = LinearSolver::AMS;
+      break;
+  }
   // Quadrature for the source integral ∫ J·φ dΩ. Polynomial exactness requires this
   // integral to be exact, or Galerkin orthogonality no longer pins E_h = E_mms. For the
-  // bubble field J has degree 2 per variable (total degree 4), and φ ∈ ND_p has degree
-  // ≤ p per variable on hexahedra and ≤ p in total on tetrahedra, so J·φ needs degree
-  // p + 2 per variable (Gauss tensor rule) or p + 4 in total (simplex rule). MFEM's
-  // default 2p is exact with no slack for order-5 tetrahedra; 2p + 4 covers both element
-  // types at every order with margin and also tightens the trigonometric source.
-  // (Geometry from the serial mesh, which every rank holds in full, so ranks that own no
-  // elements still get a valid rule.)
+  // bubble field J (for either problem) has degree 2 per variable (total degree 4), and
+  // φ ∈ ND_p has degree ≤ p per variable on hexahedra and ≤ p in total on tetrahedra, so
+  // J·φ needs degree p + 2 per variable (Gauss tensor rule) or p + 4 in total (simplex
+  // rule). MFEM's default 2p is exact with no slack for order-5 tetrahedra; 2p + 4 covers
+  // both element types at every order with margin and also tightens the trigonometric
+  // source. (Geometry from the serial mesh, which every rank holds in full, so ranks that
+  // own no elements still get a valid rule.)
   const mfem::IntegrationRule &source_ir =
       mfem::IntRules.Get(serial_mesh->GetElementGeometry(0), 2 * order + 4);
 
@@ -190,34 +272,47 @@ MmsError SolveMmsError(const MmsCase &mms, std::unique_ptr<mfem::Mesh> serial_me
                          iodata.problem.type, iodata.units, mesh);
   mfem::VectorFunctionCoefficient e_exact(/*vdim=*/3, mms.electric_field);
   mfem::VectorFunctionCoefficient curl_exact(/*vdim=*/3, mms.curl);
-  // The volume source J = ∇×(μ⁻¹∇×E_mms) − ω²εE_mms. The backend supplies the curl-curl
-  // term, which carries the μ dependence and the second derivatives. Scaling the mass term
-  // component-wise equals εE only because the default (identity) material axes make
-  // diag(ε_r) diagonal in the global frame (and likewise for μ in the backends); a rotated
-  // tensor would need R diag(ε_r) Rᵀ here.
+  // The volume source: J = ∇×(μ⁻¹∇×E_mms) − ω²εE_mms for Test 3, and only the mass part
+  // εE_mms (with coefficient 1 instead of −ω²) for Test 1. The backend supplies the
+  // curl-curl term, which carries the μ dependence and the second derivatives. Scaling the
+  // mass term component-wise equals εE only because the default (identity) material axes
+  // make diag(ε_r) diagonal in the global frame (and likewise for μ in the backends); a
+  // rotated tensor would need R diag(ε_r) Rᵀ here.
+  const bool mass_only = (problem == Problem::MASS_PROJECTION);
+  const double mass_coef = mass_only ? 1.0 : -mms.omega * mms.omega;
   mfem::VectorFunctionCoefficient source(
       /*vdim=*/3,
-      [&mms](const mfem::Vector &x, mfem::Vector &f)
+      [&mms, mass_only, mass_coef](const mfem::Vector &x, mfem::Vector &f)
       {
-        mms.curl_curl(x, f);
+        if (mass_only)
+        {
+          f = 0.0;
+        }
+        else
+        {
+          mms.curl_curl(x, f);
+        }
         mfem::Vector e(3);
         mms.electric_field(x, e);
         for (int d = 0; d < 3; d++)
         {
-          f(d) -= mms.omega * mms.omega * mms.epsilon_r[d] * e(d);
+          f(d) += mass_coef * mms.epsilon_r[d] * e(d);
         }
       });
-  const ComplexVector E = SolveManufactured(iodata, space_op, mms.omega, source, source_ir);
+  const ComplexVector E =
+      mass_only ? SolveMassProjection(iodata, space_op, source, source_ir)
+                : SolveManufactured(iodata, space_op, mms.omega, source, source_ir);
   return ComputeMmsErrors(space_op, E, e_exact, curl_exact);
 }
 
 MmsError
-SolveCartesianMmsError(const MmsCase &mms, int n, int order, double linear_tol = 1.0e-9,
+SolveCartesianMmsError(const MmsCase &mms, Problem problem, int n, int order,
+                       double linear_tol = 1.0e-9,
                        mfem::Element::Type element_type = mfem::Element::HEXAHEDRON)
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(n, n, n, element_type, 1.0, 1.0, 1.0));
-  return SolveMmsError(mms, std::move(serial_mesh), order, linear_tol);
+  return SolveMmsError(mms, problem, std::move(serial_mesh), order, linear_tol);
 }
 
 const std::vector<int> kOrders = {1, 2, 3};
@@ -227,6 +322,8 @@ const std::vector<int> kOrders = {1, 2, 3};
 // 4³ like the other orders: a 2³ mesh (8 hexahedra, 48 tetrahedra) is too coarse to
 // resolve sin πx, so the 2 → 4 rate is pre-asymptotic, and the discrete eigenvalues near
 // ω² are least accurate there (see kOmega). Order 3 therefore has a single rate pair.
+// Test 1 (the Jacobi-CG mass solve) is cheaper and has no resonance, so neither reason
+// applies to it; it shares these grids so that its report rows line up with Test 3's.
 std::vector<int> Resolutions(int order)
 {
   return (order < 3) ? std::vector<int>{4, 8, 16} : std::vector<int>{4, 8};
@@ -244,17 +341,17 @@ void ReportMmsData(const std::string &dataset, const std::string &solution,
 constexpr double kRateTol = 0.3;
 constexpr double kBackendAgreementTol = 1.0e-10;
 
-}  // namespace
-
-void CheckPolynomialExactness(const MmsCase &polynomial)
+// Polynomial exactness for either problem; the dataset name keeps their report rows apart.
+void CheckExactness(const MmsCase &polynomial, Problem problem, const std::string &dataset)
 {
-  // The operator is nonsingular, so when E_mms lies in the Nédélec space, E_h = E_mms up
-  // to the iterative solver tolerance (Galerkin orthogonality with a unique solution),
-  // and both the field and curl errors vanish. Unlike the magnetostatic check, E_mms
-  // itself must be in ND_p, not only its curl in ∇×ND_p. The bubble polynomial has degree
-  // 2 per variable (total degree 4): order 2 suffices on hexahedra (ND_2 ⊇ Q_{1,2,2} ×
-  // Q_{2,1,2} × Q_{2,2,1}), while on tetrahedra ND_p contains the full P_{p-1}, so order 5
-  // is needed. A coarse n = 2 tetrahedral mesh keeps order 5 cheap.
+  // Both operators are nonsingular, so when E_mms lies in the Nédélec space, E_h = E_mms
+  // up to the iterative solver tolerance (Galerkin orthogonality with a unique solution;
+  // for Test 1, a projection reproduces anything already in the space), and both the
+  // field and curl errors vanish. Unlike the magnetostatic check, E_mms itself must be in
+  // ND_p, not only its curl in ∇×ND_p. The bubble polynomial has degree 2 per variable
+  // (total degree 4): order 2 suffices on hexahedra (ND_2 ⊇ Q_{1,2,2} × Q_{2,1,2} ×
+  // Q_{2,2,1}), while on tetrahedra ND_p contains the full P_{p-1}, so order 5 is needed.
+  // A coarse n = 2 tetrahedral mesh keeps order 5 cheap.
   struct Element
   {
     const char *name;
@@ -268,9 +365,9 @@ void CheckPolynomialExactness(const MmsCase &polynomial)
   {
     DYNAMIC_SECTION(name)
     {
-      const auto error = SolveCartesianMmsError(polynomial, n, order,
+      const auto error = SolveCartesianMmsError(polynomial, problem, n, order,
                                                 /*linear_tol=*/1.0e-13, type);
-      ReportMmsData("affine-polynomial", "polynomial", name, order, "N", n, 1.0 / n, error);
+      ReportMmsData(dataset, "polynomial", name, order, "N", n, 1.0 / n, error);
       CAPTURE(error.electric, error.curl);
       CHECK(error.electric < 1.0e-10);
       CHECK(error.curl < 1.0e-10);
@@ -278,12 +375,18 @@ void CheckPolynomialExactness(const MmsCase &polynomial)
   }
 }
 
-void CheckOptimalConvergence(const MmsCase &smooth)
+// Convergence sweep for either problem. The field error is always asserted at O(h^p); the
+// curl error only when assert_curl is set (Test 3), otherwise it is reported only.
+void CheckConvergence(const MmsCase &smooth, Problem problem, const std::string &dataset,
+                      bool assert_curl)
 {
   // For order-p (first-kind) Nédélec elements, both the L2 field error and the L2 curl
-  // error converge as O(h^p) for a smooth solution (Monk, "Finite Element Methods for
-  // Maxwell's Equations," 2003). The paper's eq. 29, e ∝ N^(−2/3) for second-order
-  // tetrahedra with N unknowns, is the p = 2 case of this, since N ∝ h^(−3) in 3D.
+  // error of the curl-curl solution converge as O(h^p) for a smooth solution (Monk,
+  // "Finite Element Methods for Maxwell's Equations," 2003). The paper's eq. 29,
+  // e ∝ N^(−2/3) for second-order tetrahedra with N unknowns, is the p = 2 case of this,
+  // since N ∝ h^(−3) in 3D. The L2 projection's field error is bounded by the best
+  // approximation error, also O(h^p) (ND_p contains the complete polynomials of degree
+  // p − 1).
   const std::array<std::pair<const char *, mfem::Element::Type>, 2> elements = {
       std::pair{"hexahedron", mfem::Element::HEXAHEDRON},
       std::pair{"tetrahedron", mfem::Element::TETRAHEDRON}};
@@ -299,10 +402,9 @@ void CheckOptimalConvergence(const MmsCase &smooth)
         for (std::size_t i = 0; i < kResolutions.size(); i++)
         {
           h[i] = 1.0 / kResolutions[i];
-          error[i] = SolveCartesianMmsError(smooth, kResolutions[i], order,
+          error[i] = SolveCartesianMmsError(smooth, problem, kResolutions[i], order,
                                             /*linear_tol=*/1.0e-9, type);
-          ReportMmsData("cartesian-smooth", "trig", name, order, "N", kResolutions[i], h[i],
-                        error[i]);
+          ReportMmsData(dataset, "trig", name, order, "N", kResolutions[i], h[i], error[i]);
         }
 
         for (std::size_t i = 0; i + 1 < kResolutions.size(); i++)
@@ -316,15 +418,42 @@ void CheckOptimalConvergence(const MmsCase &smooth)
           CAPTURE(electric_rate);
           CHECK_THAT(electric_rate, WithinAbs(static_cast<double>(order), kRateTol));
 
-          CHECK(error[i + 1].curl < error[i].curl);
-          const double curl_rate =
-              ConvergenceRate(h[i], error[i].curl, h[i + 1], error[i + 1].curl);
-          CAPTURE(curl_rate);
-          CHECK_THAT(curl_rate, WithinAbs(static_cast<double>(order), kRateTol));
+          if (assert_curl)
+          {
+            CHECK(error[i + 1].curl < error[i].curl);
+            const double curl_rate =
+                ConvergenceRate(h[i], error[i].curl, h[i + 1], error[i + 1].curl);
+            CAPTURE(curl_rate);
+            CHECK_THAT(curl_rate, WithinAbs(static_cast<double>(order), kRateTol));
+          }
         }
       }
     }
   }
+}
+
+}  // namespace
+
+void CheckMassProjectionExactness(const MmsCase &polynomial)
+{
+  CheckExactness(polynomial, Problem::MASS_PROJECTION, "mass-affine-polynomial");
+}
+
+void CheckMassProjectionConvergence(const MmsCase &smooth)
+{
+  CheckConvergence(smooth, Problem::MASS_PROJECTION, "mass-cartesian-smooth",
+                   /*assert_curl=*/false);
+}
+
+void CheckPolynomialExactness(const MmsCase &polynomial)
+{
+  CheckExactness(polynomial, Problem::CURL_CURL_MASS, "affine-polynomial");
+}
+
+void CheckOptimalConvergence(const MmsCase &smooth)
+{
+  CheckConvergence(smooth, Problem::CURL_CURL_MASS, "cartesian-smooth",
+                   /*assert_curl=*/true);
 }
 
 void CheckBackendAgreement(const MmsCase &candidate, const MmsCase &reference)
@@ -339,8 +468,10 @@ void CheckBackendAgreement(const MmsCase &candidate, const MmsCase &reference)
   REQUIRE(candidate.omega == reference.omega);
   constexpr int n = 8, order = 2;
   constexpr double linear_tol = 1.0e-13;
-  const auto candidate_error = SolveCartesianMmsError(candidate, n, order, linear_tol);
-  const auto reference_error = SolveCartesianMmsError(reference, n, order, linear_tol);
+  const auto candidate_error =
+      SolveCartesianMmsError(candidate, Problem::CURL_CURL_MASS, n, order, linear_tol);
+  const auto reference_error =
+      SolveCartesianMmsError(reference, Problem::CURL_CURL_MASS, n, order, linear_tol);
   REQUIRE(candidate_error.primary_dofs == reference_error.primary_dofs);
 
   const double electric_disagreement =

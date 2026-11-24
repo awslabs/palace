@@ -104,6 +104,18 @@ const MmsCase &TrigCase()
 
 using namespace palace::testing::mms::driven;
 
+TEST_CASE("Driven MMS analytic mass projection is exact for a polynomial in the FE space",
+          "[driven][mms][analytic][Serial][Parallel]")
+{
+  CheckMassProjectionExactness(analytic::PolynomialCase());
+}
+
+TEST_CASE("Driven MMS analytic mass projection converges at the optimal rate",
+          "[driven][mms][analytic][Serial][Parallel]")
+{
+  CheckMassProjectionConvergence(analytic::TrigCase());
+}
+
 TEST_CASE("Driven MMS analytic is exact for a polynomial in the FE space",
           "[driven][mms][analytic][Serial][Parallel]")
 {
