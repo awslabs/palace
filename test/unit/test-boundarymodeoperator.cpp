@@ -18,6 +18,7 @@
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "drivers/boundarymodesolver.hpp"
 
 #include "fem/fespace.hpp"
@@ -335,10 +336,11 @@ public:
     mat_op = std::make_unique<MaterialOperator>(iodata, *mesh);
     surface_terms = std::make_unique<SurfaceTerms>(iodata, *mat_op, mesh->Get());
 
-    std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(*nd_fespace, *h1_fespace, *mat_op);
+    std::tie(Atnr, Atni) =
+        mode_assembly::AssembleAtn(*nd_fespace, *h1_fespace, *mat_op, nullptr);
     Btnr.reset(Atnr->Transpose());
     *Btnr *= -1.0;
-    Bttr = std::get<0>(mode_assembly::AssembleBtt(*nd_fespace, *mat_op));
+    Bttr = std::get<0>(mode_assembly::AssembleBtt(*nd_fespace, *mat_op, nullptr));
 
     // Essential (PEC) true DOFs of the block system: ND, then H1 offset by the ND size.
     {
@@ -376,15 +378,12 @@ public:
     return *it;
   }
 
-  // Pairing xᴴ A x of a component A with x = [Eₜ; Eₙ] for the in-plane field Eₜ = eₜ ŷ,
-  // tangential to the sides x = 0 and x = W, and a constant out-of-plane field Eₙ = eₙ.
-  // Returns the pairing with the real and the imaginary part of the component.
-  std::complex<double> Pairing(const mode_assembly::OperatorComponent &component, double et,
-                               double en) const
+  // The block vector x = [Eₜ; Eₙ] of the in-plane field Eₜ = eₜ ŷ, tangential to the sides
+  // x = 0 and x = W, and a constant out-of-plane field Eₙ = eₙ.
+  Vector Field(double et, double en) const
   {
-    MPI_Comm comm = Mpi::World();
     const int nd_size = nd_fespace->GetTrueVSize(), h1_size = h1_fespace->GetTrueVSize();
-    ComplexVector x(nd_size + h1_size), y(nd_size + h1_size);
+    Vector x(nd_size + h1_size);
     x = 0.0;
     {
       mfem::ParGridFunction E(&nd_fespace->Get());
@@ -395,15 +394,37 @@ public:
       E.ProjectCoefficient(coeff);
       Vector t(nd_size);
       E.GetTrueDofs(t);
-      x.Real().SetVector(t, 0);
+      x.SetVector(t, 0);
     }
-    auto *X = x.Real().HostReadWrite();
+    auto *X = x.HostReadWrite();
     for (int i = nd_size; i < nd_size + h1_size; i++)
     {
       X[i] = en;
     }
+    return x;
+  }
+
+  // Pairing xᴴ A x of a component A with the field x of Field. Returns the pairing with the
+  // real and the imaginary part of the component.
+  std::complex<double> Pairing(const mode_assembly::OperatorComponent &component, double et,
+                               double en) const
+  {
+    MPI_Comm comm = Mpi::World();
+    const auto field = Field(et, en);
+    ComplexVector x(field.Size()), y(field.Size());
+    x = 0.0;
+    x.Real() = field;
     component.op->Mult(x, y);
     return {linalg::Dot(comm, x.Real(), y.Real()), linalg::Dot(comm, x.Real(), y.Imag())};
+  }
+
+  // Pairing xᵀ A x of a real block matrix A with the field x of Field.
+  double Pairing(const mfem::HypreParMatrix &A, double et, double en) const
+  {
+    const auto x = Field(et, en);
+    Vector y(x.Size());
+    A.Mult(x, y);
+    return linalg::Dot(Mpi::World(), x, y);
   }
 };
 // Exact mode index of the TM0 mode of a parallel plate guide with a PEC plate at y = 0, a
@@ -663,6 +684,119 @@ SolveParallelPlateMode(double t, double d, double freq_ghz, double n_target,
   REQUIRE(ksp);
   return {mode_solver.GetPropagationConstant(0) / omega, ksp->NumTotalMult(),
           ksp->NumTotalMultIterations()};
+}
+
+// The modes of a cross-section solved through the 2D BoundaryModeOperator path of the
+// BoundaryMode driver, with a sparse direct or p-multigrid (mg_max_levels > 1)
+// preconditioner: their propagation constants, whether each gains energy along the guide
+// (ModeEigenSolver::GainsEnergy), and the numbers of linear solves and iterations.
+struct RectangleModes
+{
+  std::vector<std::complex<double>> kn;
+  std::vector<bool> gains_energy;
+  int num_solves, num_iterations;
+};
+
+// The two modes nearest to the shift target kₙ = omega n_target of the cross-section of a
+// serial 2D mesh, with lengths in m, of a guide filled with one material of attribute 1
+// (vacuum, or as configured) at freq_ghz, with the boundary conditions configured, of the
+// given order.
+RectangleModes SolveCrossSectionModes(std::unique_ptr<mfem::Mesh> serial_mesh,
+                                      const std::function<void(IoData &)> &configure,
+                                      double freq_ghz, double n_target, int order,
+                                      int mg_max_levels, bool pc_mat_real)
+{
+  constexpr double tol = 1.0e-10;
+  constexpr int num_modes = 2;
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(Units(1.0, 1.0));
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.model.L0 = 1.0;
+  iodata.model.Lc = 1.0;
+  iodata.domains.materials.emplace_back().attributes = {1};
+  configure(iodata);
+  iodata.solver.order = order;
+  iodata.solver.boundary_mode.freq = freq_ghz;
+  iodata.solver.boundary_mode.n = num_modes;
+  iodata.solver.boundary_mode.tol = tol;
+  iodata.solver.linear.tol = tol;
+  iodata.solver.linear.max_it = 200;
+  iodata.solver.linear.mg_max_levels = mg_max_levels;
+  iodata.solver.linear.pc_mat_real = pc_mat_real;
+
+  iodata.NondimensionalizeInputs(serial_mesh);
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
+  iodata.CheckConfiguration();
+
+  MaterialOperator mat_op(iodata, *mesh.back());
+  BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+  const int nd_size = mode_op.GetNDTrueVSize();
+  mfem::Array<int> dbc_tdof_list;
+  dbc_tdof_list.Append(mode_op.GetNDDbcTDofLists().back());
+  for (auto tdof : mode_op.GetH1DbcTDofLists().back())
+  {
+    dbc_tdof_list.Append(nd_size + tdof);
+  }
+  ModeEigenSolver mode_solver(mode_op, dbc_tdof_list, num_modes, 16, tol,
+                              EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
+                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0);
+  const double omega =
+      2.0 * std::numbers::pi *
+      iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  const double kn_target = omega * n_target;
+  auto result = mode_solver.Solve(omega, -kn_target * kn_target);
+  REQUIRE(result.num_converged >= num_modes);
+  RectangleModes modes;
+  for (int i = 0; i < num_modes; i++)
+  {
+    modes.kn.push_back(mode_solver.GetPropagationConstant(i));
+    modes.gains_energy.push_back(mode_solver.GainsEnergy(modes.kn.back()));
+  }
+  const auto *ksp = mode_solver.GetLinearSolver();
+  REQUIRE(ksp);
+  modes.num_solves = ksp->NumTotalMult();
+  modes.num_iterations = ksp->NumTotalMultIterations();
+  return modes;
+}
+
+// The modes of SolveCrossSectionModes for the cross-section 0 < x < W, 0 < y < H, W = 1 m
+// and H = 0.5 m, at 0.5 GHz (the free-space wavenumber k = omega, in 1/m), on a mesh of
+// n x n / 2 quadrilaterals. MakeCartesian2D boundary attributes: bottom = 1, right = 2,
+// top = 3, left = 4.
+constexpr double rectangle_freq_ghz = 0.5;
+RectangleModes
+SolveRectangleCrossSectionModes(const std::function<void(IoData &)> &configure,
+                                double n_target, int order, int n, int mg_max_levels,
+                                bool pc_mat_real)
+{
+  constexpr double W = 1.0, H = 0.5;
+  return SolveCrossSectionModes(std::make_unique<mfem::Mesh>(mfem::Mesh::MakeCartesian2D(
+                                    n, n / 2, mfem::Element::QUADRILATERAL, false, W, H)),
+                                configure, rectangle_freq_ghz, n_target, order,
+                                mg_max_levels, pc_mat_real);
+}
+
+// PEC plates at y = 0 and y = H and absorbing boundaries of the given order at x = 0 and
+// x = W (the cross-section of test::ExactAbsorbingParallelPlateKn).
+std::function<void(IoData &)> AbsorbingParallelPlate(int abc_order)
+{
+  return [abc_order](IoData &iodata)
+  {
+    iodata.boundaries.pec.attributes = {1, 3};
+    iodata.boundaries.farfield.attributes = {2, 4};
+    iodata.boundaries.farfield.order = abc_order;
+  };
+}
+
+// Whether a propagation constant is within the relative tolerance of the expected one.
+bool HasMode(const std::vector<std::complex<double>> &kn, std::complex<double> kn_expected,
+             double rtol)
+{
+  return std::ranges::any_of(
+      kn,
+      [&](auto k) { return std::abs(k - kn_expected) <= rtol * std::abs(kn_expected); });
 }
 
 }  // namespace
@@ -945,6 +1079,36 @@ TEST_CASE("ModeEigenSolver Conductivity adds loss", "[boundarymodeoperator][Seri
   CHECK_THAT(cond_reduced.kn[0].imag(), WithinAbs(cond_result.kn[0].imag(), 1.0e-8));
 }
 
+TEST_CASE("ModeEigenSolver reduced solve with second-order absorbing boundaries",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The second-order absorbing boundary terms make B depend on frequency, and the reduced
+  // model projects its frequency-independent part and the components of the terms
+  // separately, as for A. The first reduced solve after training falls back to the exact
+  // solve, whose mode enriches the basis, so that the second one is accepted, with the mode
+  // of the exact solve.
+  auto configure_farfield = [](IoData &iodata)
+  {
+    iodata.boundaries.pec.attributes = {1, 3};
+    iodata.boundaries.farfield.attributes = {2, 4};
+    iodata.boundaries.farfield.order = 2;
+  };
+  auto exact = SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure_farfield);
+  auto reduced =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure_farfield, true, 2);
+  REQUIRE(exact.num_converged >= 1);
+  REQUIRE(reduced.final_kn.size() == 1);
+  CAPTURE(exact.kn[0], reduced.final_kn[0], reduced.reduced_stats.exact_solves,
+          reduced.reduced_stats.fallbacks, reduced.reduced_stats.worst_residual,
+          reduced.reduced_tol);
+  CHECK(exact.kn[0].imag() < -1.0e-6 * exact.kn[0].real());
+  CHECK(reduced.reduced_stats.fallbacks == 1);
+  CHECK(reduced.reduced_stats.reduced_solves == 1);
+  CHECK(reduced.final_reduced_backward_errors[0] <= reduced.reduced_tol);
+  CHECK_THAT(reduced.final_kn[0].real(), WithinRel(exact.kn[0].real(), 1.0e-6));
+  CHECK_THAT(reduced.final_kn[0].imag(), WithinRel(exact.kn[0].imag(), 1.0e-4));
+}
+
 TEST_CASE("ModeEigenSolver p-multigrid preconditioning", "[boundarymodeoperator][Serial]")
 {
   // The H1 block of the multigrid preconditioner is negative definite (the diffusion term
@@ -1168,6 +1332,212 @@ TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
   CHECK_THAT(pair_n.imag(), WithinRel(-expected, 1.0e-12));
 }
 
+TEST_CASE("ModeEigenSolver absorbing boundaries of first and second order",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // For m = 0 and m = 1, the modes Eₓ = 0 of test::ExactAbsorbingParallelPlateKn.
+  // For m = 0, Eₙ = 0, and for m = 1, Eₙ varies along the absorbing boundaries, so
+  // that the boundary terms of the second-order condition couple it to the in-plane
+  // field. For m = 1, the mode Hₓ = 0 of the second-order condition is that of the
+  // first-order condition. The two conditions give modes 1e-2 apart, and the
+  // discretization error of these modes is less than 1e-7.
+  const int abc_order = GENERATE(1, 2);
+  const double omega =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(rectangle_freq_ghz);
+  for (int m : {0, 1})
+  {
+    // The target is the real part of the exact mode.
+    const auto kn_exact =
+        test::ExactAbsorbingParallelPlateKn(1.0, 0.5, omega, m, abc_order);
+    const auto kn_other =
+        test::ExactAbsorbingParallelPlateKn(1.0, 0.5, omega, m, 3 - abc_order);
+    const auto modes = SolveRectangleCrossSectionModes(
+        AbsorbingParallelPlate(abc_order), kn_exact.real() / omega, 3, 16, 1, false);
+    CAPTURE(abc_order, m, omega, modes.kn, kn_exact, kn_other);
+    CHECK(HasMode(modes.kn, kn_exact, 1.0e-6));
+    CHECK(std::abs(kn_other - kn_exact) > 1.0e-2 * std::abs(kn_exact));
+    if (m > 0 && abc_order > 1)
+    {
+      CHECK(HasMode(modes.kn, kn_other, 1.0e-6));
+    }
+  }
+}
+
+TEST_CASE("ModeEigenSolver multigrid preconditioners of second-order absorbing boundaries",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The p-multigrid preconditioners of the in-plane (ND) and out-of-plane (H1) blocks, and
+  // their coupling, have the terms of the second-order absorbing boundaries of the system
+  // matrix (or their magnitudes, for the real-valued preconditioner), for the modes of the
+  // previous test with m = 1 on a coarser mesh, compared to the solution with the sparse
+  // direct preconditioner (here 70 to 80 iterations per solve, and 60 to 70 with
+  // first-order absorbing boundaries). The modes agree to 1e-6, as in the p-multigrid test
+  // above: the eigenvalue solve gives the lossier mode only to about 1e-8 here, depending
+  // on the partition and the platform.
+  const double omega =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(rectangle_freq_ghz);
+  const double n_target =
+      test::ExactAbsorbingParallelPlateKn(1.0, 0.5, omega, 1, 2).real() / omega;
+  const auto ref =
+      SolveRectangleCrossSectionModes(AbsorbingParallelPlate(2), n_target, 2, 8, 1, false);
+  for (bool pc_mat_real : {false, true})
+  {
+    const auto modes = SolveRectangleCrossSectionModes(AbsorbingParallelPlate(2), n_target,
+                                                       2, 8, 2, pc_mat_real);
+    CAPTURE(pc_mat_real, modes.kn, ref.kn, modes.num_solves, modes.num_iterations);
+    REQUIRE(modes.num_solves > 0);
+    CHECK(modes.num_iterations <= 100 * modes.num_solves);
+    for (const auto &kn : ref.kn)
+    {
+      CHECK(HasMode(modes.kn, kn, 1.0e-6));
+    }
+  }
+}
+
+TEST_CASE("ModeEigenSolver slow modes on second-order absorbing edges",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // A slab of permittivity 11.45 and thickness d = 3 mm on a PMC plane (half of a symmetric
+  // slab), between PEC sides, under an absorbing boundary 2 mm above it, at 7 GHz: its TE0
+  // mode, with E along the slab and the effective index 2.71 of the open slab, above √2,
+  // loses energy along the guide with the first-order absorbing boundary condition, and
+  // gains it with the second-order one, which is then not passive on the edge
+  // (Im{kₙ} > 0). ModeEigenSolver::GainsEnergy, for the warnings of the BoundaryMode driver
+  // and of wave ports, flags only the latter.
+  constexpr double W = 1.0e-3, H = 5.0e-3, d = 3.0e-3, freq_ghz = 7.0, n_target = 2.7;
+  const double k0 =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+  for (int abc_order : {1, 2})
+  {
+    auto serial_mesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian2D(2, 10, mfem::Element::QUADRILATERAL, false, W, H));
+    mfem::Vector center(2);
+    for (int e = 0; e < serial_mesh->GetNE(); e++)
+    {
+      serial_mesh->GetElementCenter(e, center);
+      serial_mesh->SetAttribute(e, (center(1) < d) ? 1 : 2);
+    }
+    serial_mesh->SetAttributes();
+    const auto modes = SolveCrossSectionModes(
+        std::move(serial_mesh),
+        [&](IoData &iodata)
+        {
+          iodata.domains.materials[0].epsilon_r.s = {11.45, 11.45, 11.45};
+          iodata.domains.materials.emplace_back().attributes = {2};
+          iodata.boundaries.pec.attributes = {2, 4};
+          iodata.boundaries.farfield.attributes = {3};
+          iodata.boundaries.farfield.order = abc_order;
+        },
+        freq_ghz, n_target, 3, 1, false);
+    const std::vector<int> gains(modes.gains_energy.begin(), modes.gains_energy.end());
+    CAPTURE(abc_order, modes.kn, gains);
+    const auto te0 =
+        std::ranges::max_element(modes.kn, {}, [](auto kn) { return kn.real(); });
+    REQUIRE(te0->real() > std::sqrt(2.0) * k0);
+    CHECK((te0->imag() > 0.0) == (abc_order > 1));
+    CHECK(gains[std::distance(modes.kn.begin(), te0)] == (abc_order > 1));
+  }
+}
+
+TEST_CASE("ModeEigenSolver anisotropic permeability",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The in-plane terms of the mode eigenproblem come from the in-plane magnetic field, so
+  // they have the in-plane inverse permeability rotated by 90 degrees. In the PEC rectangle
+  // of SolveRectangleCrossSectionModes with μ = diag(μx, μy, μz), the mode with E along y,
+  // varying along x, has kₙ² = μx (k₀² - (π/W)²/μz), and that with E along x, varying along
+  // y, kₙ² = μy (k₀² - (π/H)²/μz). With the uniaxial μ = diag(μₜ, μₜ, μz), the TM11 mode
+  // has kₙ² = μₜ k₀² - (π/W)² - (π/H)², independent of μz. Without the rotation, the modes
+  // of μ = diag(2, 3, 1) are those of diag(3, 2, 1), 22% and 18% away. The p-multigrid
+  // preconditioner, with the rotated inverse permeability as well, gives the modes of the
+  // sparse direct one (here in at most 86 iterations per solve, and 123 without the
+  // rotation in the preconditioner).
+  constexpr double W = 1.0, H = 0.5;
+  const double k0 =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(rectangle_freq_ghz);
+  struct Mode
+  {
+    std::array<double, 3> mu;
+    double kn2;
+  };
+  const Mode modes[] = {
+      {{2.0, 3.0, 1.0}, 2.0 * (k0 * k0 - std::pow(std::numbers::pi / W, 2))},
+      {{2.0, 3.0, 1.0}, 3.0 * (k0 * k0 - std::pow(std::numbers::pi / H, 2))},
+      {{1.5, 1.5, 1.0},
+       1.5 * k0 * k0 - std::pow(std::numbers::pi / W, 2) -
+           std::pow(std::numbers::pi / H, 2)}};
+  for (const auto &mode : modes)
+  {
+    auto configure = [&](IoData &iodata)
+    {
+      iodata.domains.materials[0].mu_r.s = mode.mu;
+      iodata.boundaries.pec.attributes = {1, 2, 3, 4};
+    };
+    const double kn_exact = std::sqrt(mode.kn2);
+    const auto direct =
+        SolveRectangleCrossSectionModes(configure, kn_exact / k0, 3, 16, 1, false);
+    CAPTURE(mode.mu, kn_exact, direct.kn);
+    CHECK(HasMode(direct.kn, kn_exact, 1.0e-6));
+
+    const auto coarse =
+        SolveRectangleCrossSectionModes(configure, kn_exact / k0, 2, 8, 1, false);
+    const auto multigrid =
+        SolveRectangleCrossSectionModes(configure, kn_exact / k0, 2, 8, 2, false);
+    CAPTURE(coarse.kn, multigrid.kn, multigrid.num_solves, multigrid.num_iterations);
+    CHECK(multigrid.num_iterations <= 100 * multigrid.num_solves);
+    for (const auto &kn : coarse.kn)
+    {
+      CHECK(HasMode(multigrid.kn, kn, 1.0e-8));
+    }
+  }
+}
+
+TEST_CASE("ModeOperatorModel real preconditioner of second-order absorbing boundaries",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The absorbing side x = W of RectangleModeModel runs along the substrate, of light speed
+  // 1/2, and the vacuum above it, of light speed 1. In the real-valued preconditioner
+  // Ar + Ai of A(ω, σ), the second-order terms keep their coefficient up to the passivity
+  // limit kₙ = √2 ω of the vacuum, and above it take the magnitude |β| instead: for the
+  // unit field ŷ tangential to the side, the edge mass -(0.5 0.25 + 0.75) H of the
+  // component -[M, 0; Gᵀ, 0] (see the second-order components test), whose coefficient
+  // σβ adds Im{σβ} times it to Ar + Ai, has σ|β| times it instead, positive as the ND
+  // stiffness.
+  using RMM = RectangleModeModel;
+  RMM rect(
+      [](IoData &iodata)
+      {
+        iodata.boundaries.farfield.attributes = {2};
+        iodata.boundaries.farfield.order = 2;
+      });
+  const double omega = 2.0 * std::numbers::pi *
+                       rect.GetUnits().Nondimensionalize<Units::ValueType::FREQUENCY>(1.0);
+  const std::complex<double> beta = 0.5 / (std::complex<double>(0.0, 1.0) * omega);
+  const double edge_mass = -(0.5 * 0.25 + 0.75) * RMM::H;
+  for (double n : {1.4, 1.5})
+  {
+    CAPTURE(n);
+    const double sigma = -n * n * omega * omega;
+    std::unique_ptr<mfem::HypreParMatrix> P;
+    rect.GetModel().AddSecondOrderFarfieldRealPreconditioner(omega, sigma, P);
+    if (n < std::sqrt(2.0))
+    {
+      CHECK(!P);
+      continue;
+    }
+    REQUIRE(P);
+    const double before = (sigma * beta).imag() * edge_mass;
+    const double after = sigma * std::abs(beta) * edge_mass;
+    CHECK(before < 0.0);
+    CHECK(after > 0.0);
+    CHECK_THAT(rect.Pairing(*P, 1.0, 0.0), WithinRel(after - before, 1.0e-12));
+  }
+}
+
 TEST_CASE("ModeOperatorModel impedance damping with an anisotropic absorbing boundary",
           "[boundarymodeoperator][Serial][Parallel]")
 {
@@ -1287,7 +1657,9 @@ TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
 {
   // Absorbing edges at x = 0 and x = W neighbor the substrate and vacuum. A lossless
   // Lorentz substrate at real ω is the constant material ε(ω), whose absorbing condition
-  // uses √(ε(ω)/μ), so the two assemble the same mode operator.
+  // uses √(ε(ω)/μ) (and, for the second-order condition, the light speed of ε(ω)), so the
+  // two assemble the same mode operator A, and the same B.
+  const int order = GENERATE(1, 2);
   const double eps_inf = 4.0, w0 = 3.0, delta = 0.7;
   const double omega = 2.0;
   const double eps = eps_inf + delta * w0 * w0 / (w0 * w0 - omega * omega);
@@ -1298,7 +1670,7 @@ TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
       const double rate = electromagnetics::c0_ / iodata.model.L0;  // Rates in rad/s
       iodata.problem.type = ProblemType::DRIVEN;
       iodata.boundaries.farfield.attributes = {2, 4};
-      iodata.boundaries.farfield.order = 1;
+      iodata.boundaries.farfield.order = order;
       auto &substrate = iodata.domains.materials[0];
       if (dispersive)
       {
@@ -1316,6 +1688,7 @@ TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
                    .EvaluateFrequencyDependentPermittivity(0, {0.0, omega})
                    .real(),
                WithinRel(eps, 1.0e-12));
+  CHECK(dispersive.GetModel().HasFrequencyDependentB() == (order > 1));
   const double sigma = -2.0e-1;
   const auto A = dispersive.GetModel().Assemble(omega, sigma);
   const auto B = constant.GetModel().Assemble(omega, sigma);
@@ -1329,6 +1702,30 @@ TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
   const double norm = linalg::Norml2(Mpi::World(), z);
   z -= y;
   CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
+
+  // The frequency-dependent part of B, the sum of the components scaled by their
+  // coefficients in B.
+  auto ApplyB = [&](const RectangleModeModel &rect, ComplexVector &bx)
+  {
+    ComplexVector t(bx.Size());
+    t.UseDevice(true);
+    bx = 0.0;
+    for (const auto &component : rect.GetModel().GetComponents())
+    {
+      const auto coeff = rect.GetModel().EvaluateBCoefficient(component, omega);
+      if (coeff != 0.0)
+      {
+        component.op->Mult(x, t);
+        bx.Add(coeff, t);
+      }
+    }
+  };
+  ApplyB(dispersive, y);
+  ApplyB(constant, z);
+  const double norm_b = linalg::Norml2(Mpi::World(), z);
+  CHECK((norm_b > 0.0) == (order > 1));
+  z -= y;
+  CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm_b);
 }
 
 TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",
@@ -1337,9 +1734,15 @@ TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",
   // Each component, and so the assembled matrix, must decouple the essential DOFs from the
   // rest of the system, with a unit diagonal from the constant component. This includes
   // the ND/H1 coupling blocks, which appear in a component without their transposed
-  // counterpart (Atn in the constant and -Btn in the shift component).
-  RectangleModeModel rect([](IoData &iodata)
-                          { iodata.boundaries.pec.attributes = {1, 4}; });
+  // counterpart (Atn in the constant and -Btn in the shift component, and those of the
+  // second-order absorbing boundary, on the side x = W, which ends on a PEC side).
+  RectangleModeModel rect(
+      [](IoData &iodata)
+      {
+        iodata.boundaries.pec.attributes = {1, 4};
+        iodata.boundaries.farfield.attributes = {2};
+        iodata.boundaries.farfield.order = 2;
+      });
   MPI_Comm comm = Mpi::World();
   const auto &dbc_tdof_list = rect.GetDbcTDofList();
   int num_dbc = dbc_tdof_list.Size();
@@ -1446,6 +1849,59 @@ TEST_CASE("ModeOperatorModel boundary components on processes without the bounda
     CHECK(pair_n.imag() == 0.0);
   }
   CHECK(indices == std::vector<int>{0, 1});
+}
+
+TEST_CASE("ModeOperatorModel second-order absorbing boundary components",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The second-order absorbing boundary on the side x = W, which only the last process has
+  // elements on, adds the components -[0, G; 0, D] and -[M, 0; Gᵀ, 0], with coefficients β
+  // and σβ in A, and -β in B for the latter, where β = 1/(2iω). With the coefficient
+  // μ⁻¹c₀ = 1/2 along the substrate (y < H/4) and 1 above, a unit field ŷ, tangential to
+  // the side, gives -(H/8 + 3H/4) for M, and a constant out-of-plane field gives zero (no
+  // tangential derivative along the side).
+  using RMM = RectangleModeModel;
+  RMM rect(
+      [](IoData &iodata)
+      {
+        iodata.boundaries.farfield.attributes = {2};
+        iodata.boundaries.farfield.order = 2;
+      });
+  const std::complex<double> omega = 1.0e-2,
+                             beta = 0.5 / (std::complex<double>(0.0, 1.0) * omega);
+  constexpr double sigma = -2.0e-4;
+  CHECK(rect.GetModel().HasFrequencyDependentB());
+  int num_components = 0;
+  for (const auto &component : rect.GetModel().GetComponents())
+  {
+    const bool shift =
+        (component.type == mode_assembly::CoefficientType::SECOND_ORDER_FARFIELD_SHIFT);
+    if (!shift && component.type != mode_assembly::CoefficientType::SECOND_ORDER_FARFIELD)
+    {
+      CHECK(rect.GetModel().EvaluateBCoefficient(component, omega) == 0.0);
+      continue;
+    }
+    CAPTURE(shift);
+    num_components++;
+    CHECK(component.index == 0);
+    CHECK(rect.GetModel().EvaluateCoefficient(component, omega, sigma) ==
+          (shift ? sigma * beta : beta));
+    CHECK(rect.GetModel().EvaluateBCoefficient(component, omega) == (shift ? -beta : 0.0));
+    const auto pair_t = rect.Pairing(component, 1.0, 0.0);
+    const auto pair_n = rect.Pairing(component, 0.0, 1.0);
+    if (shift)
+    {
+      CHECK_THAT(pair_t.real(), WithinRel(-(0.5 * 0.25 + 0.75) * RMM::H, 1.0e-12));
+    }
+    else
+    {
+      CHECK_THAT(pair_t.real(), WithinAbs(0.0, 1.0e-12));
+    }
+    CHECK(pair_t.imag() == 0.0);
+    CHECK_THAT(pair_n.real(), WithinAbs(0.0, 1.0e-12));
+    CHECK(pair_n.imag() == 0.0);
+  }
+  CHECK(num_components == 2);
 }
 
 TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Parallel]")
@@ -2209,6 +2665,139 @@ TEST_CASE("Boundary mode Poynting power is the time average",
   const std::complex<double> expected = 0.5 * std::conj(kn) / omega * e * e;
   CHECK_THAT(P.real(), WithinRel(expected.real(), 1.0e-12));
   CHECK_THAT(P.imag(), WithinRel(expected.imag(), 1.0e-12));
+}
+
+TEST_CASE("BoundaryModeOperator rejects multiple boundary conditions on an attribute",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // As in the 3D operators, no boundary attribute may have more than one of the boundary
+  // conditions of the 2D mode solve, whose terms would otherwise all be added on it.
+  // MakeCartesian2D boundary attributes: bottom = 1, right = 2, top = 3, left = 4.
+  auto Construct = [](const std::function<void(IoData &)> &configure_bcs)
+  {
+    MPI_Comm comm = Mpi::World();
+    IoData iodata(Units(1.0, 1.0));
+    iodata.problem.type = ProblemType::BOUNDARYMODE;
+    iodata.model.Lc = 1.0;
+    iodata.domains.materials.emplace_back().attributes = {1};
+    iodata.boundaries.pec.attributes = {1, 3};
+    configure_bcs(iodata);
+    iodata.solver.order = 1;
+    iodata.solver.boundary_mode.freq = 1.0;
+    iodata.solver.boundary_mode.n = 1;
+    iodata.CheckConfiguration();
+    auto serial = mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::QUADRILATERAL);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, serial)));
+    MaterialOperator mat_op(iodata, *mesh.back());
+    BoundaryModeOperator mode_op(iodata, mesh, mat_op);
+  };
+  auto Impedance = [](IoData &iodata, std::vector<int> attributes)
+  {
+    auto &data = iodata.boundaries.impedance.emplace_back();
+    data.attributes = std::move(attributes);
+    data.Rs = 50.0;
+  };
+  auto Conductivity = [](IoData &iodata, std::vector<int> attributes)
+  {
+    auto &data = iodata.boundaries.conductivity.emplace_back();
+    data.attributes = std::move(attributes);
+    data.sigma = 5.8e7;
+  };
+  auto RationalImpedance = [](IoData &iodata, std::vector<int> attributes)
+  {
+    auto &data = iodata.boundaries.rational_impedance.emplace_back();
+    data.attributes = std::move(attributes);
+    data.num = {1.0e-12, 50.0};
+    data.den = {1.0};
+  };
+  const auto multiple_bc = Catch::Matchers::ContainsSubstring(
+      "Boundary attribute 2 should not be specified with multiple BC!");
+
+  // One boundary condition on each attribute, the same PEC attribute given as "PEC" and
+  // "WavePortPEC", and "WavePortPEC" overriding another boundary condition, as in the mode
+  // solve of a wave port.
+  CHECK_NOTHROW(Construct(
+      [&](IoData &iodata)
+      {
+        iodata.boundaries.auxpec.attributes = {1};
+        Impedance(iodata, {2});
+        iodata.boundaries.farfield.attributes = {4};
+      }));
+  CHECK_NOTHROW(Construct(
+      [&](IoData &iodata)
+      {
+        iodata.boundaries.auxpec.attributes = {2, 4};
+        Impedance(iodata, {2});
+        Conductivity(iodata, {4});
+      }));
+  CHECK_NOTHROW(Construct(
+      [&](IoData &iodata)
+      {
+        Conductivity(iodata, {2});
+        RationalImpedance(iodata, {4});
+      }));
+
+  // The same attribute in two boundary conditions.
+  const std::vector<std::function<void(IoData &)>> configurations = {
+      [&](IoData &iodata)
+      {
+        Impedance(iodata, {2});
+        iodata.boundaries.farfield.attributes = {2};
+      },
+      [&](IoData &iodata)
+      {
+        iodata.boundaries.pec.attributes = {2};
+        Conductivity(iodata, {2, 4});
+      },
+      [&](IoData &iodata)
+      {
+        Conductivity(iodata, {2});
+        RationalImpedance(iodata, {2});
+      },
+      [&](IoData &iodata)
+      {
+        RationalImpedance(iodata, {2});
+        iodata.boundaries.farfield.attributes = {2, 4};
+      }};
+  for (const auto &configure_bcs : configurations)
+  {
+    CHECK_THROWS_WITH(Construct(configure_bcs), multiple_bc);
+  }
+}
+
+TEST_CASE("BoundaryMode WavePortPEC overrides other boundary conditions",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // "WavePortPEC" on the sides x = 0 and x = W of the rectangle of
+  // SolveRectangleCrossSectionModes, which are also impedance and conductivity boundaries,
+  // makes them PEC, as in the mode solve of a wave port: the TE10 mode is that of the PEC
+  // rectangle.
+  const double k0 =
+      2.0 * std::numbers::pi *
+      Units(1.0, 1.0).Nondimensionalize<Units::ValueType::FREQUENCY>(rectangle_freq_ghz);
+  const double kn_exact = std::sqrt(k0 * k0 - std::numbers::pi * std::numbers::pi);
+  const auto pec = SolveRectangleCrossSectionModes(
+      [](IoData &iodata) { iodata.boundaries.pec.attributes = {1, 2, 3, 4}; },
+      kn_exact / k0, 2, 8, 1, false);
+  const auto overridden = SolveRectangleCrossSectionModes(
+      [](IoData &iodata)
+      {
+        iodata.boundaries.pec.attributes = {1, 3};
+        iodata.boundaries.auxpec.attributes = {2, 4};
+        auto &impedance = iodata.boundaries.impedance.emplace_back();
+        impedance.attributes = {2};
+        impedance.Rs = 50.0;
+        auto &conductivity = iodata.boundaries.conductivity.emplace_back();
+        conductivity.attributes = {4};
+        conductivity.sigma = 5.8e7;
+      },
+      kn_exact / k0, 2, 8, 1, false);
+  CAPTURE(kn_exact, pec.kn, overridden.kn);
+  const auto te10 = std::ranges::find_if(pec.kn, [&](auto kn)
+                                         { return HasMode({kn}, kn_exact, 1.0e-4); });
+  REQUIRE(te10 != pec.kn.end());
+  CHECK(HasMode(overridden.kn, *te10, 1.0e-10));
 }
 
 }  // namespace palace

@@ -67,14 +67,18 @@ boundary conditions, can be applied using the `"Absorbing"` boundary keyword und
 first-order absorbing boundary condition is a special case of the above impedance boundary
 and is available for eigenmode or frequency or time domain driven simulation types. The
 second-order absorbing boundary condition is only available for frequency domain
-simulations; its boundary curl operator requires a 3D mesh. It neglects the term depending
-on the divergence of the tangential field (see
+simulations; its boundary curl operator requires a 3D mesh, except in the 2D eigenvalue
+problems of [mode analysis](problem.md#Mode-analysis-problems) and of wave ports, where it
+applies to the field of the mode on the edges of the cross-section. It neglects the term
+depending on the divergence of the tangential field (see
 [Other boundary conditions](../reference.md#Other-boundary-conditions)), so that it only
 improves on the first-order condition for TE fields, with the electric field tangential to
 the boundary: for TM plane waves, the two conditions are the same. It is also not passive for
 fields whose tangential wavenumber on the boundary exceeds ``\sqrt{2}`` times the
-wavenumber in the material, like evanescent fields of guided modes below the light line or
-of Floquet periodic structures. *Palace* warns when the part of the
+wavenumber in the material, like evanescent fields of guided modes below the light line, as
+on the edges of a cross-section where the effective index of a mode exceeds ``\sqrt{2}``
+times the refractive index of the material, or of Floquet periodic structures. *Palace*
+warns when the part of the
 [Floquet wave vector](../config/reference.md#config-boundaries-periodic-floquetwavevector)
 tangential to an absorbing boundary exceeds this limit at the lowest frequency of the
 simulation.
@@ -272,7 +276,12 @@ for implementation details.
     intersect the wave port boundary will be considered as PEC in the 2D boundary mode
     analysis. Impedance (`"Impedance"`), absorbing (`"Absorbing"`), and conductivity
     (`"Conductivity"`) boundaries are treated as Robin boundary conditions in the wave port
-    eigenvalue problem, matching the standalone boundary mode solver.
+    eigenvalue problem, matching the standalone boundary mode solver. With a second-order
+    absorbing boundary condition, the port mode has its term on the edges of the cross-section,
+    but the wave port boundary condition does not have the term of the second-order condition
+    along the edges where the port meets the absorbing boundary: part of the port mode is
+    reflected there, the more the larger its field on these edges, and *Palace* warns about
+    such ports. The first-order condition has no such term.
     [`config["Boundaries"]["WavePortPEC"`](../config/reference.md#config-boundaries-waveportpec)
     allows forcing specific boundary attributes to act as PEC in the wave port solve,
     overriding any other boundary condition (e.g. impedance or absorbing) that may be

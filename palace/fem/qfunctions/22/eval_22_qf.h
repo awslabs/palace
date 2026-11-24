@@ -11,7 +11,8 @@
 // QFunctions for pointwise evaluation of derived field quantities at arbitrary points
 // of 2D volume elements. No quadrature weighting is applied. H(curl):
 // E = adj(J)^T / detJ u. The 2D magnetic flux density B is scalar-valued (out of
-// plane), with H_z = mu^{-1}_{zz} B_z supplied through a scalar coefficient context.
+// plane), with H_z = mu^{-1}_{zz} B_z supplied through a scalar coefficient context, except
+// for the in-plane B_t of a boundary mode (f_eval_mode_sn_22).
 
 // Electric energy density: v = 0.5 * scale * (eps_r E) . E.
 CEED_QFUNCTION(f_eval_energy_e_22)(void *__restrict__ ctx_, CeedInt Q,
@@ -77,9 +78,10 @@ CEED_QFUNCTION(f_eval_poynting_22)(void *__restrict__ ctx_, CeedInt Q,
 }
 
 // Boundary-mode normal Poynting density on a 2D cross-section: v = scale * Re{-Ex Hy* +
-// Ey Hx*}, with Ht = mu^{-1}_{zz} Bt and no 1/2 factor, as in the 3D
-// PoyntingVectorCoefficient. This qfunction is applied separately to real and imaginary
-// parts and accumulated.
+// Ey Hx*}, with Ht = mu^{-1} Bt for the in-plane (2 x 2) inverse permeability mu^{-1}
+// supplied through the coefficient context and the in-plane B, an H(curl) field, and no
+// 1/2 factor, as in the 3D PoyntingVectorCoefficient. This qfunction is applied separately
+// to real and imaginary parts and accumulated.
 CEED_QFUNCTION(f_eval_mode_sn_22)(void *__restrict__ ctx_, CeedInt Q,
                                   const CeedScalar *const *in, CeedScalar *const *out)
 {
@@ -91,14 +93,15 @@ CEED_QFUNCTION(f_eval_mode_sn_22)(void *__restrict__ ctx_, CeedInt Q,
   {
     const CeedScalar ue_loc[2] = {u_e[i + Q * 0], u_e[i + Q * 1]};
     const CeedScalar ub_loc[2] = {u_b[i + Q * 0], u_b[i + Q * 1]};
-    CeedScalar J_loc[4], adjJt_loc[4], E[2], B[2];
+    CeedScalar J_loc[4], adjJt_loc[4], E[2], B[2], invmu[4], H[2];
     MatUnpack22(J + i, Q, J_loc);
     const CeedScalar detJ = AdjJt22<true>(J_loc, adjJt_loc);
     MultBx22(adjJt_loc, ue_loc, E);
     MultBx22(adjJt_loc, ub_loc, B);
-    const CeedScalar invmu = CoeffUnpack1(ctx + 1, (CeedInt)attr[i]);
-    const CeedScalar s = ctx[0].second * invmu / (detJ * detJ);
-    v[i] = s * (-E[0] * B[1] + E[1] * B[0]);
+    CoeffUnpack2(ctx + 1, (CeedInt)attr[i], invmu);
+    MultBx22(invmu, B, H);
+    const CeedScalar s = ctx[0].second / (detJ * detJ);
+    v[i] = s * (-E[0] * H[1] + E[1] * H[0]);
   }
   return 0;
 }

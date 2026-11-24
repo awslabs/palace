@@ -267,6 +267,41 @@ SurfaceTerms::GetExtraSystemBdrMassTermScale(int i, std::complex<double> omega) 
                                         omega);
 }
 
+int SurfaceTerms::GetNumSecondOrderFarfieldTerms() const
+{
+  return (farfield_op.GetOrder() > 1 && farfield_op.GetAttrList().Size() > 0)
+             ? 1 + static_cast<int>(farfield_op.NumDispersiveMaterials())
+             : 0;
+}
+
+void SurfaceTerms::AddSecondOrderFarfieldTermCoefficients(int i,
+                                                          MaterialPropertyCoefficient &fb,
+                                                          double coeff) const
+{
+  MFEM_ASSERT(i >= 0 && i < GetNumSecondOrderFarfieldTerms(),
+              "Invalid second-order absorbing boundary term!");
+  if (i == 0)
+  {
+    farfield_op.AddCurlCurlBdrCoefficients(coeff, fb);
+  }
+  else
+  {
+    farfield_op.AddDispersiveCurlCurlBdrCoefficients(static_cast<std::size_t>(i - 1), coeff,
+                                                     fb);
+  }
+}
+
+std::complex<double>
+SurfaceTerms::GetSecondOrderFarfieldTermScale(int i, std::complex<double> omega) const
+{
+  MFEM_ASSERT(i >= 0 && i < GetNumSecondOrderFarfieldTerms(),
+              "Invalid second-order absorbing boundary term!");
+  const std::complex<double> beta = 0.5 / (std::complex<double>(0.0, 1.0) * omega);
+  return (i == 0) ? beta
+                  : beta / farfield_op.GetDispersiveScale(static_cast<std::size_t>(i - 1),
+                                                          omega);
+}
+
 std::string SurfaceTerms::GetExtraSystemBdrMassTermLabel(int i) const
 {
   const int num_sigma = static_cast<int>(sigma_terms.size());

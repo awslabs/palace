@@ -113,15 +113,16 @@ void DomainPointFieldEvaluator::Assemble(const Mesh &mesh, const MaterialOperato
     {
       material_ctx_offset = 1;
     }
-    const auto &coeff = (kind == Kind::ENERGY_E)
-                            ? mat_op.GetPermittivityReal()
-                            : ((scalar_magnetic_field || kind == Kind::MODE_SN)
-                                   ? mat_op.GetCurlCurlInvPermeability()
-                                   : mat_op.GetInvPermeability());
+    // The 2D magnetic flux density of ENERGY_M and POYNTING is the out-of-plane B_z, with
+    // the scalar out-of-plane μ⁻¹. The boundary-mode Sn takes the in-plane B_t of the mode
+    // instead, with the in-plane μ⁻¹ tensor: H_t = μ⁻¹ B_t.
+    const bool scalar_coeff =
+        scalar_magnetic_field && kind != Kind::ENERGY_E && kind != Kind::MODE_SN;
+    const auto &coeff = (kind == Kind::ENERGY_E) ? mat_op.GetPermittivityReal()
+                        : scalar_coeff           ? mat_op.GetCurlCurlInvPermeability()
+                                                 : mat_op.GetInvPermeability();
     MaterialPropertyCoefficient coeff_func(mat_op.GetAttributeToMaterial(), coeff);
-    material_ctx_dim =
-        ((scalar_magnetic_field && kind != Kind::ENERGY_E) || kind == Kind::MODE_SN) ? 1
-                                                                                     : dim;
+    material_ctx_dim = scalar_coeff ? 1 : dim;
     auto mat_ctx = ceed::PopulateCoefficientContext(material_ctx_dim, &coeff_func);
     ctx.insert(ctx.end(), mat_ctx.begin(), mat_ctx.end());
   }

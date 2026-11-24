@@ -3,6 +3,7 @@
 
 #include "modeoperatorassembly.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include "fem/bilinearform.hpp"
@@ -12,6 +13,7 @@
 #include "linalg/rap.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfaceterms.hpp"
+#include "utils/communication.hpp"
 
 namespace palace::mode_assembly
 {
@@ -65,26 +67,77 @@ void AddScaledComplex(std::unique_ptr<mfem::HypreParMatrix> &real,
 }
 }  // namespace
 
+mfem::DenseMatrix GetTransverseInvPermeability(const mfem::DenseMatrix &muinv,
+                                               const mfem::Vector *normal)
+{
+  const int dim = muinv.Height();
+  mfem::DenseMatrix nu(dim);
+  if (!normal)
+  {
+    // Rᵀ μ⁻¹ R for R = [0, -1; 1, 0].
+    MFEM_VERIFY(dim == 2 && muinv.Width() == 2,
+                "The transverse inverse permeability of a 2D cross-section needs the 2 x 2 "
+                "in-plane inverse permeability!");
+    nu(0, 0) = muinv(1, 1);
+    nu(0, 1) = -muinv(1, 0);
+    nu(1, 0) = -muinv(0, 1);
+    nu(1, 1) = muinv(0, 0);
+    return nu;
+  }
+  MFEM_VERIFY(
+      dim == 3 && muinv.Width() == 3 && normal->Size() == 3,
+      "The transverse inverse permeability of a cross-section in 3D needs the 3 x 3 "
+      "inverse permeability and a normal!");
+  mfem::Vector n(*normal);
+  n /= n.Norml2();
+  mfem::DenseMatrix N(3), M(3);  // N u = n × u
+  N = 0.0;
+  N(0, 1) = -n(2);
+  N(0, 2) = n(1);
+  N(1, 0) = n(2);
+  N(1, 2) = -n(0);
+  N(2, 0) = -n(1);
+  N(2, 1) = n(0);
+  mfem::Mult(muinv, N, M);
+  mfem::MultAtB(N, M, nu);
+  return nu;
+}
+
+mfem::DenseTensor GetTransverseInvPermeability(const mfem::DenseTensor &muinv,
+                                               const mfem::Vector *normal)
+{
+  mfem::DenseTensor nu(muinv.SizeI(), muinv.SizeJ(), muinv.SizeK());
+  for (int k = 0; k < muinv.SizeK(); k++)
+  {
+    nu(k) = GetTransverseInvPermeability(muinv(k), normal);
+  }
+  return nu;
+}
+
 ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,
                                   const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op)
+                                  const MaterialOperator &mat_op,
+                                  const mfem::Vector *normal)
 {
-  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                         mat_op.GetInvPermeability(), -1.0);
+  MaterialPropertyCoefficient nu_func(
+      mat_op.GetAttributeToMaterial(),
+      GetTransverseInvPermeability(mat_op.GetInvPermeability(), normal), -1.0);
   BilinearForm atn(h1_fespace, nd_fespace);
-  atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(muinv_func);
+  atn.AddDomainIntegrator<MixedVectorGradientIntegrator>(nu_func);
   return {ParOperator(atn.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
               .StealParallelAssemble(),
           nullptr};
 }
 
 ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
-                                  const MaterialOperator &mat_op)
+                                  const MaterialOperator &mat_op,
+                                  const mfem::Vector *normal)
 {
-  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
+  MaterialPropertyCoefficient nu_func(
+      mat_op.GetAttributeToMaterial(),
+      GetTransverseInvPermeability(mat_op.GetInvPermeability(), normal));
   BilinearForm btt(nd_fespace);
-  btt.AddDomainIntegrator<VectorFEMassIntegrator>(muinv_func);
+  btt.AddDomainIntegrator<VectorFEMassIntegrator>(nu_func);
   return {ParOperator(btt.FullAssemble(skip_zeros), nd_fespace).StealParallelAssemble(),
           nullptr};
 }
@@ -166,13 +219,13 @@ ModeOperatorModel::ModeOperatorModel(
     }
     auto Attr = assemble_nd(att);
 
-    MaterialPropertyCoefficient neg_muinv(attr_to_mat, mat_op.GetInvPermeability(), -1.0);
-    if (normal)
-    {
-      neg_muinv.NormalProjectedCoefficient(*normal);
-    }
+    // The diffusion of the out-of-plane component comes from the in-plane part of the curl,
+    // with ν, not the out-of-plane component of μ⁻¹.
+    MaterialPropertyCoefficient neg_nu(
+        attr_to_mat, GetTransverseInvPermeability(mat_op.GetInvPermeability(), normal),
+        -1.0);
     BilinearForm ann(h1_fespace);
-    ann.AddDomainIntegrator<DiffusionIntegrator>(neg_muinv);
+    ann.AddDomainIntegrator<DiffusionIntegrator>(neg_nu);
     // The H1 block is assembled with the opposite sign (negative diffusion), so the London
     // mass, like the surface inductance, enters with a negative coefficient.
     MaterialPropertyCoefficient london_n(n_attr);
@@ -346,6 +399,100 @@ ModeOperatorModel::ModeOperatorModel(
     surface_terms.AddScalarExtraSystemBdrMassTermCoefficients(i, unit_n);
     add_boundary_component(CoefficientType::SURFACE_TERM, i, unit_t, unit_n);
   }
+
+  // Second-order absorbing boundary terms, the components -[0, G; 0, D] and -[M, 0; Gᵀ, 0]
+  // (see ModeOperatorModel), for the terms with boundary elements on any process, and the
+  // largest light speed of the materials next to these boundaries.
+  if (surface_terms.GetNumSecondOrderFarfieldTerms() > 0)
+  {
+    const auto bdr_attr_mat = mat_op.GetBdrAttributeToMaterial();
+    for (auto attr :
+         mat_op.GetCeedBdrAttributes(surface_terms.GetFarfieldOp().GetAttrList()))
+    {
+      if (const int mat = bdr_attr_mat[attr - 1]; mat >= 0)
+      {
+        farfield_light_speed_max =
+            std::max(farfield_light_speed_max, mat_op.GetLightSpeedMax()[mat]);
+      }
+    }
+    Mpi::GlobalMax(1, &farfield_light_speed_max, nd_fespace.GetComm());
+  }
+  for (int i = 0; i < surface_terms.GetNumSecondOrderFarfieldTerms(); i++)
+  {
+    MaterialPropertyCoefficient unit(max_bdr_attr);
+    surface_terms.AddSecondOrderFarfieldTermCoefficients(i, unit, -1.0);
+    bool any = !unit.empty();
+    Mpi::GlobalOr(1, &any, nd_fespace.GetComm());
+    if (!any)
+    {
+      continue;
+    }
+    BilinearForm m(nd_fespace), d(h1_fespace), g(h1_fespace, nd_fespace);
+    if (!unit.empty())
+    {
+      m.AddBoundaryIntegrator<VectorFEMassIntegrator>(unit);
+      d.AddBoundaryIntegrator<DiffusionIntegrator>(unit);
+      g.AddBoundaryIntegrator<MixedVectorGradientIntegrator>(unit);
+    }
+    auto M = assemble_nd(m);
+    auto D = assemble_h1(d);
+    auto G = ParOperator(g.FullAssemble(skip_zeros), h1_fespace, nd_fespace, false)
+                 .StealParallelAssemble();
+    std::unique_ptr<mfem::HypreParMatrix> Gt(G->Transpose());
+    auto [Cr, Ci] =
+        BuildSystemMatrixA(nd_fespace, h1_fespace, dbc_tdof_list, nullptr, nullptr, G.get(),
+                           nullptr, D.get(), nullptr, nullptr, Operator::DIAG_ZERO);
+    components.emplace_back(CoefficientType::SECOND_ORDER_FARFIELD, i, std::move(Cr),
+                            std::move(Ci));
+    auto [Sr, Si] =
+        BuildSystemMatrixA(nd_fespace, h1_fespace, dbc_tdof_list, M.get(), nullptr, nullptr,
+                           nullptr, nullptr, nullptr, Gt.get(), Operator::DIAG_ZERO);
+    components.emplace_back(CoefficientType::SECOND_ORDER_FARFIELD_SHIFT, i, std::move(Sr),
+                            std::move(Si));
+    farfield_lower_blocks.emplace_back(i, std::move(Gt));
+  }
+}
+
+void ModeOperatorModel::AddSecondOrderFarfieldLowerBlock(
+    std::complex<double> omega, double sigma, std::unique_ptr<mfem::HypreParMatrix> &real,
+    std::unique_ptr<mfem::HypreParMatrix> &imag) const
+{
+  for (const auto &[i, block] : farfield_lower_blocks)
+  {
+    AddScaledComplex(real, imag, block.get(), nullptr,
+                     sigma * surface_terms.GetSecondOrderFarfieldTermScale(i, omega));
+  }
+}
+
+void ModeOperatorModel::AddSecondOrderFarfieldRealPreconditioner(
+    std::complex<double> omega, double sigma,
+    std::unique_ptr<mfem::HypreParMatrix> &P) const
+{
+  // Below the passivity limit at the shift, kₙ² = -σ ≤ 2 (ω/c)² for the largest light
+  // speed c next to the boundaries, Ar + Ai keeps the magnitude of the terms of the edges
+  // in the ND block. Above it, the components -[0, G; 0, D] with the coefficient β and
+  // -[M, 0; Gᵀ, 0] with σβ replace Re{c} + Im{c} of their coefficient c in Ar + Ai by |β|
+  // and σ|β|, all four blocks together (with only some of them, the solves need more
+  // iterations than with none).
+  if (farfield_light_speed_max <= 0.0 ||
+      -sigma * farfield_light_speed_max * farfield_light_speed_max <=
+          2.0 * std::norm(omega))
+  {
+    return;
+  }
+  for (const auto &component : components)
+  {
+    const bool shift = (component.type == CoefficientType::SECOND_ORDER_FARFIELD_SHIFT);
+    if (!shift && component.type != CoefficientType::SECOND_ORDER_FARFIELD)
+    {
+      continue;
+    }
+    const auto beta = surface_terms.GetSecondOrderFarfieldTermScale(component.index, omega);
+    const double factor = shift ? sigma : 1.0;
+    const auto coeff = factor * beta;
+    AddScaled(P, component.Ar.get(),
+              factor * std::abs(beta) - (coeff.real() + coeff.imag()));
+  }
 }
 
 std::complex<double>
@@ -368,9 +515,46 @@ ModeOperatorModel::EvaluateCoefficient(const OperatorComponent &component,
       return mat_op.EvaluateFrequencyDependentPermittivityA2(
           static_cast<std::size_t>(component.index),
           std::complex<double>(0.0, 1.0) * omega);
+    case CoefficientType::SECOND_ORDER_FARFIELD:
+      return surface_terms.GetSecondOrderFarfieldTermScale(component.index, omega);
+    case CoefficientType::SECOND_ORDER_FARFIELD_SHIFT:
+      return sigma * surface_terms.GetSecondOrderFarfieldTermScale(component.index, omega);
   }
   MFEM_ABORT("Unknown mode-operator coefficient type!");
   return 0.0;
+}
+
+std::complex<double>
+ModeOperatorModel::EvaluateBCoefficient(const OperatorComponent &component,
+                                        std::complex<double> omega) const
+{
+  return (component.type == CoefficientType::SECOND_ORDER_FARFIELD_SHIFT)
+             ? -surface_terms.GetSecondOrderFarfieldTermScale(component.index, omega)
+             : 0.0;
+}
+
+bool ModeOperatorModel::HasFrequencyDependentB() const
+{
+  return std::ranges::any_of(
+      components, [](const auto &component)
+      { return component.type == CoefficientType::SECOND_ORDER_FARFIELD_SHIFT; });
+}
+
+std::unique_ptr<ComplexOperator>
+ModeOperatorModel::AssembleB(const mfem::HypreParMatrix &B0,
+                             std::complex<double> omega) const
+{
+  auto real = std::make_unique<mfem::HypreParMatrix>(B0);
+  std::unique_ptr<mfem::HypreParMatrix> imag;
+  for (const auto &component : components)
+  {
+    const auto coeff = EvaluateBCoefficient(component, omega);
+    if (coeff != 0.0)
+    {
+      AddScaledComplex(real, imag, component.Ar.get(), component.Ai.get(), coeff);
+    }
+  }
+  return std::make_unique<ComplexWrapperOperator>(std::move(real), std::move(imag));
 }
 
 std::unique_ptr<ComplexOperator> ModeOperatorModel::Assemble(std::complex<double> omega,

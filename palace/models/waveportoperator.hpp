@@ -69,6 +69,12 @@ public:
   double omega0;
   mfem::Vector port_normal;
 
+  // Whether the cross-section has edges on a second-order absorbing boundary (on any
+  // process). The mode solve has the term of the second-order condition on these edges,
+  // but the port boundary condition not its term along them, which reflects part of the
+  // port mode (see WavePortOperator::PrintBoundaryInfo).
+  bool second_order_farfield_edges = false;
+
   // Unconjugated modal reactions R = ∫_Γ (n×H_mode)·E_mode = sᵀe, recomputed each
   // Initialize(). Scale the rank-1 terms of the modal correction W_full − W_scalar added to
   // the local boundary mass: W = (−iω/R) s sᵀ. `modal_reaction` uses the full modal n×H
@@ -141,6 +147,11 @@ private:
   // Warn once if the selected mode is evanescent (Re kₙ² < 0).
   bool warned_evanescent = false;
   void WarnEvanescent(std::complex<double> kn, std::complex<double> omega);
+
+  // Warn once if the selected mode gains energy along the port at a real frequency, on the
+  // edges of second-order absorbing boundaries (ModeEigenSolver::GainsEnergy).
+  bool warned_gain = false;
+  void WarnGain(std::complex<double> kn, double omega);
 
   // Warn once if the unconjugated reaction of the normalized mode is small.
   bool warned_reaction = false;

@@ -9,7 +9,11 @@
 #include <complex>
 #include <map>
 #include <numbers>
+#include <string>
 #include <unordered_set>
+#include <vector>
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 #include "linalg/errorestimator.hpp"
 #include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
@@ -465,11 +469,24 @@ BoundaryModeSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print(" Found {:d} converged eigenvalue{} (sigma = {:.6e})\n", num_conv,
              (num_conv != 1) ? "s" : "", result.sigma);
 
+  std::vector<std::string> gaining;
   for (int i = 0; i < num_conv; i++)
   {
     auto kn = eig.GetPropagationConstant(i);
     Mpi::Print(" eig {:d}: kn = {:.6e}{:+.6e}i, n_eff = {:.6e}{:+.6e}i\n", i, kn.real(),
                kn.imag(), kn.real() / omega, kn.imag() / omega);
+    if (eig.GainsEnergy(kn))
+    {
+      gaining.push_back(fmt::format("{:d} (n_eff = {:.6e}{:+.6e}i)", i, kn.real() / omega,
+                                    kn.imag() / omega));
+    }
+  }
+  if (!gaining.empty())
+  {
+    Mpi::Warning("Boundary mode{} {} gain{} energy along the guide (Im{{kn}} > 0). {}\n",
+                 (gaining.size() > 1) ? "s" : "", fmt::join(gaining, ", "),
+                 (gaining.size() > 1) ? "" : "s",
+                 ModeEigenSolver::SecondOrderFarfieldGainHint());
   }
 
   // Postprocessing.

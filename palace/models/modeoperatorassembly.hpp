@@ -7,6 +7,7 @@
 #include <complex>
 #include <memory>
 #include <tuple>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
@@ -34,7 +35,11 @@ enum class CoefficientType
   // Scale of the frequency-dependent boundary mass term index of SurfaceTerms.
   SURFACE_TERM,
   // Nonlinear system coefficient g(iω) = s²χ(s) of the frequency-dependent material index.
-  FREQUENCY_DEPENDENT_PERMITTIVITY
+  FREQUENCY_DEPENDENT_PERMITTIVITY,
+  // Scale β(ω) of the second-order absorbing boundary term index of SurfaceTerms, for its
+  // terms which are not in B, and σ β(ω) for those which are (see ModeOperatorModel).
+  SECOND_ORDER_FARFIELD,
+  SECOND_ORDER_FARFIELD_SHIFT
 };
 
 // One complete, BC-eliminated component of the mode eigenproblem matrix A. Exact assembly
@@ -57,12 +62,33 @@ struct OperatorComponent
 
 // Frequency-parametric mode eigenproblem matrix. The complete fixed components are the
 // single source of truth for both exact sparse assembly and wave-port projection.
+//
+// The eigenproblem (A₀(ω) + kₙ² B(ω)) e = 0 is solved for the shifted matrix A(ω, σ) =
+// A₀(ω) - σ B(ω), the sum of the components scaled by their coefficients. Without
+// second-order absorbing boundaries, B = [Btt, 0; Btn, 0] does not depend on frequency.
+// On the edges of the cross-section, the boundary curl-curl term β (n·∇×E, n·∇×F) of the
+// second-order absorbing boundary condition of the 3D solve, for E = (Eₜ + ẑEₙ) e^{-ikₙz}
+// and F = (Fₜ + ẑFₙ) e^{ikₙz}, has the surface curl n·∇×E = ∂_τEₙ + ikₙE_τ along the
+// tangent τ = ẑ × n of the edge (and n·∇×F = ∂_τFₙ - ikₙF_τ). With ẽₙ = ikₙEₙ, and the
+// equation of the out-of-plane component scaled by -ikₙ as for the domain terms, it adds
+//   β (kₙ² [M, 0; Gᵀ, 0] - [0, G; 0, D])
+// with the boundary forms M = (E_τ, F_τ), G = (∂_τẽₙ, F_τ), and D = (∂_τẽₙ, ∂_τFₙ), with
+// the coefficient μ⁻¹c₀. So it adds the component -[0, G; 0, D], with coefficient β(ω), and
+// the component -[M, 0; Gᵀ, 0], with coefficient σ β(ω) in A and -β(ω) in B (see
+// EvaluateBCoefficient), like the domain terms of Btt, Atn, Ann and Btn.
 class ModeOperatorModel
 {
 private:
   const MaterialOperator &mat_op;
   const SurfaceTerms &surface_terms;
   std::vector<OperatorComponent> components;
+
+  // The lower-left (H1 x ND) blocks -Gᵀ of the components -[M, 0; Gᵀ, 0] of second-order
+  // absorbing boundaries, without elimination of essential DOFs, and their term index.
+  std::vector<std::pair<int, std::unique_ptr<mfem::HypreParMatrix>>> farfield_lower_blocks;
+
+  // Largest light speed of the materials next to second-order absorbing boundaries.
+  double farfield_light_speed_max = 0.0;
 
 public:
   ModeOperatorModel(const FiniteElementSpace &nd_fespace,
@@ -76,13 +102,67 @@ public:
   std::complex<double> EvaluateCoefficient(const OperatorComponent &component,
                                            std::complex<double> omega, double sigma) const;
   std::unique_ptr<ComplexOperator> Assemble(std::complex<double> omega, double sigma) const;
+
+  // Coefficient of the component in B(ω) = B₀ + Σ bᵢ(ω) Cᵢ, with the frequency-independent
+  // B₀ = [Btt, 0; Btn, 0] (zero for the components which are not in B), whether B depends
+  // on frequency, and the assembled B(ω) (MPI collective on the FE space communicator).
+  std::complex<double> EvaluateBCoefficient(const OperatorComponent &component,
+                                            std::complex<double> omega) const;
+  bool HasFrequencyDependentB() const;
+  std::unique_ptr<ComplexOperator> AssembleB(const mfem::HypreParMatrix &B0,
+                                             std::complex<double> omega) const;
+
+  // Add the lower-left (H1 x ND) block of A(ω, σ) from second-order absorbing boundaries,
+  // σ β(ω) (-Gᵀ), without elimination of essential DOFs, to the real and imaginary parts of
+  // a matrix (MPI collective on the FE space communicator).
+  void AddSecondOrderFarfieldLowerBlock(std::complex<double> omega, double sigma,
+                                        std::unique_ptr<mfem::HypreParMatrix> &real,
+                                        std::unique_ptr<mfem::HypreParMatrix> &imag) const;
+
+  // In the real-valued approximation Ar + Ai of A(ω, σ), replace the terms of second-order
+  // absorbing boundaries, β(ω) (kₙ² [M, 0; Gᵀ, 0] - [0, G; 0, D]) with kₙ² = -σ, by the
+  // magnitude |β(ω)| of their coefficient, when the shift is above the passivity limit
+  // of the boundaries (MPI collective on the FE space communicator). Their blocks have the
+  // signs of the stiffness of the blocks of A, the curl-curl and shift terms of the ND
+  // block, the coupling terms, and the negative diffusion of the H1 block, so that with
+  // |β| they add to it, while with the imaginary part of β = 1/(2iω), which is negative,
+  // they cancel part of it. In the ND block, the first-order condition adds ω/c to the
+  // -kₙ²c/(2ω) of the second-order one on the edges, times the same edge mass, for the
+  // light speed c of the material there: below the passivity limit kₙ = √2 ω/c, their sum
+  // is positive, and Ar + Ai keeps its magnitude. Above it, for the slow modes of a
+  // cross-section whose edges are in a material of lower index, the sum is negative, as in
+  // the real-valued coarse solve of the 3D problem (SpaceOperator::AssemblePreconditioner),
+  // and the solves need many more iterations or stall.
+  void
+  AddSecondOrderFarfieldRealPreconditioner(std::complex<double> omega, double sigma,
+                                           std::unique_ptr<mfem::HypreParMatrix> &P) const;
 };
 
+// The inverse permeability of the terms of the mode eigenproblem which come from the
+// in-plane part of the curl of the field, (∇×E)ₜ = -n×(∇ₜEₙ + ikₙEₜ) for the direction of
+// propagation n: ν = [n×]ᵀ μ⁻¹ [n×], μ⁻¹ rotated by 90 degrees about n, which is μ⁻¹ for a
+// permeability isotropic in the plane of the cross-section, but in general has the
+// in-plane components of μ⁻¹ across those of μ⁻¹ (for a diagonal μ, the x component of ν
+// is 1/μ_y). These are the terms of Btt, Atn, Btn and Ann, and ν is the admittance of the
+// in-plane magnetic field: n×Hₜ is ν (kₙEₜ - i∇ₜEₙ)/ω, up to the sign of the convention.
+// Without a normal, the inverse permeability is the in-plane 2 x 2 μ⁻¹ of a 2D
+// cross-section, and ν is Rᵀμ⁻¹R for the rotation R by 90 degrees, the adjugate of μ⁻¹.
+// With the normal of a cross-section in 3D (not necessarily of unit length), it is the
+// 3 x 3 μ⁻¹.
+mfem::DenseMatrix GetTransverseInvPermeability(const mfem::DenseMatrix &muinv,
+                                               const mfem::Vector *normal);
+mfem::DenseTensor GetTransverseInvPermeability(const mfem::DenseTensor &muinv,
+                                               const mfem::Vector *normal);
+
+// Frequency-independent block matrices Atn = -(ν ∇ₜu, v) and Btt = (ν u, v), with ν of
+// GetTransverseInvPermeability for the normal of the cross-section (null for a 2D mesh).
 ComplexHypreParMatrix AssembleAtn(const FiniteElementSpace &nd_fespace,
                                   const FiniteElementSpace &h1_fespace,
-                                  const MaterialOperator &mat_op);
+                                  const MaterialOperator &mat_op,
+                                  const mfem::Vector *normal);
 ComplexHypreParMatrix AssembleBtt(const FiniteElementSpace &nd_fespace,
-                                  const MaterialOperator &mat_op);
+                                  const MaterialOperator &mat_op,
+                                  const mfem::Vector *normal);
 
 ComplexHypreParMatrix BuildSystemMatrixA(
     const FiniteElementSpace &nd_fespace, const FiniteElementSpace &h1_fespace,

@@ -15,6 +15,29 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Bug Fixes
+
+  - `"BoundaryMode"` simulations and wave port mode solves apply the second-order absorbing
+    boundary condition (`"Absorbing"` with `"Order": 2`) on the edges of the cross-section,
+    instead of only its first-order term. Modes which gain energy on these edges warn, as do
+    wave ports with such edges, whose boundary condition lacks the term along them.
+    [PR 1298](https://github.com/awslabs/palace/pull/1298).
+  - Fixed the boundary-mode `Sn` output for materials whose out-of-plane permeability
+    differs from the in-plane one: the in-plane magnetic field of the mode was computed with
+    the out-of-plane inverse permeability, so that `Sn` did not integrate to the mode power.
+    [PR 1298](https://github.com/awslabs/palace/pull/1298).
+  - `"BoundaryMode"` simulations stop when a boundary attribute is given more than one
+    boundary condition, as the other simulation types do, instead of adding the terms of
+    each. `"WavePortPEC"` still overrides the other boundary conditions of an attribute.
+    [PR 1298](https://github.com/awslabs/palace/pull/1298).
+  - Fixed the modes of `"BoundaryMode"` simulations and wave ports with an anisotropic
+    permeability: for μ = diag(μx, μy, μz), the mode with its electric field along y had the
+    propagation constant of μy instead of μx, and TM and hybrid wave port modes were wrong
+    even for a permeability that is isotropic in the plane of the port.
+    [PR 1298](https://github.com/awslabs/palace/pull/1298).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features

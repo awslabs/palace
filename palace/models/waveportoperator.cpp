@@ -25,6 +25,7 @@
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
 #include "models/materialoperator.hpp"
+#include "models/modeoperatorassembly.hpp"
 #include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
@@ -393,15 +394,21 @@ public:
       Uim += dU;
     }
 
-    // Scale by 1/(ωμ) with μ (real) evaluated in the neighboring element. With complex 1/ω
-    // = a + i·b the real/imag parts of n×H = (1/ω)·μ⁻¹·(Ure + i·Uim) couple:
-    //   Re = a·μ⁻¹Ure - b·μ⁻¹Uim,  Im = a·μ⁻¹Uim + b·μ⁻¹Ure.
-    // Note U uses the scalar kₙ from the cross-section EVP; for a rotated μ tensor that
-    // couples axes this reconstruction is approximate.
-    double MUre_data[3], MUim_data[3];
-    mfem::Vector MUre(MUre_data, vdim), MUim(MUim_data, vdim);
-    mat_op.GetInvPermeability(attr).Mult(Ure, MUre);
-    mat_op.GetInvPermeability(attr).Mult(Uim, MUim);
+    // Scale by 1/(ωμ) with μ (real) evaluated in the neighboring element: n×H = n×(μ⁻¹B)
+    // has the inverse permeability of the cross-section rotated by 90 degrees about its
+    // normal, ν = [n×]ᵀ μ⁻¹ [n×] (mode_assembly::GetTransverseInvPermeability), as the mode
+    // eigenproblem. With complex 1/ω = a + i·b the real/imag parts of n×H =
+    // (1/ω)·ν·(Ure + i·Uim) couple:
+    //   Re = a·νUre - b·νUim,  Im = a·νUim + b·νUre.
+    // Note U uses the scalar kₙ from the cross-section EVP; for a μ tensor that couples
+    // the normal axis to the plane of the port this reconstruction is approximate.
+    double normal_data[3], MUre_data[3], MUim_data[3];
+    mfem::Vector normal(normal_data, vdim), MUre(MUre_data, vdim), MUim(MUim_data, vdim);
+    BdrGridFunctionCoefficient::GetNormal(*T_submesh, normal);
+    const auto nu = mode_assembly::GetTransverseInvPermeability(
+        mat_op.GetInvPermeability(attr), &normal);
+    nu.Mult(Ure, MUre);
+    nu.Mult(Uim, MUim);
     const std::complex<double> inv_omega = 1.0 / omega;
     const double a = inv_omega.real(), b = inv_omega.imag();
     V.SetSize(vdim);
@@ -492,7 +499,8 @@ void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
 
     // Mode field element dofs (same primal transformation as GridFunction::GetVectorValue
     // and GridFunction::GetGradient), and the permeability of the neighboring parent domain
-    // element (as in BdrSubmeshHVectorCoefficient).
+    // element, rotated about the normal of the port element (as in
+    // BdrSubmeshHVectorCoefficient).
     gather(Etr_data, vdofs, loc_tr);
     gather(Eti_data, vdofs, loc_ti);
     doftrans.InvTransformPrimal(loc_tr);
@@ -504,7 +512,11 @@ void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
     int face, o, iel1, iel2;
     parent.GetBdrElementFace(parent_elem_ids[e], &face, &o);
     parent.GetFaceElements(face, &iel1, &iel2);
-    const auto &mu_inv = mat_op.GetInvPermeability(parent.GetAttribute(iel1));
+    T.SetIntPoint(&mfem::Geometries.GetCenter(fe.GetGeomType()));
+    mfem::Vector normal(sdim);
+    BdrGridFunctionCoefficient::GetNormal(T, normal);
+    const auto nu = mode_assembly::GetTransverseInvPermeability(
+        mat_op.GetInvPermeability(parent.GetAttribute(iel1)), &normal);
 
     vshape.SetSize(dof, dim);
     vshape_phys.SetSize(dof, sdim);
@@ -531,7 +543,7 @@ void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
       dshape.MultTranspose(loc_ni, gh);
       T.InverseJacobian().MultTranspose(gh, dUi);
 
-      // U = -kₙEₜ + i∇ₜEₙ (full) and U = -kₙEₜ (scalar-admittance), then n×H = μ⁻¹U/ω.
+      // U = -kₙEₜ + i∇ₜEₙ (full) and U = -kₙEₜ (scalar-admittance), then n×H = νU/ω.
       // With Eₜ = Etr + i·Eti, -kₙEₜ = -(kr·Etr - ki·Eti) - i·(kr·Eti + ki·Etr).
       for (int d = 0; d < sdim; d++)
       {
@@ -544,7 +556,7 @@ void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
       const double w = ip.weight * T.Weight();
       for (int k = 0; k < 4; k++)
       {
-        mu_inv.Mult(U[k], MU[k]);
+        nu.Mult(U[k], MU[k]);
         MU[k] *= inv_omega;
         T.InverseJacobian().Mult(MU[k], f_hat);
         f_hat *= w;
@@ -718,6 +730,17 @@ WavePortData::WavePortData(const config::WavePortData &data,
                                                    problem_type, *port_mesh);
   port_surface_terms =
       std::make_unique<SurfaceTerms>(boundaries, problem_type, units, *port_mat_op, mesh);
+  if (boundaries.farfield.order > 1)
+  {
+    const auto &port_pmesh = port_mesh->Get();
+    for (int be = 0; be < port_pmesh.GetNBE() && !second_order_farfield_edges; be++)
+    {
+      second_order_farfield_edges = std::ranges::find(boundaries.farfield.attributes,
+                                                      port_pmesh.GetBdrAttribute(be)) !=
+                                    boundaries.farfield.attributes.end();
+    }
+    Mpi::GlobalOr(1, &second_order_farfield_edges, port_mesh->GetComm());
+  }
 
   // Construct mapping from parent (boundary) element indices to submesh (domain)
   // elements.
@@ -977,6 +1000,7 @@ void WavePortData::Initialize(double omega)
   kn0 = mode_assembly::PropagationConstant(-sigma - 1.0 / lambda, omega);
   omega0 = omega;
   WarnEvanescent(kn0, omega);
+  WarnGain(kn0, omega);
 
   // Separate the computed field out into eₜ and eₙ and transform back to the physical
   // electric field variables Eₜ = eₜ and Eₙ = eₙ / (i·k_n). Order: load raw eigenvector,
@@ -1228,6 +1252,21 @@ void WavePortData::WarnEvanescent(std::complex<double> kn, std::complex<double> 
                "{:.3e}{:+.3e}i): the port is below cutoff, or \"Mode\" or \"Target\" does "
                "not select the intended mode!\n",
                fmt::join(attr_list, ", "), n_eff.real(), n_eff.imag());
+}
+
+void WavePortData::WarnGain(std::complex<double> kn, double omega)
+{
+  // kₙ is the same on all ranks.
+  if (warned_gain || !mode_solver->GainsEnergy(kn))
+  {
+    return;
+  }
+  warned_gain = true;
+  const std::complex<double> n_eff = kn / omega;
+  Mpi::Warning("Wave port with attributes {} selected a mode which gains energy along the "
+               "port (n_eff = {:.3e}{:+.3e}i, Im{{n_eff}} > 0). {}\n",
+               fmt::join(attr_list, ", "), n_eff.real(), n_eff.imag(),
+               ModeEigenSolver::SecondOrderFarfieldGainHint());
 }
 
 void WavePortData::WarnReaction()
@@ -1730,6 +1769,26 @@ void WavePortOperator::PrintBoundaryInfo(const Units &units, const mfem::ParMesh
     Mpi::Print("\nConfiguring wave port excitation source term at attributes:\n");
     Mpi::Print("{}", fmt::to_string(buffer));
   }
+
+  // The second-order absorbing boundary condition is the boundary curl-curl term of the
+  // absorbing faces, whose integration by parts over a face leaves a term along its edges.
+  // Where an absorbing face ends at a wave port, this term of the face beyond the port is
+  // missing: the port boundary condition stands for the volume beyond the port, but not for
+  // the absorbing faces there. The port mode, which has the second-order term on the edges
+  // of its cross-section, is then not a solution of the 3D problem next to these edges.
+  for (const auto &[idx, data] : ports)
+  {
+    if (data.active && data.second_order_farfield_edges)
+    {
+      Mpi::Warning(
+          "Wave port {:d} meets a second-order absorbing boundary (\"Absorbing\" with "
+          "\"Order\": 2) on the edges of its cross-section. The wave port boundary "
+          "condition does not include the term of the second-order condition along these "
+          "edges, so part of the port mode is reflected there, the more the larger its "
+          "field on them. The first-order condition (\"Order\": 1) has no such term.\n",
+          idx);
+    }
+  }
 }
 
 const WavePortData &WavePortOperator::GetPort(int idx) const
@@ -1937,8 +1996,12 @@ void WavePortOperator::AddBoundaryMassBdrCoefficients(int port_idx,
   // port to normalize its node and compute reference data.
   const auto &data = it->second;
   const MaterialOperator &mat_op = data.mat_op;
-  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
+  // The inverse permeability of the cross-section rotated by 90 degrees about the port
+  // normal, that of the in-plane magnetic field of the mode.
+  MaterialPropertyCoefficient muinv_func(
+      mat_op.GetBdrAttributeToMaterial(),
+      mode_assembly::GetTransverseInvPermeability(mat_op.GetInvPermeability(),
+                                                  &data.port_normal));
   muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(data.GetAttrList()));
   fb.AddCoefficient(muinv_func.GetAttributeToMaterial(), muinv_func.GetMaterialProperties(),
                     scale);

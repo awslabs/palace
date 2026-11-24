@@ -9,6 +9,7 @@
 #include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
+#include "utils/geodata.hpp"
 
 namespace palace
 {
@@ -29,10 +30,13 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
 
   // Boundary operators.
   surface_terms = std::make_unique<SurfaceTerms>(iodata, mat_op, solve_mesh->Get());
+  CheckBoundaryProperties();
 
   // Frequency-independent block matrices. Atn is the ND/H1 gradient coupling,
-  // Btn = -Atn^T, Btt is the ND mass.
-  std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(GetNDSpace(), GetH1Space(), mat_op);
+  // Btn = -Atn^T, Btt is the ND mass, all with the in-plane inverse permeability rotated
+  // by 90 degrees (mode_assembly::GetTransverseInvPermeability).
+  std::tie(Atnr, Atni) =
+      mode_assembly::AssembleAtn(GetNDSpace(), GetH1Space(), mat_op, nullptr);
   Btnr.reset(Atnr->Transpose());
   *Btnr *= -1.0;
   if (Atni)
@@ -40,7 +44,7 @@ BoundaryModeOperator::BoundaryModeOperator(const IoData &iodata_,
     Btni.reset(Atni->Transpose());
     *Btni *= -1.0;
   }
-  auto [bttr_tmp, btti_tmp] = mode_assembly::AssembleBtt(GetNDSpace(), mat_op);
+  auto [bttr_tmp, btti_tmp] = mode_assembly::AssembleBtt(GetNDSpace(), mat_op, nullptr);
   Bttr = std::move(bttr_tmp);
 
   Mpi::Print(" ND space: {:d} DOFs, H1 space: {:d} DOFs, total: {:d}\n",
@@ -65,13 +69,15 @@ BoundaryModeOperator::ComputePoyntingPower(double omega, std::complex<double> kn
   }
   auto comm = GetComm();
   // P = ½ ∫ (Eₜ × Hₜ*)·ẑ for E = (Eₜ + ẑEₙ) e^{-ikₙz}, whose transverse magnetic field is
-  // Hₜ = μ⁻¹ (kₙ ẑ×Eₜ + i ∇ₜEₙ×ẑ) / ω, so that
-  //   P = (1/2ω) ∫ μ⁻¹ (kₙ* |Eₜ|² + i Eₜ·∇ₜEₙ*)  (real μ).
-  // With Atn = -(μ⁻¹∇ₜφₙ, φₜ), etᴴ Atn en = -∫ μ⁻¹ Eₜ*·∇ₜEₙ, the conjugate of minus the
-  // second integral. Without the conjugate, the second term is only right when Eₙ is in
-  // quadrature with Eₜ, as for a lossless mode: for a lossy mode, it adds a spurious
-  // imaginary part to P, which inflates |P| and lowers Z_PV = Re{|V|² / 2P}.
-  // The ½ is the time-average weight of the peak phasors.
+  // Hₜ = μ⁻¹ (kₙ ẑ×Eₜ + i ∇ₜEₙ×ẑ) / ω, so that, with (ẑ×a)·μ⁻¹(ẑ×b) = a·νb,
+  //   P = (1/2ω) ∫ (kₙ* Eₜ·νEₜ* + i Eₜ·ν∇ₜEₙ*)  (real μ)
+  // for the in-plane inverse permeability rotated by 90 degrees, ν, of Btt and Atn
+  // (mode_assembly::GetTransverseInvPermeability). With Atn = -(ν∇ₜφₙ, φₜ),
+  // etᴴ Atn en = -∫ Eₜ*·ν∇ₜEₙ, the conjugate of minus the second integral. Without the
+  // conjugate, the second term is only right when Eₙ is in quadrature with Eₜ, as for a
+  // lossless mode: for a lossy mode, it adds a spurious imaginary part to P, which inflates
+  // |P| and lowers Z_PV = Re{|V|² / 2P}. The ½ is the time-average weight of the peak
+  // phasors.
   constexpr double weight = electromagnetics::TimeAverageWeight(true);
   std::complex<double> P =
       weight * std::conj(kn) / omega * linalg::Dot(comm, et, *Bttr, et);
@@ -83,6 +89,44 @@ BoundaryModeOperator::ComputePoyntingPower(double omega, std::complex<double> kn
          std::conj(linalg::Dot(comm, en, Atn, et));
   }
   return P;
+}
+
+void BoundaryModeOperator::CheckBoundaryProperties() const
+{
+  // No boundary attribute may be assigned more than one of the boundary conditions of the
+  // 2D mode solve (PEC, and the absorbing, finite conductivity, impedance and rational
+  // impedance boundaries of SurfaceTerms), as for the 3D operators
+  // (SpaceOperator::CheckBoundaryProperties): the terms of each would be added on the
+  // boundary. WavePortPEC is not counted: as in the mode solve of a wave port, it may
+  // override another boundary condition of the attribute, whose terms then only act on
+  // eliminated essential DOFs.
+  const auto &pmesh = solve_mesh->Get();
+  const int bdr_attr_max = pmesh.bdr_attributes.Size() ? pmesh.bdr_attributes.Max() : 0;
+  mfem::Array<int> pec_bcs;
+  for (auto attr : iodata.boundaries.pec.attributes)
+  {
+    if (attr > 0 && attr <= bdr_attr_max)
+    {
+      pec_bcs.Append(attr);
+    }
+  }
+  const auto dbc_marker = mesh::AttrToMarker(bdr_attr_max, pec_bcs);
+  const auto farfield_marker =
+      mesh::AttrToMarker(bdr_attr_max, surface_terms->GetFarfieldOp().GetAttrList());
+  const auto surf_sigma_marker = mesh::AttrToMarker(
+      bdr_attr_max, surface_terms->GetSurfaceConductivityOp().GetAttrList());
+  const auto surf_z_marker = mesh::AttrToMarker(
+      bdr_attr_max, surface_terms->GetSurfaceImpedanceOp().GetAttrList());
+  const auto surf_rz_marker = mesh::AttrToMarker(
+      bdr_attr_max, surface_terms->GetRationalImpedanceOp().GetAttrList());
+  for (int i = 0; i < bdr_attr_max; i++)
+  {
+    MFEM_VERIFY(dbc_marker[i] + farfield_marker[i] + surf_sigma_marker[i] +
+                        surf_z_marker[i] + surf_rz_marker[i] <=
+                    1,
+                "Boundary attribute " << i + 1
+                                      << " should not be specified with multiple BC!");
+  }
 }
 
 void BoundaryModeOperator::SetUpFESpaces(const std::vector<std::unique_ptr<Mesh>> &mesh)

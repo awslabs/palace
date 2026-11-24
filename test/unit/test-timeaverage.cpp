@@ -444,6 +444,14 @@ TEST_CASE("Lumped port unit time-averaged incident power",
 TEST_CASE_METHOD(test::SharedTempDir, "Boundary mode Sn is SI time-averaged power density",
                  "[timeaverage][postoperator][Serial][Parallel]")
 {
+  // A uniform field of 1 V/m along x or y, with kn = omega, in vacuum and in a material of
+  // permeability diag(2, 3, 5). The mode convention has B_t = -(kn/omega) z x E_t, so Sn is
+  // positive, and with the in-plane magnetic field H_t = mu^-1 B_t, it equals 1/(2 mu Z0)
+  // W/m² for the relative permeability mu along B_t: mu_yy for E_t along x and mu_xx for
+  // E_t along y, not the out-of-plane mu_zz.
+  const bool anisotropic = GENERATE(false, true);
+  const int direction = GENERATE(0, 1);
+  const double mu = anisotropic ? ((direction == 0) ? 3.0 : 2.0) : 1.0;
   const auto comm = Mpi::World();
   IoData iodata(Units(0.013, 0.43));
   iodata.problem.type = ProblemType::BOUNDARYMODE;
@@ -454,7 +462,12 @@ TEST_CASE_METHOD(test::SharedTempDir, "Boundary mode Sn is SI time-averaged powe
   iodata.solver.boundary_mode.freq = 2.0;
   iodata.solver.boundary_mode.n = 1;
   iodata.solver.boundary_mode.n_post = 1;
-  iodata.domains.materials.emplace_back().attributes = {1};
+  auto &material = iodata.domains.materials.emplace_back();
+  material.attributes = {1};
+  if (anisotropic)
+  {
+    material.mu_r.s = {2.0, 3.0, 5.0};
+  }
   iodata.CheckConfiguration();
   auto serial = mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::QUADRILATERAL);
   serial.EnsureNodes();
@@ -463,11 +476,9 @@ TEST_CASE_METHOD(test::SharedTempDir, "Boundary mode Sn is SI time-averaged powe
   MaterialOperator mat_op(iodata, *meshes.back());
   BoundaryModeOperator mode_op(iodata, meshes, mat_op);
   PostOperator<ProblemType::BOUNDARYMODE> post_op(iodata, mode_op);
-  // Vacuum plane wave, |E| = 1 V/m, kn = omega. The mode convention has B_t =
-  // -(kn/omega) z x E_t, so Sn is positive and equals 1/(2 Z0) W/m².
   mfem::Vector field(2);
   field = 0.0;
-  field(0) = iodata.units.Nondimensionalize<Units::ValueType::FIELD_E>(1.0);
+  field(direction) = iodata.units.Nondimensionalize<Units::ValueType::FIELD_E>(1.0);
   mfem::VectorConstantCoefficient coeff(field);
   GridFunction E(mode_op.GetNDSpace(), true);
   E.Real().ProjectCoefficient(coeff);
@@ -488,7 +499,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "Boundary mode Sn is SI time-averaged powe
   REQUIRE(Sn.Size() > 0);
   for (int i = 0; i < Sn.Size(); i++)
   {
-    CHECK_THAT(Sn(i), WithinRel(1.0 / (2.0 * electromagnetics::Z0_), 1.0e-5));
+    CHECK_THAT(Sn(i), WithinRel(1.0 / (2.0 * mu * electromagnetics::Z0_), 1.0e-5));
   }
 }
 

@@ -393,6 +393,17 @@ the port boundary, the propagation constant ``k_{n,m}`` is complex, and its imag
 part (the attenuation of the port mode) is kept in the boundary condition and in the incident field,
 so that the port is matched to its own mode.
 
+For an anisotropic permeability, the in-plane magnetic field of a mode, ``\bm{H}_t``, comes
+from the in-plane part of the curl of its electric field,
+``(\nabla\times\bm{E})_t = -\hat{\bm{n}}\times(\nabla_t E_n + ik_n\bm{E}_t)``, which is
+``\nabla_t E_n + ik_n\bm{E}_t`` rotated by 90 degrees about the port normal ``\hat{\bm{n}}``.
+The in-plane terms of the eigenvalue problem and ``\mu_r^{-1}`` in the coefficient ``\gamma``
+are therefore ``[\hat{\bm{n}}\times]^T\mu_r^{-1}[\hat{\bm{n}}\times]``, the inverse
+permeability rotated in the same way: for ``\mu_r = \text{diag}(\mu_x, \mu_y, \mu_z)`` and the
+normal ``\hat{\bm{z}}``, the field ``E_y`` has the inverse permeability ``1/\mu_x`` of its
+magnetic field ``H_x``. The same holds for the 2D eigenvalue problem of a
+[boundary mode simulation](guide/problem.md#Mode-analysis-problems).
+
 The modes of a lossy cross-section are orthogonal under the unconjugated (reciprocity) pairing
 ``\int_\Gamma (\bm{E}_m\times\bm{H}_k)\cdot\bm{n}\,dS``, and not under the power pairing
 ``\int_\Gamma (\bm{E}_m\times\bm{H}_k^*)\cdot\bm{n}\,dS`` [[11]](#References). The incident wave
@@ -806,6 +817,29 @@ light line or evanescent diffraction orders of a periodic structure, and in part
 the part of a [Floquet wave vector](#Floquet-periodic-boundary-conditions) tangential to the
 boundary exceeds ``\sqrt{2}k``, for which *Palace* prints a warning. The first-order
 condition is passive.
+
+In the two-dimensional eigenvalue problem of a wave port or a boundary mode simulation, the
+absorbing boundary conditions apply on the edges of the cross-section, which are
+boundaries of the 3D model parallel to the direction of propagation, for the field
+``\bm{E} = (\bm{E}_t + E_n\hat{\bm{n}})e^{-ik_n x_n}``. On an edge with the unit tangent
+``\bm{\tau}`` in the plane of the cross-section, the component of the curl of the field
+normal to the boundary is ``(\partial_\tau E_n + ik_n E_\tau)e^{-ik_n x_n}``, and the
+second-order term of the weak form of the 3D problem, the integral over the boundary of
+``\beta`` times the product of these components of the curls of the field and of the test
+function, becomes
+
+```math
+\beta\int_{\partial\Omega}(\partial_\tau E_n + ik_n E_\tau)(\partial_\tau v_n - ik_n v_\tau)\,dl
+```
+
+per unit length, for the test function ``\bm{v} = (\bm{v}_t + v_n\hat{\bm{n}})e^{ik_n x_n}``.
+Its ``k_n^2`` term adds to the matrix of the eigenvalue ``k_n^2``, which then depends on
+frequency. The propagation constant is part of the tangential wavenumber on the edges, so
+the second-order condition is not passive on the edges where the effective index
+``\text{Re}\{k_n\}/k_0`` of a mode exceeds ``\sqrt{2}`` times the refractive index of the
+material: for example, on edges in vacuum, for the quasi-TEM mode of a coplanar waveguide on
+a substrate with a relative permittivity above 3. A mode which then gains energy along the
+guide, with ``\text{Im}\{k_n\} > 0``, is reported with a warning.
 
 Additionally, while metals with finite conductivity can be modeled using an impedance
 boundary condition with constant impedance ``Z_s``, a more accurate model taking into
