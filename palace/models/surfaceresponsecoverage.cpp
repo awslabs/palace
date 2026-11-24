@@ -876,6 +876,11 @@ CoverageMeasurement ComputeCoverageMeasurement(
     measurement.cells.push_back(
         ComputeCoverageCell(type, summaries, thresholds, regime, excitation));
   }
+  for (const auto &[interface, type] : types)
+  {
+    measurement.interface_cells[interface] = ComputeCoverageCell(
+        type, {measurement.interfaces.at(interface)}, thresholds, regime, excitation);
+  }
   measurement.keys = CoverageKeyRows(partitions, keys_by_feature);
   for (const auto &[interface, partition] : partitions)
   {
@@ -989,6 +994,17 @@ void MarkCoverageTargetsNotServed(CoverageMeasurement &measurement,
                      CoverageStatusRank(cell.status))
     {
       cell.status = CoverageStatus::TARGET_NOT_SERVED;
+    }
+  }
+  for (const auto &[interface, type] : not_served)
+  {
+    (void)type;
+    const auto cell = measurement.interface_cells.find(interface);
+    if (cell != measurement.interface_cells.end() &&
+        CoverageStatusRank(CoverageStatus::TARGET_NOT_SERVED) >
+            CoverageStatusRank(cell->second.status))
+    {
+      cell->second.status = CoverageStatus::TARGET_NOT_SERVED;
     }
   }
 }

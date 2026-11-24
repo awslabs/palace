@@ -172,6 +172,11 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
   const auto outcome = WriteSurfaceResponseRequirements(
       iodata, *mesh.back(),
       (fs::path(iodata.problem.output) / "surface-response-requirements.json").string());
+  // CUT-PLAN step 4 (supervisor's ruling (B), 2026-11-24): the census needs the response
+  // operator's placed knots, which the preflight does not build (step 4b); say so.
+  Mpi::Print(comm,
+             "\nResolution census: not evaluated in PreflightOnly; every corrected run "
+             "prints it before its first solve\n");
   if (!outcome.fail_closed_summary.empty())
   {
     std::string written;

@@ -96,8 +96,10 @@ fs::path SaveIteration(MPI_Comm comm, const fs::path &output_dir, int step, int 
               fs::copy(path, dest, fs::copy_options::overwrite_existing);
             }
           }
-          else if (fname.ends_with("_resolved.json"))
+          else if (fname.ends_with("_resolved.json") || fname == kSurfaceParticipationFile)
           {
+            // CUT-PLAN step 4 (lane v1table): the per-iteration table holds every level
+            // and is appended at each one: it stays at the top level too.
             // The resolved configuration is a global record of the run, not per-iteration
             // output. Leave it in the top-level output folder rather than moving it into an
             // iteration subfolder and symlinking back.
@@ -366,6 +368,36 @@ std::string ConductorConsistencyBanner(const json &statistics)
   return banner;
 }
 
+// CUT-PLAN step 4 (lane v1table): the per-iteration table of a corrected electrostatic,
+// eigenmode or driven run, with the verdict data of its Resolution.BarsFile (the built-in
+// data, palace/models/surfaceparticipationverdict.json, without one or without a "Verdict"
+// member); null otherwise.
+std::unique_ptr<SurfaceParticipationTable>
+NewSurfaceParticipationTable(const IoData &iodata, const fs::path &dir)
+{
+  auto Table = [&](const auto &request, const char *problem)
+  {
+    const auto &bars_file = request.resolution.bars_file;
+    return std::make_unique<SurfaceParticipationTable>(
+        (dir / kSurfaceParticipationFile).string(), problem, iodata.solver.order,
+        bars_file.empty() ? BuiltInParticipationVerdictBars()
+                          : ReadParticipationVerdictBars(bars_file));
+  };
+  const auto &electrostatic = iodata.solver.electrostatic.response_correction;
+  const auto &maxwell = iodata.solver.surface_response_correction;
+  switch (iodata.problem.type)
+  {
+    case ProblemType::ELECTROSTATIC:
+      return electrostatic ? Table(*electrostatic, "Electrostatic") : nullptr;
+    case ProblemType::EIGENMODE:
+      return maxwell ? Table(*maxwell, "Eigenmode") : nullptr;
+    case ProblemType::DRIVEN:
+      return maxwell ? Table(*maxwell, "Driven") : nullptr;
+    default:
+      return nullptr;
+  }
+}
+
 }  // namespace
 
 BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread,
@@ -441,12 +473,16 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
   // the relative field energy around each edge.
   RefineEdgeTubes(iodata, *mesh.back());
 
+  // CUT-PLAN step 4 (lane v1table): the per-iteration table of a corrected run.
+  surface_participation = NewSurfaceParticipationTable(iodata, post_dir);
+
   // Perform initial solve and estimation.
   solve_level = 1;
   solve_levels = use_amr ? refinement.max_it + 1 : 1;
   auto [indicators, ntdof] = Solve(mesh);
   MFEM_VERIFY(solve_converged_,
               "Initial solve did not converge; no converged result to fall back on!");
+  FinishSurfaceParticipationLevel(ntdof, comm);
   auto marking_indicators =
       BuildMarkingIndicators(indicators, mesh.back()->Get(), iodata.boundaries);
   double err = linalg::Norml2(comm, marking_indicators);
@@ -632,6 +668,7 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     const auto prev_ntdof = ntdof;
     solve_level = it + 1;
     std::tie(indicators, ntdof) = Solve(mesh);
+    FinishSurfaceParticipationLevel(ntdof, comm);
     if (!solve_converged_)
     {
       // Keep the previous converged iteration for the summary/CSVs (restore its DOF count);
@@ -1123,6 +1160,19 @@ void BaseSolver::SaveSurfaceResponseSolverMetadata(
           minimum[2];
     }
     WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::FinishSurfaceParticipationLevel(long long int ntdof, MPI_Comm comm) const
+{
+  if (!surface_participation)
+  {
+    return;
+  }
+  surface_participation->FinishLevel(solve_level, ntdof, solve_converged_, comm);
+  if (surface_participation->Started())
+  {
+    SaveSurfaceResponseMetadata("ParticipationTable", surface_participation->Metadata());
   }
 }
 

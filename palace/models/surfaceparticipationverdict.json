@@ -1,0 +1,13 @@
+{
+  "Verdict": {
+    "MinUnknownsRatio": 1.2,
+    "MaxCensusRatio": 0.95,
+    "MaxChangePerDoublingPercent": 1.0,
+    "CensusBarOverR": {"1": null, "2": 1.7, "3": 2.0, "4": 4.0},
+    "UnderResolvedFactor": 2.0,
+    "TestedProblems": ["Electrostatic"],
+    "TestedScopes": ["Type"],
+    "Interim": false,
+    "Provenance": "the words of the per-iteration table surface-participation.csv: lane meshrule VERDICT-INPUT.md (final, MESHTEXT=OK, 2026-11-24; its check meshrule-fix-review.md: 0 blockers, 1 major, 7 minors, with the CELL-NOT-REFINED guard ruled in by the supervisor; the INTERIM label dropped for electrostatic values by the supervisor once the 19 vectors passed; eigenmode and driven words read -UNTESTED), measured on 634 graded values of three designs (CTX-002 junction boxes, QUO-023 and JTS-001 windows; thin + library against thick; electrostatics and one eigenmode design; PEC; R = 1.9 um): g = 100 |p_k / p_j - 1| / log2(N_k / N_j), j the latest earlier level with N_k >= MinUnknownsRatio N_j, read only if the value's own cell census m90_k <= MaxCensusRatio m90_j; SETTLED iff g < MaxChangePerDoublingPercent (safe limits per design 1.263 / 1.281 / 2.971 %/doubling); RESOLVED iff m90_k <= CensusBarOverR(order) AND SETTLED (the bar is the edge of the tested domain, not a size that gives 5 %: 39 values RESOLVED, up to 4.0 % off thick, 26 of them beyond 2 %); UNDER-RESOLVED iff m90_k > UnderResolvedFactor x the bar; MARGINAL otherwise; no bar at Order 1 or 5 and above. No 2 % word is supported; no eigenmode value settled in the tests. TestedScopes names Type only: the box values were graded with their cell's census, while a region row reads the census of its own patches, which reads lower for junction boxes (2.85 vs 3.27 R on one CTX-002 level), so region rows' resolution words read -UNTESTED until the box points are re-graded with their own census."
+  }
+}

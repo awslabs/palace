@@ -34249,6 +34249,46 @@ SurfaceResponseOperator::MeasureResolution(ResolutionAccumulator *accumulator,
   return cells;
 }
 
+std::map<int, ResolutionCell>
+SurfaceResponseOperator::MeasureRegionResolution(ResolutionAccumulator *accumulator,
+                                                 double energy_scale) const
+{
+  // CUT-PLAN step 4 (lane v1table): the boxes' own census cells, one added sum (the boxes
+  // are the same on every rank: every rank's accumulator holds every target with a Region).
+  std::map<int, ResolutionCell> cells;
+  if (!accumulator || accumulator->regions.empty())
+  {
+    return cells;
+  }
+  std::vector<double> sums;
+  sums.reserve(accumulator->regions.size() * ResolutionAccumulator::kStride);
+  for (const auto &[interface, values] : accumulator->regions)
+  {
+    MFEM_VERIFY(values.size() == static_cast<std::size_t>(ResolutionAccumulator::kStride),
+                "The census of Region target " << interface << " has the wrong size!");
+    sums.insert(sums.end(), values.begin(), values.end());
+  }
+  Mpi::GlobalSum(static_cast<int>(sums.size()), sums.data(), fespace.GetComm());
+  if (!Mpi::Root(fespace.GetComm()))
+  {
+    return cells;
+  }
+  const std::string reason = resolution_enabled ? "" : "disabled";
+  std::size_t offset = 0;
+  for (const auto &[interface, values] : accumulator->regions)
+  {
+    (void)values;
+    const auto type = resolution_interface_types.find(interface);
+    cells[interface] = ComputeResolutionCell(
+        sums.data() + offset,
+        type != resolution_interface_types.end() ? resolution_types[type->second]
+                                                 : std::string("Default"),
+        true, 0.0, resolution_bars_hold, energy_scale, reason);
+    offset += ResolutionAccumulator::kStride;
+  }
+  return cells;
+}
+
 void SurfaceResponseOperator::WriteResolutionPatchTable(const std::string &path) const
 {
   // PatchEnergy only (the caller): per applied patch its census reading, gathered on the
@@ -41244,6 +41284,18 @@ SurfaceResponseOperator::GetElectrostaticResponse(
   ElectrostaticResponse result;
   // Lane rescensus-product: the patch's fixed-trace fabricated energy per census Type.
   std::vector<double> resolution_energy(resolution ? resolution->types : 0);
+  // CUT-PLAN step 4 (lane v1table): the patch's share-weighted fixed-trace energy on each
+  // box it adds to (the box census, ResolutionAccumulator::regions; every box on every
+  // rank).
+  std::vector<std::pair<int, double>> region_resolution_energy;
+  if (resolution && region_shares)
+  {
+    for (const auto &[target, shares] : *region_shares)
+    {
+      (void)shares;
+      resolution->regions[target].assign(ResolutionAccumulator::kStride, 0.0);
+    }
+  }
   double weighted_trace_closure_spread_squared = 0.0;
   double trace_closure_response_weight = 0.0;
   double failed_trace_closure_response_weight = 0.0;
@@ -41343,6 +41395,7 @@ SurfaceResponseOperator::GetElectrostaticResponse(
            static_cast<double>(model.fabricated_surfaces.size())});
     }
     std::fill(resolution_energy.begin(), resolution_energy.end(), 0.0);
+    region_resolution_energy.clear();
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
@@ -41382,6 +41435,11 @@ SurfaceResponseOperator::GetElectrostaticResponse(
           AccumulateRegionPatch(region_local[interface], shares->second, patch.global_index,
                                 fixed_trace_energy, fixed_flux_energy, include_fixed_flux,
                                 maximum_trace_closure_spread);
+          const double share = shares->second.share[patch.global_index];
+          if (resolution && share > 0.0)
+          {
+            region_resolution_energy.emplace_back(interface, share * fixed_trace_energy);
+          }
         }
       }
       if (include_patches)
@@ -41406,6 +41464,10 @@ SurfaceResponseOperator::GetElectrostaticResponse(
       for (int t = 0; t < resolution->types; t++)
       {
         resolution->Add(t, plane_slot, status, m, resolution_energy[t]);
+      }
+      for (const auto &[interface, energy] : region_resolution_energy)
+      {
+        resolution->AddRegion(interface, status, m, energy);
       }
     }
   }
@@ -41761,6 +41823,18 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
 {
   // Lane rescensus-product: the patch's fixed-trace fabricated energy per census Type.
   std::vector<double> resolution_energy(resolution ? resolution->types : 0);
+  // CUT-PLAN step 4 (lane v1table): the patch's share-weighted fixed-trace energy on each
+  // box it adds to (the box census, ResolutionAccumulator::regions; every box on every
+  // rank).
+  std::vector<std::pair<int, double>> region_resolution_energy;
+  if (resolution && region_shares)
+  {
+    for (const auto &[target, shares] : *region_shares)
+    {
+      (void)shares;
+      resolution->regions[target].assign(ResolutionAccumulator::kStride, 0.0);
+    }
+  }
   MFEM_VERIFY(maxwell && maxwell_contours.size() == patches.size(),
               "Maxwell surface response was not configured!");
   MFEM_ASSERT(maxwell_conductor_anchors.size() == patches.size(),
@@ -42049,6 +42123,7 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
     }
     const double surface_weight = fallback ? 0.0 : patch.weight;
     std::fill(resolution_energy.begin(), resolution_energy.end(), 0.0);
+    region_resolution_energy.clear();
     for (const auto &[interface, matrix] : model.fabricated_surfaces)
     {
       const double fixed_trace_energy =
@@ -42093,6 +42168,11 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
           AccumulateRegionPatch(region_local[interface], shares->second, patch.global_index,
                                 fixed_trace_energy, fixed_flux_energy, true,
                                 maximum_trace_closure_spread);
+          const double share = shares->second.share[patch.global_index];
+          if (resolution && share > 0.0)
+          {
+            region_resolution_energy.emplace_back(interface, share * fixed_trace_energy);
+          }
         }
       }
     }
@@ -42106,6 +42186,10 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       for (int t = 0; t < resolution->types; t++)
       {
         resolution->Add(t, plane_slot, status, m, resolution_energy[t]);
+      }
+      for (const auto &[interface, energy] : region_resolution_energy)
+      {
+        resolution->AddRegion(interface, status, m, energy);
       }
     }
     double path_scale_squared = 0.0;

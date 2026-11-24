@@ -607,6 +607,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   PostOperator<ProblemType::EIGENMODE> post_op(iodata, space_op, &response_geometry,
                                                &surface_post_geometry,
                                                &impedance_candidate_geometry);
+  post_op.SetSurfaceParticipationTable(surface_participation.get());
   ComplexVector B(Curl.Height());
   B.UseDevice(true);
 
