@@ -239,6 +239,11 @@ protected:
   std::complex<double> GetBoundaryTermCoefficient(const BoundaryTerm &term,
                                                   double omega) const;
 
+  // True iff there are frequency-dependent PML regions. Their terms of A(ω) are not of the
+  // factored form of the terms above: they are assembled and projected at each frequency,
+  // or evaluated from a rational fit (see ProjectPMLExtraSystem and FitPMLExtraSystem).
+  bool has_pml_A2 = false;
+
   // Port-space evaluation of the wave-port terms of the PROM. The modal correction
   // Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ, the excitation RHS2ᵣ(ω) = −2iω Vᵀs_full, and the
   // S-parameters only need the pairings Vᵀs of the basis with the per-port modal n×H shape
@@ -389,6 +394,10 @@ protected:
     // singular values: modal-correction residue matrices are generally indefinite.
     std::vector<double> weights;
     std::vector<Eigen::VectorXd> u_dirs;
+    // Complex directions used instead of u_dirs if nonempty, for the Takagi factorization
+    // M_proj = Σ_j weights[j] u_j u_jᵀ of a complex symmetric residue matrix (frequency-
+    // dependent PML).
+    std::vector<Eigen::VectorXcd> u_dirs_c;
     std::vector<std::complex<double>> poles;
     std::vector<std::complex<double>> residues;
     // If true, poles and residues are p_k, r_k in s = iω of r_k s²/(s - p_k) M_proj,
@@ -537,6 +546,38 @@ protected:
   static bool AddAuxBlockDirections(WavePortAuxBlock &blk, const Eigen::MatrixXcd &Mp_r,
                                     double rank_tol);
 
+  // Frequency-dependent PML terms of the PROM, A2ᵣ(ω) = Vᵀ A2_pml(ω) V. They are sampled on
+  // the sweep band for the current basis and approximated by
+  //               A2ᵣ(ω) ≈ P₀ + ω P₁ + ω² P₂ + Σₖ Rₖ / (ω - pₖ) ,
+  // with poles pₖ on the positive imaginary axis (see AddPMLSynthesis), for circuit
+  // synthesis and the online phase of the sweep.
+  struct PMLSamples
+  {
+    std::vector<double> w_fit, w_check;
+    Eigen::MatrixXcd Y_fit, Y_check;  // Vectorized samples, one row per frequency
+    double scale = 0.0;               // Maximum Frobenius norm of the samples
+  };
+  struct PMLRationalFit
+  {
+    Eigen::MatrixXcd P0, P1, P2;
+    std::vector<std::complex<double>> poles;
+    std::vector<Eigen::MatrixXcd> residues;
+    double rel_err = 0.0;  // Relative error on the check grid
+    Eigen::MatrixXcd Evaluate(double omega) const;
+  };
+  mutable std::optional<PMLSamples> pml_samples;  // For the current basis
+  std::optional<PMLRationalFit> pml_online_fit;
+  Eigen::MatrixXcd ProjectPMLExtraSystem(double omega) const;
+  const PMLSamples &GetPMLSamples() const;
+  std::vector<std::complex<double>> GetPMLPoles(int num_poles) const;
+  PMLRationalFit FitPMLExtraSystem(const std::vector<std::complex<double>> &poles) const;
+
+  // Fold the frequency-dependent PML terms into the synthesized pencil: corrections to the
+  // reduced K, C, M and auxiliary states for their rational part.
+  void AddPMLSynthesis(Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr,
+                       Eigen::MatrixXcd &Mr_corr,
+                       std::vector<WavePortAuxBlock> &aux_blocks) const;
+
   // Append aux-state rows/columns for regime-2 wave ports onto an n×n base pencil
   // (Kr_total, Cr_total, Mr_total). Returns the (n+aux)×(n+aux) augmented matrices and
   // appends labels to `aux_labels`. The base matrices are left at size n×n if no aux
@@ -656,6 +697,12 @@ public:
   // Return ||V c|| for the coefficients c of a vector in the basis (zero-padded to the
   // basis dimension).
   double BasisNorm(const Eigen::VectorXcd &c) const;
+
+  // Prepare the online phase of the sweep, with the final basis: fit the
+  // frequency-dependent PML terms of the PROM, which replaces their assembly and projection
+  // at each frequency in SolvePROM if the fit is accurate to near machine precision and the
+  // sweep has more frequencies than the fit samples.
+  void PrepareOnlinePhase();
 
   // Assemble and solve the PROM at the specified frequency, for every excitation. The
   // reduced solutions are available from GetReducedSolution(excitation_idx).

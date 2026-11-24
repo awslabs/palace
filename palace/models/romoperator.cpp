@@ -81,6 +81,9 @@ constexpr double WAVEPORT_SYNTHESIS_AUX_RANK_TOL = 1.0e-6;
 // residue norm (a far pole's residue can be O(10-100)×W via near-cancellation with the poly
 // part).
 constexpr double WAVEPORT_SYNTHESIS_MODAL_PART_FLOOR = 1.0e-10;
+// Chebyshev nodes of the fits of the frequency-dependent PML terms, and of the independent
+// grid to check them.
+constexpr int PML_FIT_SAMPLES = 30, PML_CHECK_SAMPLES = 20;
 // Index of `target` in `labels`, or -1 when absent. Used to address rows of the
 // synthesized matrices by their node label.
 inline long LabelIndex(const std::vector<std::string> &labels, const std::string &target)
@@ -600,6 +603,8 @@ HybridBulkBoundaryOperator::HybridBulkBoundaryOperator(
     {
       if (domain_orthog_type == DomainOrthogonalizationWeight::ENERGY)
       {
+        // With the background permittivity in PML regions, so that the weight is positive
+        // definite.
         return MaterialPropertyCoefficient{mat_op.GetAttributeToMaterial(),
                                            mat_op.GetPermittivityReal()};
       }
@@ -719,12 +724,14 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
              space_op.GetFrequencyDependentPermittivityMassMatrix(m, Operator::DIAG_ZERO),
              true);
   }
+  has_pml_A2 = mat_op.HasFrequencyDependentPML();
   {
-    // The terms other than the wave ports reproduce the assembled A2(ω): check on a random
-    // vector at the ends of the sweep, so that a frequency-dependent term without a
-    // factored form here (one added to SpaceOperator::GetExtraSystemMatrix but not here)
-    // stops the simulation instead of being dropped from the PROM. The tolerance leaves
-    // room for the round-off of partial assembly on devices.
+    // The terms other than the wave ports and the frequency-dependent PML terms reproduce
+    // the assembled A2(ω): check on a random vector at the ends of the sweep, so that a
+    // frequency-dependent term without a factored form here (one added to
+    // SpaceOperator::GetExtraSystemMatrix but not here) stops the simulation instead of
+    // being dropped from the PROM. The tolerance leaves room for the round-off of partial
+    // assembly on devices.
     const auto &sample_f = iodata.solver.driven.sample_f;
     ComplexVector x(K->Height()), y(K->Height()), z(K->Height());
     x.UseDevice(true);
@@ -736,7 +743,7 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
                             : std::vector<double>{sample_f.front(), sample_f.back()})
     {
       auto A2 = space_op.GetExtraSystemMatrix<ComplexOperator>(
-          omega, Operator::DIAG_ZERO, /*include_wave_ports=*/false);
+          omega, Operator::DIAG_ZERO, /*include_wave_ports=*/false, /*include_pml=*/false);
       y = 0.0;
       double scale = 0.0;
       if (A2)
@@ -1280,6 +1287,8 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
   // vectors, if it has a nonzero real and imaginary parts).
   BlockTimer bt(Timer::CONSTRUCT_PROM);
   MPI_Comm comm = space_op.GetComm();
+  pml_samples.reset();
+  pml_online_fit.reset();
 
   const auto norm_re = linalg::Norml2(comm, u.Real());
   const auto norm_im = linalg::Norml2(comm, u.Imag());
@@ -1447,6 +1456,8 @@ void RomOperator::TruncatePROM(std::size_t n)
 {
   MFEM_VERIFY(n <= V.size(), "Cannot truncate the PROM basis to more vectors than it has!");
   const auto ne = static_cast<Eigen::Index>(n);
+  pml_samples.reset();
+  pml_online_fit.reset();
   V.resize(n);
   v_node_label.resize(n);
   orth_R.conservativeResize(ne, ne);
@@ -1561,6 +1572,39 @@ double RomOperator::BasisNorm(const Eigen::VectorXcd &c) const
   return weight_op_W ? (gram_L.topRows(c.size()).transpose() * c).norm() : c.norm();
 }
 
+void RomOperator::PrepareOnlinePhase()
+{
+  // Rational fit of the frequency-dependent PML terms for the final basis, which replaces
+  // their per-frequency assembly and projection if it is accurate to near machine
+  // precision and cheaper (fewer samples than online frequencies).
+  pml_online_fit.reset();
+  if (has_pml_A2 && !V.empty() && sweep_omega_max > sweep_omega_min)
+  {
+    constexpr double online_tol = 1.0e-10;
+    constexpr int max_poles = 16;
+    if (sweep_omega_samples.size() > PML_FIT_SAMPLES + PML_CHECK_SAMPLES)
+    {
+      for (int m = 0; m <= max_poles; m++)
+      {
+        auto fit = FitPMLExtraSystem(GetPMLPoles(m));
+        if (fit.rel_err <= online_tol)
+        {
+          Mpi::Print(" Frequency-dependent PML: online rational fit with {:d} pole{} "
+                     "(residual {:.3e})\n",
+                     m, (m == 1) ? "" : "s", fit.rel_err);
+          pml_online_fit = std::move(fit);
+          break;
+        }
+      }
+      if (!pml_online_fit)
+      {
+        Mpi::Print(" Frequency-dependent PML: no accurate online rational fit, using "
+                   "per-frequency projection\n");
+      }
+    }
+  }
+}
+
 void RomOperator::SolvePROM(double omega)
 {
   BlockTimer bt(Timer::SOLVE_PROM);
@@ -1600,6 +1644,14 @@ void RomOperator::SolvePROM(double omega)
     {
       Ar += f * term.Ar;
     }
+  }
+  if (has_pml_A2)
+  {
+    // Frequency-dependent PML regions: the PML tensors are not separable in ω, so their
+    // terms are evaluated from the rational fit for the final basis during the online
+    // phase, or otherwise assembled and projected at each frequency (n HDM operator
+    // applications).
+    Ar += pml_online_fit ? pml_online_fit->Evaluate(omega) : ProjectPMLExtraSystem(omega);
   }
 
   // Add the low-rank wave-port modal correction Wᵣ(ω) = Σ_k g_k(ω) (Vᵀs_k)(Vᵀs_k)ᵀ, the
@@ -2270,6 +2322,11 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
       auto rk = blk.residues[k];
       for (std::size_t j = 0; j < blk.weights.size(); j++)
       {
+        auto u = [&blk, j](long i)
+        {
+          return blk.u_dirs_c.empty() ? std::complex<double>(blk.u_dirs[j](i))
+                                      : blk.u_dirs_c[j](i);
+        };
         if (blk.frequency_coupled)
         {
           // Aux diagonal s - pₖ (K_aa = -pₖ, C_aa = 1) and couplings s·q·uⱼ (C_va = C_av =
@@ -2280,8 +2337,8 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
           aug.Cr(aux_row, aux_row) = 1.0;
           for (long i = 0; i < n_v; i++)
           {
-            aug.Cr(i, aux_row) = q * blk.u_dirs[j](i);
-            aug.Cr(aux_row, i) = q * blk.u_dirs[j](i);
+            aug.Cr(i, aux_row) = q * u(i);
+            aug.Cr(aux_row, i) = q * u(i);
           }
         }
         else
@@ -2292,8 +2349,8 @@ RomOperator::AugmentedPencil RomOperator::BuildAugmentedPencil(
           aug.Cr(aux_row, aux_row) = std::complex<double>(0.0, -1.0);
           for (long i = 0; i < n_v; i++)
           {
-            aug.Kr(i, aux_row) = coupling * blk.u_dirs[j](i);
-            aug.Kr(aux_row, i) = coupling * blk.u_dirs[j](i);
+            aug.Kr(i, aux_row) = coupling * u(i);
+            aug.Kr(aux_row, i) = coupling * u(i);
           }
         }
         const std::string prefix =
@@ -2891,6 +2948,12 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
     }
   }
 
+  // Frequency-dependent PML regions (part of the device, not a port load).
+  if (has_pml_A2 && sweep_omega_max > sweep_omega_min)
+  {
+    AddPMLSynthesis(Kr_total_corr, Cr_total_corr, Mr_total_corr, aux_blocks_total);
+  }
+
   // Polynomial-only matrices (basis dim n × n). The legacy matrices are loaded by the
   // matched port/reference realization. Per-port load matrices are emitted separately below
   // so downstream tools can remove internal port loads and add back only external loads
@@ -3035,6 +3098,265 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   }
 
   return out;
+}
+
+Eigen::MatrixXcd RomOperator::PMLRationalFit::Evaluate(double omega) const
+{
+  Eigen::MatrixXcd A = P0 + omega * P1 + (omega * omega) * P2;
+  for (std::size_t k = 0; k < poles.size(); k++)
+  {
+    A += residues[k] / (omega - poles[k]);
+  }
+  return A;
+}
+
+Eigen::MatrixXcd RomOperator::ProjectPMLExtraSystem(double omega) const
+{
+  const auto n = static_cast<long>(V.size());
+  Eigen::MatrixXcd A = Eigen::MatrixXcd::Zero(n, n);
+  if (auto A2_pml = space_op.GetExtraSystemPMLMatrix(omega, Operator::DIAG_ZERO))
+  {
+    // All of Vᵀ A2_pml V, which is not symmetric with a Floquet wave vector.
+    BasisProjection proj(V, 0);
+    proj.AddOperator(*A2_pml, A, false);
+    proj.Compute(space_op.GetComm());
+  }
+  return A;
+}
+
+const RomOperator::PMLSamples &RomOperator::GetPMLSamples() const
+{
+  if (!pml_samples)
+  {
+    const auto n = static_cast<long>(V.size());
+    PMLSamples samples;
+    samples.w_fit =
+        SampleChebyshevLobatto(sweep_omega_min, sweep_omega_max, PML_FIT_SAMPLES);
+    samples.w_check =
+        SampleChebyshevGauss(sweep_omega_min, sweep_omega_max, PML_CHECK_SAMPLES);
+    for (auto [ws, Y] : {std::pair{&samples.w_fit, &samples.Y_fit},
+                         std::pair{&samples.w_check, &samples.Y_check}})
+    {
+      Y->resize(static_cast<long>(ws->size()), n * n);
+      for (std::size_t i = 0; i < ws->size(); i++)
+      {
+        const Eigen::MatrixXcd A = ProjectPMLExtraSystem((*ws)[i]);
+        Y->row(static_cast<long>(i)) =
+            Eigen::Map<const Eigen::RowVectorXcd>(A.data(), n * n);
+      }
+      samples.scale = std::max(samples.scale, Y->rowwise().norm().maxCoeff());
+    }
+    pml_samples = std::move(samples);
+  }
+  return *pml_samples;
+}
+
+std::vector<std::complex<double>> RomOperator::GetPMLPoles(int num_poles) const
+{
+  // The stretch factors s(ω) = κ + σ / (α + iω) and their inverses have poles at ω = iα and
+  // ω = i(α + σ/κ), which by the grading of the profiles form a continuum on the positive
+  // imaginary axis, ω ∈ i[0, τ_max]. Use p₀ = 0 (exact for the pole of s at ω = 0 without
+  // frequency shift) and pₖ = iτₖ, k ≥ 1, with τₖ geometrically spaced in
+  // [ω_min / 2, τ_max].
+  double tau_max = 0.0;
+  for (const auto &layer : space_op.GetMaterialOp().GetPMLLayers())
+  {
+    if (!layer.IsFrequencyDependent())
+    {
+      continue;
+    }
+    const auto &p = layer.GetStretch();
+    for (int a = 0; a < 3; a++)
+    {
+      const double sigma_max = std::max(p.sigma_max[2 * a], p.sigma_max[2 * a + 1]);
+      tau_max = std::max(tau_max, p.alpha_max[a] + sigma_max / p.kappa_max[a]);
+    }
+  }
+  const double tau_min = 0.5 * sweep_omega_min;
+  std::vector<std::complex<double>> poles;
+  for (int k = 0; k < num_poles; k++)
+  {
+    if (k == 0)
+    {
+      poles.emplace_back(0.0, 0.0);
+      continue;
+    }
+    const double t = (num_poles > 2) ? static_cast<double>(k - 1) / (num_poles - 2) : 0.0;
+    poles.emplace_back(0.0, (tau_max > tau_min) ? tau_min * std::pow(tau_max / tau_min, t)
+                                                : tau_min);
+  }
+  return poles;
+}
+
+RomOperator::PMLRationalFit
+RomOperator::FitPMLExtraSystem(const std::vector<std::complex<double>> &poles) const
+{
+  // Linear least-squares fit of all matrix coefficients for the given poles.
+  const auto &samples = GetPMLSamples();
+  const auto n = static_cast<long>(V.size());
+  const int n_poles = static_cast<int>(poles.size());
+  auto Design = [&](const std::vector<double> &ws)
+  {
+    Eigen::MatrixXcd D(static_cast<long>(ws.size()), 3 + n_poles);
+    for (std::size_t i = 0; i < ws.size(); i++)
+    {
+      D(i, 0) = 1.0;
+      D(i, 1) = ws[i];
+      D(i, 2) = ws[i] * ws[i];
+      for (int k = 0; k < n_poles; k++)
+      {
+        D(i, 3 + k) = 1.0 / (ws[i] - poles[k]);
+      }
+    }
+    return D;
+  };
+  auto Unpack = [n](const Eigen::RowVectorXcd &v)
+  { return Eigen::MatrixXcd(Eigen::Map<const Eigen::MatrixXcd>(v.data(), n, n)); };
+  const Eigen::MatrixXcd coeff =
+      Design(samples.w_fit).colPivHouseholderQr().solve(samples.Y_fit);
+  PMLRationalFit fit;
+  fit.P0 = Unpack(coeff.row(0));
+  fit.P1 = Unpack(coeff.row(1));
+  fit.P2 = Unpack(coeff.row(2));
+  fit.poles = poles;
+  for (int k = 0; k < n_poles; k++)
+  {
+    fit.residues.push_back(Unpack(coeff.row(3 + k)));
+  }
+  const Eigen::MatrixXcd err = Design(samples.w_check) * coeff - samples.Y_check;
+  fit.rel_err =
+      (samples.scale > 0.0) ? err.rowwise().norm().maxCoeff() / samples.scale : 0.0;
+  return fit;
+}
+
+void RomOperator::AddPMLSynthesis(Eigen::MatrixXcd &Kr_corr, Eigen::MatrixXcd &Cr_corr,
+                                  Eigen::MatrixXcd &Mr_corr,
+                                  std::vector<WavePortAuxBlock> &aux_blocks) const
+{
+  // The reduced PML terms A2ᵣ(ω) are a matrix-valued rational function of ω, not of the
+  // scalar-times-fixed-matrix form of the boundary terms above, with a continuum of poles
+  // on the positive imaginary axis (see GetPMLPoles). As for the other BCs, the polynomial
+  // regime is used if it meets the synthesis tolerance on the band, otherwise poles on the
+  // imaginary axis are added until it does. These give decaying auxiliary states, while a
+  // free rational fit (AAA) of the projected terms can place spurious poles close to the
+  // band or in the lower half plane. Each residue is realized with one auxiliary state per
+  // significant direction of its Takagi factorization.
+  const auto &samples = GetPMLSamples();
+  if (samples.scale <= 0.0)
+  {
+    return;
+  }
+  const long nr = Kr.rows();
+  struct Realization
+  {
+    PMLRationalFit fit;  // With the truncated residues
+    std::vector<WavePortAuxBlock> blocks;
+    std::size_t n_aux = 0;
+  };
+  auto Realize = [&](const std::vector<std::complex<double>> &poles)
+  {
+    // Without a Floquet wave vector (rejected with circuit synthesis, see IoData), the PML
+    // terms are complex symmetric: remove the rounding errors of the fit before the Takagi
+    // factorization of the residues.
+    Realization out;
+    out.fit = FitPMLExtraSystem(poles);
+    for (auto *A : {&out.fit.P0, &out.fit.P1, &out.fit.P2})
+    {
+      *A = (0.5 * (*A + A->transpose())).eval();
+    }
+    for (auto &R : out.fit.residues)
+    {
+      R = (0.5 * (R + R.transpose())).eval();
+    }
+    for (std::size_t k = 0; k < poles.size(); k++)
+    {
+      // Drop the directions whose maximum contribution on the band is insignificant.
+      const auto p = poles[k];
+      const double dre =
+          std::max({sweep_omega_min - p.real(), p.real() - sweep_omega_max, 0.0});
+      const double band_distance =
+          std::max(std::hypot(dre, p.imag()), 1.0e-3 * (sweep_omega_max - sweep_omega_min));
+      const double weight_tol =
+          0.1 * waveport_synthesis_tol * samples.scale * band_distance;
+
+      // Takagi factorization R = Σⱼ σⱼ uⱼ uⱼᵀ of the complex symmetric residue, from the
+      // eigendecomposition of the real symmetric embedding [[Re R, Im R], [Im R, -Re R]]
+      // with eigenvalue pairs ±σⱼ and eigenvectors [Re uⱼ; Im uⱼ], [-Im uⱼ; Re uⱼ]. Each
+      // kept direction gives one auxiliary state (half of those for separate signed
+      // factorizations of the real and imaginary parts).
+      auto &R = out.fit.residues[k];
+      Eigen::MatrixXd E(2 * nr, 2 * nr);
+      E << R.real(), R.imag(), R.imag(), -R.real();
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(E);
+      MFEM_VERIFY(eig.info() == Eigen::Success,
+                  "Failed eigendecomposition for PML synthesis residue matrix!");
+      WavePortAuxBlock blk;
+      blk.port_idx = -1;
+      blk.label = fmt::format("pml_p{:d}", k);
+      blk.poles = {p};
+      blk.residues = {std::complex<double>(0.0, -1.0)};  // i·(-i)·Σⱼ σⱼ uⱼ uⱼᵀ = R
+      R.setZero();
+      for (long j = 2 * nr - 1; j >= 0 && eig.eigenvalues()(j) > weight_tol; j--)
+      {
+        const Eigen::VectorXcd u =
+            eig.eigenvectors().col(j).head(nr).cast<std::complex<double>>() +
+            std::complex<double>(0.0, 1.0) *
+                eig.eigenvectors().col(j).tail(nr).cast<std::complex<double>>();
+        blk.weights.push_back(eig.eigenvalues()(j));
+        blk.u_dirs_c.push_back(u);
+        R += eig.eigenvalues()(j) * (u * u.transpose());
+      }
+      if (!blk.weights.empty())
+      {
+        out.n_aux += blk.weights.size();
+        out.blocks.push_back(std::move(blk));
+      }
+    }
+    // Error of the realized approximation on the check grid.
+    double max_err = 0.0;
+    for (std::size_t i = 0; i < samples.w_check.size(); i++)
+    {
+      const Eigen::MatrixXcd A = out.fit.Evaluate(samples.w_check[i]);
+      max_err =
+          std::max(max_err, (Eigen::Map<const Eigen::RowVectorXcd>(A.data(), nr * nr) -
+                             samples.Y_check.row(static_cast<long>(i)))
+                                .norm());
+    }
+    out.fit.rel_err = max_err / samples.scale;
+    return out;
+  };
+
+  // Polynomial regime, then increasing numbers of poles.
+  constexpr int max_poles = 12;
+  auto best = Realize({});
+  for (int m = 1; best.fit.rel_err > waveport_synthesis_tol && m <= max_poles; m++)
+  {
+    auto trial = Realize(GetPMLPoles(m));
+    if (trial.fit.rel_err < best.fit.rel_err)
+    {
+      best = std::move(trial);
+    }
+  }
+
+  // Fold the polynomial part into the pencil: ω P₁ = iω (-i P₁), ω² P₂ = -ω² (-P₂).
+  Kr_corr += best.fit.P0;
+  Cr_corr += std::complex<double>(0.0, -1.0) * best.fit.P1;
+  Mr_corr -= best.fit.P2;
+  for (auto &blk : best.blocks)
+  {
+    aux_blocks.push_back(std::move(blk));
+  }
+  const auto n_poles = best.fit.poles.size();
+  Mpi::Print(" Frequency-dependent PML: {} synthesis residual {:.3e} (tol {:.3e}, {:d} "
+             "pole{} on the imaginary axis, +{:d} aux states)\n",
+             (n_poles == 0) ? "polynomial" : "augmented", best.fit.rel_err,
+             waveport_synthesis_tol, n_poles, (n_poles == 1) ? "" : "s", best.n_aux);
+  if (best.fit.rel_err > waveport_synthesis_tol)
+  {
+    Mpi::Warning("Frequency-dependent PML synthesis residual {:.3e} exceeds the synthesis "
+                 "tolerance {:.3e}!\n",
+                 best.fit.rel_err, waveport_synthesis_tol);
+  }
 }
 
 void RomOperator::PrintPortReferenceData(const Units &units, const fs::path &post_dir,

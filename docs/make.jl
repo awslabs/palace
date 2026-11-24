@@ -78,6 +78,10 @@ generate_microstrip_schematic()
 include(joinpath(@__DIR__, "generate_sic_schematic.jl"))
 generate_sic_schematic()
 
+# Draw the diagrams of the extruded PML used by guide/boundaries.md.
+include(joinpath(@__DIR__, "generate_pml_diagrams.jl"))
+generate_pml_diagrams()
+
 git_ref = get_git_ref()
 @info "Building documentation with GitHub links pointing to: $git_ref"
 rewrite_github_links(joinpath(@__DIR__, "src"), git_ref)
@@ -119,6 +123,7 @@ makedocs(
             "examples/spheres.md",
             "examples/rings.md",
             "examples/antenna.md",
+            "examples/patch_antenna.md",
             "examples/transmon.md",
             "examples/cylinder.md",
             "examples/coaxial.md",

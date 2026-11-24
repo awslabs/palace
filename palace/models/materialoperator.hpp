@@ -4,11 +4,13 @@
 #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
+#include <algorithm>
 #include <complex>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
+#include "models/pml.hpp"
 #include "utils/configfile.hpp"
 #include "utils/permittivitymodel.hpp"
 
@@ -48,6 +50,11 @@ private:
   mfem::Vector wave_vector_bz;     // BZ-wrapped k_F (always k_F, never k₀). For BZ offset.
   double floquet_omega_ref = 0.0;  // Nondimensional; when > 0, k_F scales with frequency.
   mfem::Array<double> mat_c0_min, mat_c0_max, mat_mu_eps_max;
+
+  // PML blocks, and the map from libCEED attribute to material index without the PML
+  // attributes (-1), for the bulk material terms which the PML terms replace.
+  std::vector<pml::Layer> pml_layers;
+  mfem::Array<int> attr_mat_bulk;
 
   // Are materials isotropic? True when all the material properties are effectively
   // scalar-valued (ie, true scalars or vectors with identical entries). Also true when a
@@ -94,6 +101,9 @@ private:
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
                                ProblemType problem_type, const mfem::ParMesh &mesh);
+  void SetUpPML(const std::vector<config::PMLData> &pml,
+                const std::vector<config::MaterialData> &materials,
+                ProblemType problem_type, const mfem::ParMesh &mesh, int fe_order);
   void SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,
                               ProblemType problem_type, const mfem::ParMesh &mesh);
 
@@ -117,7 +127,8 @@ private:
 public:
   MaterialOperator(const std::vector<config::MaterialData> &materials,
                    const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
-                   const Mesh &mesh);
+                   const Mesh &mesh, const std::vector<config::PMLData> &pml = {},
+                   int fe_order = 1);
   MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }
@@ -395,8 +406,36 @@ public:
   const mfem::DenseMatrix &GetWaveVectorCross() const { return wave_vector_cross; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }
   double GetFloquetOmegaRef() const { return floquet_omega_ref; }
+  // Cartesian PML regions (see models/pml.hpp), only for 3D frequency domain problems, in
+  // blocks with their own stretch. A frequency-dependent stretch is evaluated at the solve
+  // frequency, so that the PML terms contribute to the frequency-dependent part A2(ω) of
+  // the system matrix.
+  bool HasPML() const { return !pml_layers.empty(); }
+  bool HasFrequencyDependentPML() const
+  {
+    return std::ranges::any_of(pml_layers, [](const pml::Layer &layer)
+                               { return layer.IsFrequencyDependent(); });
+  }
+  const std::vector<pml::Layer> &GetPMLLayers() const { return pml_layers; }
 
+  // Attributes of the PML regions of all blocks (global mesh attributes, sorted).
+  std::vector<int> GetPMLAttributes() const;
+
+  // Whether the local libCEED attribute is in a PML region.
+  bool IsPMLCeedAttribute(int ceed_attr) const
+  {
+    return std::ranges::any_of(pml_layers, [ceed_attr](const pml::Layer &layer)
+                               { return layer.IsPMLCeedAttribute(ceed_attr); });
+  }
+
+  // The material properties of PML attributes are those of the background material of the
+  // layer. The map from attribute to material GetAttributeToMaterial() includes them (for
+  // the error estimators, field postprocessing, and boundary conditions on the boundaries
+  // of the PML regions), while GetBulkAttributeToMaterial() excludes them: for the volume
+  // terms of the system matrices, replaced by the PML terms in the PML regions, and for the
+  // domain energies, which exclude the PML regions.
   const auto &GetAttributeToMaterial() const { return attr_mat; }
+  const auto &GetBulkAttributeToMaterial() const { return attr_mat_bulk; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
 
   template <typename T>
@@ -500,6 +539,9 @@ bool IsIsotropic(const config::SymmetricMatrixData<N> &data);
 
 template <std::size_t N>
 bool IsIdentity(const config::SymmetricMatrixData<N> &data);
+
+template <std::size_t N>
+mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data);
 
 }  // namespace palace::internal::mat
 

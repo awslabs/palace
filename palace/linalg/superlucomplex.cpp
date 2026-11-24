@@ -12,6 +12,7 @@
 #include <vector>
 #include "linalg/complexcsr.hpp"
 #include "linalg/superlu.hpp"
+#include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
 // SuperLU_DIST complex double precision header.
@@ -19,6 +20,15 @@
 
 namespace palace
 {
+
+namespace
+{
+
+// Relative residual above which a factorization with robust pivoting is considered
+// inaccurate (as for SuperLUSolver).
+constexpr double robust_pivoting_tol = 1.0e-10;
+
+}  // namespace
 
 struct SuperLUComplexSolver::Data
 {
@@ -134,14 +144,18 @@ struct SuperLUComplexSolver::Data
 
 SuperLUComplexSolver::SuperLUComplexSolver(MPI_Comm comm, SymbolicFactorization reorder,
                                            bool use_3d, bool drop_small_entries,
-                                           bool reorder_reuse, int print)
+                                           bool reorder_reuse, int print,
+                                           bool robust_pivoting)
   : Solver<ComplexOperator>(), comm(comm), drop_small_entries(drop_small_entries),
-    reorder_reuse(reorder_reuse), data(std::make_unique<Data>())
+    reorder_reuse(reorder_reuse), robust_pivoting(robust_pivoting), refine(false),
+    print(print), data(std::make_unique<Data>())
 {
   // Process grid as for SuperLUSolver: the depth of a 3D process grid, and process layers
   // as close to square as possible.
   const int np = Mpi::Size(comm);
   const int npdep = data->npdep = GetSuperLUGridDepth(np, use_3d);
+  MFEM_VERIFY(!robust_pivoting || npdep == 1,
+              "SuperLUComplexSolver supports robust pivoting on 2D process grids only!");
 #if SUPERLU_DIST_MAJOR_VERSION < 9
   MFEM_VERIFY(npdep == 1, "SuperLUComplexSolver requires SuperLU_DIST 9 or later for a "
                           "3D process grid!");
@@ -186,7 +200,7 @@ SuperLUComplexSolver::SuperLUComplexSolver(MPI_Comm comm, SymbolicFactorization 
   options.Equil = NO;
   options.ReplaceTinyPivot = NO;
   options.IterRefine = NOREFINE;
-  options.SymPattern = YES;
+  options.SymPattern = robust_pivoting ? NO : YES;
   switch (reorder)
   {
     case SymbolicFactorization::METIS:
@@ -281,15 +295,69 @@ void SuperLUComplexSolver::SetOperator(const ComplexOperator &op)
     d.B.assign(csr.n_loc, 0.0);
   }
 
-  // With a 3D process grid, the factorization is followed by a solve (of a zero right-hand
-  // side) in the same call, as in mfem::SuperLUSolver, whose first solve factors the
-  // matrix. This works around a defect of SuperLU_DIST (9.3.1): the driver for 3D process
-  // grids allocates part of its solve structures in the first solve, and
-  // zDestroy_A3d_gathered_on_2d frees them whether or not they were allocated, which is an
-  // invalid free when a factorization is destroyed or replaced before any solve.
-  d.Call((d.npdep > 1) ? 1 : 0);
   this->height = op.Height();
   this->width = op.Width();
+  if (!robust_pivoting)
+  {
+    // With a 3D process grid, the factorization is followed by a solve (of a zero
+    // right-hand side) in the same call, as in mfem::SuperLUSolver, whose first solve
+    // factors the matrix. This works around a defect of SuperLU_DIST (9.3.1): the driver
+    // for 3D process grids allocates part of its solve structures in the first solve, and
+    // zDestroy_A3d_gathered_on_2d frees them whether or not they were allocated, which is
+    // an invalid free when a factorization is destroyed or replaced before any solve.
+    d.Call((d.npdep > 1) ? 1 : 0);
+    return;
+  }
+
+  // Check the accuracy of the factorization, and factor again with tiny pivot replacement
+  // (which bounds the element growth of the elimination) and iterative refinement (which
+  // recovers the accuracy lost to the perturbed pivots) if it is inaccurate (see
+  // SuperLUSolver). The first solve of the check factors the matrix: SuperLU_DIST sets up
+  // the iterative refinement for a new matrix only in a call which factors it, and a later
+  // solve would refine with the setup of the previous matrix.
+  const double res = FactorizationResidual(op);
+  if (res > robust_pivoting_tol && !refine)
+  {
+    if (print > 0)
+    {
+      Mpi::Print(comm,
+                 " SuperLUComplexSolver: Inaccurate factorization (relative residual "
+                 "{:.3e}), using tiny pivot replacement and iterative refinement\n",
+                 res);
+    }
+    refine = true;
+    d.options.ReplaceTinyPivot = YES;
+    d.options.IterRefine = SLU_DOUBLE;
+    SetOperator(op);
+    return;
+  }
+  if (res > robust_pivoting_tol)
+  {
+    Mpi::Warning(comm,
+                 "SuperLU_DIST factorization is inaccurate (relative residual {:.3e})!\n"
+                 "Consider using STRUMPACK or MUMPS instead.\n",
+                 res);
+  }
+  else if (print > 1)
+  {
+    Mpi::Print(comm, " SuperLUComplexSolver: Factorization relative residual {:.3e}\n",
+               res);
+  }
+}
+
+double SuperLUComplexSolver::FactorizationResidual(const ComplexOperator &op) const
+{
+  ComplexVector x(op.Width()), b(op.Height()), r(op.Height());
+  x.UseDevice(true);
+  b.UseDevice(true);
+  r.UseDevice(true);
+  x.Real().Randomize(1);
+  x.Imag().Randomize(2);
+  op.Mult(x, b);
+  Mult(b, x);
+  op.Mult(x, r);
+  r -= b;
+  return linalg::Norml2(comm, r) / linalg::Norml2(comm, b);
 }
 
 void SuperLUComplexSolver::Mult(const ComplexVector &x, ComplexVector &y) const
