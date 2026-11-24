@@ -183,6 +183,14 @@ file. These include:
     boundary-law metadata. See
     [Maxwell response correction](../reference.md#Maxwell-response-correction)
     for the supported geometry and confidence limits.
+    The energies (J) of these outputs are time averages, as the other energies of a
+    frequency-domain solution: in eigenmode and boundary-mode simulations they are one
+    half of the values of *Palace* before version 0.20.0, in port-driven simulations they
+    are unchanged (the ports deliver 1 W of time-averaged incident power); the
+    participations, shares and statuses do not change. A frequency-dependent material
+    `"Permittivity"` is refused with the correction, and with the interface keys it builds
+    on (`"EdgeDistances"`, `"LocalizeEdgeEnergy"`, `"FluxRecovery"`, the ownership keys and
+    `"Region"`), in this version.
     Every corrected run also reports an edge-resolution census of the trace contour
     (`surface-response-resolution.csv`, `SurfaceResponse.Resolution` in `palace.json`, a
     PREFLIGHT line and a banner; see

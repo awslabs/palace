@@ -2553,7 +2553,12 @@ the tangential electric field need not vanish inside a finite-impedance sheet mo
 Palace obtains the remaining coefficients by integrating around the coupon contour.
 Fixing this reference is essential: contour differences alone leave an arbitrary
 constant which changes the coupon response. The complex coefficients are evaluated with
-Hermitian domain- and surface-response quadratic forms.
+Hermitian domain- and surface-response quadratic forms, time-averaged as every energy of
+a frequency-domain solution in *Palace* (one half of the Hermitian form of the complex
+peak phasors, since version 0.20.0): the corrected energies, the raw interface energies
+and the normalization energy share this convention, so the participations are ratios of
+like quantities. The library's coupon responses are static, real-field responses and
+are stored unchanged; the time average is applied where they meet the complex traces.
 
 The corrected interface energy keeps the resolved raw energy outside the matching radius
 and replaces the complete thin core with the fabricated coupon response. The

@@ -17,6 +17,43 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 ## In progress
 
+#### Interface Changes
+
+  - Synchronized with *Palace* 0.20.0. The surface-response outputs follow its time-averaged
+    energy convention ([PR 937](https://github.com/awslabs/palace/pull/937)): an energy of a
+    complex (frequency-domain) field is the time average, one half of the Hermitian form,
+    applied once by the owner of each energy, as for *Palace*'s own energies. What changes
+    for a designer, by solver:
+      - eigenmode and boundary mode: every energy in J of the surface-response outputs
+        halves, exactly when the field is unchanged, as `domain-E.csv`: `E_norm`, `E_surf`
+        and `W within-R raw` of `surface-Q-corrected.csv`; `E_out`, `E_ann` and the local
+        energies of `surface-Q-edge.csv` and `surface-Q-edge-local.csv`; the "(J)" columns
+        of the `surface-response-*-energy.csv` tables (model, model-raw, patch, exclusion,
+        uncovered and its by-key and by-feature forms, loop-remainder, conductor-consistency,
+        domain-boundary, spatial-cluster-priority), of the near-edge energy budget, of the
+        coverage, resolution, loop-fit (the loop weight and the withheld domain correction),
+        magnetic and impedance-candidate tables; and the "(J)" values of `SurfaceResponse` in
+        `palace.json`.
+      - port-driven (lumped or wave ports): the same energies do not change, up to the solver
+        tolerance (the ports deliver 1 W of time-averaged incident power, so the fields scale
+        by sqrt(2) and the energies by 2 x 1/2); the linear quantities scale by sqrt(2): the
+        device traces and loop scales (V), the Ls-law gate normalizations and leg values (V),
+        and the conductor-consistency `Amplitude` and `Normalization`.
+      - driven by a surface current or through Floquet ports: the energies halve.
+      - electrostatic: nothing changes.
+      - the participations (`p_surf`, `p_out`, ...), Q, shares, fractions, correction
+        factors, residuals, statuses and verdicts do not change (ratios of like energies),
+        nor does the fabrication-process library (static responses, stored unchanged).
+  - A frequency-dependent material `"Permittivity"` (*Palace* 0.20.0) is refused with the
+    surface-response correction and with the interface keys it builds on
+    (`"EdgeDistances"`, `"LocalizeEdgeEnergy"` and `"SaveLocalEdgeEnergy"`,
+    `"FluxRecovery"`, the ownership keys and `"Region"`), for every problem type, with a
+    message naming the key.
+  - The response-corrected adaptive driven sweep (developer only) follows *Palace*'s
+    certification of the PROM and its sample refinement; every output file of the
+    surface-response product is written through *Palace*'s checked writers (a failed
+    write aborts).
+
 #### New Features
 
   - Added the configuration keys of the surface-response correction and of the features
