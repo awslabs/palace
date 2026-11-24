@@ -1326,9 +1326,14 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
     PalaceCeedCall(ceed, CeedOperatorAssemblyDataStrip(*op_coarse));
   };
 
-  // Initialize the coarse operator.
-  auto op_coarse = std::make_unique<SymmetricOperator>(fespace_coarse.GetVSize(),
-                                                       fespace_coarse.GetVSize());
+  // Initialize the coarse operator, symmetric as the fine one is (see
+  // BilinearForm::PartialAssemble).
+  const bool symmetric = (typeid(op_fine) == typeid(SymmetricOperator));
+  std::unique_ptr<Operator> op_coarse =
+      symmetric ? std::make_unique<SymmetricOperator>(fespace_coarse.GetVSize(),
+                                                      fespace_coarse.GetVSize())
+                : std::make_unique<Operator>(fespace_coarse.GetVSize(),
+                                             fespace_coarse.GetVSize());
 
   // Assemble the coarse operator by coarsening each sub-operator (over threads, geometry
   // types, integrators) of the original fine operator.
@@ -1347,16 +1352,29 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
         ceed = ceed_parent;
       }
     }
-    CeedInt nsub_ops_fine;
-    CeedOperator *sub_ops_fine;
+    CeedInt nsub_ops_fine, nsub_ops_fine_t = 0;
+    CeedOperator *sub_ops_fine, *sub_ops_fine_t = nullptr;
     PalaceCeedCall(ceed, CeedOperatorCompositeGetNumSub(op_fine[id], &nsub_ops_fine));
     PalaceCeedCall(ceed, CeedOperatorCompositeGetSubList(op_fine[id], &sub_ops_fine));
+    if (!symmetric)
+    {
+      PalaceCeedCall(
+          ceed, CeedOperatorCompositeGetNumSub(op_fine.Transpose(id), &nsub_ops_fine_t));
+      PalaceCeedCall(
+          ceed, CeedOperatorCompositeGetSubList(op_fine.Transpose(id), &sub_ops_fine_t));
+      MFEM_VERIFY(nsub_ops_fine_t == 0 || nsub_ops_fine_t == nsub_ops_fine,
+                  "Unexpected transposed sub-operators in CeedOperatorCoarsen!");
+    }
     for (CeedInt k = 0; k < nsub_ops_fine; k++)
     {
-      CeedOperator sub_op_coarse;
+      CeedOperator sub_op_coarse, sub_op_coarse_t = nullptr;
       SingleOperatorCoarsen(ceed, sub_ops_fine[k], &sub_op_coarse);
-      // Sub-operator owned by ceed::Operator.
-      op_coarse->AddSubOperator(sub_op_coarse);
+      if (nsub_ops_fine_t > 0)
+      {
+        SingleOperatorCoarsen(ceed, sub_ops_fine_t[k], &sub_op_coarse_t);
+      }
+      // Sub-operators owned by ceed::Operator.
+      op_coarse->AddSubOperator(sub_op_coarse, sub_op_coarse_t);
     }
   }
 

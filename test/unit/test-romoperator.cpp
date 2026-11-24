@@ -33,6 +33,7 @@
 #include "models/spaceoperator.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -5235,5 +5236,158 @@ TEST_CASE("RomOperator-SolveReducedSystem-Parallel", "[romoperator][Serial][Para
   if (Mpi::Rank(comm) != 0)
   {
     CHECK(x.isZero());
+  }
+}
+
+// The PROM excitation of a plane wave, evaluated from the restrictions of D_Xᵀ V to the
+// layer dofs and the incident field on the layer only, is the projection Vᵀ b of the HDM
+// excitation b = (A g_T)_O - (A g_O)_T with A = K + iω C - ω² M: on a conforming mesh, on
+// a nonconforming one with elements refined on both sides of the boundary of the
+// total-field region (whose layer couples through the constraints of hanging entities),
+// and on a periodic cell with an oblique plane wave and a Floquet wave vector which scales
+// with the frequency (whose antisymmetric terms need the true transposes of the operators
+// of partial assembly).
+TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator plane wave excitation",
+                 "[romoperator][Serial][Parallel]")
+{
+  enum class Case
+  {
+    Conforming,
+    Nonconforming,
+    Periodic
+  };
+  const auto test_case = GENERATE(Case::Conforming, Case::Nonconforming, Case::Periodic);
+  const int n = 5;
+  const double theta = std::numbers::pi / 6.0, f_ref = 0.15;  // GHz
+  json config;
+  config["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  config["Model"] = {{"Mesh", (temp_dir / "cube.mesh").string()},
+                     {"L0", 1.0}};  // A wavelength of a few cells
+  config["Domains"] = {{"Materials", {{{"Attributes", {1, 2}}}}},
+                       {"PlaneWave",
+                        {{{"Index", 1},
+                          {"Attributes", {1}},
+                          {"Direction", {std::sin(theta), 0.0, std::cos(theta)}},
+                          {"Polarization", "+Y"},
+                          {"Amplitude", 1.0}}}}};
+  config["Solver"] = {
+      {"Order", 2},
+      {"Driven",
+       {{"Samples", {{{"MinFreq", 0.1}, {"MaxFreq", 0.2}, {"FreqStep", 0.05}}}}}}};
+
+  // Attribute 1 is the total-field region: the center element of a cube of n x n x n
+  // hexahedra, or the slab of the middle layer of elements along z on the periodic cell.
+  // MFEM's boundary attributes of the cube are 1 (z = 0), 2 (y = 0), 3 (x = 1), 4 (y = 1),
+  // 5 (x = 0) and 6 (z = 1).
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0, false);
+  mfem::Vector c;
+  for (int e = 0; e < serial_mesh.GetNE(); e++)
+  {
+    serial_mesh.GetElementCenter(e, c);
+    bool tf = std::abs(c(2) - 0.5) < 0.5 / n;
+    if (test_case != Case::Periodic)
+    {
+      tf = tf && std::abs(c(0) - 0.5) < 0.5 / n && std::abs(c(1) - 0.5) < 0.5 / n;
+    }
+    serial_mesh.SetAttribute(e, tf ? 1 : 2);
+  }
+  serial_mesh.SetAttributes();
+  if (test_case == Case::Nonconforming)
+  {
+    // Refine the total-field element and one element of the layer outside of it.
+    mfem::Array<int> refine;
+    for (int e = 0; e < serial_mesh.GetNE(); e++)
+    {
+      serial_mesh.GetElementCenter(e, c);
+      if ((std::abs(c(0) - 0.5) < 0.5 / n && std::abs(c(1) - 0.5) < 0.5 / n &&
+           std::abs(c(2) - 0.5) < 0.5 / n) ||
+          (std::abs(c(0) - 0.5) < 0.5 / n && std::abs(c(1) - 0.5) < 0.5 / n &&
+           std::abs(c(2) - 0.5 - 1.0 / n) < 0.5 / n))
+      {
+        refine.Append(e);
+      }
+    }
+    REQUIRE(refine.Size() == 2);
+    serial_mesh.EnsureNCMesh();
+    serial_mesh.GeneralRefinement(refine, 1);
+  }
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream fo(temp_dir / "cube.mesh");
+    fo.precision(16);
+    serial_mesh.Print(fo);
+  }
+  Mpi::Barrier(Mpi::World());
+  if (test_case == Case::Periodic)
+  {
+    // Periodic along x and y, with the Floquet wave vector of the plane wave at f_ref,
+    // which scales with the frequency; absorbing on z.
+    const double k_F =
+        2.0 * std::numbers::pi * f_ref * 1.0e9 / electromagnetics::c0_ * std::sin(theta);
+    config["Boundaries"] = {{"Absorbing", {{"Attributes", {1, 6}}, {"Order", 1}}},
+                            {"Periodic",
+                             {{"FloquetWaveVector", {k_F, 0.0, 0.0}},
+                              {"FloquetReferenceFrequency", f_ref},
+                              {"BoundaryPairs",
+                               {{{"DonorAttributes", {5}},
+                                 {"ReceiverAttributes", {3}},
+                                 {"Translation", {1.0, 0.0, 0.0}}},
+                                {{"DonorAttributes", {2}},
+                                 {"ReceiverAttributes", {4}},
+                                 {"Translation", {0.0, 1.0, 0.0}}}}}}}};
+  }
+  else
+  {
+    config["Boundaries"] = {
+        {"Absorbing", {{"Attributes", {1, 2, 3, 4, 5, 6}}, {"Order", 1}}}};
+  }
+  CAPTURE(config.dump());
+
+  IoData iodata(config, false);
+  auto mesh = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh);
+  REQUIRE(space_op.GetMaterialOp().HasWaveVector() == (test_case == Case::Periodic));
+  RomOperatorTest prom_op(iodata, space_op, 3);
+  const auto comm = space_op.GetComm();
+  ComplexVector v(space_op.GetNDSpace().GetTrueVSize());
+  v.UseDevice(true);
+  for (int j = 0; j < 3; j++)
+  {
+    v = 0.0;
+    linalg::SetRandom(comm, v.Real(), 1 + j + 3 * Mpi::Rank(comm));
+    prom_op.UpdatePROM(v, "test");
+  }
+  REQUIRE(prom_op.GetReducedDimension() == 3);
+
+  auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+  auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+  REQUIRE(C);
+  ComplexVector b(v.Size());
+  b.UseDevice(true);
+  for (double omega : iodata.solver.driven.sample_f)
+  {
+    CAPTURE(omega);
+    auto A = space_op.GetSystemMatrix(std::complex<double>(1.0, 0.0), 1i * omega,
+                                      std::complex<double>(-omega * omega, 0.0), K.get(),
+                                      C.get(), M.get());
+    b = 0.0;
+    REQUIRE(space_op.AddPlaneWaveExcitationVector(1, omega, *A, b));
+    Eigen::VectorXcd full(3);
+    for (int i = 0; i < 3; i++)
+    {
+      full(i) = {linalg::Dot(comm, prom_op.GetVectors()[i], b.Real()),
+                 linalg::Dot(comm, prom_op.GetVectors()[i], b.Imag())};
+    }
+    REQUIRE(full.norm() > 0.0);
+    prom_op.SolvePROM(omega);
+    const Eigen::VectorXcd reduced = prom_op.GetAr() * prom_op.GetReducedSolution(1);
+    CHECK((reduced - full).norm() <= 1.0e-10 * full.norm());
+
+    // The same for this excitation alone.
+    prom_op.SolvePROM(omega, 1);
+    CHECK((prom_op.GetAr() * prom_op.GetReducedSolution(1) - full).norm() <=
+          1.0e-10 * full.norm());
   }
 }

@@ -262,6 +262,200 @@ palace::test::CustomCheck TestFarfieldDipole(double rtol, double tol_dipole)
   };
 }
 
+// Far field of an incident plane wave of amplitude 1 V/m scattered by an object with
+// mirror symmetry about the planes phi = 0 and phi = 90 deg (with the incident field
+// polarized in one of them). Besides the magnitude comparison with the reference data (as
+// in TestFarfield), check the magnitude |r E| (V) against closed-form values at the given
+// (theta, phi) directions (deg), to tol_closed of each value, and the cross-polarized far
+// field on the two planes (E . phi_hat on phi = 0, E . theta_hat on phi = 90), which
+// vanishes by symmetry, to tol_cross of the largest closed-form value.
+palace::test::CustomCheck
+TestFarfieldPlaneWave(double rtol, double tol_closed, double tol_cross,
+                      std::vector<std::array<double, 3>> closed_form)
+{
+  return [rtol, tol_closed, tol_cross, closed_form = std::move(closed_form)](
+             palace::Table &a, palace::Table &r, const std::filesystem::path &path)
+  {
+    TestFarfield(rtol)(a, r, path);
+    REQUIRE(a.n_cols() >= 8);
+    const std::size_t e0 = a.n_cols() - 6, it = e0 - 2, ip = e0 - 1;
+    double amax = 0.0;
+    for (const auto &[theta, phi, value] : closed_form)
+    {
+      amax = std::max(amax, value);
+    }
+    for (const auto &[theta, phi, value] : closed_form)
+    {
+      bool found = false;
+      for (std::size_t i = 0; i < a.n_rows() && !found; ++i)
+      {
+        if (std::abs(a[it].data[i] - theta) > 1.0e-6 ||
+            std::abs(a[ip].data[i] - phi) > 1.0e-6)
+        {
+          continue;
+        }
+        found = true;
+        double m = 0.0;
+        for (std::size_t j = e0; j < e0 + 6; j++)
+        {
+          m += a[j].data[i] * a[j].data[i];
+        }
+        m = std::sqrt(m);
+        INFO("theta = " << theta << ", phi = " << phi << ": |r E| = " << m
+                        << ", closed form = " << value);
+        CHECK(std::abs(m - value) <= tol_closed * value);
+      }
+      INFO("theta = " << theta << ", phi = " << phi);
+      CHECK(found);
+    }
+    for (std::size_t i = 0; i < a.n_rows(); ++i)
+    {
+      const double theta = a[it].data[i] * std::numbers::pi / 180.0;
+      const double phi = a[ip].data[i] * std::numbers::pi / 180.0;
+      const double st = std::sin(theta), ct = std::cos(theta);
+      const double sp = std::sin(phi), cp = std::cos(phi);
+      const bool e_plane = std::abs(sp) < 1.0e-6, h_plane = std::abs(cp) < 1.0e-6;
+      if (!e_plane && !h_plane)
+      {
+        continue;
+      }
+      // Cross-polarized direction on the plane: phi_hat on phi = 0, theta_hat on phi = 90.
+      const double u[3] = {e_plane ? -sp : ct * cp, e_plane ? cp : ct * sp,
+                           e_plane ? 0.0 : -st};
+      std::complex<double> e_cross = 0.0;
+      for (int d = 0; d < 3; d++)
+      {
+        e_cross +=
+            std::complex<double>(a[e0 + 2 * d].data[i], a[e0 + 2 * d + 1].data[i]) * u[d];
+      }
+      INFO("row " << i + 1 << ": theta = " << a[it].data[i] << ", phi = " << a[ip].data[i]
+                  << ", cross-polarized |r E| = " << std::abs(e_cross));
+      CHECK(std::abs(e_cross) <= tol_cross * amax);
+    }
+  };
+}
+
+// Far field of an incident plane wave on an empty total-field region: the scattered field
+// vanishes, and what remains is the leakage of the TF/SF source. Check that |r E| (V) stays
+// below tol at all directions, independently of the reference data (the leakage is
+// discretization noise).
+palace::test::CustomCheck TestFarfieldLeakage(double tol)
+{
+  return [tol](palace::Table &a, palace::Table &, const std::filesystem::path &)
+  {
+    REQUIRE(a.n_cols() >= 6);
+    const std::size_t e0 = a.n_cols() - 6;
+    for (std::size_t i = 0; i < a.n_rows(); ++i)
+    {
+      double m = 0.0;
+      for (std::size_t j = e0; j < e0 + 6; j++)
+      {
+        m += a[j].data[i] * a[j].data[i];
+      }
+      INFO("row " << i + 1 << ": |r E| = " << std::sqrt(m));
+      CHECK(std::sqrt(m) <= tol);
+    }
+  };
+}
+
+// The radar cross section of a plane wave of amplitude E0 (V/m) must follow from the far
+// field of the same run (farfield-rE.csv, next to the checked file): in farfield-rcs.csv,
+// sigma_theta = 4 pi |r E . theta_hat|^2 / E0^2, sigma_phi likewise, and sigma their sum;
+// in rcs-monostatic.csv (single plane wave along direction khat with polarization phat),
+// sigma_co and sigma_cross from the far field along phat and khat x phat in the
+// backscattering direction -khat, at each frequency (the far field has the same directions
+// at every frequency, in consecutive blocks). The tolerance is relative to the largest
+// value. With compare_ref, the table is also compared with the reference data (as for the
+// other CSVs).
+palace::test::CustomCheck TestRCS(double tol, double E0, std::array<double, 3> khat,
+                                  std::array<double, 3> phat, bool compare_ref,
+                                  palace::test::RegressionOptions opts)
+{
+  return [=](palace::Table &a, palace::Table &r, const std::filesystem::path &path)
+  {
+    if (compare_ref)
+    {
+      palace::test::CompareCSVFiles(a, r, opts);
+    }
+    palace::TableWithCSVFile ff_file((path.parent_path() / "farfield-rE.csv").string(),
+                                     true);
+    palace::Table &ff = ff_file.table;
+    REQUIRE(ff.n_cols() >= 8);
+    const std::size_t e0 = ff.n_cols() - 6, it = e0 - 2, ip = e0 - 1;
+    auto E = [&](std::size_t i, int d)
+    { return std::complex<double>(ff[e0 + 2 * d].data[i], ff[e0 + 2 * d + 1].data[i]); };
+    auto sigma = [&](std::size_t i, const double(&u)[3])
+    {
+      return 4.0 * std::numbers::pi *
+             std::norm(E(i, 0) * u[0] + E(i, 1) * u[1] + E(i, 2) * u[2]) / (E0 * E0);
+    };
+    if (path.filename() == "farfield-rcs.csv")
+    {
+      REQUIRE(a.n_rows() == ff.n_rows());
+      REQUIRE(a.n_cols() >= 3);
+      const std::size_t is = a.n_cols() - 3;
+      double smax = 0.0;
+      for (std::size_t i = 0; i < a.n_rows(); ++i)
+      {
+        smax = std::max(smax, a[is].data[i]);
+      }
+      for (std::size_t i = 0; i < a.n_rows(); ++i)
+      {
+        const double theta = ff[it].data[i] * std::numbers::pi / 180.0;
+        const double phi = ff[ip].data[i] * std::numbers::pi / 180.0;
+        const double st = std::sin(theta), ct = std::cos(theta);
+        const double sp = std::sin(phi), cp = std::cos(phi);
+        const double theta_hat[3] = {ct * cp, ct * sp, -st}, phi_hat[3] = {-sp, cp, 0.0};
+        const double s_theta = sigma(i, theta_hat), s_phi = sigma(i, phi_hat);
+        INFO("row " << i + 1 << ": sigma = " << a[is].data[i]
+                    << ", from r E = " << s_theta + s_phi);
+        CHECK(std::abs(a[is].data[i] - (s_theta + s_phi)) <= tol * smax);
+        CHECK(std::abs(a[is + 1].data[i] - s_theta) <= tol * smax);
+        CHECK(std::abs(a[is + 2].data[i] - s_phi) <= tol * smax);
+      }
+    }
+    else
+    {
+      // Backscattering direction -khat.
+      const double theta_b =
+          std::acos(std::clamp(-khat[2], -1.0, 1.0)) * 180.0 / std::numbers::pi;
+      double phi_b = std::atan2(-khat[1], -khat[0]) * 180.0 / std::numbers::pi;
+      REQUIRE(a.n_rows() > 0);
+      REQUIRE(ff.n_rows() % a.n_rows() == 0);
+      const std::size_t n_dir = ff.n_rows() / a.n_rows();
+      std::size_t ib = n_dir;
+      for (std::size_t i = 0; i < n_dir; ++i)
+      {
+        if (std::abs(ff[it].data[i] - theta_b) < 1.0e-6 &&
+            (std::abs(std::sin(theta_b * std::numbers::pi / 180.0)) < 1.0e-12 ||
+             std::abs(std::remainder(ff[ip].data[i] - phi_b, 360.0)) < 1.0e-6))
+        {
+          ib = i;
+          break;
+        }
+      }
+      INFO("backscattering direction theta = " << theta_b << ", phi = " << phi_b);
+      REQUIRE(ib < n_dir);
+      REQUIRE(a.n_cols() == 4);  // f, sigma, sigma_co, sigma_cross
+      const double p[3] = {phat[0], phat[1], phat[2]};
+      const double q[3] = {khat[1] * phat[2] - khat[2] * phat[1],
+                           khat[2] * phat[0] - khat[0] * phat[2],
+                           khat[0] * phat[1] - khat[1] * phat[0]};
+      for (std::size_t k = 0; k < a.n_rows(); ++k)
+      {
+        const std::size_t i = ib + k * n_dir;
+        REQUIRE(std::abs(ff[0].data[i] - a[0].data[k]) <= 1.0e-9 * a[0].data[k]);
+        const double s_co = sigma(i, p), s_cross = sigma(i, q);
+        INFO("row " << k + 1 << ": sigma = " << a[1].data[k]
+                    << ", from r E = " << s_co + s_cross);
+        CHECK(std::abs(a[1].data[k] - (s_co + s_cross)) <= tol * (s_co + s_cross));
+        CHECK(std::abs(a[2].data[k] - s_co) <= tol * (s_co + s_cross));
+        CHECK(std::abs(a[3].data[k] - s_cross) <= tol * (s_co + s_cross));
+      }
+    }
+  };
+}
+
 // Generalised comparison for any CSV with paired "Re{X} (unit)" / "Im{X} (unit)" complex
 // columns. For each Re column it pairs the matching Im (looked up by header_text), then
 // compares either the magnitudes |X| = sqrt(Re^2 + Im^2), or the complex values with a
@@ -2869,6 +3063,83 @@ TEST_CASE("farfield_interior", "[Serial][Parallel][GPU][Regression]")
   opts.custom_checks["farfield-rE.csv"] = TestFarfieldDipole(opts.rtol, 1.0e-2);
   palace::test::RunRegressionCase("farfield_interior", "farfield_interior.json",
                                   "farfield_interior", opts);
+}
+
+// Plane wave scattering by a coated sphere (examples/rcs_coated_sphere): PEC core of radius
+// 5 cm with a lossy magnetic coating (eps_r = 4, mu_r = 2, sigma = 0.5 S/m) to 7.5 cm,
+// plane wave of 1 V/m along +z polarized along +x at 600 MHz. The far field is checked
+// against the Mie series of the coated sphere, and the radar cross section against the far
+// field.
+TEST_CASE("rcs_coated_sphere", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-10;
+  opts.paraview_fields = false;  // "SaveStep": 0
+  // |r E| (V) of the Mie series on the E-plane (phi = 0) and H-plane (phi = 90 deg).
+  std::vector<std::array<double, 3>> mie = {
+      {0.0, 0.0, 7.2510022e-02},    {30.0, 0.0, 6.2770498e-02},
+      {60.0, 0.0, 3.8238762e-02},   {90.0, 0.0, 1.3388941e-02},
+      {120.0, 0.0, 2.5369425e-02},  {150.0, 0.0, 4.2185252e-02},
+      {180.0, 0.0, 4.8259146e-02},  {30.0, 90.0, 7.0169882e-02},
+      {60.0, 90.0, 6.4338504e-02},  {90.0, 90.0, 5.7641865e-02},
+      {120.0, 90.0, 5.2317057e-02}, {150.0, 90.0, 4.9228392e-02}};
+  opts.custom_checks["farfield-rE.csv"] =
+      TestFarfieldPlaneWave(opts.rtol, 5.0e-2, 1.0e-3, std::move(mie));
+  opts.custom_checks["farfield-rcs.csv"] =
+      TestRCS(1.0e-8, 1.0, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}, true, opts);
+  opts.custom_checks["rcs-monostatic.csv"] =
+      TestRCS(1.0e-8, 1.0, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}, true, opts);
+  palace::test::RunRegressionCase("rcs_coated_sphere", "rcs_coated_sphere.json",
+                                  "rcs_coated_sphere", opts);
+}
+
+// The same plane wave on the empty box: the far field measures the leakage of the TF/SF
+// source, which must stay well below the far field of the sphere (-46 dB of its maximum
+// here); the radar cross section is only checked against the far field of the run.
+TEST_CASE("rcs_empty", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-10;
+  opts.paraview_fields = false;  // "SaveStep": 0
+  opts.custom_checks["farfield-rE.csv"] = TestFarfieldLeakage(1.0e-3);
+  opts.custom_checks["farfield-rcs.csv"] =
+      TestRCS(1.0e-8, 1.0, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}, false, opts);
+  opts.custom_checks["rcs-monostatic.csv"] =
+      TestRCS(1.0e-8, 1.0, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}, false, opts);
+  palace::test::RunRegressionCase("rcs_coated_sphere", "rcs_empty.json", "rcs_empty", opts);
+}
+
+// A uniform frequency sweep of the coated sphere at second order, from 500 to 700 MHz, and
+// the same with an adaptive sweep, which is checked against the reference data of the
+// uniform sweep (its reference files link to those of rcs_sweep, so that the two cases run
+// in separate directories): the plane wave excitation of the reduced-order model is exact
+// at each frequency, so the outputs agree to AdaptiveTol = 1e-5 (the radar cross section,
+// as the square of the far field, to twice that). The error indicators of the two sweeps
+// differ.
+TEST_CASE("rcs_sweep", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-10;
+  opts.paraview_fields = false;  // "SaveStep": 0
+  opts.custom_checks["farfield-rcs.csv"] =
+      TestRCS(1.0e-8, 1.0, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}, true, opts);
+  opts.custom_checks["rcs-monostatic.csv"] =
+      TestRCS(1.0e-8, 1.0, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0}, true, opts);
+  palace::test::RunRegressionCase("rcs_coated_sphere", "rcs_sweep.json", "rcs_sweep", opts);
+}
+
+TEST_CASE("rcs_sweep_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-7;
+  opts.paraview_fields = false;  // "SaveStep": 0
+  opts.excluded_files = {"error-indicators.csv"};
+  palace::test::RunRegressionCase("rcs_coated_sphere", "rcs_sweep_adaptive.json",
+                                  "rcs_sweep_adaptive", opts);
 }
 
 // --- coaxial + cpw non-adaptive + cpw eigen: reltol still 2e-2 (from  ---

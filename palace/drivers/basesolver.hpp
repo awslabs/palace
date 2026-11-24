@@ -58,6 +58,10 @@ protected:
   // adaptation, for example to transfer solution data to the modified mesh.
   virtual void UpdateAfterMeshChange(Mesh &mesh) const {}
 
+  // Called with the local elements marked for a nonconforming refinement of the finest
+  // mesh, before it, to mark more of them.
+  virtual void AddMarkedElements(Mesh &mesh, mfem::Array<int> &marked_elements) const {}
+
   // Whether the adaptive mesh refinement goes on after the solve of adaptation iteration it
   // (0 for the initial solve), with ntdof unknowns and the error estimate err.
   bool ContinueAdaptation(int it, long long int ntdof, double err) const;

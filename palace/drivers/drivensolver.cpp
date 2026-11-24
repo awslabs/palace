@@ -13,6 +13,7 @@
 #include <mfem.hpp>
 #include "drivers/fluxerrorestimator.hpp"
 #include "fem/errorindicator.hpp"
+#include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/floquetcorrection.hpp"
@@ -22,6 +23,7 @@
 #include "linalg/vector.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/lumpedportoperator.hpp"
+#include "models/planewaveoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/romoperator.hpp"
@@ -79,6 +81,53 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           space_op.GlobalTrueVSize()};
 }
 
+void DrivenSolver::AddMarkedElements(Mesh &mesh, mfem::Array<int> &marked_elements) const
+{
+  // A nonconforming refinement of part of the layer of elements around the total-field
+  // region of a plane wave leaves hanging entities inside the layer, where the source is
+  // then not consistent with the incident field, and the solution degrades. Refining the
+  // whole layer whenever part of it is marked avoids this, at the cost of its elements.
+  if (iodata.domains.plane_wave.empty())
+  {
+    return;
+  }
+  PlaneWaveOperator plane_wave_op(iodata.domains.plane_wave, iodata.units, mesh.Get(),
+                                  false);
+  mfem::ND_FECollection nd_fec(1, mesh.Get().Dimension());
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  mfem::Array<int> marked(mesh.Get().GetNE()), tdofs, elements, layer;
+  marked = 0;
+  for (int e : marked_elements)
+  {
+    marked[e] = 1;
+  }
+  for (const auto &[idx, src] : plane_wave_op)
+  {
+    plane_wave_op.GetLayer(idx, nd_fespace, tdofs, elements, &layer);
+    int counts[2] = {0, layer.Size()};  // Marked and all elements of the layer
+    for (int e : layer)
+    {
+      counts[0] += marked[e];
+    }
+    Mpi::GlobalSum(2, counts, mesh.Get().GetComm());
+    if (counts[0] == 0 || counts[0] == counts[1])
+    {
+      continue;
+    }
+    for (int e : layer)
+    {
+      if (!marked[e])
+      {
+        marked[e] = 1;
+        marked_elements.Append(e);
+      }
+    }
+    Mpi::Print(" Plane wave {:d}: marked the whole layer of {:d} elements around the "
+               "total-field region ({:d} of them were marked)\n",
+               idx, counts[1], counts[0]);
+  }
+}
+
 ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 {
   const auto &port_excitations = space_op.GetPortExcitations();
@@ -121,6 +170,40 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
     floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
         space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetRTSpace(),
         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+  }
+
+  // Compute B = -1/(iω) ∇ x E on the true dofs.
+  auto CurlE = [&](const ComplexVector &E, ComplexVector &B, double omega)
+  {
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
+      // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
+      floquet_corr->AddMult(
+          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+    }
+  };
+
+  // With a plane wave, the solution is the total field on its total-field region and the
+  // scattered field elsewhere. The outputs take the total field everywhere, and the far
+  // field and the error estimates outside of the total-field region the scattered field.
+  const auto &plane_wave_op = space_op.GetPlaneWaveOp();
+  ComplexVector E_t, B_t, E_s, B_s;
+  if (!plane_wave_op.Empty())
+  {
+    for (auto *v : {&E_t, &E_s})
+    {
+      v->SetSize(Curl.Width());
+      v->UseDevice(true);
+    }
+    for (auto *v : {&B_t, &B_s})
+    {
+      v->SetSize(Curl.Height());
+      v->UseDevice(true);
+    }
   }
 
   // Main excitation and frequency loop.
@@ -204,6 +287,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
       // Solve linear system.
       space_op.GetExcitationVector(excitation_idx, omega, RHS);
+      space_op.AddPlaneWaveExcitationVector(excitation_idx, omega, *A, RHS);
       if (E_prev.Size() > 1)
       {
         BlockTimer bt(Timer::KSP_INITIAL_GUESS);
@@ -237,24 +321,25 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
                  linalg::Norml2(space_op.GetComm(), E),
                  linalg::Norml2(space_op.GetComm(), RHS));
 
-      // Compute B = -1/(iω) ∇ x E on the true dofs.
-      Curl.Mult(E.Real(), B.Real());
-      Curl.Mult(E.Imag(), B.Imag());
-      B *= -1.0 / (1i * omega);
-      if (space_op.GetMaterialOp().HasWaveVector())
-      {
-        // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
-        // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
-        floquet_corr->AddMult(
-            E, B,
-            space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
-      }
-
       if (omega_i == omega_start)
       {
         // Switch ParaView subfolders once per excitation, after the first solve.
         post_op.InitializeParaviewDataCollection(excitation_idx);
       }
+      if (plane_wave_op.GetTotalAndScatteredField(excitation_idx, omega,
+                                                  space_op.GetNDSpace(), E, E_t, E_s))
+      {
+        CurlE(E_t, B_t, omega);
+        CurlE(E_s, B_s, omega);
+        post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E_t, B_t, omega, &E_s,
+                                   &B_s);
+        Mpi::Print(" Updating solution error estimates\n");
+        estimator.AddErrorIndicator(E_t, B_t, E_s, B_s,
+                                    plane_wave_op.GetSource(excitation_idx).attr_marker,
+                                    omega, indicator);
+        continue;
+      }
+      CurlE(E, B, omega);
       auto total_domain_energy =
           post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
 
@@ -312,6 +397,38 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     floquet_corr = std::make_unique<FloquetCorrSolver<ComplexVector>>(
         space_op.GetMaterialOp(), space_op.GetNDSpace(), space_op.GetRTSpace(),
         iodata.solver.linear.tol, iodata.solver.linear.max_it, 0);
+  }
+
+  // Compute B = -1/(iω) ∇ x E on the true dofs.
+  auto CurlE = [&](const ComplexVector &E, ComplexVector &B, double omega)
+  {
+    Curl.Mult(E.Real(), B.Real());
+    Curl.Mult(E.Imag(), B.Imag());
+    B *= -1.0 / (1i * omega);
+    if (space_op.GetMaterialOp().HasWaveVector())
+    {
+      // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
+      // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
+      floquet_corr->AddMult(
+          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+    }
+  };
+
+  // Total and scattered fields of the plane wave excitations, as for the uniform sweep.
+  const auto &plane_wave_op = space_op.GetPlaneWaveOp();
+  ComplexVector E_t, B_t, E_s, B_s;
+  if (!plane_wave_op.Empty())
+  {
+    for (auto *v : {&E_t, &E_s})
+    {
+      v->SetSize(Curl.Width());
+      v->UseDevice(true);
+    }
+    for (auto *v : {&B_t, &B_s})
+    {
+      v->SetSize(Curl.Height());
+      v->UseDevice(true);
+    }
   }
 
   // Configure the PROM operator which performs the parameter space sampling and basis
@@ -372,18 +489,20 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     prom_op.UpdateMRI(excitation_idx, omega, update.c);
 
     // Compute B = -1/(iω) ∇ x E on the true dofs, and set the internal GridFunctions in
-    // PostOperator for energy postprocessing and error estimation.
+    // PostOperator for energy postprocessing and error estimation. With a plane wave, the
+    // error indicator is that of the total and scattered fields (see SweepUniform).
     BlockTimer bt0(Timer::POSTPRO);
-    Curl.Mult(E.Real(), B.Real());
-    Curl.Mult(E.Imag(), B.Imag());
-    B *= -1.0 / (1i * omega);
-    if (space_op.GetMaterialOp().HasWaveVector())
+    if (plane_wave_op.GetTotalAndScatteredField(excitation_idx, omega,
+                                                space_op.GetNDSpace(), E, E_t, E_s))
     {
-      // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
-      // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k₀, so scale = 1.
-      floquet_corr->AddMult(
-          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+      CurlE(E_t, B_t, omega);
+      CurlE(E_s, B_s, omega);
+      estimator.AddErrorIndicator(E_t, B_t, E_s, B_s,
+                                  plane_wave_op.GetSource(excitation_idx).attr_marker,
+                                  omega, indicator);
+      return update.error;
     }
+    CurlE(E, B, omega);
 
     // Measure domain energies for the error indicator only. Don't exchange face_nbr_data,
     // unless printing paraview fields.
@@ -407,7 +526,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   Eh.UseDevice(true);
   auto CertifyPROM = [&](int excitation_idx, double omega)
   {
-    prom_op.SolvePROM(omega);
+    prom_op.SolvePROM(omega, excitation_idx);
     prom_op.ExpandPROMSolution(excitation_idx, Eh);
     if (linalg::Norml2(space_op.GetComm(), Eh) == 0.0)
     {
@@ -611,17 +730,17 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     BlockTimer bt0(Timer::POSTPRO);
     Mpi::Print(" Sol. ||E|| = {:.6e}\n", linalg::Norml2(space_op.GetComm(), E));
 
-    // Compute B = -1/(iω) ∇ x E on the true dofs.
-    Curl.Mult(E.Real(), B.Real());
-    Curl.Mult(E.Imag(), B.Imag());
-    B *= -1.0 / (1i * omega);
-    if (space_op.GetMaterialOp().HasWaveVector())
+    // Compute B = -1/(iω) ∇ x E on the true dofs, with the total and scattered fields of a
+    // plane wave.
+    if (plane_wave_op.GetTotalAndScatteredField(excitation_idx, omega,
+                                                space_op.GetNDSpace(), E, E_t, E_s))
     {
-      // Calculate B field correction for Floquet BCs: B += k_F(ω)/ω × E.
-      // With k₀ = k_F_ref/ω_ref stored, k_F(ω)/ω = k_F_ref/ω_ref = k₀, so scale = 1.
-      floquet_corr->AddMult(
-          E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
+      CurlE(E_t, B_t, omega);
+      CurlE(E_s, B_s, omega);
+      post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E_t, B_t, omega, &E_s, &B_s);
+      return;
     }
+    CurlE(E, B, omega);
     post_op.MeasureAndPrintAll(excitation_idx, int(omega_i), E, B, omega);
   };
 
@@ -649,7 +768,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       }
       for (std::size_t omega_i = 0; omega_i < omega_sample.size(); omega_i++)
       {
-        prom_op.SolvePROM(omega_sample[omega_i]);
+        prom_op.SolvePROM(omega_sample[omega_i], excitation_idx);
         postprocess_online_point(excitation_idx, omega_i);
       }
     }

@@ -77,6 +77,18 @@ public:
       estimator_3d->AddErrorIndicator(E, B, Et, omega, indicator);
     }
   }
+
+  // The same for a total-field/scattered-field solution, with the total and the scattered
+  // fields (see TimeDependentFluxErrorEstimator). Driven problems are 3D.
+  void AddErrorIndicator(const VecType &E_t, const VecType &B_t, const VecType &E_s,
+                         const VecType &B_s, const mfem::Array<int> &tf_attr_marker,
+                         double omega, ErrorIndicator &indicator) const
+    requires std::is_same_v<VecType, ComplexVector>
+  {
+    MFEM_VERIFY(estimator_3d, "The error estimator of plane wave excitations requires a "
+                              "3D problem!");
+    estimator_3d->AddErrorIndicator(E_t, B_t, E_s, B_s, tf_attr_marker, omega, indicator);
+  }
 };
 
 }  // namespace palace

@@ -1,0 +1,530 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#include <array>
+#include <cmath>
+#include <complex>
+#include <map>
+#include <memory>
+#include <numbers>
+#include <string>
+#include <vector>
+#include <mfem.hpp>
+#include <catch2/catch_approx.hpp>
+#include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
+#include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+#include "fem/fespace.hpp"
+#include "fem/mesh.hpp"
+#include "linalg/operator.hpp"
+#include "linalg/vector.hpp"
+#include "models/materialoperator.hpp"
+#include "models/planewaveoperator.hpp"
+#include "utils/communication.hpp"
+#include "utils/configfile.hpp"
+#include "utils/units.hpp"
+
+namespace palace
+{
+
+namespace
+{
+
+// Unit cube of n x n x n hexahedra split into tetrahedra (n a multiple of 3), with the
+// volume attributes 1 for the inner cube [1/3, 2/3]^3, 2 for the slab x < 1/3, and 3 for
+// the rest.
+std::unique_ptr<mfem::ParMesh> MakeMesh(int n)
+{
+  auto mesh =
+      mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  mfem::Vector c;
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    mesh.GetElementCenter(e, c);
+    bool inner = true;
+    for (int d = 0; d < 3; d++)
+    {
+      inner = inner && c(d) > 1.0 / 3.0 && c(d) < 2.0 / 3.0;
+    }
+    mesh.SetAttribute(e, inner ? 1 : (c(0) < 1.0 / 3.0 ? 2 : 3));
+  }
+  mesh.SetAttributes();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), mesh);
+}
+
+config::PlaneWaveData MakePlaneWave(const std::vector<int> &attributes,
+                                    const std::array<double, 3> &direction,
+                                    const std::array<double, 3> &polarization,
+                                    double amplitude = 1.0,
+                                    const std::array<double, 3> &origin = {0.0, 0.0, 0.0})
+{
+  config::PlaneWaveData data;
+  data.attributes = attributes;
+  data.direction = direction;
+  data.polarization = polarization;
+  data.amplitude = amplitude;
+  data.origin = origin;
+  return data;
+}
+
+}  // namespace
+
+TEST_CASE("PlaneWaveOperator source", "[planewaveoperator][Serial]")
+{
+  auto mesh = MakeMesh(3);
+  Units units(0.5, 2.0);
+
+  // The direction is normalized and the polarization is made orthogonal to it.
+  std::map<int, config::PlaneWaveData> plane_wave = {
+      {1, MakePlaneWave({1, 3}, {0.0, 0.0, 2.0}, {1.0, 0.0, 1.0}, 3.0)}};
+  PlaneWaveOperator op(plane_wave, units, *mesh);
+  REQUIRE(op.Size() == 1);
+  const auto &src = op.GetSource(1);
+  const std::array<double, 3> k_ref = {0.0, 0.0, 1.0}, p_ref = {1.0, 0.0, 0.0};
+  for (int d = 0; d < 3; d++)
+  {
+    CHECK(src.direction(d) == Catch::Approx(k_ref[d]).margin(1.0e-14));
+    CHECK(src.polarization(d) == Catch::Approx(p_ref[d]).margin(1.0e-14));
+  }
+  CHECK(src.amplitude ==
+        Catch::Approx(units.Nondimensionalize<Units::ValueType::FIELD_E>(3.0)));
+  REQUIRE(src.attr_marker.Size() == 3);
+  CHECK(src.attr_marker[0] == 1);
+  CHECK(src.attr_marker[1] == 0);
+  CHECK(src.attr_marker[2] == 1);
+
+  // Invalid sources.
+  auto Make = [&](const config::PlaneWaveData &data)
+  { return PlaneWaveOperator({{1, data}}, units, *mesh); };
+  CHECK_THROWS(Make(MakePlaneWave({1}, {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0})));
+  CHECK_THROWS(Make(MakePlaneWave({1}, {0.0, 0.0, 1.0}, {0.0, 0.0, -2.0})));
+  CHECK_THROWS(Make(MakePlaneWave({4}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0})));
+  CHECK_THROWS(Make(MakePlaneWave({0}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0})));
+}
+
+TEST_CASE("PlaneWaveOperator total-field marker", "[planewaveoperator][Serial][Parallel]")
+{
+  // The marker selects the true dofs of the closure of the total-field region: with
+  // Nédélec spaces of order 2 and above on tetrahedra, face dofs on the triangles shared
+  // between processes need the marker to be combined as for essential dofs. The region is
+  // either the inner cube or most of the domain, so that in parallel the interfaces
+  // between processes cross it.
+  const int order = GENERATE(1, 2, 3);
+  const auto tf_attributes = GENERATE(std::vector<int>{1}, std::vector<int>{1, 3});
+  Mesh mesh(MakeMesh(6));
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  Units units(1.0, 1.0);
+  std::map<int, config::PlaneWaveData> plane_wave = {
+      {1, MakePlaneWave(tf_attributes, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0})}};
+  PlaneWaveOperator op(plane_wave, units, mesh.Get());
+
+  const Vector &marker = op.GetTotalFieldMarker(1, nd_fespace);
+  REQUIRE(marker.Size() == nd_fespace.GetTrueVSize());
+  int counts[2] = {0, 0};  // Marked dofs, entries which are neither 0 nor 1
+  for (int i = 0; i < marker.Size(); i++)
+  {
+    counts[0] += (marker(i) == 1.0);
+    counts[1] += (marker(i) != 0.0 && marker(i) != 1.0);
+  }
+  Mpi::GlobalSum(2, counts, nd_fespace.GetComm());
+  CHECK(counts[1] == 0);
+
+  // The true dofs of the closure of the region are the true dofs of the same space on the
+  // region alone, independently of the number of processes.
+  mfem::Array<int> tf_attr_array;
+  for (auto attr : tf_attributes)
+  {
+    tf_attr_array.Append(attr);
+  }
+  auto submesh = mfem::ParSubMesh::CreateFromDomain(mesh.Get(), tf_attr_array);
+  mfem::ND_FECollection sub_fec(order, 3);
+  mfem::ParFiniteElementSpace sub_fespace(&submesh, &sub_fec);
+  CHECK(counts[0] == sub_fespace.GlobalTrueVSize());
+}
+
+TEST_CASE("PlaneWaveOperator right-hand side", "[planewaveoperator][Serial][Parallel]")
+{
+  // With x = M g, the incident field inside of S (the marked dofs) and no scattered field
+  // outside, the residual of the TF/SF system is A x - b = M A g: it vanishes on all the
+  // scattered-field dofs and it is the residual of the discrete incident field on the
+  // total-field dofs. The interpolant g of the incident field is computed here
+  // independently, so this also checks the phase, amplitude, and polarization conventions.
+  const int order = GENERATE(1, 2, 3);
+  Mesh mesh(MakeMesh(6));
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  Units units(1.0, 1.0);
+  const double omega = 2.0 * std::numbers::pi, E0 = 1.5;
+  const std::array<double, 3> x0 = {0.2, 0.1, -0.3};
+  std::map<int, config::PlaneWaveData> plane_wave = {
+      {1, MakePlaneWave({1}, {1.0, 2.0, 2.0}, {0.0, 1.0, 0.0}, E0, x0)}};
+  PlaneWaveOperator op(plane_wave, units, mesh.Get());
+
+  // System operator of the total field in vacuum, without boundary conditions.
+  mfem::ParBilinearForm a(&nd_fespace.Get());
+  mfem::ConstantCoefficient neg_omega2(-omega * omega);
+  a.AddDomainIntegrator(new mfem::CurlCurlIntegrator());
+  a.AddDomainIntegrator(new mfem::VectorFEMassIntegrator(neg_omega2));
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> K(a.ParallelAssemble());
+  ComplexWrapperOperator A(K.get(), nullptr);
+
+  const int n = nd_fespace.GetTrueVSize();
+  ComplexVector b(n);
+  b = 0.0;
+  REQUIRE(op.AddExcitationVector(1, omega, A, nd_fespace, b));
+  CHECK_FALSE(op.AddExcitationVector(2, omega, A, nd_fespace, b));
+
+  // Incident field E0 p exp(-i omega khat . (x - x0)), with khat = (1, 2, 2) / 3 and p the
+  // normalized part of +Y orthogonal to khat, in nondimensional units.
+  const double E0_nd = units.Nondimensionalize<Units::ValueType::FIELD_E>(E0);
+  const std::array<double, 3> khat = {1.0 / 3.0, 2.0 / 3.0, 2.0 / 3.0};
+  const double p_norm = std::sqrt(45.0);
+  const std::array<double, 3> p = {-2.0 / p_norm, 5.0 / p_norm, -4.0 / p_norm};
+  ComplexVector g(n);
+  for (int part = 0; part < 2; part++)
+  {
+    mfem::VectorFunctionCoefficient coef(
+        3,
+        [&](const mfem::Vector &x, mfem::Vector &E)
+        {
+          double phase = 0.0;
+          for (int d = 0; d < 3; d++)
+          {
+            phase += khat[d] * (x(d) - x0[d]);
+          }
+          const auto f = E0_nd * std::exp(std::complex<double>(0.0, -omega * phase));
+          for (int d = 0; d < 3; d++)
+          {
+            E(d) = ((part == 0) ? f.real() : f.imag()) * p[d];
+          }
+        });
+    mfem::ParGridFunction gf(&nd_fespace.Get());
+    gf.ProjectCoefficient(coef);
+    gf.ParallelProject((part == 0) ? g.Real() : g.Imag());
+  }
+
+  const Vector &marker = op.GetTotalFieldMarker(1, nd_fespace);
+  ComplexVector x(n), Ax(n), Ag(n);
+  for (int i = 0; i < n; i++)
+  {
+    x.Real()(i) = marker(i) * g.Real()(i);
+    x.Imag()(i) = marker(i) * g.Imag()(i);
+  }
+  A.Mult(x, Ax);
+  A.Mult(g, Ag);
+  double err[3] = {0.0, 0.0, 0.0};  // Scattered-field rows, total-field rows, scale
+  for (int i = 0; i < n; i++)
+  {
+    const std::complex<double> r(Ax.Real()(i) - b.Real()(i), Ax.Imag()(i) - b.Imag()(i));
+    const std::complex<double> Agi(Ag.Real()(i), Ag.Imag()(i));
+    if (marker(i) == 0.0)
+    {
+      err[0] = std::max(err[0], std::abs(r));
+    }
+    else
+    {
+      err[1] = std::max(err[1], std::abs(r - Agi));
+    }
+    err[2] = std::max(err[2], std::abs(std::complex<double>(b.Real()(i), b.Imag()(i))));
+  }
+  Mpi::GlobalMax(3, err, nd_fespace.GetComm());
+  REQUIRE(err[2] > 0.0);
+  CHECK(err[0] <= 1.0e-12 * err[2]);
+  CHECK(err[1] <= 1.0e-12 * err[2]);
+}
+
+TEST_CASE("PlaneWaveOperator total and scattered fields",
+          "[planewaveoperator][Serial][Parallel]")
+{
+  // The TF/SF solution x is the total field on the dofs of the closure of the total-field
+  // region and the scattered field elsewhere: E_t = x + (1 - M) g and E_s = x - M g, so
+  // that E_t - E_s = g everywhere, E_t = x on the marked dofs and E_s = x on the others.
+  // Without a scatterer, x = M g gives E_t = g and E_s = 0.
+  const int order = GENERATE(1, 2);
+  Mesh mesh(MakeMesh(6));
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  Units units(1.0, 1.0);
+  const double omega = 2.0 * std::numbers::pi;
+  std::map<int, config::PlaneWaveData> plane_wave = {
+      {1, MakePlaneWave({1}, {1.0, 2.0, 2.0}, {0.0, 1.0, 0.0}, 1.5)}};
+  PlaneWaveOperator op(plane_wave, units, mesh.Get());
+
+  const int n = nd_fespace.GetTrueVSize();
+  ComplexVector g(n), x(n), E_t, E_s;
+  REQUIRE(op.GetIncidentField(1, omega, nd_fespace, g));
+  CHECK_FALSE(op.GetTotalAndScatteredField(2, omega, nd_fespace, x, E_t, E_s));
+  const Vector &marker = op.GetTotalFieldMarker(1, nd_fespace);
+  for (int i = 0; i < n; i++)
+  {
+    // An arbitrary solution, then the one without a scatterer.
+    x.Real()(i) = std::sin(1.0 + i);
+    x.Imag()(i) = std::cos(2.0 * i);
+  }
+  for (bool empty : {false, true})
+  {
+    if (empty)
+    {
+      for (int i = 0; i < n; i++)
+      {
+        x.Real()(i) = marker(i) * g.Real()(i);
+        x.Imag()(i) = marker(i) * g.Imag()(i);
+      }
+    }
+    REQUIRE(op.GetTotalAndScatteredField(1, omega, nd_fespace, x, E_t, E_s));
+    REQUIRE(E_t.Size() == n);
+    REQUIRE(E_s.Size() == n);
+    double err[4] = {0.0, 0.0, 0.0, 0.0};  // E_t - E_s - g, E_t or E_s - x, E_t - g, E_s
+    for (int i = 0; i < n; i++)
+    {
+      const std::complex<double> et(E_t.Real()(i), E_t.Imag()(i)),
+          es(E_s.Real()(i), E_s.Imag()(i)), gi(g.Real()(i), g.Imag()(i)),
+          xi(x.Real()(i), x.Imag()(i));
+      err[0] = std::max(err[0], std::abs(et - es - gi));
+      err[1] = std::max(err[1], std::abs(((marker(i) == 1.0) ? et : es) - xi));
+      err[2] = std::max(err[2], std::abs(et - gi));
+      err[3] = std::max(err[3], std::abs(es));
+    }
+    Mpi::GlobalMax(4, err, nd_fespace.GetComm());
+    CHECK(err[0] <= 1.0e-14);
+    CHECK(err[1] == 0.0);
+    if (empty)
+    {
+      CHECK(err[2] <= 1.0e-14);
+      CHECK(err[3] <= 1.0e-14);
+    }
+  }
+}
+
+TEST_CASE("PlaneWaveOperator background around the total field",
+          "[planewaveoperator][Serial][Parallel]")
+{
+  // Attribute 1 is the inner cube, attribute 2 the slab x < 1/3 which touches it on one
+  // face, and attribute 3 the rest, which touches it on the other faces.
+  Mesh mesh(MakeMesh(3));
+  mfem::ND_FECollection nd_fec(GENERATE(1, 2), 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  Units units(1.0, 1.0);
+  config::PeriodicBoundaryData periodic;
+  // Returns the speed of light of the background of a plane wave with the given
+  // total-field region, with the given materials for some of the attributes (vacuum for
+  // the others).
+  auto Background = [&](const std::vector<int> &tf_attributes,
+                        const std::map<int, config::MaterialData> &material)
+  {
+    std::vector<config::MaterialData> materials;
+    for (int a = 1; a <= 3; a++)
+    {
+      auto it = material.find(a);
+      config::MaterialData data =
+          (it != material.end()) ? it->second : config::MaterialData();
+      data.attributes = {a};
+      materials.push_back(data);
+    }
+    MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, mesh);
+    std::map<int, config::PlaneWaveData> plane_wave = {
+        {1, MakePlaneWave(tf_attributes, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0})}};
+    PlaneWaveOperator op(plane_wave, units, mesh.Get());
+    op.SetUpBackground(mat_op, nd_fespace);
+    return op.GetSource(1).c;
+  };
+  config::MaterialData dielectric, magnetic, lossy, conductor, anisotropic, dispersive;
+  dielectric.epsilon_r = 4.0;
+  magnetic.mu_r = 4.0;
+  lossy.epsilon_r = 4.0;
+  lossy.tandelta = 1.0e-2;
+  conductor.sigma = 1.0;
+  anisotropic.epsilon_r.s[0] = 2.0;
+  dispersive.epsilon_r = 4.0;
+  dispersive.permittivity_terms = {config::LorentzData{1.0, 1.0, 0.0}};
+
+  // Vacuum, any material inside the total-field region, or one homogeneous isotropic
+  // material around it, whose speed of light is used.
+  CHECK(Background({1}, {}) == Catch::Approx(1.0));
+  CHECK(Background({1}, {{1, conductor}}) == Catch::Approx(1.0));
+  CHECK(Background({1}, {{2, dielectric}, {3, dielectric}}) == Catch::Approx(0.5));
+  CHECK(Background({1}, {{2, magnetic}, {3, magnetic}}) == Catch::Approx(0.5));
+  CHECK(Background({1, 2}, {{1, anisotropic}, {2, lossy}, {3, dielectric}}) ==
+        Catch::Approx(0.5));
+
+  // A lossy, anisotropic or frequency-dependent material, two materials, even with the same
+  // speed of light, or no scattered-field region around the total-field region.
+  for (const auto &material : {lossy, conductor, anisotropic, dispersive})
+  {
+    CHECK_THROWS(Background({1}, {{2, material}, {3, material}}));
+  }
+  CHECK_THROWS(Background({1}, {{2, dielectric}}));
+  CHECK_THROWS(Background({1}, {{2, dielectric}, {3, magnetic}}));
+  CHECK_THROWS(Background({1, 2, 3}, {}));
+}
+
+TEST_CASE("PlaneWaveOperator Floquet envelope", "[planewaveoperator][Serial][Parallel]")
+{
+  // Unit cube periodic in x and y, with the total-field slab 1/3 < z < 2/3 (attribute 1)
+  // in vacuum (attribute 2).
+  auto serial =
+      mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::TETRAHEDRON, 1.0, 1.0, 1.0);
+  mfem::Vector c;
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, (c(2) > 1.0 / 3.0 && c(2) < 2.0 / 3.0) ? 1 : 2);
+  }
+  serial.SetAttributes();
+  std::vector<mfem::Vector> translations = {mfem::Vector({1.0, 0.0, 0.0}),
+                                            mfem::Vector({0.0, 1.0, 0.0})};
+  auto periodic_serial =
+      mfem::Mesh::MakePeriodic(serial, serial.CreatePeriodicVertexMapping(translations));
+  Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), periodic_serial));
+  mfem::ND_FECollection nd_fec(2, 3);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  Units units(1.0, 1.0);
+  std::vector<config::MaterialData> materials(1);
+  materials[0].attributes = {1, 2};
+
+  // Periodic boundary pairs, with the lattice translations or (when translate is false)
+  // without, as when they are detected from the mesh, with the attributes of their faces
+  // (x = 0 and 1 are 5 and 3, y = 0 and 1 are 2 and 4) when attributes is true.
+  auto Pairs = [](bool translate, double rotate = 0.0, bool attributes = false)
+  {
+    std::vector<config::PeriodicData> pairs(2);
+    for (int p = 0; p < 2; p++)
+    {
+      if (attributes)
+      {
+        pairs[p].donor_attributes = {(p == 0) ? 5 : 2};
+        pairs[p].receiver_attributes = {(p == 0) ? 3 : 4};
+      }
+      if (!translate)
+      {
+        continue;
+      }
+      auto &T = pairs[p].affine_transform;
+      T[0] = T[5] = T[10] = T[15] = 1.0;
+      T[p * 4 + 3] = 1.0;
+      T[1] = rotate;
+      T[4] = -rotate;
+    }
+    return pairs;
+  };
+
+  // Returns whether the incident field is accepted at the angular frequencies omega, for
+  // a plane wave of direction (sin(theta), 0, cos(theta)) and the Floquet wave vector
+  // (kf, 0, 0), defined at omega_ref when omega_ref > 0 (and then scaled with the
+  // frequency). With translate, the lattice translations are checked at setup, otherwise
+  // the interpolated field is checked at each frequency.
+  auto Accepted = [&](double theta, const std::vector<double> &omega, double kf,
+                      double omega_ref = 0.0, bool translate = true, double rotate = 0.0,
+                      bool attributes = false, bool setup_only = false)
+  {
+    config::PeriodicBoundaryData periodic;
+    periodic.wave_vector = {kf, 0.0, 0.0};
+    periodic.floquet_reference_freq = omega_ref;
+    MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, mesh);
+    std::map<int, config::PlaneWaveData> plane_wave = {
+        {1, MakePlaneWave({1}, {std::sin(theta), 0.0, std::cos(theta)}, {0.0, 1.0, 0.0})}};
+    PlaneWaveOperator op(plane_wave, units, mesh.Get());
+    op.SetUpBackground(mat_op, nd_fespace);
+    periodic.boundary_pairs = Pairs(translate, rotate, attributes);
+    try
+    {
+      op.CheckPeriodicity(periodic, omega, mesh.Get());
+      ComplexVector g;
+      for (const double w : (setup_only ? std::vector<double>{} : omega))
+      {
+        op.GetIncidentField(1, w, nd_fespace, g);
+      }
+    }
+    catch (const std::exception &)
+    {
+      return false;
+    }
+    return true;
+  };
+  const double theta = std::asin(0.5), omega = 2.0;  // k sin(theta) = 1
+  const double omega_big = 9.0, theta_big = std::asin((1.0 + 2.0 * std::numbers::pi) / 9.0);
+
+  for (bool translate : {true, false})
+  {
+    // Normal incidence needs no Floquet wave vector, oblique incidence needs the
+    // tangential part of the wave vector of the plane wave, also without a Floquet wave
+    // vector.
+    CHECK(Accepted(0.0, {omega}, 0.0, 0.0, translate));
+    CHECK(Accepted(theta, {omega}, 1.0, 0.0, translate));
+    CHECK_FALSE(Accepted(theta, {omega}, 0.0, 0.0, translate));
+    CHECK_FALSE(Accepted(theta, {omega}, 0.5, 0.0, translate));
+
+    // Up to a reciprocal lattice vector: k sin(theta) = 1 + 2 pi with k_F = 1.
+    CHECK(Accepted(theta_big, {omega_big}, 1.0, 0.0, translate));
+
+    // A Floquet wave vector which scales with the frequency matches at every frequency, a
+    // fixed one only at its own.
+    CHECK(Accepted(theta, {omega, 1.5 * omega}, 1.0, omega, translate));
+    CHECK_FALSE(Accepted(theta, {omega, 1.5 * omega}, 1.0, 0.0, translate));
+  }
+
+  // Periodic boundary pairs which are not translations are rejected.
+  CHECK_FALSE(Accepted(0.0, {omega}, 0.0, 0.0, true, 0.1));
+
+  // Without translations, the lattice of the axis-aligned cell is taken from the faces of
+  // the pairs and the extent of the mesh, so that the setup already rejects a mismatch;
+  // without their attributes, only the interpolated field shows it.
+  CHECK(Accepted(theta, {omega}, 1.0, 0.0, false, 0.0, true, true));
+  CHECK_FALSE(Accepted(theta, {omega}, 0.0, 0.0, false, 0.0, true, true));
+  CHECK(Accepted(theta, {omega}, 0.0, 0.0, false, 0.0, false, true));
+}
+
+TEST_CASE("PlaneWaveOperator boundaries around the total field",
+          "[planewaveoperator][Serial][Parallel]")
+{
+  // A boundary with a condition which touches the layer of elements around the total-field
+  // region or crosses its boundary is rejected, except a PEC or PMC symmetry plane along
+  // the direction of propagation, with the polarization (PEC) or the magnetic field (PMC)
+  // along its normal. A boundary inside the region which does not reach its boundary is
+  // part of the scatterer. The slab x < 1/3 (attribute 2) touches the face x = 0 (boundary
+  // attribute 5) from inside, and its boundary x = 1/3 crosses the face y = 0 (boundary
+  // attribute 2); the inner cube (attribute 1) of a 6 x 6 x 6 mesh is separated from the
+  // boundaries.
+  Units units(1.0, 1.0);
+  auto Check = [&units](int n, int tf_attr, const std::array<double, 3> &direction,
+                        const std::array<double, 3> &polarization,
+                        const nlohmann::json &bdr)
+  {
+    Mesh mesh(MakeMesh(n));
+    mfem::ND_FECollection nd_fec(1, 3);
+    FiniteElementSpace nd_fespace(mesh, &nd_fec);
+    std::map<int, config::PlaneWaveData> plane_wave = {
+        {1, MakePlaneWave({tf_attr}, direction, polarization)}};
+    PlaneWaveOperator op(plane_wave, units, mesh.Get(), false);
+    op.CheckBoundaries(config::BoundaryData(bdr), nd_fespace);
+  };
+  auto Bdr = [](const char *type, int attr)
+  {
+    nlohmann::json bdr = {{type, {{"Attributes", {attr}}}}};
+    if (std::string(type) == "Absorbing")
+    {
+      bdr[type]["Order"] = 1;
+    }
+    return bdr;
+  };
+  const nlohmann::json all = {
+      {"Absorbing", {{"Attributes", {1, 2, 3, 4, 5, 6}}, {"Order", 1}}}};
+  const std::array<double, 3> x = {1.0, 0.0, 0.0}, y = {0.0, 1.0, 0.0}, z = {0.0, 0.0, 1.0};
+  CHECK_NOTHROW(Check(6, 1, z, x, all));
+  CHECK_THROWS_WITH(Check(3, 1, z, x, all),
+                    Catch::Matchers::ContainsSubstring("touch the layer"));
+  CHECK_NOTHROW(Check(3, 2, z, x, Bdr("Absorbing", 5)));
+  CHECK_THROWS_WITH(Check(3, 2, z, x, Bdr("Absorbing", 2)),
+                    Catch::Matchers::ContainsSubstring("attributes 2"));
+  CHECK_NOTHROW(Check(3, 2, z, y, Bdr("PEC", 2)));
+  CHECK_THROWS(Check(3, 2, z, x, Bdr("PEC", 2)));
+  CHECK_THROWS(Check(3, 2, y, z, Bdr("PEC", 2)));
+  CHECK_NOTHROW(Check(3, 2, z, x, Bdr("PMC", 2)));
+  CHECK_THROWS(Check(3, 2, z, y, Bdr("PMC", 2)));
+}
+
+}  // namespace palace
