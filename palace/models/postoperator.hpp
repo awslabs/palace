@@ -48,6 +48,7 @@ class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
 class SurfaceCurrentOperator;
+class SurfaceParticipationTable;
 class WavePortOperator;
 
 namespace config
@@ -527,6 +528,9 @@ protected:
     CoverageMeasurement coverage_measurement;
     // Lane rescensus-product (decision 1817): the census cells of this measurement (root).
     std::vector<ResolutionCell> resolution_cells;
+    // CUT-PLAN step 4 (lane v1table): the census cells of the targets with a Region, over
+    // each box's own patches (root).
+    std::map<int, ResolutionCell> region_resolution_cells;
     // COL-3 (mx-sc-magnetic Phase 3 (b), R-MAG-15; Diagnostics.WithinRVolumeEnergy): per
     // placed patch the raw field's within-box volume energies (empty when off).
     std::vector<SurfaceResponseOperator::PatchVolumeEnergy> within_r_volume_energies;
@@ -570,6 +574,7 @@ protected:
     SurfaceResponseOperator::MaxwellResponse self_consistent_confidence;
   };
   mutable std::optional<MaxwellSurfaceResponseMeasurement> surface_response_measurement;
+  SurfaceParticipationTable *surface_participation = nullptr;
   mutable std::unique_ptr<TableWithCSVFile> surface_Q_corrected;
   // surface-Q-corrected.csv carries the "response target" column (decision 922 C-3 (ii)):
   // decided at the first print from the measured interfaces.
@@ -731,6 +736,11 @@ protected:
   }
   void MeasureProbes() const;
   void PrintSurfaceResponseCorrection(double output_index, int excitation) const;
+  // CUT-PLAN step 4 (lane v1table): this measurement's rows of surface-participation.csv
+  // (root), from the values PrintSurfaceResponseCorrection prints (raw rows from the
+  // surface-Q measurement on a RawFallback run). `point` 1-based (the mode index m, or the
+  // driven sweep step + 1), `frequency` GHz.
+  void AddSurfaceParticipationRows(int point, double frequency, int excitation) const;
   void RegisterSurfaceResponseParaviewFields();
   void ClearSurfaceResponseCorrectedField();
 
@@ -887,6 +897,14 @@ public:
   }
 
   const SurfacePostOperator &GetSurfacePostOp() const { return surf_post_op; }
+
+  // CUT-PLAN step 4 (lane v1table): the run's per-iteration table (owned by the driver's
+  // BaseSolver, alive across levels); each eigenmode / driven measurement adds its rows to
+  // it on the root. Null = no table (no correction, boundary mode).
+  void SetSurfaceParticipationTable(SurfaceParticipationTable *table)
+  {
+    surface_participation = table;
+  }
 
   // Supply a response-corrected Maxwell field for participation postprocessing while the
   // ordinary MeasureAndPrintAll field and CSV output remain the raw thin-metal result.

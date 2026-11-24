@@ -127,6 +127,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
                                             &surface_post_geometry,
                                             &impedance_candidate_geometry);
+  post_op.SetSurfaceParticipationTable(surface_participation.get());
 
   // The fixed system matrices are only needed when the system cannot be applied through
   // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
@@ -431,6 +432,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   PostOperator<ProblemType::DRIVEN> post_op(iodata, space_op, &response_geometry,
                                             &surface_post_geometry,
                                             &impedance_candidate_geometry);
+  post_op.SetSurfaceParticipationTable(surface_participation.get());
   SurfaceResponseOperator *response_correction = post_op.GetSurfaceResponseOperator();
   if (response_correction && iodata.model.refinement.max_it == 0)
   {

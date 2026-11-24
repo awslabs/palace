@@ -1,0 +1,248 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#ifndef PALACE_MODELS_SURFACE_PARTICIPATION_TABLE_HPP
+#define PALACE_MODELS_SURFACE_PARTICIPATION_TABLE_HPP
+
+#include <array>
+#include <limits>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
+#include <nlohmann/json_fwd.hpp>
+#include "utils/communication.hpp"
+#include "utils/tablecsv.hpp"
+
+namespace palace
+{
+
+struct CoverageCell;
+struct ResolutionCell;
+
+// CUT-PLAN step 4 (decisions 2378 / 2379; lane v1table DESIGN-NOTE): the designer's table
+// surface-participation.csv. One row per (adaptive iteration, point, excitation, interface)
+// with the raw and the fixed-trace corrected participation, the row's verdicts and the
+// change since the previous iteration; one file per run at the top level, appended at the
+// end of every converged level. Output only: no value, solve or marking reads it.
+inline constexpr const char *kSurfaceParticipationFile = "surface-participation.csv";
+
+// The verdict data (lane meshrule VERDICT-INPUT.md and its check; DATA, not code: the
+// built-in values are the repository file palace/models/surfaceparticipationverdict.json,
+// embedded at build time, and the optional "Verdict" member of a Resolution.BarsFile file
+// replaces them). G = the growth of the unknowns from an earlier level for the change to be
+// read; F = the largest ratio m90_k / m90_j of the value's own cell census for the change
+// to be read (its edges were refined since j); T = the largest change in % per doubling of
+// the unknowns that reads SETTLED; B = per FE order 1-4 the largest cell census m90 (h / R)
+// of a RESOLVED value (NaN = none; orders >= 5 have none); a census above
+// `under_resolved_factor` x B reads UNDER-RESOLVED. `tested_problems`: the problem types
+// the rule was tested on; the words of any other read -UNTESTED.
+struct ParticipationVerdictBars
+{
+  double min_unknowns_ratio = 0.0;
+  double max_census_ratio = 0.0;
+  double max_change_per_doubling = 0.0;  // % per doubling
+  std::array<double, 4> census_bar{};
+  double under_resolved_factor = 0.0;
+  std::vector<std::string> tested_problems;
+  bool built_in = true;
+  bool interim = true;
+  std::string source, sha256, provenance;
+  // The bar at `order` (NaN at orders >= 5: no bar was measured there).
+  double CensusBar(int order) const;
+  // The suffix of the SETTLED / RESOLVED words: -INTERIM while the data are interim,
+  // -UNTESTED for a problem type the rule was not tested on, else none.
+  std::string WordSuffix(const std::string &problem) const;
+};
+// The "Verdict" member of a JSON text: {"MinUnknownsRatio": G > 1, "MaxCensusRatio": F in
+// (0, 1], "MaxChangePerDoublingPercent": T > 0, "CensusBarOverR": {"1": null | B > 0, ...,
+// "4": ...}, "UnderResolvedFactor": >= 1, "TestedProblems": [names], "Interim": bool
+// (default false), "Provenance": text}.
+ParticipationVerdictBars ParseParticipationVerdictBars(const std::string &text,
+                                                       const std::string &source,
+                                                       bool built_in);
+ParticipationVerdictBars BuiltInParticipationVerdictBars();
+// The "Verdict" member of a bars file; the built-in data when the file has no such member.
+ParticipationVerdictBars ReadParticipationVerdictBars(const std::string &path);
+
+// Why a value's indicator is not evaluated (printed after MOVING), the first that applies
+// in the order of VERDICT-INPUT.md s2: no earlier level (FIRST-ITERATION: the first level,
+// every fixed mesh), no earlier level with N_k >= G N_j (UNKNOWNS-GREW-<20% for G = 1.2),
+// p_j* = 0 (ZERO-ANCHOR-VALUE), then this table's NO-VALUE (p_k or p_j* not finite), then
+// the value's own cell census not fallen to F m90_j* or not read (CELL-NOT-REFINED: on a
+// chip the unknowns can grow elsewhere while its edges stay); and UNMATCHED (an eigenmode,
+// a driven frequency or an interface with no row at the previous level).
+enum class ParticipationNotEvaluated : char
+{
+  NONE,
+  FIRST_ITERATION,
+  UNKNOWNS_GREW_LITTLE,
+  UNMATCHED,
+  ZERO_ANCHOR_VALUE,
+  NO_VALUE,
+  CELL_NOT_REFINED
+};
+
+// One earlier level of a value: its unknowns, its value and its cell census m90.
+struct ParticipationHistoryEntry
+{
+  double unknowns = 0.0, p = 0.0, m90 = 0.0;
+};
+
+// The indicator of a value p with cell census m90 at a level of N unknowns, from its own
+// earlier levels `history`, oldest first: j* = the LATEST with N >= G N_j (the guard
+// compares with j* only); read only when p_j* != 0, p and p_j* are finite and m90 <= F
+// m90_j* (exact comparisons); g = 100 |p / p_j* - 1| / log2(N / N_j*) (% per doubling);
+// SETTLED iff g < T (strict). A region value's m90 is its own patches' census, in the guard
+// as in the bar.
+struct ParticipationIndicator
+{
+  double per_doubling = std::numeric_limits<double>::quiet_NaN();
+  int anchor = -1;  // the index of j* in the history
+  ParticipationNotEvaluated not_evaluated = ParticipationNotEvaluated::FIRST_ITERATION;
+  bool settled = false;
+};
+ParticipationIndicator
+ComputeParticipationIndicator(double p, double m90, double unknowns,
+                              const std::vector<ParticipationHistoryEntry> &history,
+                              const ParticipationVerdictBars &bars);
+// SETTLED (+ WordSuffix), MOVING, or MOVING: <why not evaluated>.
+std::string ParticipationConvergenceName(const ParticipationIndicator &indicator,
+                                         const ParticipationVerdictBars &bars,
+                                         const std::string &problem);
+// The resolution word of a value from its cell census m90 (NaN: no reading) at `order`:
+// RESOLVED (+ WordSuffix) iff m90 <= B AND the value is SETTLED, UNDER-RESOLVED iff
+// m90 > factor x B, MARGINAL otherwise; NO-BARS without a B at the order (orders 1 and >=
+// 5), NOT-EVALUATED without a reading. A single solve is never SETTLED, so never RESOLVED.
+std::string ParticipationResolutionWord(double m90, int order, bool settled,
+                                        const ParticipationVerdictBars &bars,
+                                        const std::string &problem);
+
+// One row of surface-participation.csv (the DESIGN-NOTE's 27 columns).
+struct SurfaceParticipationRow
+{
+  int iteration = 0;
+  long long int unknowns = 0;
+  std::string problem;
+  int point = 0;
+  double frequency = std::numeric_limits<double>::quiet_NaN();  // GHz
+  int excitation = 0;
+  int interface = 0;
+  std::string type;
+  bool region = false;
+  double p_raw = std::numeric_limits<double>::quiet_NaN();
+  double p_corrected = std::numeric_limits<double>::quiet_NaN();
+  double q_raw = std::numeric_limits<double>::quiet_NaN();
+  double q_corrected = std::numeric_limits<double>::quiet_NaN();
+  std::string resolution = "NOT-EVALUATED";
+  double m90 = std::numeric_limits<double>::quiet_NaN();
+  double m50 = std::numeric_limits<double>::quiet_NaN();
+  std::string coverage = "NOT-MEASURED";
+  double uncovered_share = std::numeric_limits<double>::quiet_NaN();
+  std::string regime = "NO-MODEL";
+  std::string confidence = "none";
+  double change_corrected = std::numeric_limits<double>::quiet_NaN();
+  double change_raw = std::numeric_limits<double>::quiet_NaN();
+  double per_doubling = std::numeric_limits<double>::quiet_NaN();
+  std::string convergence;
+  std::string flags;
+  std::string reason;
+  // A Type total: the sum over the Type's whole target interfaces of the point (interface
+  // 0, scope Type): THE value of the verdicts, which its interface rows carry.
+  bool type_total = false;
+  // Not columns: the developer policy MarkNotApplied marked the row's cell (a flag); the
+  // value's earlier levels through its join chain, oldest first.
+  bool marked = false;
+  std::vector<ParticipationHistoryEntry> history;
+};
+
+// The verdict inputs of a target row from its cells (nullptr = no cell: no census reading /
+// NOT-MEASURED): m90 and m50 of the census cell (the resolution word is set by the join,
+// which knows the convergence), coverage and regime of the coverage cell.
+void SetParticipationResolution(SurfaceParticipationRow &row, const ResolutionCell *cell);
+void SetParticipationCoverage(SurfaceParticipationRow &row, const CoverageCell *cell);
+// An untargeted interface: raw only (p corrected NaN, verdicts NOT-TARGET).
+void SetParticipationNotTarget(SurfaceParticipationRow &row);
+// The census cell of `type` over every plane (nullptr when the census has none).
+const ResolutionCell *FindParticipationCensusCell(const std::vector<ResolutionCell> &cells,
+                                                  const std::string &type);
+
+// The eigenmode join (DESIGN-NOTE s3): mode m of the current level matches mode j of the
+// previous level iff j is the previous mode nearest to f_m, |f_m - f_j| is below half the
+// distance from f_j to its nearest other previous mode, m is the current mode nearest to
+// f_j, and the overlap of their raw participation vectors is at least
+// kParticipationModeMinOverlap.
+inline constexpr double kParticipationModeMinOverlap = 0.9;
+struct ParticipationModeSignature
+{
+  int point = 0;
+  double frequency = 0.0;
+  std::map<int, double> participation;  // interface -> p raw of the mode's whole rows
+};
+// For every current mode (by point), the matched previous point, or -1 (UNMATCHED).
+std::map<int, int>
+MatchParticipationModes(const std::vector<ParticipationModeSignature> &previous,
+                        const std::vector<ParticipationModeSignature> &current);
+
+// The rows of a level with, per (point, excitation), one Type total per Type with whole
+// target interfaces first (interface 0: p raw and p corrected summed, Q = 1 / sum 1 / Q_i,
+// the Type's cells), then the given rows in their order.
+std::vector<SurfaceParticipationRow>
+AddParticipationTypeTotals(const std::vector<SurfaceParticipationRow> &rows);
+// Joins the rows of a level to the previous level's (nullptr: the first level) and sets
+// their history, change, indicator, convergence, resolution word and flags; a whole
+// interface row then carries its Type total's indicator and words. ES and driven
+// rows join by (point, excitation, interface; a driven frequency must agree to 1e-12
+// relative); eigenmode rows through MatchParticipationModes.
+void JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
+                            const std::vector<SurfaceParticipationRow> *previous,
+                            const ParticipationVerdictBars &bars, int order);
+// The flags column: the verdicts not met, in the order resolution, coverage, regime,
+// confidence, convergence, then the developer mark; empty only when every verdict is met
+// with final (not interim) data.
+std::string ParticipationFlags(const SurfaceParticipationRow &row);
+// The log block of a finished level (DESIGN-NOTE s5): a header line, then one line per
+// row up to kParticipationLogRows rows, else one line per (Type, whole | region).
+inline constexpr std::size_t kParticipationLogRows = 40;
+std::string ParticipationLogBlock(const std::vector<SurfaceParticipationRow> &rows,
+                                  int iteration, long long int unknowns,
+                                  long long int previous_unknowns,
+                                  const ParticipationVerdictBars &bars, int order);
+
+class SurfaceParticipationTable
+{
+  std::string problem;
+  int order = 0;
+  ParticipationVerdictBars bars;
+  TableWithCSVFile file;
+  std::vector<SurfaceParticipationRow> current, previous;
+  long long int previous_unknowns = 0;
+  int iterations = 0;
+  std::size_t rows_written = 0;
+  bool started = false;
+
+public:
+  // `path` the table file; `problem` Electrostatic / Eigenmode / Driven; `order` the FE
+  // order of the run (the bar's order).
+  SurfaceParticipationTable(std::string path, std::string problem, int order,
+                            ParticipationVerdictBars bars);
+  const std::string &Problem() const { return problem; }
+  const ParticipationVerdictBars &Bars() const { return bars; }
+  // A row of the level being solved (root; iteration, unknowns and the join are set by
+  // FinishLevel).
+  void AddRow(SurfaceParticipationRow row) { current.push_back(std::move(row)); }
+  // The end of a level (collective call; root work): with `converged`, joins the level's
+  // rows to the previous level's, appends them to the file and prints the log block;
+  // otherwise drops them and prints one line.
+  void FinishLevel(int iteration, long long int unknowns, bool converged, MPI_Comm comm);
+  // The rows of the last finished level (root).
+  const std::vector<SurfaceParticipationRow> &LastLevel() const { return previous; }
+  // Whether the file exists: a run that never has a row writes no file (root).
+  bool Started() const { return started; }
+  // The palace.json block SurfaceResponse.ParticipationTable.
+  nlohmann::json Metadata() const;
+};
+
+}  // namespace palace
+
+#endif  // PALACE_MODELS_SURFACE_PARTICIPATION_TABLE_HPP

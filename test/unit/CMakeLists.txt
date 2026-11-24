@@ -114,6 +114,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator-boundary-viz.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-superconductorsheetoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceimpedanceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceparticipation.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponsecoverage.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponsefilmrule.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-surfaceresponseresolution.cpp

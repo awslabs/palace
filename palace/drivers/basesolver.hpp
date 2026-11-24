@@ -11,6 +11,7 @@
 #include <fmt/os.h>
 #include <nlohmann/json_fwd.hpp>
 #include "fem/errorindicator.hpp"
+#include "models/surfaceparticipationtable.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/memoryreporting.hpp"
@@ -71,6 +72,13 @@ protected:
   // mesh). Lets SolveEstimateMarkRefine halt adaptation gracefully, keeping the last
   // converged iteration, instead of aborting or reporting a collapsed inductance.
   mutable bool solve_converged_ = true;
+
+  // CUT-PLAN step 4 (lane v1table): the per-iteration table surface-participation.csv of a
+  // corrected electrostatic, eigenmode or driven run (null otherwise); made before the
+  // first solve, alive across the adaptive levels; the drivers add each level's rows to it
+  // (root) and SolveEstimateMarkRefine finishes each level after its solve.
+  mutable std::unique_ptr<SurfaceParticipationTable> surface_participation;
+  void FinishSurfaceParticipationLevel(long long int ntdof, MPI_Comm comm) const;
 
   // Previous adaptation iteration's total London kinetic energy S(A_t − a_h), for detecting
   // an anomalous spike; negative until the first London solve sets it.

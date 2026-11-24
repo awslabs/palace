@@ -35,6 +35,7 @@
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
+#include "models/surfaceparticipationtable.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
@@ -3222,6 +3223,10 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
     result.resolution_cells = surface_response_op->MeasureResolution(
         surface_response_postprocess_enabled ? &resolution_sums : nullptr,
         units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+    // CUT-PLAN step 4 (lane v1table): the boxes' own census cells (collective).
+    result.region_resolution_cells = surface_response_op->MeasureRegionResolution(
+        surface_response_postprocess_enabled ? &resolution_sums : nullptr,
+        units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
 
     if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::EIGENMODE)
     {
@@ -4097,6 +4102,113 @@ void PostOperator<solver_t>::PrintSurfaceResponseCorrection(double output_index,
   PrintSurfaceResponseUncoveredFeatureEnergies(output_index, excitation);
   PrintSurfaceResponseLoopFit(output_index, excitation);
   PrintSurfaceResponseCoverage(output_index, excitation);
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::AddSurfaceParticipationRows(int point, double frequency,
+                                                         int excitation) const
+{
+  if (!surface_participation || !surface_response_op || !Mpi::Root(fem_op->GetComm()))
+  {
+    return;
+  }
+  const auto types = GetInterfaceTypes();
+  std::set<int> indices;
+  for (const auto &[index, type] : types)
+  {
+    (void)type;
+    indices.insert(index);
+  }
+  const auto regions = surf_post_op.GetRegionInterfaces(indices);
+  auto NewRow = [&](int interface)
+  {
+    SurfaceParticipationRow row;
+    row.point = point;
+    row.frequency = frequency;
+    row.excitation = excitation;
+    row.interface = interface;
+    const auto type = types.find(interface);
+    row.type = type != types.end() ? type->second : std::string("Default");
+    row.region = regions.count(interface) > 0;
+    return row;
+  };
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  if (!surface_response_measurement)
+  {
+    // A RawFallback run corrects nothing: the raw rows of surface-Q.csv, named.
+    if (!surface_response_op->IsRawFallback())
+    {
+      return;
+    }
+    std::string classes;
+    for (const auto &fallback : surface_response_op->GetGeometryFallbacks())
+    {
+      if (fallback.what == "run" && classes.find(fallback.cls) == std::string::npos)
+      {
+        classes += (classes.empty() ? "" : "+") + fallback.cls;
+      }
+    }
+    for (const auto &raw : measurement_cache.interface_eps_i)
+    {
+      auto row = NewRow(raw.idx);
+      row.p_raw = raw.energy_participation;
+      row.q_raw = raw.quality_factor;
+      row.p_corrected = row.q_corrected = nan;
+      row.reason = "RawFallback" + (classes.empty() ? std::string() : ": " + classes);
+      surface_participation->AddRow(std::move(row));
+    }
+    return;
+  }
+  // The values of PrintSurfaceResponseCorrection (the same expressions: the same doubles as
+  // surface-Q-corrected.csv); the verdicts of the row's cells.
+  const auto &result = *surface_response_measurement;
+  const auto &coverage = result.coverage_measurement;
+  const bool marking = surface_response_op->CoverageMarkNotApplied();
+  const std::string confidence =
+      result.has_postprocessed ? (result.confidence.confident ? "pass" : "fail") : "none";
+  auto Quality = [](double participation, double loss_tangent)
+  {
+    return participation == 0.0 || loss_tangent == 0.0
+               ? mfem::infinity()
+               : 1.0 / (participation * loss_tangent);
+  };
+  for (const auto &[interface_index, interface] : result.interfaces)
+  {
+    auto row = NewRow(interface_index);
+    row.p_raw = interface.raw_energy / result.raw_normalization_energy;
+    row.p_corrected = interface.corrected_energy / result.corrected_normalization_energy;
+    row.q_raw = Quality(row.p_raw, interface.loss_tangent);
+    row.q_corrected = Quality(row.p_corrected, interface.loss_tangent);
+    row.confidence = confidence;
+    if (!interface.response_target && coverage.not_served.count(interface_index) == 0)
+    {
+      SetParticipationNotTarget(row);
+      surface_participation->AddRow(std::move(row));
+      continue;
+    }
+    const CoverageCell *type_cell = coverage.FindCell(row.type);
+    if (row.region)
+    {
+      const auto own = coverage.interface_cells.find(interface_index);
+      SetParticipationCoverage(row, own != coverage.interface_cells.end() ? &own->second
+                                                                          : nullptr);
+      const auto census = result.region_resolution_cells.find(interface_index);
+      SetParticipationResolution(
+          row, census != result.region_resolution_cells.end() ? &census->second : nullptr);
+    }
+    else
+    {
+      SetParticipationCoverage(row, type_cell);
+      SetParticipationResolution(
+          row, FindParticipationCensusCell(result.resolution_cells, row.type));
+    }
+    row.marked = marking && (!type_cell || coverage.IsTypeMarked(row.type));
+    if (!result.has_postprocessed)
+    {
+      row.reason = "no fixed-trace evaluation (developer SelfConsistent)";
+    }
+    surface_participation->AddRow(std::move(row));
+  }
 }
 
 template <ProblemType solver_t>
@@ -5362,6 +5474,7 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
       units.Dimensionalize<Units::ValueType::FREQUENCY>(omega) / (2 * std::numbers::pi);
   post_op_csv.PrintAllCSVData(*this, measurement_cache, freq.real(), step, ex_idx);
   PrintSurfaceResponseCorrection(freq.real(), ex_idx);
+  AddSurfaceParticipationRows(step + 1, freq.real(), ex_idx);
   if (impedance_film_rule)
   {
     // The impedance-metal rule (RECORD): the candidate, after everything of record.
@@ -5697,6 +5810,11 @@ double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
   PrintSurfaceResponseCorrection(print_idx, 0);
+  AddSurfaceParticipationRows(
+      print_idx,
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(omega.real()) /
+          (2 * std::numbers::pi),
+      0);
   if (impedance_film_rule)
   {
     // The impedance-metal rule (RECORD): the candidate, after everything of record.

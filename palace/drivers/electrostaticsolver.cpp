@@ -14,6 +14,7 @@
 #include "linalg/operator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
+#include "models/surfaceparticipationtable.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/collectiveenvironment.hpp"
 #include "utils/communication.hpp"
@@ -1144,6 +1145,9 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // / patch applied: NoMatchedFeature, AllPatchesOutside, NoPerimeter) saves the operator's
   // record + banner and runs the thin solve WITHOUT the operator (every other output = the
   // run without ResponseCorrection); nothing else below sees a response_correction.
+  // CUT-PLAN step 4 (lane v1table): such a run still writes its surface-participation.csv
+  // rows (raw, named by the fallback's classes).
+  std::optional<std::string> participation_raw_fallback;
   if (response_config)
   {
     if (response_config->impedance_metal_rule ==
@@ -1180,6 +1184,16 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     if (response_correction->IsRawFallback())
     {
+      std::string classes;
+      for (const auto &fallback : response_correction->GetGeometryFallbacks())
+      {
+        if (fallback.what == "run" && classes.find(fallback.cls) == std::string::npos)
+        {
+          classes += (classes.empty() ? "" : "+") + fallback.cls;
+        }
+      }
+      participation_raw_fallback =
+          "RawFallback" + (classes.empty() ? std::string() : ": " + classes);
       SaveMetadata(*response_correction);
       response_correction.reset();
       postprocess_response = self_consistent_response = patch_energy_response = false;
@@ -1896,6 +1910,10 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // with the FINAL portions: ruling 1654 (III) Q3). The coverage tables are written as each
   // source completes (a killed run keeps the finished sources).
   std::vector<std::pair<int, CoverageMeasurement>> coverage_measurements;
+  // CUT-PLAN step 4 (lane v1table): per source (the coverage_measurements order; root) its
+  // census cells and its boxes' own census cells, for surface-participation.csv.
+  std::vector<std::vector<ResolutionCell>> source_resolution_cells;
+  std::vector<std::map<int, ResolutionCell>> source_region_resolution_cells;
   std::vector<std::size_t> coverage_conductor_consistency_counts;
   // Lane ccpx (Exclusion PerExcitation): per source (the corrected_results order) the
   // patches excluded at its own gate pass and its own portion record: a source is
@@ -2169,6 +2187,27 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
     // Measurement and printing.
     auto total_domain_energy = post_op.MeasureAndPrintAll(step, V[step], E, idx);
+    if (surface_participation && participation_raw_fallback && root)
+    {
+      // CUT-PLAN step 4 (lane v1table): a RawFallback run's raw rows (surface-Q.csv's).
+      const auto types = post_op.GetInterfaceTypes();
+      const auto energies = post_op.GetCachedElectrostaticEnergies();
+      for (const auto &[interface, energy] : energies.interfaces)
+      {
+        SurfaceParticipationRow row;
+        row.point = idx;
+        row.interface = interface;
+        const auto type = types.find(interface);
+        row.type = type != types.end() ? type->second : std::string("Default");
+        row.region = !post_op.GetRegionInterfaces({interface}).empty();
+        row.p_raw = energy.energy / energies.domain;
+        row.q_raw = row.p_raw == 0.0 || energy.loss_tangent == 0.0
+                        ? mfem::infinity()
+                        : 1.0 / (energy.loss_tangent * row.p_raw);
+        row.reason = *participation_raw_fallback;
+        surface_participation->AddRow(std::move(row));
+      }
+    }
 
     EnergyData raw_energies;
     std::map<int, SurfacePostOperator::UncoveredEdgeEnergy> raw_uncovered;
@@ -2715,8 +2754,13 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         const auto resolution_cells = response_correction->MeasureResolution(
             postprocess_response ? &resolution_sums : nullptr,
             iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
+        const auto region_resolution_cells = response_correction->MeasureRegionResolution(
+            postprocess_response ? &resolution_sums : nullptr,
+            iodata.units.Dimensionalize<Units::ValueType::ENERGY>(1.0));
         if (root)
         {
+          source_resolution_cells.push_back(resolution_cells);
+          source_region_resolution_cells.push_back(region_resolution_cells);
           const bool first = coverage_measurements.size() == 1;
           std::ofstream output(resolution_path, first ? std::ios::out | std::ios::trunc
                                                       : std::ios::out | std::ios::app);
@@ -3206,6 +3250,82 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       }
     }
     output.WriteFullTableTrunc();
+
+    // CUT-PLAN step 4 (lane v1table): this level's rows of surface-participation.csv, from
+    // the values just printed (p_surf raw[i], p_surf postprocessed fixed-trace[i]; the same
+    // expressions) and each source's cells.
+    if (surface_participation)
+    {
+      MFEM_VERIFY(source_resolution_cells.size() == corrected_results.size() &&
+                      source_region_resolution_cells.size() == corrected_results.size(),
+                  "The surface-participation table needs one census per corrected source!");
+      const auto types = post_op.GetInterfaceTypes();
+      std::set<int> indices;
+      for (const auto &[interface, data] : interfaces)
+      {
+        (void)data;
+        indices.insert(interface);
+      }
+      const auto regions = post_op.GetRegionInterfaces(indices);
+      auto Quality = [](double participation, double loss_tangent)
+      {
+        return participation == 0.0 || loss_tangent == 0.0
+                   ? mfem::infinity()
+                   : 1.0 / (participation * loss_tangent);
+      };
+      for (std::size_t k = 0; k < corrected_results.size(); k++)
+      {
+        const auto &result = corrected_results[k];
+        const auto &coverage = coverage_measurements[k].second;
+        const std::string confidence =
+            result.has_postprocessed ? (result.confident ? "pass" : "fail") : "none";
+        for (const auto &[interface, raw] : result.raw.interfaces)
+        {
+          const auto &fixed_trace =
+              result.postprocessed_fixed_trace.interfaces.at(interface);
+          SurfaceParticipationRow row;
+          row.point = result.source;
+          row.interface = interface;
+          const auto type = types.find(interface);
+          row.type = type != types.end() ? type->second : std::string("Default");
+          row.region = regions.count(interface) > 0;
+          row.p_raw = raw.energy / result.raw.domain;
+          row.p_corrected = fixed_trace.energy / result.postprocessed_fixed_trace.domain;
+          row.q_raw = Quality(row.p_raw, raw.loss_tangent);
+          row.q_corrected = Quality(row.p_corrected, fixed_trace.loss_tangent);
+          row.confidence = confidence;
+          if (coverage_targets.count(interface) == 0)
+          {
+            SetParticipationNotTarget(row);
+            surface_participation->AddRow(std::move(row));
+            continue;
+          }
+          const CoverageCell *type_cell = coverage.FindCell(row.type);
+          if (row.region)
+          {
+            const auto own = coverage.interface_cells.find(interface);
+            SetParticipationCoverage(
+                row, own != coverage.interface_cells.end() ? &own->second : nullptr);
+            const auto census = source_region_resolution_cells[k].find(interface);
+            SetParticipationResolution(
+                row, census != source_region_resolution_cells[k].end() ? &census->second
+                                                                       : nullptr);
+          }
+          else
+          {
+            SetParticipationCoverage(row, type_cell);
+            SetParticipationResolution(
+                row, FindParticipationCensusCell(source_resolution_cells[k], row.type));
+          }
+          row.marked = marking && (!type_cell || coverage.IsTypeMarked(row.type));
+          if (!result.has_postprocessed)
+          {
+            row.reason = "no fixed-trace evaluation (developer SelfConsistent)";
+          }
+          surface_participation->AddRow(std::move(row));
+        }
+      }
+    }
 
     TableWithCSVFile model_output(post_dir / "surface-response-model-energy.csv");
     model_output.table.insert(Column::Integer("source", "source"));
