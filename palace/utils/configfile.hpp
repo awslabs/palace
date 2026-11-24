@@ -1595,9 +1595,26 @@ public:
     // Automatic three-dimensional patch construction (Features by default).
     PatchConstruction patch_construction = PatchConstruction::FEATURES;
 
-    // Select postprocessing-only fixed-trace/fixed-flux evaluation, a self-consistent
-    // corrected solve, or both. Both preserves the historical behavior.
-    CorrectionMode correction_mode = CorrectionMode::BOTH;
+    // The developer switch of the v1 default path ("Developer", default false): a parked
+    // option of the correction (the self-consistent path and the other options set aside
+    // for v1, which corrects by post-processing only) is refused by name without it.
+    bool developer = false;
+
+    // The parked options this block selects, in the order the parser met them (with the
+    // switch on): printed in one log line and recorded in palace.json as
+    // SurfaceResponse.Developer. Mutable: the mesh load and the library read append the
+    // options they meet (DEVELOPER OPTIONS (mesh) / (library)).
+    mutable std::vector<std::string> developer_options;
+
+    // The keys of a parked option the block states without selecting the option (SolveTol
+    // or TranslationalDomainCorrection without a self-consistent solve, MortarOversampling
+    // without the surface-mortar coupling): not read; IoData names them in one warning.
+    std::vector<std::string> ignored_keys;
+
+    // Select postprocessing-only fixed-trace/fixed-flux evaluation (the default), a
+    // self-consistent corrected solve, or both. SelfConsistent and Both (the historical
+    // default) need the developer switch.
+    CorrectionMode correction_mode = CorrectionMode::POSTPROCESS_ONLY;
 
     // Relative tolerance for an optional self-consistent corrected-field solve. The raw
     // field solve continues to use Solver.Linear.Tol.
@@ -1675,9 +1692,11 @@ public:
     // PsdRefusalRatio) always continues electric-only by name; a library without magnetic
     // leaves never reads this key.
     bool allow_electric_only_fallback = false;
-    // Magnetic (default true; decision 1229 Q1 (i)): false = the library's magnetic leaves
-    // are NOT read for this run, so the electric-only self-consistent result of the SAME
-    // library can be reproduced (bitwise with the leaf-less library: no new column / file).
+    // Magnetic (decision 1229 Q1 (i)): false = the library's magnetic leaves are NOT read
+    // for this run, so the electric-only self-consistent result of the SAME library can be
+    // reproduced (bitwise with the leaf-less library: no new column / file). The parser's
+    // default is the developer switch (CUT-PLAN step 5c: without it the leaves are never
+    // read); "Magnetic": true needs the switch.
     bool magnetic_leaves = true;
     // MagneticRules of the library (Version 3, top level; written by
     // attach_magnetic_leaves.py from the Phase-0 calibration, SUPERVISOR AMENDMENT 1202 /
@@ -1855,17 +1874,19 @@ public:
 
     // Diagnostics.ConductorConsistencyRecords (decision 1685): where the Records array of
     // SurfaceResponse.Diagnostics.ConductorConsistency (one entry per tested patch and
-    // excitation) goes. METADATA (default): palace.json, as before. DIRECTORY: the file
-    // surface-response-conductor-consistency-records.json in Diagnostics.Directory, with
-    // the array at the same key path and in the same text; palace.json then lacks only that
-    // member (TestedPatches, the record count, and the gate's summary stay).
+    // excitation) goes. DIRECTORY (the default since the v1 cut, CUT-PLAN step 6: a chip's
+    // records would make palace.json GBs): the file
+    // surface-response-conductor-consistency-records.json in Diagnostics.Directory, else in
+    // the directory conductor-consistency/ of the output, with the array at the same key
+    // path and in the same text; palace.json then lacks only that member (TestedPatches,
+    // the record count, and the gate's summary stay). METADATA: palace.json, as before.
     enum class ConductorConsistencyRecordsOutput
     {
       METADATA,
       DIRECTORY
     };
     ConductorConsistencyRecordsOutput conductor_consistency_records =
-        ConductorConsistencyRecordsOutput::METADATA;
+        ConductorConsistencyRecordsOutput::DIRECTORY;
 
     // GeometryFailurePolicy (readiness hardening, USER decision 1000 (b), supervisor 1001):
     // what a run does when the DEVICE GEOMETRY reaches a converted former-abort site of the
@@ -2557,6 +2578,13 @@ ParseStringAsDirection(std::string str, bool required = true);
 // Validation functions for cross-field checks. Return empty string if valid, otherwise
 // return all error messages concatenated.
 std::optional<std::string> Validate(const BoundaryData &boundaries);
+
+// The v1 default path (the correction by post-processing only): a parked option of a
+// correction run (`option`, as the configuration spells it) needs "Developer": true in its
+// response-correction block. Refused by name without the switch; recorded in
+// data.developer_options with it.
+void RequireDeveloperOption(ElectrostaticSolverData::ResponseCorrectionData &data,
+                            const std::string &option);
 
 }  // namespace palace::config
 

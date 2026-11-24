@@ -3,7 +3,17 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Run the fixed-mesh p=1 corrected single-transmon eigenmode benchmark."""
+"""Run the fixed-mesh p=1 corrected single-transmon eigenmode benchmark.
+
+FORMS (the v1 cut; developer_form.py): by default the run's response-correction block is the V1
+FORM (post-processing only, no SolveTol) and the snapshot comparison reads the baseline's kept
+columns only (a column of the parked fixed-flux / self-consistent values, PARKED_COLUMN_MARKS, is
+neither required nor compared); `--developer` runs the RECORDED DEVELOPER FORM of the baseline
+(SolveTol 1e-6 with the default of record "CorrectionMode": "Both" stated and "Developer": true)
+and requires every baseline column. The baseline was recorded in that form: values from the v1
+form are not comparable with records made before this cut until the benchmark's collocated twins
+are read.
+"""
 
 import argparse
 import csv
@@ -24,7 +34,9 @@ BENCHMARK_ROOT = HERE.parent
 TRANSMON = BENCHMARK_ROOT.parent
 ROOT = TRANSMON.parent.parent
 sys.path.insert(0, str(BENCHMARK_ROOT))
+sys.path.insert(0, str(TRANSMON.parent / "surface_response_identification"))
 import run_surface_response_preflight as common  # noqa: E402
+import developer_form  # noqa: E402
 
 
 NAME = "transmon-surface-response-corrected-eigenmode-p1"
@@ -54,6 +66,9 @@ APPENDED_COVERAGE_COLUMNS = {
     "worst coverage status",
     "worst regime status",
 }
+# The columns of the parked values (the v1 cut, CUT-PLAN step 2: written only with the developer
+# switch): the v1 form neither requires nor compares them.
+PARKED_COLUMN_MARKS = ("fixed-flux", "self-consistent")
 INTEGER_COLUMNS = {
     "m",
     "exc",
@@ -93,7 +108,7 @@ def fixture_document(source, mesh, library):
     }
 
 
-def prepare_config(source, library, output, postpro):
+def prepare_config(source, library, output, postpro, developer=False):
     config = json.loads(source.read_text())
     mesh = Path(config["Model"]["Mesh"])
     if not mesh.is_absolute():
@@ -123,12 +138,15 @@ def prepare_config(source, library, output, postpro):
         dielectric["EdgeDistances"] = [matching_radius]
         dielectric["LocalizeEdgeEnergy"] = False
         dielectric["SaveLocalEdgeEnergy"] = False
-    config["Solver"]["SurfaceResponseCorrection"] = {
+    recorded = {
         "Library": str(library.resolve(strict=True)),
         "TargetInterfaces": [1, 2, 3],
         "UnmatchedPolicy": "Warn",
         "SolveTol": 1.0e-6,
     }
+    config["Solver"]["SurfaceResponseCorrection"] = (
+        developer_form.developer_block(recorded) if developer else developer_form.v1_block(recorded)
+    )
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(config, indent=2) + "\n")
     return mesh
@@ -171,7 +189,8 @@ def workload(metadata):
     }
 
 
-def compare_snapshots(expected, observed, relative_tolerance, absolute_tolerance):
+def compare_snapshots(expected, observed, relative_tolerance, absolute_tolerance, parked_columns=True):
+    """`parked_columns` False (the v1 form): the baseline's parked columns are neither required nor compared."""
     failures = []
     if expected.keys() != observed.keys():
         return ["snapshot file set changed"]
@@ -183,7 +202,16 @@ def compare_snapshots(expected, observed, relative_tolerance, absolute_tolerance
             zip(expected[filename], observed[filename])
         ):
             # Columns APPENDED after the baseline (the coverage columns) are not compared;
-            # every baseline column must still be there.
+            # every baseline column must still be there (in the v1 form: every kept one).
+            if not parked_columns:
+                expected_row, observed_row = (
+                    {
+                        column: value
+                        for column, value in row.items()
+                        if not any(mark in column for mark in PARKED_COLUMN_MARKS)
+                    }
+                    for row in (expected_row, observed_row)
+                )
             if not expected_row.keys() <= observed_row.keys() or not (
                 observed_row.keys() - expected_row.keys() <= APPENDED_COVERAGE_COLUMNS
             ):
@@ -254,12 +282,13 @@ def run_one(
     ranks,
     repeat,
     timeout,
+    developer=False,
 ):
     run_dir = output / f"np{ranks}-run{repeat}"
     run_dir.mkdir(parents=True, exist_ok=False)
     postpro = run_dir / "postpro"
     config_path = run_dir / "config.json"
-    mesh = prepare_config(source, library, config_path, postpro)
+    mesh = prepare_config(source, library, config_path, postpro, developer)
     command = [
         str(launcher),
         *launcher_args,
@@ -335,6 +364,7 @@ def main():
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--timeout-seconds", type=float, default=600.0)
     parser.add_argument("--write-baseline-candidate", type=Path)
+    developer_form.add_developer_argument(parser)
     args = parser.parse_args()
     if args.repeats < 1 or any(rank < 1 for rank in args.ranks):
         parser.error("ranks and repeats must be positive")
@@ -363,6 +393,8 @@ def main():
         checked_in = json.loads(args.baseline.resolve(strict=True).read_text())
         verify_fixtures(checked_in["Fixtures"], source, mesh, library)
 
+    form = developer_form.form_name(args.developer)
+    print(f"Response correction: the {form}")
     runs = []
     for ranks in args.ranks:
         for repeat in range(1, args.repeats + 1):
@@ -378,6 +410,7 @@ def main():
                 ranks,
                 repeat,
                 args.timeout_seconds,
+                args.developer,
             )
             runs.append(run)
             if checked_in:
@@ -400,6 +433,7 @@ def main():
                     run["Snapshot"],
                     checked_in["RelativeTolerance"],
                     checked_in["AbsoluteTolerance"],
+                    parked_columns=args.developer,
                 )
                 if failures:
                     raise RuntimeError(
@@ -417,6 +451,7 @@ def main():
         "SchemaVersion": 1,
         "Benchmark": NAME,
         "Qualified": False,
+        "ResponseForm": form,
         "Host": {
             "Platform": platform.platform(),
             "Processor": platform.processor(),

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:4-5-4",
+  "$id": "urn:palace:schema:4-6-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -102,7 +102,7 @@
         },
         "CrackInternalBoundaryElements": {
           "type": "boolean",
-          "description": "Duplicate nodes along interior boundaries to decouple the elements on either side (\"crack\" the mesh). If not specified, the mesh is cracked along interior boundaries with boundary conditions which apply to each side separately, [PMC](@ref config-boundaries-pmc) (or [ZeroCharge](@ref config-boundaries-zerocharge)) and [Absorbing](@ref config-boundaries-absorbing) boundaries, and along [Impedance](@ref config-boundaries-impedance), [RationalImpedance](@ref config-boundaries-rationalimpedance), and [Conductivity](@ref config-boundaries-conductivity) boundaries with `\"Crack\": true`. If `true`, the mesh is cracked along all interior boundaries with boundary conditions except for lumped ports, with the surface impedance of impedance boundaries split between their two faces (the behavior of previous versions). If `false`, the mesh is never cracked, which is an error for boundaries with `\"Crack\": true`. Deprecated: the error estimate for adaptive mesh refinement no longer requires cracking the mesh, and cracking is a per-boundary modeling choice for impedance, rational impedance, and conductivity boundaries.",
+          "description": "Duplicate nodes along interior boundaries to decouple the elements on either side (\"crack\" the mesh). If not specified, the mesh is cracked along interior boundaries with boundary conditions which apply to each side separately, [PMC](@ref config-boundaries-pmc) (or [ZeroCharge](@ref config-boundaries-zerocharge)) and [Absorbing](@ref config-boundaries-absorbing) boundaries, and along [Impedance](@ref config-boundaries-impedance), [RationalImpedance](@ref config-boundaries-rationalimpedance), and [Conductivity](@ref config-boundaries-conductivity) boundaries with `\"Crack\": true`. If `true`, the mesh is cracked along all interior boundaries with boundary conditions except for lumped ports, with the surface impedance of impedance boundaries split between their two faces (the behavior of previous versions). If `false`, the mesh is never cracked, which is an error for boundaries with `\"Crack\": true`. Deprecated: the error estimate for adaptive mesh refinement no longer requires cracking the mesh, and cracking is a per-boundary modeling choice for impedance, rational impedance, and conductivity boundaries. In a surface-response correction run `true` is accepted where the interior metal it cracks is impedance (Ls) sheets (the same mesh as `\"Crack\": true` on each of them) and refused where it would crack an interior perfect conductor (PEC, Ground, Terminal, PrescribedPotential) unless the correction block sets `\"Developer\": true`.",
           "x-palace-advanced": true,
           "x-palace-deprecated": true
         },
@@ -3382,7 +3382,7 @@
         },
         "ResponseCorrection": {
           "type": "object",
-          "description": "Apply a global thin-metal Schur-complement correction using matched fabricated- and thin-coupon response matrices. The legacy one-model syntax remains supported for explicit 2D placement. A fabrication-process `Library` automatically selects one-edge or coupled multi-edge coupons in 2D and integrates them along extracted physical metal edges in 3D. Standard output remains the raw thin-metal result, while surface response matrices enable `surface-Q-corrected.csv`.",
+          "description": "Apply a global thin-metal Schur-complement correction using matched fabricated- and thin-coupon response matrices. The legacy one-model syntax and the explicit `Models` / `Patches` form remain supported for hand-placed models as a developer option (they need `\"Developer\": true`). A fabrication-process `Library` automatically selects one-edge or coupled multi-edge coupons in 2D and integrates them along extracted physical metal edges in 3D. Standard output remains the raw thin-metal result, while surface response matrices enable `surface-Q-corrected.csv`.",
           "additionalProperties": false,
           "oneOf": [
             {
@@ -3575,7 +3575,7 @@
                 "Features",
                 "Legacy"
               ],
-              "description": "Three-dimensional automatic patch construction. `Features` builds the patches from the geometry identification's feature list (every matched feature becomes its patches, an unmatched feature is omitted alone, excluded segments are never corrected); `Legacy` keeps the former per-interface-group classification for comparison.",
+              "description": "Three-dimensional automatic patch construction. `Features` builds the patches from the geometry identification's feature list (every matched feature becomes its patches, an unmatched feature is omitted alone, excluded segments are never corrected); `Legacy` keeps the former per-interface-group classification for comparison (a developer option: needs `\"Developer\": true`).",
               "default": "Features"
             },
             "SpatialSupport": {
@@ -3625,6 +3625,11 @@
               },
               "description": "Spatial-support contract options of the automatic matching."
             },
+            "Developer": {
+              "type": "boolean",
+              "description": "The developer switch of the correction. The default correction is post-processing only, with the fabrication-process `Library`; the options set aside from it (parked) are refused by name unless this key is true: `CorrectionMode` `SelfConsistent` / `Both` (its keys `SolveTol`, `TranslationalDomainCorrection` are not read without it); the legacy options `PatchConstruction` `Legacy` and `ConductorConsistency.Exclusion` `Sticky`; the alternatives `TraceCoupling` `SurfaceMortar` (its key `MortarOversampling` is not read without it) and the hand-placed form without `Library`; the 2D boundary-mode correction, the conductivity or rational-impedance coupons of a library where the device carries that law (a coupon of a law the device does not carry is never matched and not refused) and `\"Crack\": true` on a `Conductivity` or `RationalImpedance` boundary of a correction run; `ConductorConsistency.ControlFlipProbePiece`; the magnetic leaves (`Magnetic` `true`, `AllowElectricOnlyFallback` `true`, `ConductorConsistency.ControlStateAnchorSetbackOverR`; without the switch the leaves are not read); and `Model.CrackInternalBoundaryElements` `true` where it would crack an interior perfect conductor. With it, the run prints one line `DEVELOPER OPTIONS: <the parked options in use>`, `palace.json` records the same list as `SurfaceResponse.Developer`, and the parked fixed-flux and self-consistent columns of the corrected tables are written (without it their values are computed but not written).",
+              "default": false
+            },
             "CorrectionMode": {
               "type": "string",
               "enum": [
@@ -3632,13 +3637,13 @@
                 "SelfConsistent",
                 "Both"
               ],
-              "description": "Select fixed-trace/fixed-flux postprocessing only, a self-consistent corrected solve only, or both. `Both` preserves the historical behavior and means all correction families available for the problem type. Boundary mode supports `PostprocessOnly` and `Both`, but rejects `SelfConsistent` because it has no corrected boundary-mode eigenproblem.",
-              "default": "Both"
+              "description": "Select fixed-trace postprocessing only (the default: the correction of the raw thin-metal solution), a self-consistent corrected solve only, or both. `SelfConsistent` and `Both` (the historical default: all correction families available for the problem type) are developer options and need `\"Developer\": true`. Boundary mode supports `PostprocessOnly` and `Both`, but rejects `SelfConsistent` because it has no corrected boundary-mode eigenproblem.",
+              "default": "PostprocessOnly"
             },
             "SolveTol": {
               "type": "number",
               "exclusiveMinimum": 0.0,
-              "description": "Relative convergence tolerance for an optional self-consistent fabrication-response corrected-field solve. The raw field solve continues to use `Solver.Linear.Tol`.",
+              "description": "Relative convergence tolerance for an optional self-consistent fabrication-response corrected-field solve. The raw field solve continues to use `Solver.Linear.Tol`. A key of the self-consistent solve (a developer option) only: read with it; in a block without it, not read and named in one warning.",
               "default": 1e-06
             },
             "TranslationalDomainCorrection": {
@@ -3648,7 +3653,7 @@
                 "FixedTrace",
                 "FixedFlux"
               ],
-              "description": "Self-consistent domain coupling for translational isolated-edge, gap, strip, and parallel-edge coupon families. `Disabled` retains their fabricated surface-energy evaluation but omits their domain defect from the corrected global operator. Spatial clusters and corners remain fixed-trace coupled.",
+              "description": "Self-consistent domain coupling for translational isolated-edge, gap, strip, and parallel-edge coupon families. `Disabled` retains their fabricated surface-energy evaluation but omits their domain defect from the corrected global operator. Spatial clusters and corners remain fixed-trace coupled. A key of the self-consistent solve (a developer option) only: read with it; in a block without it, not read and named in one warning.",
               "default": "FixedTrace"
             },
             "TraceCoupling": {
@@ -3657,14 +3662,14 @@
                 "Collocated",
                 "SurfaceMortar"
               ],
-              "description": "Map the global field into coupon trace coefficients by historical point collocation or by an L2 matching-surface mortar projection. SurfaceMortar applies to electrostatic translational families and single-conductor spatial/corner models with closed contour rings. Multi-conductor open spatial traces and Maxwell H(curl) mortars remain under development.",
+              "description": "Map the global field into coupon trace coefficients by historical point collocation or by an L2 matching-surface mortar projection. SurfaceMortar applies to electrostatic translational families and single-conductor spatial/corner models with closed contour rings. Multi-conductor open spatial traces and Maxwell H(curl) mortars remain under development. `SurfaceMortar` is a developer option (needs `\"Developer\": true`); `Collocated` is the default path.",
               "default": "Collocated"
             },
             "MortarOversampling": {
               "type": "integer",
               "minimum": 1,
               "maximum": 8,
-              "description": "Quadrature refinement factor relative to the local finite-element mesh size for SurfaceMortar trace coupling.",
+              "description": "Quadrature refinement factor relative to the local finite-element mesh size for SurfaceMortar trace coupling. A key of the mortar coupling (a developer option) only: read with it; in a block without it, not read and named in one warning.",
               "default": 2
             },
             "PatchEnergy": {
@@ -3674,12 +3679,12 @@
             },
             "Magnetic": {
               "type": "boolean",
-              "description": "Read the library's OPTIONAL magnetic (inductive) leaves (`MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` of a Version-3 model). Default true: a model carrying them adds the K-side defect dK = P_m^T W dS_m P_m to every CORRECTED operator (the uniform and adaptive driven sweeps, the self-consistent eigenproblem, its shift-invert and nonlinear refine), the `fixed-trace frequency shift` column (the corrected frequency of record) and `surface-response-magnetic.csv`. False: the leaves are not read, the run is the electric-only run of the same library (byte-identical to the library without leaves), so the electric-only self-consistent result can be reproduced beside the magnetic one. A library without leaves is unaffected either way.",
-              "default": true
+              "description": "Read the library's OPTIONAL magnetic (inductive) leaves (`MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` of a Version-3 model). Default false (without the developer switch the leaves are never read); with `\"Developer\": true` the default is true: a model carrying them adds the K-side defect dK = P_m^T W dS_m P_m to every CORRECTED operator (the uniform and adaptive driven sweeps, the self-consistent eigenproblem, its shift-invert and nonlinear refine), the `fixed-trace frequency shift` column (the corrected frequency of record) and `surface-response-magnetic.csv`. False: the leaves are not read, the run is the electric-only run of the same library (byte-identical to the library without leaves), so the electric-only self-consistent result can be reproduced beside the magnetic one. A library without leaves is unaffected either way. The magnetic leaves are a developer option: without `\"Developer\": true` they are never read (as `false`) and `true` is refused; with it the default is `true`.",
+              "default": false
             },
             "AllowElectricOnlyFallback": {
               "type": "boolean",
-              "description": "The magnetic (inductive) defect of finite-thickness metal: a Version-3 library model may carry the OPTIONAL leaves `MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` (the vacuum twin of its 2D electrostatic coupon pair; 2D translational models only). A leaf refused by rule r1 (basis / piece counts), r2 (the twin's Fabrication differs from the library's) or r3 (the same-mesh proof exceeds the library's `MagneticRules.SameMeshTolerance`) ABORTS the run by name unless this key is true, in which case that model continues ELECTRIC-ONLY and is named in `surface-response-magnetic.csv` and the preflight manifest (`Summary.MagneticElectricOnly`). An r4 refusal (the leaf's -lambda_min / ||dS_m|| above `MagneticRules.PsdRefusalRatio`) always continues electric-only by name. Ignored by a library without magnetic leaves (its outputs are byte-identical to a run without this key).",
+              "description": "The magnetic (inductive) defect of finite-thickness metal: a Version-3 library model may carry the OPTIONAL leaves `MagneticFabricatedMatrix` / `MagneticThinMatrix` / `MagneticSource` (the vacuum twin of its 2D electrostatic coupon pair; 2D translational models only). A leaf refused by rule r1 (basis / piece counts), r2 (the twin's Fabrication differs from the library's) or r3 (the same-mesh proof exceeds the library's `MagneticRules.SameMeshTolerance`) ABORTS the run by name unless this key is true, in which case that model continues ELECTRIC-ONLY and is named in `surface-response-magnetic.csv` and the preflight manifest (`Summary.MagneticElectricOnly`). An r4 refusal (the leaf's -lambda_min / ||dS_m|| above `MagneticRules.PsdRefusalRatio`) always continues electric-only by name. Ignored by a library without magnetic leaves (its outputs are byte-identical to a run without this key). `true` is a developer option (needs `\"Developer\": true`).",
               "default": false
             },
             "Diagnostics": {
@@ -3710,8 +3715,8 @@
                 "ConductorConsistencyRecords": {
                   "type": "string",
                   "enum": ["Metadata", "Directory"],
-                  "description": "Where the `Records` array of `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and excitation) is written. `Metadata` (default): `palace.json`. `Directory` (requires `Directory`): `surface-response-conductor-consistency-records.json` in that directory, the array at the same key path and in the same text; `palace.json` lacks only that member (`TestedPatches` = the record count and the gate summary stay).",
-                  "default": "Metadata"
+                  "description": "Where the `Records` array of `SurfaceResponse.Diagnostics.ConductorConsistency` (one entry per tested patch and excitation) is written. `Directory` (default): `surface-response-conductor-consistency-records.json` in the `Directory` above, else in the sub-directory `conductor-consistency` of the output directory, the array at the same key path and in the same text; `palace.json` lacks only that member (`TestedPatches` = the record count and the gate summary stay). `Metadata`: `palace.json` (the default before schema 4-6-0; a chip's records make `palace.json` GBs).",
+                  "default": "Directory"
                 }
               }
             },
@@ -3773,19 +3778,19 @@
                 "Exclusion": {
                   "type": "string",
                   "enum": ["PerExcitation", "Sticky"],
-                  "description": "Where an exclusion acts. PerExcitation: at the excitation (eigenmode, driven port excitation and frequency, electrostatic terminal) whose own test fails, and there only; every patch is tested at every excitation, so the result of an excitation does not depend on the order of the excitations. Sticky: the legacy rule (weight 0 from the excluding excitation on; an excluded patch is not tested again), for comparisons with results made before PerExcitation existed.",
+                  "description": "Where an exclusion acts. PerExcitation: at the excitation (eigenmode, driven port excitation and frequency, electrostatic terminal) whose own test fails, and there only; every patch is tested at every excitation, so the result of an excitation does not depend on the order of the excitations. Sticky: the legacy rule (weight 0 from the excluding excitation on; an excluded patch is not tested again), for comparisons with results made before PerExcitation existed (a developer option: needs `\"Developer\": true`).",
                   "default": "PerExcitation"
                 },
                 "ControlStateAnchorSetbackOverR": {
                   "type": "number",
                   "exclusiveMinimum": 0,
                   "maximum": 1,
-                  "description": "DIAGNOSTIC CONTROL, not a modelling option: the MAGNETIC chain trace's conductor-path anchor lines (the flux STATE operand of the dual conductor-consistency gate) start from the patch's conductor anchors SET BACK into their metal piece by this fraction of the matching radius (the probe form's generic setback and sheet nudge) instead of the edge anchors; the electric lines, the electric gate and the operator are untouched. Admitted ONLY with `RecordOnly: true` and `CorrectionMode: PostprocessOnly` (the magnetic term read under it is NOT of record); printed and recorded as a CONTROL; REFUSED by name on a library whose `MagneticRules.StateAnchorSetbackOverR` (R-MAG-17, the term's form of record) already sets the state anchors back. A run of record never carries it."
+                  "description": "DIAGNOSTIC CONTROL, not a modelling option: the MAGNETIC chain trace's conductor-path anchor lines (the flux STATE operand of the dual conductor-consistency gate) start from the patch's conductor anchors SET BACK into their metal piece by this fraction of the matching radius (the probe form's generic setback and sheet nudge) instead of the edge anchors; the electric lines, the electric gate and the operator are untouched. Admitted ONLY with `RecordOnly: true` and `CorrectionMode: PostprocessOnly` (the magnetic term read under it is NOT of record); printed and recorded as a CONTROL; REFUSED by name on a library whose `MagneticRules.StateAnchorSetbackOverR` (R-MAG-17, the term's form of record) already sets the state anchors back. A run of record never carries it. A developer option (needs `\"Developer\": true`)."
                 },
                 "ControlFlipProbePiece": {
                   "type": "array",
                   "minItems": 1,
-                  "description": "DIAGNOSTIC CONTROL, not a modelling option: every entry flips the LOCAL PIECE label of one model edge's conductor-consistency probes at the probe construction (the level both gates read) on every patch of that model, so that the gates' discrimination of a one-label mis-mapping is MEASURED on a device (the flipped probe is compared with the wrong piece's state). Admitted ONLY with `RecordOnly: true` (refused by name otherwise); a `Model` / `Edge` that does not exist in the loaded library is refused (no silent no-op); printed on the gate lines and recorded as a CONTROL in the manifest / records. A run of record never carries it.",
+                  "description": "DIAGNOSTIC CONTROL, not a modelling option: every entry flips the LOCAL PIECE label of one model edge's conductor-consistency probes at the probe construction (the level both gates read) on every patch of that model, so that the gates' discrimination of a one-label mis-mapping is MEASURED on a device (the flipped probe is compared with the wrong piece's state). Admitted ONLY with `RecordOnly: true` (refused by name otherwise); a `Model` / `Edge` that does not exist in the loaded library is refused (no silent no-op); printed on the gate lines and recorded as a CONTROL in the manifest / records. A run of record never carries it. A developer option (needs `\"Developer\": true`).",
                   "items": {
                     "type": "object",
                     "additionalProperties": false,

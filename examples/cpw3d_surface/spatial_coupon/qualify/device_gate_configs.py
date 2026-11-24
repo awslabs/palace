@@ -34,6 +34,14 @@ decisions 1174 / 1238 / 1239):
     electrostatic terminal (FE6: electrostaticsolver.cpp "No terminal or prescribed potential boundaries", 1174) is the
     form's reason.
 
+RESPONSE FORMS (the v1 cut; developer_form.py): the c0 solves above are the RECORDED DEVELOPER FORM, written with
+`--developer` (the chain recipe byte for byte plus "Developer": true appended to the correction block of every config).
+By default the tool writes the V1 FORM: TraceCoupling the v1 value of the recorded coupling (Collocated: the mortar
+coupling is parked) and no switch, from a v1 base (a base carrying a parked setting is refused: it needs --developer).
+The gate bars (Count 0, MaxRatio <= 1e-4) were set on the recorded (mortar) form and are not changed: values from the
+v1 form are not comparable with records made before this cut until the benchmark's collocated twins are read. The
+printed line and the record name the form.
+
 A base config of the wrong Problem.Type for the form, a Driven base without an excited LumpedPort, or a non-zero
 Refinement.MaxIts under `--form es` is REFUSED (ValueError, the reason named). Existing output files are never overwritten
 (475). Beside the configs `device-gate-configs.record.json` names the form, the base (sha256), the library, the orders, the
@@ -41,6 +49,7 @@ frequency and the leaves set. Pure Python.
 
 usage:
   device_gate_configs.py --base CONFIG --library LIB --out OUTDIR [--form es|driven] [--orders 3 4 5] [--frequency F]
+      [--developer]
 """
 
 import argparse
@@ -50,6 +59,11 @@ import json
 import sys
 from pathlib import Path
 
+IDENTIFICATION_TOOLS = Path(__file__).resolve().parents[3] / "surface_response_identification"
+if str(IDENTIFICATION_TOOLS) not in sys.path:
+    sys.path.insert(0, str(IDENTIFICATION_TOOLS))
+import developer_form  # noqa: E402
+
 FORMS = ("es", "driven")
 DEFAULT_ORDERS = (3, 4, 5)
 PREFLIGHT_NAME = "preflight.json"
@@ -58,6 +72,7 @@ PROBLEM_TYPE = {"es": "Electrostatic", "driven": "Driven"}
 # The device-side leaf of the response correction per form (configfile.cpp: Solver.Electrostatic.ResponseCorrection on the
 # electrostatic path; Solver.SurfaceResponseCorrection, parsed by the same reader, on the driven / eigenmode paths).
 CORRECTION_PATH = {"es": ("Solver", "Electrostatic", "ResponseCorrection"), "driven": ("Solver", "SurfaceResponseCorrection")}
+# The recorded c0 trace coupling per form (the (F) chains' recipe); the v1 form writes its v1 value (trace_coupling).
 TRACE_COUPLING = {"es": "SurfaceMortar", "driven": "Collocated"}
 PREFLIGHT_GEOMETRY_POLICY = "RecordRaw"
 # Solver.Driven leaves the one-sample c0 drops by name (confirmation d1243 MINOR-2): the legacy top-level range (configfile.cpp
@@ -88,8 +103,24 @@ def _leaf(config, path):
     return node
 
 
-def check_base(config, form):
-    """The base config fits the form: Problem.Type, the correction block, (es) Refinement.MaxIts 0, (driven) an excited port."""
+def trace_coupling(form, developer):
+    """The c0 TraceCoupling: the recorded one in the developer form, else its v1 value (developer_form.PARKED_OPTIONS)."""
+    recorded = {"Library": "", "TraceCoupling": TRACE_COUPLING[form]}
+    return (recorded if developer else developer_form.v1_block(recorded))["TraceCoupling"]
+
+
+def _switch(config, form, developer):
+    """The developer form appends "Developer": true to the correction block (as its last key)."""
+    if developer:
+        leaf = _leaf(config, CORRECTION_PATH[form])
+        leaf.pop(developer_form.DEVELOPER_KEY, None)
+        leaf[developer_form.DEVELOPER_KEY] = True
+    return config
+
+
+def check_base(config, form, developer=False):
+    """The base config fits the form: Problem.Type, the correction block, (es) Refinement.MaxIts 0, (driven) an excited port;
+    the v1 form needs a base without parked settings."""
     problem_type = config.get("Problem", {}).get("Type")
     if problem_type != PROBLEM_TYPE[form]:
         raise DeviceGateConfigError(f"--form {form} needs a Problem.Type {PROBLEM_TYPE[form]} base config, not {problem_type!r}")
@@ -104,6 +135,10 @@ def check_base(config, form):
         if not any(port.get("Excitation") for port in ports):
             raise DeviceGateConfigError("--form driven needs a Boundaries.LumpedPort entry with Excitation true (the F-39 port form)")
         _leaf(config, ("Solver", "Driven"))
+    parked = developer_form.parked_config_settings(config)
+    if parked and not developer:
+        raise DeviceGateConfigError(f"the base config carries the parked settings {parked}: the v1 form needs a v1 base (its writer's "
+                                    f"default form); --developer writes the recorded developer form")
 
 
 def common_config(base, form, library, frequency):
@@ -118,44 +153,45 @@ def common_config(base, form, library, frequency):
     return config
 
 
-def preflight_config(common, form, out):
+def preflight_config(common, form, out, developer=False):
     config = copy.deepcopy(common)
     config["Problem"]["Output"] = f"{out}/preflight/postpro"
     _leaf(config, CORRECTION_PATH[form])["GeometryFailurePolicy"] = PREFLIGHT_GEOMETRY_POLICY
-    return config
+    return _switch(config, form, developer)
 
 
-def c0_config(common, form, out, order):
+def c0_config(common, form, out, order, developer=False):
     config = copy.deepcopy(common)
     config["Solver"]["Order"] = int(order)
     if form == "es":
         config["Solver"]["Electrostatic"]["Save"] = 0
-    _leaf(config, CORRECTION_PATH[form])["TraceCoupling"] = TRACE_COUPLING[form]
+    _leaf(config, CORRECTION_PATH[form])["TraceCoupling"] = trace_coupling(form, developer)
     config["Problem"]["Output"] = f"{out}/c0-p{int(order)}/postpro"
-    return config
+    return _switch(config, form, developer)
 
 
-def device_gate_configs(base, *, form, library, out, orders=DEFAULT_ORDERS, frequency=None):
+def device_gate_configs(base, *, form, library, out, orders=DEFAULT_ORDERS, frequency=None, developer=False):
     """{file name -> config dict} for the form; `out` is the output root AS WRITTEN into Problem.Output (a string)."""
     if form not in FORMS:
         raise DeviceGateConfigError(f"unknown form {form!r}; one of {FORMS}")
     if form == "driven" and frequency is None:
         raise DeviceGateConfigError("--form driven needs --frequency F (GHz): the one frequency of the c0 solves, no default")
-    check_base(base, form)
+    check_base(base, form, developer)
     common = common_config(base, form, library, frequency)
-    configs = {PREFLIGHT_NAME: preflight_config(common, form, out)}
+    configs = {PREFLIGHT_NAME: preflight_config(common, form, out, developer)}
     for order in orders:
-        configs[c0_name(order)] = c0_config(common, form, out, order)
+        configs[c0_name(order)] = c0_config(common, form, out, order, developer)
     return configs
 
 
-def write_configs(base_path, *, form, library, out, orders=DEFAULT_ORDERS, frequency=None):
+def write_configs(base_path, *, form, library, out, orders=DEFAULT_ORDERS, frequency=None, developer=False):
     """Writes the configs and the record under `out`; refuses to overwrite (475). Returns the record."""
     base_path = Path(base_path)
     base = json.loads(base_path.read_text())
     out_dir = Path(out)
     # The chain recipe wrote f"{Path(outdir)}/...": the Path-normalised string names the Output root.
-    configs = device_gate_configs(base, form=form, library=library, out=str(out_dir), orders=orders, frequency=frequency)
+    configs = device_gate_configs(base, form=form, library=library, out=str(out_dir), orders=orders, frequency=frequency,
+                                  developer=developer)
     existing = [name for name in list(configs) + [RECORD_NAME] if (out_dir / name).exists()]
     if existing:
         raise DeviceGateConfigError(f"refusing to overwrite {existing} in {out_dir} (decision 475): use a fresh --out")
@@ -172,10 +208,16 @@ def write_configs(base_path, *, form, library, out, orders=DEFAULT_ORDERS, frequ
         "Orders": [int(o) for o in orders],
         "FrequencyGHz": None if frequency is None else float(frequency),
         "Files": sorted(configs),
-        "Leaves": {"Correction": ".".join(CORRECTION_PATH[form]), "TraceCoupling": TRACE_COUPLING[form],
+        "ResponseForm": developer_form.form_name(developer),
+        "Leaves": {"Correction": ".".join(CORRECTION_PATH[form]), "TraceCoupling": trace_coupling(form, developer),
                    "PreflightGeometryFailurePolicy": PREFLIGHT_GEOMETRY_POLICY,
-                   "RefinementMaxIts": 0, "Save": 0 if form == "es" else "Driven.Samples[].SaveStep 0"},
-        "Verification": ("the form of record (the (F) chains' write_c0_configs v2 recipe, byte-identical)" if form == "es" else
+                   "RefinementMaxIts": 0, "Save": 0 if form == "es" else "Driven.Samples[].SaveStep 0",
+                   "Developer": developer},
+        "Verification": (("the form of record (the (F) chains' write_c0_configs v2 recipe, byte-identical) with \"Developer\": "
+                          "true" if developer else
+                          "the v1 form (not the form of record: the gate bars were set on the recorded mortar form; values from the "
+                          "v1 form are not comparable with records made before this cut until the benchmark's collocated twins "
+                          "are read)") if form == "es" else
                          "UNVERIFIED: no Maxwell-form c0 solved yet; the acceptance test = P3's c0 on the FE6 9f8d interim "
                          "library (~0.3 node-h) before any F use (decision 1239)"),
     }
@@ -188,17 +230,18 @@ def main(argv=None):
     parser.add_argument("--base", required=True, help="the window's device run config (Electrostatic for --form es, Driven for --form driven)")
     parser.add_argument("--library", required=True, help="the interim process library (process-library-abs.json) the c0 solves apply")
     parser.add_argument("--out", required=True, help="the output root: the configs' directory AND the Problem.Output root written into them")
-    parser.add_argument("--form", choices=FORMS, default="es", help="es (default; the form of record) | driven (UNVERIFIED until P3's 9f8d c0)")
+    parser.add_argument("--form", choices=FORMS, default="es", help="es (default; with --developer the form of record) | driven (UNVERIFIED until P3's 9f8d c0)")
     parser.add_argument("--orders", type=int, nargs="+", default=list(DEFAULT_ORDERS), help="the c0 orders (default 3 4 5)")
     parser.add_argument("--frequency", type=float, help="--form driven: the one frequency (GHz) of the c0 solves (required, no default)")
+    developer_form.add_developer_argument(parser)
     args = parser.parse_args(argv)
     try:
         record = write_configs(args.base, form=args.form, library=args.library, out=args.out, orders=args.orders,
-                               frequency=args.frequency)
+                               frequency=args.frequency, developer=args.developer)
     except DeviceGateConfigError as error:
         print(f"device_gate_configs.py: {error}", file=sys.stderr)
         return 2
-    print(f"configs written: {record['Files']} form {record['Form']} base {record['Base']} out {args.out}")
+    print(f"configs written: {record['Files']} form {record['Form']} ({record['ResponseForm']}) base {record['Base']} out {args.out}")
     return 0
 
 

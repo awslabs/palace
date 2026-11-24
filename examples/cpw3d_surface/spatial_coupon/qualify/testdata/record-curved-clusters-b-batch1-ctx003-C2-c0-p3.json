@@ -1,0 +1,209 @@
+{
+ "Problem": {
+  "Type": "Electrostatic",
+  "Verbose": 1,
+  "Output": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/curved-clusters-20261005/b-batch1/preflight/ctx003-C2/c0-p3/postpro",
+  "OutputFormats": {
+   "Paraview": false,
+   "GridFunction": false
+  }
+ },
+ "Model": {
+  "Mesh": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/stage2-20261004/thinmesh/ctx003-C2-thin.msh2",
+  "L0": 1e-06,
+  "Refinement": {
+   "MaxIts": 0,
+   "UniformLevels": 0,
+   "SerialUniformLevels": 0
+  }
+ },
+ "Domains": {
+  "Materials": [
+   {
+    "Attributes": [
+     1,
+     2
+    ],
+    "Permittivity": 11.45
+   },
+   {
+    "Attributes": [
+     3
+    ],
+    "Permittivity": 1.0
+   }
+  ],
+  "Postprocessing": {
+   "Energy": [
+    {
+     "Index": 1,
+     "Attributes": [
+      1,
+      2
+     ]
+    },
+    {
+     "Index": 2,
+     "Attributes": [
+      3
+     ]
+    }
+   ]
+  }
+ },
+ "Boundaries": {
+  "Ground": {
+   "Attributes": [
+    95,
+    106,
+    131
+   ]
+  },
+  "Terminal": [
+   {
+    "Index": 1,
+    "Attributes": [
+     1002
+    ]
+   }
+  ],
+  "Postprocessing": {
+   "Dielectric": [
+    {
+     "Index": 1,
+     "Attributes": [
+      26,
+      124
+     ],
+     "Type": "SA",
+     "Thickness": 0.002,
+     "Permittivity": 4.0,
+     "LossTan": 0.002,
+     "AutomaticEdges": true,
+     "LocalizeEdgeEnergy": false,
+     "SaveLocalEdgeEnergy": false,
+     "EdgeDistances": [
+      1.9
+     ]
+    },
+    {
+     "Index": 2,
+     "Attributes": [
+      95
+     ],
+     "Type": "MS",
+     "Thickness": 0.002,
+     "Permittivity": 11.45,
+     "LossTan": 0.0003,
+     "AutomaticEdges": true,
+     "LocalizeEdgeEnergy": false,
+     "SaveLocalEdgeEnergy": false,
+     "EdgeDistances": [
+      1.9
+     ],
+     "EdgeFrameNormal": [
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    {
+     "Index": 3,
+     "Attributes": [
+      95
+     ],
+     "Type": "MA",
+     "Thickness": 0.002,
+     "Permittivity": 10.0,
+     "LossTan": 0.03,
+     "AutomaticEdges": true,
+     "LocalizeEdgeEnergy": false,
+     "SaveLocalEdgeEnergy": false,
+     "EdgeDistances": [
+      1.9
+     ],
+     "EdgeFrameNormal": [
+      0.0,
+      0.0,
+      1.0
+     ]
+    },
+    {
+     "Index": 4,
+     "Attributes": [
+      106,
+      1002
+     ],
+     "Type": "MS",
+     "Thickness": 0.002,
+     "Permittivity": 11.45,
+     "LossTan": 0.0003,
+     "AutomaticEdges": true,
+     "LocalizeEdgeEnergy": false,
+     "SaveLocalEdgeEnergy": false,
+     "EdgeDistances": [
+      1.9
+     ],
+     "EdgeFrameNormal": [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    },
+    {
+     "Index": 5,
+     "Attributes": [
+      106,
+      1002
+     ],
+     "Type": "MA",
+     "Thickness": 0.002,
+     "Permittivity": 10.0,
+     "LossTan": 0.03,
+     "AutomaticEdges": true,
+     "LocalizeEdgeEnergy": false,
+     "SaveLocalEdgeEnergy": false,
+     "EdgeDistances": [
+      1.9
+     ],
+     "EdgeFrameNormal": [
+      0.0,
+      0.0,
+      -1.0
+     ]
+    }
+   ]
+  }
+ },
+ "Solver": {
+  "Order": 3,
+  "Electrostatic": {
+   "Save": 0,
+   "ResponseCorrection": {
+    "Library": "/data/home/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/curved-clusters-20261005/b-batch1/library/b1-interim-C2/process-library-abs.json",
+    "TargetInterfaces": [
+     1,
+     2,
+     3,
+     4,
+     5
+    ],
+    "UnmatchedPolicy": "Warn",
+    "CorrectionMode": "Both",
+    "TranslationalDomainCorrection": "FixedTrace",
+    "TraceCoupling": "SurfaceMortar",
+    "MortarOversampling": 2,
+    "SolveTol": 1e-06,
+    "PatchConstruction": "Features"
+   }
+  },
+  "Linear": {
+   "Type": "BoomerAMG",
+   "KSPType": "CG",
+   "Tol": 1e-10,
+   "MaxIts": 1000,
+   "EstimatorTol": 0.1,
+   "EstimatorMG": true
+  }
+ }
+}

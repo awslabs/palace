@@ -1,0 +1,156 @@
+{
+  "Problem": {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "/Users/simlap/bedrock-tests/coupon-accuracy-assessment-20260913/v1/lanes/scope/driven/prep/thin_corrected",
+    "OutputFormats": {
+      "Paraview": false,
+      "GridFunction": false
+    }
+  },
+  "Model": {
+    "Mesh": "/Users/simlap/bedrock-tests/palace2/examples/cpw3d_surface/mesh/cpw3d_surface_maxwell_thin.msh",
+    "L0": 1e-06,
+    "Refinement": {
+      "MaxIts": 0
+    },
+    "CrackInternalBoundaryElements": true
+  },
+  "Domains": {
+    "Materials": [
+      {
+        "Attributes": [
+          1
+        ],
+        "Permittivity": 11.47
+      },
+      {
+        "Attributes": [
+          2
+        ],
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing": {
+      "Energy": [
+        {
+          "Index": 1,
+          "Attributes": [
+            1
+          ]
+        },
+        {
+          "Index": 2,
+          "Attributes": [
+            2
+          ]
+        }
+      ]
+    }
+  },
+  "Boundaries": {
+    "PEC": {
+      "Attributes": [
+        1,
+        2,
+        4
+      ]
+    },
+    "Postprocessing": {
+      "Dielectric": [
+        {
+          "Index": 1,
+          "Attributes": [
+            3
+          ],
+          "Type": "SA",
+          "Thickness": 0.002,
+          "Permittivity": 4.0,
+          "LossTan": 0.002,
+          "AutomaticEdges": true,
+          "EdgeDistances": [
+            2.0
+          ]
+        },
+        {
+          "Index": 2,
+          "Attributes": [
+            1,
+            2
+          ],
+          "Type": "MS",
+          "Thickness": 0.002,
+          "Permittivity": 11.47,
+          "LossTan": 0.0003,
+          "AutomaticEdges": true,
+          "EdgeDistances": [
+            2.0
+          ]
+        },
+        {
+          "Index": 3,
+          "Attributes": [
+            1,
+            2
+          ],
+          "Type": "MA",
+          "Thickness": 0.002,
+          "Permittivity": 10.0,
+          "LossTan": 0.03,
+          "AutomaticEdges": true,
+          "EdgeDistances": [
+            2.0
+          ]
+        }
+      ]
+    },
+    "WavePort": [
+      {
+        "Index": 1,
+        "Attributes": [
+          5
+        ],
+        "Mode": 1,
+        "Excitation": 1
+      },
+      {
+        "Index": 2,
+        "Attributes": [
+          6
+        ],
+        "Mode": 1
+      }
+    ]
+  },
+  "Solver": {
+    "Order": 1,
+    "Linear": {
+      "Type": "STRUMPACK",
+      "KSPType": "GMRES",
+      "Tol": 1e-08,
+      "MaxIts": 500,
+      "EstimatorTol": 0.1,
+      "EstimatorMG": true
+    },
+    "Driven": {
+      "Samples": [
+        {
+          "Type": "Point",
+          "Freq": [
+            5.0
+          ],
+          "SaveStep": 0
+        }
+      ]
+    },
+    "SurfaceResponseCorrection": {
+      "Library": "/Users/simlap/bedrock-tests/palace2/examples/transmon/benchmark/corrected-p1/library/process-library.json",
+      "TargetInterfaces": [
+        1,
+        2,
+        3
+      ],
+      "UnmatchedPolicy": "Error"
+    }
+  }
+}

@@ -526,6 +526,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   // The lead reaches the wall x = 1 obliquely: under the mirror rule (boundary-cut DESIGN
@@ -768,6 +769,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator corner-arm
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   correction["DomainBoundary"] = {{"Mirror", "Off"}};
@@ -1115,6 +1117,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   IoData iodata(config, false);
@@ -1373,6 +1376,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   // The lead reaches the wall x = 1: the mirror is off (its own tests above and in
@@ -1648,6 +1652,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction.erase("PatchConstruction");
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   correction["DomainBoundary"] = {{"Mirror", "Off"}};
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
@@ -1953,6 +1958,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   correction.erase("PatchConstruction");
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
+  correction["Developer"] = true;
   correction["CorrectionMode"] = "Both";
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
   const fs::path full_dir = temp.temp_dir / "uncovered-full";
@@ -2229,6 +2235,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                                {{"Library", edge_library_path.string()},
                                 {"TargetInterfaces", {4}},
                                 {"UnmatchedPolicy", "Warn"},
+                                {"Developer", true},
                                 {"CorrectionMode", "Both"}}}};
   IoData iodata(maxwell_config, false);
   iodata.boundaries.cracked_attributes.insert(9);
@@ -2518,6 +2525,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                        {{"Library", edge_library_path.string()},
                         {"TargetInterfaces", {4}},
                         {"UnmatchedPolicy", "Warn"},
+                        {"Developer", true},
                         {"CorrectionMode", "Both"},
                         {"Diagnostics", {{"UncoveredFeatureEnergy", true}}}}}};
   IoData iodata(config, false);
@@ -2889,6 +2897,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                        {{"Library", edge_library_path.string()},
                         {"TargetInterfaces", {4}},
                         {"UnmatchedPolicy", "Warn"},
+                        {"Developer", true},
                         {"CorrectionMode", "Both"}}}};
   IoData iodata(config, false);
   iodata.boundaries.cracked_attributes.insert(9);
@@ -3201,6 +3210,7 @@ TEST_CASE_METHOD(
                        {{"Library", edge_library_path.string()},
                         {"TargetInterfaces", {4}},
                         {"UnmatchedPolicy", "Warn"},
+                        {"Developer", true},
                         {"CorrectionMode", "Both"}}}};
   IoData iodata(config, false);
   iodata.boundaries.cracked_attributes.insert(9);
@@ -3627,6 +3637,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                                {{"Library", edge_library_path.string()},
                                 {"TargetInterfaces", {4}},
                                 {"UnmatchedPolicy", "Warn"},
+                                {"Developer", true},
                                 {"CorrectionMode", "Both"}}}};
   IoData iodata(maxwell_config, false);
   iodata.boundaries.cracked_attributes.insert(9);
@@ -4923,6 +4934,7 @@ struct LoopFitLeadFixture
                           {"TargetInterfaces", {4}},
                           {"UnmatchedPolicy", "Warn"},
                           {"CorrectionMode", "PostprocessOnly"},
+                          {"Developer", true},  // the tests read the fixed-flux columns
                           {"PatchEnergy", true}}}};
     return config;
   }
@@ -5979,7 +5991,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                        {{"Library", edge_library_path.string()},
                         {"TargetInterfaces", {4}},
                         {"UnmatchedPolicy", "Warn"},
-                        {"CorrectionMode", "PostprocessOnly"}}}};
+                        {"CorrectionMode", "PostprocessOnly"},
+                        {"Developer", true}}}};  // the fixed-flux columns are read
   auto Run = [&](bool extra_interface, const char *stem)
   {
     json run = config;

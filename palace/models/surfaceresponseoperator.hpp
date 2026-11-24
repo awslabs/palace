@@ -1096,6 +1096,9 @@ private:
       const std::function<double(std::size_t)> &origin_z_of);
   ResolutionStatus ResolutionPatchStatusOf(std::size_t patch_index, double *m) const;
   bool conductor_consistency_records_in_directory = false;
+  // The developer switch of the configuration (CUT-PLAN step 2): the parked columns of the
+  // corrected tables are written only with it.
+  bool developer_columns = false;
   // OI-SCP-HOLE (decisions 915 / 918 / 922): the corner / vertex coupons dropped whole by
   // the SpatialClusterPriority rule, with the parts of their raw claims OUTSIDE every
   // matched cluster's box as the drivers' fourth raw class (counted, uncorrected).
@@ -2078,6 +2081,10 @@ public:
   // Lane L4 (decision 1829): whether the writers mark the corrected values of marked cells
   // (Coverage.Policy "MarkNotApplied"); false = "Warn" (every value printed).
   bool CoverageMarkNotApplied() const { return coverage_mark_not_applied; }
+  // The developer switch ("Developer": true): the parked fixed-flux and self-consistent
+  // columns of surface-Q-corrected.csv, surface-response-confidence.csv and the
+  // terminal-*-corrected.csv matrices are written (the v1 default path hides them).
+  bool DeveloperColumns() const { return developer_columns; }
   // The run's coverage cells as the writers printed them (root only), for the end-of-run
   // banner and palace.json SurfaceResponse.Coverage (BaseSolver::SaveMetadata).
   CoverageRunRecord &GetCoverageRunRecord() { return coverage_run_record; }
@@ -2234,6 +2241,11 @@ public:
   }
   static constexpr const char *kConductorConsistencyRecordsFile =
       "surface-response-conductor-consistency-records.json";
+  // The records file's sub-directory of the output directory when Diagnostics.Directory is
+  // unset (Diagnostics.ConductorConsistencyRecords "Directory", the default; CUT-PLAN step
+  // 6).
+  static constexpr const char *kConductorConsistencyRecordsDirectory =
+      "conductor-consistency";
   const std::vector<
       config::ElectrostaticSolverData::ResponseCorrectionData::UncoveredPortionData> &
   GetIdentificationExclusionPortions() const

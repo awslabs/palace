@@ -419,6 +419,13 @@ python3 corner_validation/prepare_maxwell_validation.py \
   --frequency 50
 ```
 
+`corner_validation/prepare_maxwell_validation.py` and `corner_validation/prepare_validation.py`
+write the v1 form by default (no parked key; the electrostatic thin-corrected block is the
+verification protocol's less its parked options); `--developer` writes the recorded developer
+form (the protocol's recorded block, the records' cracked mesh and `"Developer": true`). The
+corner protocol's bars were set on the recorded form: values from the v1 form are not
+comparable with records made before this cut until the benchmark's collocated twins are read.
+
 The fabricated mesh assigns the overetched SA footprint directly below the artificial
 lumped-port sheet to boundary attribute 6. This footprint is excluded from both
 validation metrics because the port replaces the corresponding SA patch in the thin

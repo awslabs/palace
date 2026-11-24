@@ -53,6 +53,9 @@ validated separately on small meshes with explicit resource bounds.
 
 For thick-reference comparisons, use
 `../prepare_surface_response_electrostatic.py` to create the thin electrostatic config.
+It writes the v1 form by default (post-processing only; `--developer` writes the recorded
+developer form with `"Developer": true`): values from the v1 form are not comparable with
+records made before this cut until the benchmark's collocated twins are read.
 It sets the same isotropic substrate permittivity used by the finite-metal reference
 (default `11.45`), includes port patches 6 and 7 in the grounded metal union, and uses the
 separately tagged transmon island as terminal attribute 9. The checked-in

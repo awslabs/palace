@@ -100,6 +100,62 @@ class CorrectedEigenmodeBenchmarkTest(unittest.TestCase):
                 self.assertEqual(dielectric["EdgeDistances"], [2.0])
                 self.assertFalse(dielectric["LocalizeEdgeEnergy"])
 
+    def prepare(self, temporary, developer):
+        output = Path(temporary) / ("developer.json" if developer else "v1.json")
+        BENCHMARK.prepare_config(
+            BENCHMARK.TRANSMON / "transmon_surface_coarse.json",
+            BENCHMARK.DEFAULT_LIBRARY,
+            output,
+            Path(temporary) / "postpro",
+            developer,
+        )
+        return json.loads(output.read_text())
+
+    def test_default_config_is_the_v1_form(self):
+        # The v1 cut (developer_form.py): post-processing only, no parked key.
+        with tempfile.TemporaryDirectory() as temporary:
+            config = self.prepare(temporary, False)
+        correction = config["Solver"]["SurfaceResponseCorrection"]
+        self.assertEqual(list(correction), ["Library", "TargetInterfaces", "UnmatchedPolicy"])
+        self.assertEqual(BENCHMARK.developer_form.parked_config_settings(config), [])
+
+    def test_developer_form_is_the_record(self):
+        # The record: the block the baseline's runs were made with (prepare_config of e4195bac6c, this file before
+        # the cut: Library, TargetInterfaces [1, 2, 3], UnmatchedPolicy Warn, SolveTol 1e-6 under the default of
+        # record CorrectionMode Both). The recorded developer form is that block with the default stated and
+        # "Developer": true; every other key of the config is the v1 form's.
+        with tempfile.TemporaryDirectory() as temporary:
+            developer = self.prepare(temporary, True)
+            v1 = self.prepare(temporary, False)
+        correction = developer["Solver"]["SurfaceResponseCorrection"]
+        self.assertEqual(
+            list(correction.items()),
+            [
+                ("Library", str(BENCHMARK.DEFAULT_LIBRARY.resolve())),
+                ("TargetInterfaces", [1, 2, 3]),
+                ("UnmatchedPolicy", "Warn"),
+                ("SolveTol", 1.0e-6),
+                ("CorrectionMode", "Both"),
+                ("Developer", True),
+            ],
+        )
+        del developer["Solver"]["SurfaceResponseCorrection"]
+        del v1["Solver"]["SurfaceResponseCorrection"]
+        self.assertEqual(developer, v1)
+
+    def test_v1_form_compares_the_kept_columns(self):
+        expected = {"x.csv": [{"m": 1.0, "p_surf corrected": 2.0, "p_surf self-consistent": 3.0,
+                               "E_surf corrected fixed-flux (J)": 4.0}]}
+        observed = {"x.csv": [{"m": 1.0, "p_surf corrected": 2.0}]}
+        self.assertEqual(
+            BENCHMARK.compare_snapshots(expected, observed, 1.0e-3, 1.0e-20, parked_columns=False), []
+        )
+        self.assertTrue(BENCHMARK.compare_snapshots(expected, observed, 1.0e-3, 1.0e-20))
+        observed["x.csv"][0]["p_surf corrected"] = 2.1
+        self.assertTrue(
+            BENCHMARK.compare_snapshots(expected, observed, 1.0e-3, 1.0e-20, parked_columns=False)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

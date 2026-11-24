@@ -246,6 +246,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // Mesh units are metres, unscaled, as the library's R (m).
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
+  config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
   config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
   // The two lowest modes of the 2 m PEC box (about 0.1 GHz).
   config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
@@ -282,6 +283,22 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(corrected[i] > 0.0);
     CHECK(std::isfinite(self_consistent[i]));
     CHECK(self_consistent[i] > 0.0);
+  }
+
+  // The developer switch's record: CorrectionMode Both, the fixture's legacy patch builder,
+  // and in the legacy form the global crack of the PEC island (attribute 9).
+  {
+    std::ifstream input(unstaged / "palace.json");
+    REQUIRE(input);
+    const auto metadata = test::json::parse(input);
+    auto expected = test::json::array(
+        {"\"CorrectionMode\": \"Both\"", "\"PatchConstruction\": \"Legacy\""});
+    if (legacy)
+    {
+      expected.push_back(
+          "\"CrackInternalBoundaryElements\": true on the perfect conductors 9");
+    }
+    CHECK(metadata.at("SurfaceResponse").at("Developer") == expected);
   }
 
   // Every table is bitwise the same with and without the staging.
@@ -337,6 +354,47 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+// The v1 cut (CUT-PLAN step 5a; decision 2379 (3)): the deprecated global crack key would
+// crack the interior PEC island sheet (attribute 9) of this correction run, which the
+// correction never cracks: refused at mesh load by name without the developer switch (the
+// staged / unstaged case above runs it with the switch). Serial: the serial mesh, and so
+// the refusal, is on the root only.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Global crack key on a perfect conductor needs the developer switch",
+                 "[eigensolver][surface-response][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "crack-key-island.mesh";
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  test::json config = ConvexMaxwellIslandConfig(test::CrackPolicy::Legacy);
+  REQUIRE(config["Model"]["CrackInternalBoundaryElements"] == true);
+  // The v1 path otherwise: no switch, the Features patch construction.
+  config["Solver"]["SurfaceResponseCorrection"].erase("Developer");
+  config["Solver"]["SurfaceResponseCorrection"].erase("PatchConstruction");
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 1}};
+  config["Problem"]["Output"] = (temp.temp_dir / "crack-key-refused").string();
+  IoData iodata(config, false);
+  MakeOutputFolder(iodata, comm);
+  BlockTimer::Reset();
+  CHECK_THROWS_WITH(
+      palace::Run(iodata, comm, utils::ConfigureOmp(), /*git_tag=*/nullptr),
+      Catch::Matchers::ContainsSubstring("would crack the interior perfect-conductor "
+                                         "boundaries with attributes 9") &&
+          Catch::Matchers::ContainsSubstring("\"Crack\": true") &&
+          Catch::Matchers::ContainsSubstring("\"Developer\": true"));
+#endif
+}
+
 // Decision 2159 (OI-EIGEN-SC-CORRECTED-LINEAR-SOLVE-NONCONVERGED-RESULT-UNFLAGGED): the
 // corrected linear solves of the self-consistent eigenproblem that did not reach their
 // tolerance are counted in palace.json (SurfaceResponse.CorrectedSolver.Eigenmode.
@@ -368,6 +426,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // Mesh units are metres, unscaled, as the library's R (m).
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
+  config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
   config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
   // The two lowest modes of the 2 m PEC box (about 0.1 GHz).
   config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}, {"Save", 0}};

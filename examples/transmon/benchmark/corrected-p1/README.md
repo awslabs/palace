@@ -46,7 +46,13 @@ python3 examples/transmon/benchmark/corrected-p1/run_corrected_eigenmode.py \
   --ranks 1 2 4
 ```
 
-The default is one run at each rank count. On the development Apple arm64 host, observed
+The default is one run at each rank count. The runs write the v1 form by default
+(post-processing only; the comparison reads the baseline's kept columns, the parked
+fixed-flux / self-consistent columns are neither required nor compared); `--developer` runs
+the recorded developer form of the baseline (`SolveTol`, `"CorrectionMode": "Both"` stated,
+`"Developer": true`) and requires every baseline column. Values from the v1 form are not
+comparable with records made before this cut until the benchmark's collocated twins are
+read. On the development Apple arm64 host, observed
 wall times were approximately 153, 84, and 60 seconds for one, two, and four ranks. Peak
 node memory was approximately 3.7--4.0 GiB. These values are observational, not portable
 pass/fail limits.

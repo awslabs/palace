@@ -130,9 +130,13 @@ def _assert_coverage_marks():
 _assert_coverage_marks()
 
 # Decisions 1934 / 1942: the report writers whose --band reports this reader accepts, by provenance ONLY: {writer sha256: the
-# coverage_marks.py sha256 it requires} (ONE writer: coverage_report.py of the policy branch's merge preparation, decisions 1966 /
-# 1967 (A); the round-4 writer 6dec7256 is no longer allowed: it gave a silently EMPTY ladder for a run-directory --ladder-run).
-ALLOWED_REPORT_WRITERS = {"0aae7cce91666be3bc3175aca448d92de811efc50e539e20797b0d47cbd3eed2": "3feaa623f05d459820000df67f706d393cad8053bf7ead1b96127c4eff8c0d53"}
+# coverage_marks.py sha256 it requires}: coverage_report.py of the policy branch's merge preparation (decisions 1966 / 1967 (A))
+# and the same writer after the v1 cut (it reads the conductor-consistency Records from the records file where palace.json no
+# longer carries them, CUT-PLAN step 6: the counts it lists; the bands do not depend on them, the conductor rows being listed
+# with no band change, so the earlier writer's reports grade as before). The round-4 writer 6dec7256 is no longer allowed: it
+# gave a silently EMPTY ladder for a run-directory --ladder-run.
+ALLOWED_REPORT_WRITERS = {"0aae7cce91666be3bc3175aca448d92de811efc50e539e20797b0d47cbd3eed2": "3feaa623f05d459820000df67f706d393cad8053bf7ead1b96127c4eff8c0d53",
+                          "814be8763e4deec121eb1ae44368383f6fce158d70a22326020be703bcfc2066": "3feaa623f05d459820000df67f706d393cad8053bf7ead1b96127c4eff8c0d53"}
 
 TYPES = ("SA", "MS", "MA_sharp", "C")
 D4 = {"SA": 5.0, "MS": 5.0, "MA_sharp": 5.0, "C": 0.5}

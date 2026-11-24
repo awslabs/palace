@@ -4587,6 +4587,59 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
   return library;
 }
 
+// The v1 default path (CUT-PLAN step 5d): the coupons of the metal laws other than the
+// perfect conductor and the impedance (Ls) sheet (conductivity and rational-impedance
+// models) are parked. A coupon is matched only to a device boundary of its own law
+// (CompatibleBoundaryLaw), so such a coupon is in use only where the device carries its
+// law: there it is refused by name without the developer switch, and listed with it; a
+// library coupon of a law the device does not carry is never matched and not looked at.
+void VerifyLibraryMetalLaws(
+    const ProcessLibrary &library, const config::BoundaryData &boundaries,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request)
+{
+  const auto matchable = [&boundaries](const MetalBoundaryLaw &law)
+  {
+    return (law.type == MetalBoundaryConditionType::CONDUCTIVITY &&
+            !boundaries.conductivity.empty()) ||
+           (law.type == MetalBoundaryConditionType::RATIONAL_IMPEDANCE &&
+            !boundaries.rational_impedance.empty());
+  };
+  std::vector<std::string> parked_models;
+  for (const auto &model : library.models)
+  {
+    const bool parked_model =
+        matchable(model.boundary_condition) ||
+        std::any_of(model.spatial_edges.begin(), model.spatial_edges.end(),
+                    [&](const auto &edge) { return matchable(edge.boundary_condition); });
+    if (!parked_model)
+    {
+      continue;
+    }
+    MFEM_VERIFY(request.developer,
+                "Fabrication-process response model \""
+                    << model.name << "\" of the library \"" << request.library
+                    << "\" is a conductivity or rational-impedance coupon, a parked "
+                       "developer option (the correction serves perfect conductors and "
+                       "impedance (Ls) sheets; the device carries a boundary of the "
+                       "coupon's law); set \"Developer\": true in the response-correction "
+                       "block to use it!");
+    parked_models.push_back(fmt::format("\"{}\"", model.name));
+  }
+  if (parked_models.empty())
+  {
+    return;
+  }
+  const std::string option =
+      fmt::format("the conductivity or rational-impedance coupons {} of the library",
+                  fmt::join(parked_models, ", "));
+  if (std::find(request.developer_options.begin(), request.developer_options.end(),
+                option) == request.developer_options.end())
+  {
+    request.developer_options.push_back(option);
+    Mpi::Print("\nDEVELOPER OPTIONS (library): {}\n", option);
+  }
+}
+
 void ValidateLibraryInterfaceLayers(
     const ProcessLibrary &library,
     const std::map<int, config::InterfaceDielectricData> &dielectrics,
@@ -8021,6 +8074,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   const auto library = ReadProcessLibrary(
       request.library, iodata.units, iodata.InputsNondimensionalized(),
       requirements != nullptr, requirements != nullptr, request.magnetic_leaves);
+  VerifyLibraryMetalLaws(library, iodata.boundaries, request);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -16093,6 +16147,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   const auto library = ReadProcessLibrary(
       request.library, iodata.units, iodata.InputsNondimensionalized(),
       requirements != nullptr, requirements != nullptr, request.magnetic_leaves);
+  VerifyLibraryMetalLaws(library, iodata.boundaries, request);
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
@@ -34449,6 +34504,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
   // each flagged coverage cell.
   coverage_run_record.conductor_consistency_share = conductor_consistency_per_excitation;
   diagnostics_directory = request->diagnostics_directory;
+  developer_columns = request->developer;
   conductor_consistency_records_in_directory =
       request->conductor_consistency_records ==
       config::ElectrostaticSolverData::ResponseCorrectionData::
@@ -36197,6 +36253,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       !conductor_consistency_record_only;
   exclusion_energy = request->exclusion_energy;
   diagnostics_directory = request->diagnostics_directory;
+  developer_columns = request->developer;
   conductor_consistency_records_in_directory =
       request->conductor_consistency_records ==
       config::ElectrostaticSolverData::ResponseCorrectionData::

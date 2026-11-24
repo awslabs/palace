@@ -666,6 +666,7 @@ TEST_CASE_METHOD(
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   auto Build = [&](const json &run_config, std::vector<std::unique_ptr<Mesh>> &meshes)
@@ -900,6 +901,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   IoData iodata(config, false);
@@ -1027,6 +1029,7 @@ TEST_CASE_METHOD(
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction.erase("PatchConstruction");
   correction["Library"] = library_path.string();
+  correction["Developer"] = true;
   correction["TraceCoupling"] = "SurfaceMortar";
   correction["MortarOversampling"] = 2;
   correction["Diagnostics"] = {{"ExclusionEnergy", true}};
@@ -1259,6 +1262,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_FALSE(response.GetConductorConsistencyUnionPortionRecord().portions.empty());
     // Sticky (the legacy rule): the later source re-tests nothing (the weights stay 0).
     json sticky_config = config;
+    sticky_config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
     sticky_config["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"]
                  ["Exclusion"] = "Sticky";
     std::vector<std::unique_ptr<Mesh>> sticky_meshes;
@@ -1306,6 +1310,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     auto Gate = [&](const std::string &exclusion, bool strip_first)
     {
       json order_config = config;
+      order_config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
       order_config["Solver"]["SurfaceResponseCorrection"]["ConductorConsistency"]
                   ["Exclusion"] = exclusion;
       std::vector<std::unique_ptr<Mesh>> order_meshes;
@@ -1617,6 +1622,7 @@ TEST_CASE_METHOD(
   correction["Library"] = library_path.string();
   correction["UnmatchedPolicy"] = "Warn";  // the short's corner cluster has no model: raw
   correction["TraceCoupling"] = "Collocated";
+  correction["Developer"] = true;  // Sticky is a parked legacy option
   correction["ConductorConsistency"] = {{"Exclusion", exclusion}};
   IoData iodata(config, false);
   iodata.boundaries.cracked_attributes.insert(9);
@@ -2066,6 +2072,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     auto &island_correction = island["Solver"]["Electrostatic"]["ResponseCorrection"];
     island_correction.erase("PatchConstruction");
     island_correction["Library"] = library_path.string();
+    island_correction["Developer"] = true;
     island_correction["TraceCoupling"] = "SurfaceMortar";
     island_correction["MortarOversampling"] = 2;
     // A rejected feature is unmatched (raw): the run's UnmatchedPolicy applies to it as to
@@ -2694,6 +2701,11 @@ TEST_CASE("Response-correction ConductorConsistency.Exclusion is read and bounde
         Exclusion::PER_EXCITATION);
   }
   correction["ConductorConsistency"] = {{"Exclusion", "Sticky"}};
+  // The legacy rule is a parked developer option (CUT-PLAN step 5a).
+  CHECK_THROWS_WITH(IoData(config, false),
+                    ContainsSubstring("{\"Exclusion\": \"Sticky\"}") &&
+                        ContainsSubstring("is a parked developer option"));
+  correction["Developer"] = true;
   {
     IoData iodata(config, false);
     CHECK(
@@ -2702,6 +2714,7 @@ TEST_CASE("Response-correction ConductorConsistency.Exclusion is read and bounde
     CHECK_FALSE(
         iodata.solver.electrostatic.response_correction->conductor_consistency_record_only);
   }
+  correction.erase("Developer");
   correction["ConductorConsistency"] = {{"Exclusion", "PerExcitation"}};
   {
     IoData iodata(config, false);

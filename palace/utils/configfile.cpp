@@ -1887,6 +1887,19 @@ void VerifyImpedanceMetalRuleCoveragePolicy(
       "Solver.SurfaceResponseCorrection, or remove \"ImpedanceMetalRule\"!");
 }
 
+void RequireDeveloperOption(ElectrostaticSolverData::ResponseCorrectionData &data,
+                            const std::string &option)
+{
+  MFEM_VERIFY(
+      data.developer,
+      "Response-correction "
+          << option
+          << " is a parked developer option (the correction is post-processing "
+             "only by default, with the fabrication-process library); set "
+             "\"Developer\": true in the same response-correction block to use it!");
+  data.developer_options.push_back(option);
+}
+
 ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
 {
   n_post = electrostatic.value("Save", n_post);
@@ -1956,17 +1969,27 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
   {
     const auto &correction = *it;
     ResponseCorrectionData data;
-    const std::string correction_mode = correction.value("CorrectionMode", "Both");
+    // The developer switch first: every parked option below is checked against it.
+    if (auto developer = correction.find("Developer"); developer != correction.end())
+    {
+      MFEM_VERIFY(developer->is_boolean(),
+                  "Response-correction \"Developer\" must be a boolean!");
+      data.developer = developer->get<bool>();
+    }
+    const std::string correction_mode =
+        correction.value("CorrectionMode", "PostprocessOnly");
     if (correction_mode == "PostprocessOnly")
     {
       data.correction_mode = ResponseCorrectionData::CorrectionMode::POSTPROCESS_ONLY;
     }
     else if (correction_mode == "SelfConsistent")
     {
+      RequireDeveloperOption(data, "\"CorrectionMode\": \"SelfConsistent\"");
       data.correction_mode = ResponseCorrectionData::CorrectionMode::SELF_CONSISTENT;
     }
     else if (correction_mode == "Both")
     {
+      RequireDeveloperOption(data, "\"CorrectionMode\": \"Both\"");
       data.correction_mode = ResponseCorrectionData::CorrectionMode::BOTH;
     }
     else
@@ -1974,30 +1997,47 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       MFEM_ABORT("Electrostatic response-correction \"CorrectionMode\" must be "
                  "\"PostprocessOnly\", \"SelfConsistent\", or \"Both\"!");
     }
-    data.solve_tol = correction.value("SolveTol", data.solve_tol);
-    MFEM_VERIFY(std::isfinite(data.solve_tol) && data.solve_tol > 0.0,
-                "Electrostatic response-correction \"SolveTol\" must be positive!");
-    const std::string translational_domain_correction =
-        correction.value("TranslationalDomainCorrection", "FixedTrace");
-    if (translational_domain_correction == "Disabled")
+    // The two keys of the self-consistent solve alone (its tolerance; its domain coupling)
+    // follow the parked option they belong to: read with it, ignored (IoData warns once)
+    // without it, so that un-parking the solve un-parks them.
+    if (data.correction_mode == ResponseCorrectionData::CorrectionMode::POSTPROCESS_ONLY)
     {
-      data.translational_domain_correction =
-          ResponseCorrectionData::TranslationalDomainCorrection::DISABLED;
-    }
-    else if (translational_domain_correction == "FixedTrace")
-    {
-      data.translational_domain_correction =
-          ResponseCorrectionData::TranslationalDomainCorrection::FIXED_TRACE;
-    }
-    else if (translational_domain_correction == "FixedFlux")
-    {
-      data.translational_domain_correction =
-          ResponseCorrectionData::TranslationalDomainCorrection::FIXED_FLUX;
+      for (const char *key : {"SolveTol", "TranslationalDomainCorrection"})
+      {
+        if (correction.contains(key))
+        {
+          data.ignored_keys.push_back(
+              fmt::format("\"{}\" (no self-consistent solve)", key));
+        }
+      }
     }
     else
     {
-      MFEM_ABORT("Electrostatic response-correction \"TranslationalDomainCorrection\" "
-                 "must be \"Disabled\", \"FixedTrace\", or \"FixedFlux\"!");
+      data.solve_tol = correction.value("SolveTol", data.solve_tol);
+      MFEM_VERIFY(std::isfinite(data.solve_tol) && data.solve_tol > 0.0,
+                  "Electrostatic response-correction \"SolveTol\" must be positive!");
+      const std::string translational_domain_correction =
+          correction.value("TranslationalDomainCorrection", "FixedTrace");
+      if (translational_domain_correction == "Disabled")
+      {
+        data.translational_domain_correction =
+            ResponseCorrectionData::TranslationalDomainCorrection::DISABLED;
+      }
+      else if (translational_domain_correction == "FixedTrace")
+      {
+        data.translational_domain_correction =
+            ResponseCorrectionData::TranslationalDomainCorrection::FIXED_TRACE;
+      }
+      else if (translational_domain_correction == "FixedFlux")
+      {
+        data.translational_domain_correction =
+            ResponseCorrectionData::TranslationalDomainCorrection::FIXED_FLUX;
+      }
+      else
+      {
+        MFEM_ABORT("Electrostatic response-correction \"TranslationalDomainCorrection\" "
+                   "must be \"Disabled\", \"FixedTrace\", or \"FixedFlux\"!");
+      }
     }
     const std::string trace_coupling = correction.value("TraceCoupling", "Collocated");
     if (trace_coupling == "Collocated")
@@ -2006,6 +2046,9 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
     }
     else if (trace_coupling == "SurfaceMortar")
     {
+      // The mortar trace coupling: a parked alternative (CUT-PLAN step 5b); its quadrature
+      // key MortarOversampling follows it.
+      RequireDeveloperOption(data, "\"TraceCoupling\": \"SurfaceMortar\"");
       data.trace_coupling = ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR;
     }
     else
@@ -2013,14 +2056,34 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       MFEM_ABORT("Response-correction \"TraceCoupling\" must be \"Collocated\" or "
                  "\"SurfaceMortar\"!");
     }
-    data.mortar_oversampling =
-        correction.value("MortarOversampling", data.mortar_oversampling);
-    MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
-                "Response-correction \"MortarOversampling\" must be between 1 and 8!");
+    // The quadrature of the mortar coupling alone: read with it; without it not read
+    // (IoData names the key in one warning).
+    if (data.trace_coupling == ResponseCorrectionData::TraceCoupling::SURFACE_MORTAR)
+    {
+      data.mortar_oversampling =
+          correction.value("MortarOversampling", data.mortar_oversampling);
+      MFEM_VERIFY(data.mortar_oversampling > 0 && data.mortar_oversampling <= 8,
+                  "Response-correction \"MortarOversampling\" must be between 1 and 8!");
+    }
+    else if (correction.contains("MortarOversampling"))
+    {
+      data.ignored_keys.push_back("\"MortarOversampling\" (no surface-mortar coupling)");
+    }
     data.patch_energy = correction.value("PatchEnergy", data.patch_energy);
+    // The magnetic (kinetic) leaves of the library are a parked candidate (CUT-PLAN step
+    // 5c): read only with the developer switch (by default with it, as before), never
+    // without it (the run of a library without leaves, byte for byte).
     data.allow_electric_only_fallback =
         correction.value("AllowElectricOnlyFallback", data.allow_electric_only_fallback);
-    data.magnetic_leaves = correction.value("Magnetic", data.magnetic_leaves);
+    if (data.allow_electric_only_fallback)
+    {
+      RequireDeveloperOption(data, "\"AllowElectricOnlyFallback\": true");
+    }
+    data.magnetic_leaves = correction.value("Magnetic", data.developer);
+    if (correction.contains("Magnetic") && data.magnetic_leaves)
+    {
+      RequireDeveloperOption(data, "\"Magnetic\": true");
+    }
     if (auto gate = correction.find("ConductorConsistency"); gate != correction.end())
     {
       MFEM_VERIFY(gate->is_object(),
@@ -2033,6 +2096,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                         (*exclusion == "PerExcitation" || *exclusion == "Sticky"),
                     "Response-correction \"ConductorConsistency.Exclusion\" must be "
                     "\"PerExcitation\" or \"Sticky\"!");
+        if (*exclusion == "Sticky")
+        {
+          // The former sticky exclusion rule: a parked legacy option.
+          RequireDeveloperOption(data,
+                                 "\"ConductorConsistency\": {\"Exclusion\": \"Sticky\"}");
+        }
         data.conductor_consistency_exclusion =
             *exclusion == "Sticky"
                 ? ResponseCorrectionData::ConductorConsistencyExclusion::STICKY
@@ -2040,6 +2109,9 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       }
       if (auto flips = gate->find("ControlFlipProbePiece"); flips != gate->end())
       {
+        // A falsification control of the gate: parked (CUT-PLAN step 5d).
+        RequireDeveloperOption(data,
+                               "\"ConductorConsistency\": {\"ControlFlipProbePiece\"}");
         // Decision 1292 (B): a diagnostic CONTROL admitted only with RecordOnly true.
         MFEM_VERIFY(
             flips->is_array() && !flips->empty(),
@@ -2076,6 +2148,9 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       }
       if (gate->contains("ControlStateAnchorSetbackOverR"))
       {
+        // A control of the magnetic chain trace alone: parked with the leaves.
+        RequireDeveloperOption(
+            data, "\"ConductorConsistency\": {\"ControlStateAnchorSetbackOverR\"}");
         // Decision 1302: a diagnostic CONTROL admitted only with RecordOnly true on a
         // PostprocessOnly run.
         data.control_state_anchor_setback_over_r =
@@ -2152,16 +2227,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
             records->is_string() && (*records == "Metadata" || *records == "Directory"),
             "Response-correction \"Diagnostics.ConductorConsistencyRecords\" must be "
             "\"Metadata\" or \"Directory\"!");
+        // "Directory" without Diagnostics.Directory: the default directory
+        // conductor-consistency/ of the output (CUT-PLAN step 6).
         data.conductor_consistency_records =
             *records == "Directory"
                 ? ResponseCorrectionData::ConductorConsistencyRecordsOutput::DIRECTORY
                 : ResponseCorrectionData::ConductorConsistencyRecordsOutput::METADATA;
-        MFEM_VERIFY(
-            data.conductor_consistency_records !=
-                    ResponseCorrectionData::ConductorConsistencyRecordsOutput::DIRECTORY ||
-                !data.diagnostics_directory.empty(),
-            "Response-correction \"Diagnostics.ConductorConsistencyRecords\": "
-            "\"Directory\" requires \"Diagnostics.Directory\"!");
       }
       for (const auto &[key, value] : diagnostics->items())
       {
@@ -2405,6 +2476,8 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       }
       else if (patch_construction == "Legacy")
       {
+        // The legacy per-interface-group patch builder: a parked legacy option.
+        RequireDeveloperOption(data, "\"PatchConstruction\": \"Legacy\"");
         data.patch_construction = ResponseCorrectionData::PatchConstruction::LEGACY;
       }
       else
@@ -2443,6 +2516,11 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
       response_correction = std::move(data);
       return;
     }
+
+    // The hand-placed form (explicit models and patches instead of the library): a parked
+    // alternative (CUT-PLAN step 5b).
+    RequireDeveloperOption(data,
+                           "without \"Library\" (the hand-placed models and patches)");
 
     auto ParseModel = [](const json &model, int default_idx)
     {

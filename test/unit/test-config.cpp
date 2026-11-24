@@ -10,6 +10,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <fmt/format.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -1106,13 +1107,25 @@ TEST_CASE("Config interface dielectric region", "[config][Serial]")
 
 TEST_CASE("Config electrostatic response correction", "[config][Serial]")
 {
-  const json correction = {{"FabricatedMatrix", "fabricated.csv"},
+  // The hand-placed form (models and patches instead of the library) is a parked
+  // alternative (CUT-PLAN step 5b): refused by name without the developer switch.
+  const json correction = {{"Developer", true},
+                           {"FabricatedMatrix", "fabricated.csv"},
                            {"ThinMatrix", "thin.csv"},
                            {"BasisPoints", "points.csv"},
                            {"Edges",
                             {{{"Origin", {1.0, 2.0, 0.0}},
                               {"AxisU", {1.0, 0.0, 0.0}},
                               {"AxisV", {0.0, 1.0, 0.0}}}}}};
+  {
+    auto without_switch = correction;
+    without_switch.erase("Developer");
+    CHECK_THROWS_WITH(
+        config::ElectrostaticSolverData(json{{"ResponseCorrection", without_switch}}),
+        Catch::Matchers::ContainsSubstring(
+            "without \"Library\" (the hand-placed models and "
+            "patches) is a parked developer option"));
+  }
   const config::ElectrostaticSolverData electrostatic(
       json{{"ResponseCorrection", correction}});
   REQUIRE(electrostatic.response_correction);
@@ -1120,11 +1133,17 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
       config::ElectrostaticSolverData::ResponseCorrectionData::CorrectionMode;
   using DomainCorrection = config::ElectrostaticSolverData::ResponseCorrectionData::
       TranslationalDomainCorrection;
-  CHECK(electrostatic.response_correction->correction_mode == CorrectionMode::BOTH);
+  // The v1 default path: post-processing only, also with the developer switch.
+  CHECK(electrostatic.response_correction->correction_mode ==
+        CorrectionMode::POSTPROCESS_ONLY);
+  CHECK(electrostatic.response_correction->developer);
+  CHECK(
+      electrostatic.response_correction->developer_options ==
+      std::vector<std::string>{"without \"Library\" (the hand-placed models and patches)"});
   CHECK(electrostatic.response_correction->translational_domain_correction ==
         DomainCorrection::FIXED_TRACE);
   CHECK(electrostatic.response_correction->IncludesPostprocessing());
-  CHECK(electrostatic.response_correction->IncludesSelfConsistent());
+  CHECK_FALSE(electrostatic.response_correction->IncludesSelfConsistent());
   CHECK(electrostatic.response_correction->solve_tol == 1.0e-6);
   REQUIRE(electrostatic.response_correction->models.size() == 1);
   CHECK(electrostatic.response_correction->models[0].idx == 1);
@@ -1149,7 +1168,7 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   sparse["Solver"]["Electrostatic"].erase("ResponseCorrection");
   sparse = IoData::ConcretizeDefaults(iodata, sparse);
   auto concretized_correction = correction;
-  concretized_correction["CorrectionMode"] = "Both";
+  concretized_correction["CorrectionMode"] = "PostprocessOnly";
   concretized_correction["SolveTol"] = 1.0e-6;
   concretized_correction["TranslationalDomainCorrection"] = "FixedTrace";
   concretized_correction["TraceCoupling"] = "Collocated";
@@ -1161,6 +1180,7 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK_THROWS(IoData(config, false));
 
   const json multi_model = {
+      {"Developer", true},
       {"Models",
        {{{"Index", 7},
          {"FabricatedMatrix", "fabricated-domain.csv"},
@@ -1193,8 +1213,7 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
 
   const json automatic_correction = {{"Library", "fabrication-process.json"},
                                      {"TargetInterfaces", {4, 5, 6}},
-                                     {"UnmatchedPolicy", "Error"},
-                                     {"SolveTol", 1.0e-7}};
+                                     {"UnmatchedPolicy", "Error"}};
   const config::ElectrostaticSolverData automatic(
       json{{"ResponseCorrection", automatic_correction}});
   REQUIRE(automatic.response_correction);
@@ -1203,18 +1222,113 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(automatic.response_correction->target_interfaces == std::vector<int>{4, 5, 6});
   CHECK(automatic.response_correction->unmatched_policy ==
         config::ElectrostaticSolverData::ResponseCorrectionData::UnmatchedPolicy::ERROR);
-  CHECK(automatic.response_correction->solve_tol == 1.0e-7);
+  CHECK(automatic.response_correction->solve_tol == 1.0e-6);
+  CHECK_FALSE(automatic.response_correction->developer);
+  CHECK(automatic.response_correction->developer_options.empty());
+  {
+    // The magnetic (kinetic) leaves are a parked candidate (CUT-PLAN step 5c): never read
+    // without the developer switch, read by default with it; "Magnetic": true,
+    // "AllowElectricOnlyFallback": true and the magnetic chain trace's control need the
+    // switch; "Magnetic": false and "AllowElectricOnlyFallback": false do not.
+    CHECK_FALSE(automatic.response_correction->magnetic_leaves);
+    auto developer = automatic_correction;
+    developer["Developer"] = true;
+    CHECK(config::ElectrostaticSolverData(json{{"ResponseCorrection", developer}})
+              .response_correction->magnetic_leaves);
+    for (const auto &[key, value, message] :
+         std::vector<std::tuple<std::string, json, std::string>>{
+             {"Magnetic", true, "\"Magnetic\": true is a parked developer option"},
+             {"AllowElectricOnlyFallback", true,
+              "\"AllowElectricOnlyFallback\": true is a parked developer option"},
+             {"ConductorConsistency",
+              {{"RecordOnly", true}, {"ControlStateAnchorSetbackOverR", 0.5}},
+              "{\"ControlStateAnchorSetbackOverR\"} is a parked developer option"}})
+    {
+      INFO(key);
+      auto parked = automatic_correction;
+      parked[key] = value;
+      if (key == "ConductorConsistency")
+      {
+        parked["CorrectionMode"] = "PostprocessOnly";
+      }
+      CHECK_THROWS_WITH(
+          config::ElectrostaticSolverData(json{{"ResponseCorrection", parked}}),
+          Catch::Matchers::ContainsSubstring(message));
+      parked["Developer"] = true;
+      CHECK_NOTHROW(config::ElectrostaticSolverData(json{{"ResponseCorrection", parked}}));
+    }
+    for (const char *key : {"Magnetic", "AllowElectricOnlyFallback"})
+    {
+      auto off = automatic_correction;
+      off[key] = false;
+      const config::ElectrostaticSolverData data(json{{"ResponseCorrection", off}});
+      CHECK_FALSE(data.response_correction->magnetic_leaves);
+      CHECK(data.response_correction->developer_options.empty());
+    }
+  }
+  {
+    // The gate's falsification control is parked (CUT-PLAN step 5d): refused by name
+    // without the developer switch, admitted (with RecordOnly true) with it.
+    auto parked = automatic_correction;
+    parked["CorrectionMode"] = "PostprocessOnly";
+    parked["ConductorConsistency"] = {
+        {"RecordOnly", true},
+        {"ControlFlipProbePiece", {{{"Model", "m"}, {"Edge", 0}, {"Piece", 2}}}}};
+    CHECK_THROWS_WITH(config::ElectrostaticSolverData(json{{"ResponseCorrection", parked}}),
+                      Catch::Matchers::ContainsSubstring(
+                          "{\"ControlFlipProbePiece\"} is a parked developer option"));
+    parked["Developer"] = true;
+    CHECK_NOTHROW(config::ElectrostaticSolverData(json{{"ResponseCorrection", parked}}));
+  }
+  CHECK(automatic.response_correction->correction_mode == CorrectionMode::POSTPROCESS_ONLY);
+  {
+    // SolveTol configures the self-consistent solve alone: without it the key is not read
+    // and is named among the ignored keys; with the (parked) solve it is read.
+    auto solve_tol = automatic_correction;
+    solve_tol["SolveTol"] = 1.0e-7;
+    const config::ElectrostaticSolverData ignored(json{{"ResponseCorrection", solve_tol}});
+    REQUIRE(ignored.response_correction);
+    CHECK(ignored.response_correction->solve_tol == 1.0e-6);
+    CHECK(ignored.response_correction->ignored_keys ==
+          std::vector<std::string>{"\"SolveTol\" (no self-consistent solve)"});
+    CHECK(ignored.response_correction->developer_options.empty());
+    solve_tol["CorrectionMode"] = "Both";
+    solve_tol["Developer"] = true;
+    const config::ElectrostaticSolverData developer(
+        json{{"ResponseCorrection", solve_tol}});
+    REQUIRE(developer.response_correction);
+    CHECK(developer.response_correction->solve_tol == 1.0e-7);
+    CHECK(developer.response_correction->ignored_keys.empty());
+    CHECK(developer.response_correction->developer_options ==
+          std::vector<std::string>{"\"CorrectionMode\": \"Both\""});
+    auto not_boolean = automatic_correction;
+    not_boolean["Developer"] = "yes";
+    CHECK_THROWS_WITH(
+        config::ElectrostaticSolverData(json{{"ResponseCorrection", not_boolean}}),
+        Catch::Matchers::ContainsSubstring("\"Developer\" must be a boolean"));
+  }
   CHECK(automatic.response_correction->models.empty());
   CHECK(automatic.response_correction->patches.empty());
   // The Features-driven patch construction is the default; Legacy only by explicit request.
   CHECK(
       automatic.response_correction->patch_construction ==
       config::ElectrostaticSolverData::ResponseCorrectionData::PatchConstruction::FEATURES);
+  // The legacy patch builder is a parked developer option (CUT-PLAN step 5a); an explicit
+  // Features needs no switch.
   auto legacy_construction = automatic_correction;
   legacy_construction["PatchConstruction"] = "Legacy";
+  CHECK_THROWS_WITH(
+      config::ElectrostaticSolverData(json{{"ResponseCorrection", legacy_construction}}),
+      Catch::Matchers::ContainsSubstring(
+          "\"PatchConstruction\": \"Legacy\" is a parked developer option"));
+  legacy_construction["Developer"] = true;
   CHECK(config::ElectrostaticSolverData(json{{"ResponseCorrection", legacy_construction}})
             .response_correction->patch_construction ==
         config::ElectrostaticSolverData::ResponseCorrectionData::PatchConstruction::LEGACY);
+  auto features_construction = automatic_correction;
+  features_construction["PatchConstruction"] = "Features";
+  CHECK(config::ElectrostaticSolverData(json{{"ResponseCorrection", features_construction}})
+            .response_correction->developer_options.empty());
   auto invalid_construction = automatic_correction;
   invalid_construction["PatchConstruction"] = "Groups";
   CHECK_THROWS(
@@ -1255,14 +1369,30 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
            {"SelfConsistent", CorrectionMode::SELF_CONSISTENT, false, true},
            {"Both", CorrectionMode::BOTH, true, true}})
   {
+    // SelfConsistent and Both are parked: refused without the developer switch, accepted
+    // and listed with it; PostprocessOnly needs no switch.
     auto mode_config = automatic_correction;
     mode_config["CorrectionMode"] = name;
+    if (self_consistent)
+    {
+      CHECK_THROWS_WITH(
+          config::ElectrostaticSolverData(json{{"ResponseCorrection", mode_config}}),
+          Catch::Matchers::ContainsSubstring(fmt::format(
+              "\"CorrectionMode\": \"{}\" is a parked developer option", name)) &&
+              Catch::Matchers::ContainsSubstring("\"Developer\": true"));
+      mode_config["Developer"] = true;
+    }
     const config::ElectrostaticSolverData mode_data(
         json{{"ResponseCorrection", mode_config}});
     REQUIRE(mode_data.response_correction);
     CHECK(mode_data.response_correction->correction_mode == mode);
     CHECK(mode_data.response_correction->IncludesPostprocessing() == postprocess);
     CHECK(mode_data.response_correction->IncludesSelfConsistent() == self_consistent);
+    CHECK(mode_data.response_correction->developer == self_consistent);
+    CHECK(mode_data.response_correction->developer_options ==
+          (self_consistent
+               ? std::vector<std::string>{fmt::format("\"CorrectionMode\": \"{}\"", name)}
+               : std::vector<std::string>{}));
   }
   auto invalid_mode = automatic_correction;
   invalid_mode["CorrectionMode"] = "postprocessonly";
@@ -1273,14 +1403,28 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
            {"FixedTrace", DomainCorrection::FIXED_TRACE},
            {"FixedFlux", DomainCorrection::FIXED_FLUX}})
   {
+    // A key of the self-consistent solve alone: read with that (parked) solve; without it
+    // not read (the default FixedTrace stays) and named among the ignored keys.
     auto domain_config = automatic_correction;
     domain_config["TranslationalDomainCorrection"] = name;
+    const config::ElectrostaticSolverData ignored(
+        json{{"ResponseCorrection", domain_config}});
+    REQUIRE(ignored.response_correction);
+    CHECK(ignored.response_correction->translational_domain_correction ==
+          DomainCorrection::FIXED_TRACE);
+    CHECK(ignored.response_correction->ignored_keys ==
+          std::vector<std::string>{
+              "\"TranslationalDomainCorrection\" (no self-consistent solve)"});
+    domain_config["CorrectionMode"] = "Both";
+    domain_config["Developer"] = true;
     const config::ElectrostaticSolverData domain_data(
         json{{"ResponseCorrection", domain_config}});
     REQUIRE(domain_data.response_correction);
     CHECK(domain_data.response_correction->translational_domain_correction == mode);
   }
   auto invalid_domain_mode = automatic_correction;
+  invalid_domain_mode["CorrectionMode"] = "Both";
+  invalid_domain_mode["Developer"] = true;
   invalid_domain_mode["TranslationalDomainCorrection"] = "disabled";
   CHECK_THROWS(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_domain_mode}}));
@@ -1293,8 +1437,18 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
            {"SurfaceMortar", config::ElectrostaticSolverData::ResponseCorrectionData::
                                  TraceCoupling::SURFACE_MORTAR}})
   {
+    // SurfaceMortar is a parked alternative (CUT-PLAN step 5b); Collocated needs no switch.
     auto trace_config = automatic_correction;
     trace_config["TraceCoupling"] = name;
+    if (mode == config::ElectrostaticSolverData::ResponseCorrectionData::TraceCoupling::
+                    SURFACE_MORTAR)
+    {
+      CHECK_THROWS_WITH(
+          config::ElectrostaticSolverData(json{{"ResponseCorrection", trace_config}}),
+          Catch::Matchers::ContainsSubstring(
+              "\"TraceCoupling\": \"SurfaceMortar\" is a parked developer option"));
+      trace_config["Developer"] = true;
+    }
     const config::ElectrostaticSolverData trace_data(
         json{{"ResponseCorrection", trace_config}});
     REQUIRE(trace_data.response_correction);
@@ -1305,11 +1459,26 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK_THROWS(config::ElectrostaticSolverData(
       json{{"ResponseCorrection", invalid_trace_coupling}}));
   auto oversampled_mortar = automatic_correction;
-  oversampled_mortar["MortarOversampling"] = 2;
+  oversampled_mortar["MortarOversampling"] = 3;
+  {
+    // The quadrature of the (parked) mortar coupling alone: without it not read (the
+    // default 2 stays) and named among the ignored keys.
+    const config::ElectrostaticSolverData ignored(
+        json{{"ResponseCorrection", oversampled_mortar}});
+    REQUIRE(ignored.response_correction);
+    CHECK(ignored.response_correction->mortar_oversampling == 2);
+    CHECK(ignored.response_correction->ignored_keys ==
+          std::vector<std::string>{"\"MortarOversampling\" (no surface-mortar coupling)"});
+  }
+  oversampled_mortar["TraceCoupling"] = "SurfaceMortar";
+  oversampled_mortar["Developer"] = true;
   const config::ElectrostaticSolverData oversampled_data(
       json{{"ResponseCorrection", oversampled_mortar}});
   REQUIRE(oversampled_data.response_correction);
-  CHECK(oversampled_data.response_correction->mortar_oversampling == 2);
+  CHECK(oversampled_data.response_correction->mortar_oversampling == 3);
+  CHECK(oversampled_data.response_correction->ignored_keys.empty());
+  CHECK(oversampled_data.response_correction->developer_options ==
+        std::vector<std::string>{"\"TraceCoupling\": \"SurfaceMortar\""});
   oversampled_mortar["MortarOversampling"] = 0;
   CHECK_THROWS(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", oversampled_mortar}}));
@@ -1404,6 +1573,8 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   }
 
   auto invalid_solve_tol = automatic_correction;
+  invalid_solve_tol["CorrectionMode"] = "Both";
+  invalid_solve_tol["Developer"] = true;
   invalid_solve_tol["SolveTol"] = 0.0;
   CHECK_THROWS(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", invalid_solve_tol}}));
@@ -1426,17 +1597,57 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   boundary_mode_config["Problem"]["Type"] = "BoundaryMode";
   boundary_mode_config["Solver"].erase("Eigenmode");
   boundary_mode_config["Solver"]["BoundaryMode"] = {{"Freq", 5.0}};
+  // The 2D boundary-mode correction is a parked developer option (CUT-PLAN step 5d).
+  CHECK_THROWS_WITH(IoData(boundary_mode_config, false),
+                    Catch::Matchers::ContainsSubstring(
+                        "on a BoundaryMode problem (the 2D boundary-mode correction) is a "
+                        "parked developer option"));
+  boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
   CHECK_NOTHROW(IoData(boundary_mode_config, false));
   boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] =
       "PostprocessOnly";
   CHECK_NOTHROW(IoData(boundary_mode_config, false));
   boundary_mode_config["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] =
       "SelfConsistent";
-  CHECK_THROWS(IoData(boundary_mode_config, false));
+  CHECK_THROWS_WITH(IoData(boundary_mode_config, false),
+                    Catch::Matchers::ContainsSubstring(
+                        "Boundary mode does not support SurfaceResponseCorrection"));
+  {
+    // A cracked sheet of a metal law other than the perfect conductor and the Ls sheet in a
+    // correction run is a parked developer option (CUT-PLAN step 5d); uncracked it is not
+    // (the correction leaves it uncorrected, as its coverage counts).
+    auto conductivity_config = maxwell_config;
+    conductivity_config["Boundaries"]["Conductivity"] = {
+        {{"Attributes", {2}}, {"Conductivity", 5.8e7}}};
+    CHECK_NOTHROW(IoData(conductivity_config, false));
+    conductivity_config["Boundaries"]["Conductivity"][0]["Crack"] = true;
+    CHECK_THROWS_WITH(IoData(conductivity_config, false),
+                      Catch::Matchers::ContainsSubstring(
+                          "with \"Crack\": true on a Conductivity or RationalImpedance "
+                          "boundary is a parked developer option"));
+    conductivity_config["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
+    const IoData developer(conductivity_config, false);
+    CHECK(developer.solver.surface_response_correction->developer_options ==
+          std::vector<std::string>{
+              "with \"Crack\": true on a Conductivity or RationalImpedance boundary"});
+  }
   // OI-MAXWELL-TRANSLATIONAL-MODE-INERT (decisions 1237 / 1260): the Maxwell path never
   // reads TranslationalDomainCorrection, so only the default FixedTrace is accepted (an
   // explicit FixedTrace parses; Disabled / FixedFlux are refused by name).
+  // TranslationalDomainCorrection is a key of the (parked) self-consistent solve alone:
+  // without that solve it is not read, whatever its value.
   auto translational_maxwell = maxwell_config;
+  for (const char *mode : {"FixedTrace", "Disabled", "FixedFlux"})
+  {
+    translational_maxwell["Solver"]["SurfaceResponseCorrection"]
+                         ["TranslationalDomainCorrection"] = mode;
+    const IoData ignored(translational_maxwell, false);
+    CHECK(ignored.solver.surface_response_correction->ignored_keys ==
+          std::vector<std::string>{
+              "\"TranslationalDomainCorrection\" (no self-consistent solve)"});
+  }
+  translational_maxwell["Solver"]["SurfaceResponseCorrection"]["CorrectionMode"] = "Both";
+  translational_maxwell["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
   translational_maxwell["Solver"]["SurfaceResponseCorrection"]
                        ["TranslationalDomainCorrection"] = "FixedTrace";
   CHECK_NOTHROW(IoData(translational_maxwell, false));
@@ -1478,7 +1689,12 @@ TEST_CASE("Config surface-response Diagnostics.Directory and ConductorConsistenc
       json{{"ResponseCorrection", automatic_correction}});
   REQUIRE(defaults.response_correction);
   CHECK(defaults.response_correction->diagnostics_directory.empty());
-  CHECK(defaults.response_correction->conductor_consistency_records == Records::METADATA);
+  // The v1 default (CUT-PLAN step 6): the records leave palace.json for their file.
+  CHECK(defaults.response_correction->conductor_consistency_records == Records::DIRECTORY);
+  auto metadata = automatic_correction;
+  metadata["Diagnostics"] = {{"ConductorConsistencyRecords", "Metadata"}};
+  CHECK(config::ElectrostaticSolverData(json{{"ResponseCorrection", metadata}})
+            .response_correction->conductor_consistency_records == Records::METADATA);
 
   auto moved = automatic_correction;
   moved["Diagnostics"] = {{"Directory", "diagnostics"},
@@ -1499,7 +1715,7 @@ TEST_CASE("Config surface-response Diagnostics.Directory and ConductorConsistenc
   const config::ElectrostaticSolverData only(json{{"ResponseCorrection", directory_only}});
   REQUIRE(only.response_correction);
   CHECK(only.response_correction->diagnostics_directory == "heavy.tables_1");
-  CHECK(only.response_correction->conductor_consistency_records == Records::METADATA);
+  CHECK(only.response_correction->conductor_consistency_records == Records::DIRECTORY);
 
   for (const auto *name :
        {"", "a/b", "..", ".", ".hidden", "-dash", "iteration1", "iterations", "with space"})
@@ -1516,11 +1732,14 @@ TEST_CASE("Config surface-response Diagnostics.Directory and ConductorConsistenc
   CHECK_THROWS_WITH(
       config::ElectrostaticSolverData(json{{"ResponseCorrection", not_a_string}}),
       Catch::Matchers::ContainsSubstring("Diagnostics.Directory"));
+  // "Directory" without Diagnostics.Directory: the default directory (the v1 cut).
   auto records_without_directory = automatic_correction;
   records_without_directory["Diagnostics"] = {{"ConductorConsistencyRecords", "Directory"}};
-  CHECK_THROWS_WITH(config::ElectrostaticSolverData(
-                        json{{"ResponseCorrection", records_without_directory}}),
-                    Catch::Matchers::ContainsSubstring("requires"));
+  const config::ElectrostaticSolverData records_only(
+      json{{"ResponseCorrection", records_without_directory}});
+  CHECK(records_only.response_correction->diagnostics_directory.empty());
+  CHECK(records_only.response_correction->conductor_consistency_records ==
+        Records::DIRECTORY);
   auto invalid_records = automatic_correction;
   invalid_records["Diagnostics"] = {{"Directory", "diagnostics"},
                                     {"ConductorConsistencyRecords", "palace.json"}};

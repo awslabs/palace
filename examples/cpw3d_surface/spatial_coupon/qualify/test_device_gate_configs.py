@@ -87,39 +87,91 @@ def chain_recipe_v2(base, lib, outdir):
 
 
 LIB = "/cluster/library/interim/process-library-abs.json"
+# The record: curved-clusters-20261005/b-batch1/cluster-mirror/preflight/ctx003-C2/c0-p3.json (sha256 67678bfdbd26c776...,
+# 2026-10-07, written by the (F) chain's recipe; copied to testdata/).
+RECORD = Path(__file__).resolve().parent / "testdata" / "record-curved-clusters-b-batch1-ctx003-C2-c0-p3.json"
+
+
+def es_base_v1():
+    """The es base in the v1 form (its writer's default): no parked setting."""
+    base = es_base()
+    del base["Solver"]["Electrostatic"]["ResponseCorrection"]["CorrectionMode"]
+    return base
+
+
+def with_switch(text):
+    """A recorded config text with "Developer": true appended to its correction block (the recorded developer form)."""
+    config = json.loads(text)
+    leaf = config["Solver"]["Electrostatic"]["ResponseCorrection"]
+    leaf["Developer"] = True
+    return dgc.dump_config(config)
 
 
 class EsDefaultByteIdentity(unittest.TestCase):
-    def test_default_form_is_es_and_byte_identical_to_the_chain_recipe(self):
+    def test_developer_form_is_es_and_byte_identical_to_the_chain_recipe(self):
+        # The v1 cut: the chain recipe is the recorded developer form (--developer), byte for byte plus the switch.
         with tempfile.TemporaryDirectory() as tmp:
             base_path = Path(tmp) / "window-key-k2d.json"
             base_path.write_text(json.dumps(es_base(), indent=1) + "\n")
             out = Path(tmp) / "registration" / "key"
-            record = dgc.write_configs(base_path, form="es", library=LIB, out=str(out))
+            record = dgc.write_configs(base_path, form="es", library=LIB, out=str(out), developer=True)
             expected = chain_recipe_v2(es_base(), LIB, str(out))
             self.assertEqual(sorted(record["Files"]), sorted(expected))
             for name, text in expected.items():
-                self.assertEqual((out / name).read_text(), text, name)
+                self.assertEqual((out / name).read_text(), with_switch(text), name)
             self.assertEqual(record["Form"], "es")
             self.assertEqual(record["ProblemType"], "Electrostatic")
+            self.assertEqual(record["ResponseForm"], "recorded developer form")
+            self.assertTrue(record["Verification"].startswith("the form of record"))
             # A base with a missing Save leaf: the recipe appends it after the same keys (insertion order preserved).
             base = es_base()
             del base["Solver"]["Electrostatic"]["Save"]
-            got = dgc.device_gate_configs(base, form="es", library=LIB, out=str(out))
+            got = dgc.device_gate_configs(base, form="es", library=LIB, out=str(out), developer=True)
             for name, text in chain_recipe_v2(base, LIB, str(out)).items():
-                self.assertEqual(dgc.dump_config(got[name]), text, name)
+                self.assertEqual(dgc.dump_config(got[name]), with_switch(text), name)
+
+    def test_developer_form_is_the_record(self):
+        # The recorded c0 (a base carrying CorrectionMode Both, SolveTol, TranslationalDomainCorrection and
+        # MortarOversampling 2 from the window writer's recorded form) is reproduced byte for byte plus the switch from a
+        # base whose c0 leaves differ (the tool sets them).
+        text = RECORD.read_text()
+        record = json.loads(text)
+        self.assertEqual(dgc.dump_config(record), text)
+        base = json.loads(text)
+        base["Solver"]["Order"] = 2
+        base["Solver"]["Electrostatic"]["Save"] = 1
+        base["Solver"]["Electrostatic"]["ResponseCorrection"]["TraceCoupling"] = "Collocated"
+        base["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] = "/elsewhere/process-library-abs.json"
+        base["Problem"]["Output"] = "/elsewhere/postpro"
+        out = record["Problem"]["Output"].rsplit("/c0-p3/postpro", 1)[0]
+        got = dgc.device_gate_configs(base, form="es", library=record["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"],
+                                      out=out, orders=(3,), developer=True)
+        self.assertEqual(dgc.dump_config(got["c0-p3.json"]), with_switch(text))
+
+    def test_default_form_is_the_v1_form(self):
+        # The default (no --developer): the c0 solves collocate (the mortar coupling is parked) from a v1 base, no switch,
+        # no parked key; a base carrying a parked setting is refused by name.
+        configs = dgc.device_gate_configs(es_base_v1(), form="es", library=LIB, out="/o")
+        for name, config in configs.items():
+            self.assertEqual(dgc.developer_form.parked_config_settings(config), [], name)
+            self.assertNotIn("Developer", config["Solver"]["Electrostatic"]["ResponseCorrection"], name)
+        self.assertEqual(configs["c0-p3.json"]["Solver"]["Electrostatic"]["ResponseCorrection"]["TraceCoupling"], "Collocated")
+        with self.assertRaisesRegex(dgc.DeviceGateConfigError, "CorrectionMode Both"):
+            dgc.device_gate_configs(es_base(), form="es", library=LIB, out="/o")
 
     def test_cli_default_form_and_record(self):
         with tempfile.TemporaryDirectory() as tmp:
             base_path = Path(tmp) / "base.json"
-            base_path.write_text(json.dumps(es_base()))
+            base_path.write_text(json.dumps(es_base_v1()))
             out = os.path.join(tmp, "out")
             self.assertEqual(dgc.main(["--base", str(base_path), "--library", LIB, "--out", out]), 0)
             record = json.loads(Path(out, dgc.RECORD_NAME).read_text())
             self.assertEqual(record["Form"], "es")
             self.assertEqual(record["Orders"], [3, 4, 5])
             self.assertIsNone(record["FrequencyGHz"])
-            self.assertTrue(record["Verification"].startswith("the form of record"))
+            self.assertEqual((record["ResponseForm"], record["Leaves"]["TraceCoupling"], record["Leaves"]["Developer"]),
+                             ("v1 form", "Collocated", False))
+            self.assertTrue(record["Verification"].startswith("the v1 form (not the form of record"))
             self.assertEqual(sorted(p.name for p in Path(out).glob("*.json")),
                              sorted(["preflight.json", "c0-p3.json", "c0-p4.json", "c0-p5.json", dgc.RECORD_NAME]))
 
@@ -211,7 +263,7 @@ class Refusals(unittest.TestCase):
     def test_never_overwrites(self):
         with tempfile.TemporaryDirectory() as tmp:
             base_path = Path(tmp) / "base.json"
-            base_path.write_text(json.dumps(es_base()))
+            base_path.write_text(json.dumps(es_base_v1()))
             out = os.path.join(tmp, "out")
             dgc.write_configs(base_path, form="es", library=LIB, out=out)
             with self.assertRaisesRegex(dgc.DeviceGateConfigError, "refusing to overwrite"):
@@ -257,6 +309,29 @@ class MaxwellFormGateRecord(unittest.TestCase):
             self.assertAlmostEqual(gate["MaxRatio"], 6.3e-7)
             self.assertEqual((gate["Probed"], gate["Count"], gate["Excluded"]), (6, 0, 0))
             self.assertEqual(gate["Tolerance"], sq.GATE_MAX_RATIO)
+
+    def test_the_records_file_of_a_default_v1_run(self):
+        """The v1 cut (CUT-PLAN step 6): palace.json keeps the gate block without its Records, which Palace writes to
+        conductor-consistency/ of the output (or Diagnostics.Directory); gate_solve_record reads them there, and a solve
+        whose records are nowhere still fails closed."""
+        records = [maxwell_record(self.MODEL, r, f) for f, r in ((5.2, 2.2e-7), (5.7, 6.3e-7))]
+        with tempfile.TemporaryDirectory() as tmp:
+            for directory, resolved in (("conductor-consistency", {}), ("diag", {"SurfaceResponseCorrection": {"Diagnostics": {"Directory": "diag"}}})):
+                path = self.palace_json(tmp, f"c0-{directory}", records, 0, 4)
+                meta = json.loads(path.read_text())
+                moved = meta["SurfaceResponse"]["Diagnostics"]["ConductorConsistency"].pop("Records")
+                path.write_text(json.dumps(meta))
+                (path.parent / "config_resolved.json").write_text(json.dumps({"Solver": dict(resolved, Order=4)}))
+                records_path = path.parent / directory / sq.CONDUCTOR_CONSISTENCY_RECORDS_FILE
+                records_path.parent.mkdir()
+                records_path.write_text(json.dumps({"SurfaceResponse": {"Diagnostics": {"ConductorConsistency": {"Records": moved}}}}))
+                gate = sq.resolution_aware_gate([sq.gate_solve_record(path)], self.MODEL)
+                self.assertTrue(gate["Passed"], directory)
+                self.assertEqual(gate["Probed"], 2)
+                records_path.unlink()
+                gate = sq.resolution_aware_gate([sq.gate_solve_record(path)], self.MODEL)
+                self.assertFalse(gate["Passed"])
+                self.assertIn("no conductor-consistency record", gate["Solves"][0]["Reason"])
 
     def test_a_maxwell_ratio_over_the_bar_at_one_frequency_fails(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -36,7 +36,15 @@ order of the set fix the Ground / Terminal boundaries and their order on both si
               ft = sc; decisions 329 / 341: the reference's MS / MA integrate every metal shell,
               so a window MS / MA total = the corrected targets + the raw non-target sheets).
               The library path is a parameter (--library; the geometry-only seed by default for
-              the preflight).
+              the preflight). FORMS (the v1 cut; developer_form.py): by default the thin config is
+              the V1 FORM, the protocol path's settings less the parked options (no self-consistent
+              solve: no CorrectionMode Both, SolveTol or TranslationalDomainCorrection; no mortar:
+              TraceCoupling Collocated, no MortarOversampling) on the uncracked mesh (crack policy
+              default); `--developer` writes the RECORDED DEVELOPER
+              FORM, the protocol path's recorded settings with "Developer": true on the cracked
+              mesh of the records (crack policy legacy; refused without `--developer`). The window protocol's bars were set on the recorded
+              form: values from the v1 form are not comparable with records made before this cut
+              until the benchmark's collocated twins are read.
 
     python3 write_window_es_configs.py fabricated --polygon-set S1p.json --manifest S1p_r10nm_t5um.json \\
         --mesh /path/on/the/cluster/S1p_r10nm_t5um.msh2 --postpro /path/postpro --output ref-r10-p4.json [--order 4]
@@ -54,7 +62,8 @@ import sys
 _IDENTIFICATION = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "surface_response_identification")
 if _IDENTIFICATION not in sys.path:
     sys.path.insert(0, _IDENTIFICATION)
-from crack_policy import CRACK_POLICY_DEFAULT, add_crack_policy_argument, apply_crack_policy  # noqa: E402
+from crack_policy import add_crack_policy_argument, apply_crack_policy  # noqa: E402
+import developer_form  # noqa: E402
 
 # The fabrication record of the transmon reference (`process-library.json` `Fabrication`):
 # 2-nm layers, eps SA 4.0 / MS 11.45 / MA 10.0, substrate 11.45; the loss tangents are the
@@ -204,11 +213,14 @@ def fabricated_config(polygon_set, manifest, mesh, postpro, order=4, linear_max_
     }
 
 
-def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFAULT_RADIUS_UM, verbose=1, crack_policy=CRACK_POLICY_DEFAULT):
+def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFAULT_RADIUS_UM, verbose=1, crack_policy=None,
+                developer=False):
     """The thin + library configuration from the thin window manifest (`Attributes`: name ->
     attribute; sheets `ground_<plane>`, `<label>_<plane>`, `gap_<plane>`, bump shells
     `bump_surface` (ground) / `bump_<label>` (terminal), volumes `substrate_<plane lower-case>`,
-    `vacuum`; the table lists exactly the groups the mesh carries)."""
+    `vacuum`; the table lists exactly the groups the mesh carries). `developer`: the recorded
+    developer form of the response-correction block, else the v1 form; `crack_policy` None: the
+    form's (developer_form.device_run_crack_policy)."""
     if path not in THIN_PATHS:
         raise ValueError(f"path {path!r} must be one of {sorted(THIN_PATHS)}")
     settings = THIN_PATHS[path]
@@ -270,7 +282,8 @@ def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFA
         })
     return {
         "Problem": {"Type": "Electrostatic", "Verbose": verbose, "Output": postpro, "OutputFormats": {"Paraview": False, "GridFunction": False}},
-        "Model": apply_crack_policy({"Mesh": mesh, "L0": 1.0e-6, "Refinement": refinement}, crack_policy),
+        "Model": apply_crack_policy({"Mesh": mesh, "L0": 1.0e-6, "Refinement": refinement},
+                                    developer_form.device_run_crack_policy(crack_policy, developer)),
         "Domains": {
             "Materials": [
                 {"Attributes": substrates, "Permittivity": SUBSTRATE_PERMITTIVITY},
@@ -287,7 +300,7 @@ def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFA
             "Order": settings["Order"],
             "Electrostatic": {
                 "Save": 0 if path == "preflight" else 1,
-                "ResponseCorrection": {
+                "ResponseCorrection": (developer_form.developer_block if developer else developer_form.v1_block)({
                     "Library": library,
                     "TargetInterfaces": target_interfaces,
                     "UnmatchedPolicy": "Warn",
@@ -297,7 +310,7 @@ def thin_config(polygon_set, manifest, mesh, library, path, postpro, radius=DEFA
                     "MortarOversampling": 2,
                     "SolveTol": 1.0e-6,
                     "PatchConstruction": "Features",
-                },
+                }),
             },
             "Linear": {"Type": "BoomerAMG", "KSPType": "CG", "Tol": 1.0e-10, "MaxIts": 1000, "EstimatorTol": 0.1, "EstimatorMG": True},
         },
@@ -325,6 +338,8 @@ def main(argv=None):
     parser.add_argument("--path", default="T", choices=sorted(THIN_PATHS), help="thin: protocol path T (p5, 12 solves), P4 or preflight")
     parser.add_argument("--radius", type=float, help="thin: EdgeDistances when the library has no MatchingRadius (default 1.9)")
     add_crack_policy_argument(parser)  # thin only: the fabricated reference keeps CrackInternalBoundaryElements false
+    developer_form.add_developer_argument(parser)  # thin only
+    parser.set_defaults(crack_policy=None)  # thin: the form's crack policy
     args = parser.parse_args(argv)
     polygon_set = load_json(args.polygon_set)
     manifest = load_json(args.manifest)
@@ -333,7 +348,12 @@ def main(argv=None):
     else:
         library = args.library or DEFAULT_SEED_LIBRARY
         radius = args.radius if args.radius is not None else library_radius(library)
-        config = thin_config(polygon_set, manifest, args.mesh, library, args.path, args.postpro, radius=radius, crack_policy=args.crack_policy)
+        try:
+            config = thin_config(polygon_set, manifest, args.mesh, library, args.path, args.postpro, radius=radius,
+                                 crack_policy=args.crack_policy, developer=args.developer)
+        except ValueError as error:
+            parser.error(str(error))
+        print(f"write_window_es_configs.py: thin {args.path}, the {developer_form.form_name(args.developer)}", file=sys.stderr)
     output = os.path.abspath(args.output)
     os.makedirs(os.path.dirname(output), exist_ok=True)
     with open(output, "w") as target:

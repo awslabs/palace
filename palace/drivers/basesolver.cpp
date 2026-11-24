@@ -900,6 +900,20 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
       }
       meta["SurfaceResponse"][key] = std::move(value);
     }
+    // The v1 default path (decisions 2377 / 2379): a run with the developer switch records
+    // the parked options it selects (the list of its "DEVELOPER OPTIONS" log line).
+    for (const auto *config : {iodata.solver.electrostatic.response_correction
+                                   ? &*iodata.solver.electrostatic.response_correction
+                                   : nullptr,
+                               iodata.solver.surface_response_correction
+                                   ? &*iodata.solver.surface_response_correction
+                                   : nullptr})
+    {
+      if (config && config->developer)
+      {
+        meta["SurfaceResponse"]["Developer"] = config->developer_options;
+      }
+    }
     // Lane L1 (decision 1634 (4); DESIGN-v2 s4.5): the coverage of the run's cells (the
     // writers' record, root only); an empty record (no cell measured, e.g. a raw
     // fallback) writes its block too, with Cells 0 (review m-6: never silent).
@@ -990,7 +1004,8 @@ void BaseSolver::SaveMetadata(SurfaceResponseOperator &response) const
       WriteMetadata(post_dir, meta);
       WriteConductorConsistencyRecords(
           response.DiagnosticsPath(
-              post_dir, SurfaceResponseOperator::kConductorConsistencyRecordsFile),
+              post_dir, SurfaceResponseOperator::kConductorConsistencyRecordsFile,
+              SurfaceResponseOperator::kConductorConsistencyRecordsDirectory),
           records, spill);
     }
     else
