@@ -23,12 +23,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     wave port with a nonzero `"Offset"`, which lacked the de-embedding factor
     exp(i kₙ d) of the excited wave port: their phase was off by kₙ d, and for a lossy wave
     port their magnitude too.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1289](https://github.com/awslabs/palace/pull/1289).
   - Fixed the abort "Incident Floquet mode is evanescent or not found!" when measuring the
     S-parameters of a Floquet port which is not excited and whose specular (0,0) order is
     below cutoff, for example in total internal reflection. Such a port only terminates the
     model and needs no incident wave: it reports the orders which carry power, if any.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1289](https://github.com/awslabs/palace/pull/1289).
 
 ## [0.20.0] - 2026-11-23
 
