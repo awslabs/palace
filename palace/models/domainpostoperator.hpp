@@ -46,11 +46,17 @@ public:
   }
 
   // Temporary vectors for inner product calculations.
-  mutable Vector D, H;
+  mutable Vector D, H, D_n;
 
   // Bilinear forms for computing field energy integrals over domains.
   std::unique_ptr<Operator> M_elec, M_mag;
   std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_i;
+
+  // Mode analysis: forms of the out-of-plane E (H1) and in-plane B (ND), which complete
+  // those of the in-plane E and out-of-plane B, over the entire domain and each
+  // postprocessing domain.
+  std::unique_ptr<Operator> M_elec_n, M_mag_t;
+  std::map<int, std::pair<std::unique_ptr<Operator>, std::unique_ptr<Operator>>> M_n_i;
 
   // London domain mass ∫ (μλ²)⁻¹ A·v for magnetostatics, with ½AᵀM_london·A the kinetic
   // energy of the supercurrent (null without London domains).
@@ -63,8 +69,8 @@ public:
   // model. A form on every attribute of a material is its unit mass, borrowed when given at
   // construction; the others are owned by M_elec_fd_owned.
   using FrequencyDependentForms = std::vector<std::pair<std::size_t, const Operator *>>;
-  FrequencyDependentForms M_elec_fd;
-  std::map<int, FrequencyDependentForms> M_elec_fd_i;
+  FrequencyDependentForms M_elec_fd, M_elec_n_fd;
+  std::map<int, FrequencyDependentForms> M_elec_fd_i, M_elec_n_fd_i;
   std::vector<std::unique_ptr<Operator>> M_elec_fd_owned;
   const MaterialOperator *mat_op = nullptr;
 
@@ -78,6 +84,12 @@ public:
                      const std::vector<const Operator *> &unit_mass = {});
   DomainPostOperator(const config::DomainPostData &postpro, const MaterialOperator &mat_op,
                      const FiniteElementSpace &fespace);
+  // Mode analysis: in-plane fields on the ND space, and out-of-plane E and B on the H1 and
+  // L2 curl spaces.
+  DomainPostOperator(const config::DomainPostData &postpro, const MaterialOperator &mat_op,
+                     const FiniteElementSpace &nd_fespace,
+                     const FiniteElementSpace &h1_fespace,
+                     const FiniteElementSpace &l2_fespace);
   DomainPostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                      const FiniteElementSpace &nd_fespace,
                      const FiniteElementSpace &rt_fespace);
@@ -105,10 +117,13 @@ public:
   // Get volume integrals computing the electric or magnetic field energy in the entire
   // domain (time-averaged for complex-valued fields). The STORED electric energy requires
   // HasStoredElectricFieldEnergy() (or HasStoredDomainElectricFieldEnergy(idx) for a
-  // portion of the domain).
+  // portion of the domain). For mode analysis, E and B are the in-plane E and out-of-plane
+  // B, completed by the out-of-plane E (En) and in-plane B (Bt).
   double GetElectricFieldEnergy(const GridFunction &E, double omega,
-                                ElectricEnergy type = ElectricEnergy::STORED) const;
-  double GetMagneticFieldEnergy(const GridFunction &B) const;
+                                ElectricEnergy type = ElectricEnergy::STORED,
+                                const GridFunction *En = nullptr) const;
+  double GetMagneticFieldEnergy(const GridFunction &B,
+                                const GridFunction *Bt = nullptr) const;
 
   // The STORED (if HasStoredElectricFieldEnergy()) and MATERIAL electric energies in the
   // entire domain, from one set of field products.
@@ -117,19 +132,23 @@ public:
     std::optional<double> stored;
     double material;
   };
-  ElectricFieldEnergies GetElectricFieldEnergies(const GridFunction &E, double omega) const;
+  ElectricFieldEnergies GetElectricFieldEnergies(const GridFunction &E, double omega,
+                                                 const GridFunction *En = nullptr) const;
 
   // The electric field energy in the entire domain with the high-frequency permittivity ε∞
   // of each frequency-dependent material, and the permittivity of the constant materials,
   // without the energy of the polarization. Available for every material, and positive for
   // a nonzero field also at a zero of a permittivity.
-  double GetHighFrequencyElectricFieldEnergy(const GridFunction &E) const;
+  double GetHighFrequencyElectricFieldEnergy(const GridFunction &E,
+                                             const GridFunction *En = nullptr) const;
 
   // Get volume integrals for the electric or magnetic field energy in a portion of the
   // domain (time-averaged for complex-valued fields).
   double GetDomainElectricFieldEnergy(int idx, const GridFunction &E, double omega,
-                                      ElectricEnergy type = ElectricEnergy::STORED) const;
-  double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B) const;
+                                      ElectricEnergy type = ElectricEnergy::STORED,
+                                      const GridFunction *En = nullptr) const;
+  double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B,
+                                      const GridFunction *Bt = nullptr) const;
 
   // The magnetic field energies from a real L-vector of the space of construction, for
   // spaces without MFEM grid functions (broken spaces). Real-valued fields, so these are
@@ -149,14 +168,21 @@ public:
                                            ElectricEnergy type) const;
 
 private:
+  // The forms of the frequency-dependent materials on the ND or H1 space, over the entire
+  // domain (M_fd) and each postprocessing domain (M_fd_i).
   void SetUpFrequencyDependentForms(const config::DomainPostData &postpro,
                                     const MaterialOperator &mat_op,
-                                    const FiniteElementSpace &nd_fespace,
-                                    const std::vector<const Operator *> &unit_mass = {});
+                                    const FiniteElementSpace &fespace,
+                                    const std::vector<const Operator *> &unit_mass,
+                                    FrequencyDependentForms &M_fd,
+                                    std::map<int, FrequencyDependentForms> &M_fd_i);
   bool HasStoredEnergy(const FrequencyDependentForms &M_fd) const;
+  // The electric energy of E with the forms (M, M_fd) and, for mode analysis, of En with
+  // (M_n, M_n_fd).
   double ElectricFieldEnergy(const Operator &M, const FrequencyDependentForms &M_fd,
-                             const GridFunction &E, double omega,
-                             ElectricEnergy type) const;
+                             const GridFunction &E, const Operator *M_n,
+                             const FrequencyDependentForms *M_n_fd, const GridFunction *En,
+                             double omega, ElectricEnergy type) const;
 
   // Evaluate the energy quadratic form 1/2 uᴴ M u for a real or complex field u, with the
   // time-average weight applied for complex peak phasors.

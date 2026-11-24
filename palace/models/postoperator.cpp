@@ -133,9 +133,11 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
           else if constexpr (solver_t == ProblemType::BOUNDARYMODE)
           {
-            // Mode analysis: E on ND space, B (Hz) on L2 curl space.
+            // Mode analysis: in-plane fields on the ND space, out-of-plane E on the H1
+            // space and B on the L2 curl space.
             return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
-                                      fem_op_.GetNDSpace(), fem_op_.GetCurlSpace());
+                                      fem_op_.GetNDSpace(), fem_op_.GetH1Space(),
+                                      fem_op_.GetCurlSpace());
           }
           else
           {
@@ -1734,7 +1736,9 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // every process), the energies with it, and the participations in the total, are
     // left empty.
     const double omega = measurement_cache.freq.real();
-    const auto [energy, material] = dom_post_op.GetElectricFieldEnergies(field, omega);
+    // Mode analysis adds the out-of-plane E.
+    const auto [energy, material] =
+        dom_post_op.GetElectricFieldEnergies(field, omega, En.get());
     measurement_cache.domain_E_field_energy_all = energy;
     measurement_cache.domain_E_field_energy_material = material;
 
@@ -1744,7 +1748,8 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
           Measurement::DomainData{idx, std::nullopt, std::nullopt});
       if (dom_post_op.HasStoredDomainElectricFieldEnergy(idx))
       {
-        d.energy = dom_post_op.GetDomainElectricFieldEnergy(idx, field, omega);
+        d.energy = dom_post_op.GetDomainElectricFieldEnergy(
+            idx, field, omega, DomainPostOperator::ElectricEnergy::STORED, En.get());
         if (energy)
         {
           d.participation_ratio = ParticipationRatio(*d.energy, *energy);
@@ -1768,15 +1773,16 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // A broken magnetostatic solution has no grid function, but its L-vector.
     auto &field = A ? *A : *B;
     const bool use_l = (a_l.Size() > 0);
+    // Mode analysis adds the in-plane B.
     auto energy = use_l ? dom_post_op.GetMagneticFieldEnergy(a_l, field.GetComm())
-                        : dom_post_op.GetMagneticFieldEnergy(field);
+                        : dom_post_op.GetMagneticFieldEnergy(field, Bt_inplane.get());
     measurement_cache.domain_H_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
       auto energy_i =
           use_l ? dom_post_op.GetDomainMagneticFieldEnergy(idx, a_l, field.GetComm())
-                : dom_post_op.GetDomainMagneticFieldEnergy(idx, field);
+                : dom_post_op.GetDomainMagneticFieldEnergy(idx, field, Bt_inplane.get());
       measurement_cache.domain_H_field_energy_i.emplace_back(
           Measurement::DomainData{idx, energy_i, ParticipationRatio(energy_i, energy)});
     }

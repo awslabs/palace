@@ -15,6 +15,14 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Bug Fixes
+
+  - Fixed the domain energies of boundary mode simulations, which omitted the out-of-plane
+    electric field and the in-plane magnetic flux density, so that the magnetic energy of
+    a quasi-TEM mode was nearly zero.
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features

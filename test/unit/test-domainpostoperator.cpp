@@ -306,4 +306,86 @@ TEST_CASE("DomainPostOperator - 2D Magnetic Energy",
   CHECK_THAT(dom_post_op.GetDomainMagneticFieldEnergy(1, B), WithinRel(region, 1.0e-12));
 }
 
+TEST_CASE("DomainPostOperator - Mode analysis energies",
+          "[domainpostoperator][Serial][Parallel]")
+{
+  // The energies of a boundary mode include the out-of-plane E and the in-plane B. Uniform
+  // fields on the rectangle [0, 1] x [0, 0.5]: attribute 1 (x < 1/2, also the energy
+  // region) is a frequency-dependent material with ε∞ = 2, and attribute 2 a constant one
+  // with ε_r = diag(3, 3, 5) and μ_r = diag(2, 2, 4), whose out-of-plane components weight
+  // En and Bz. E = (1, 2, 3) + i (0.5, 0, -1), |Et|² = 5.25 and |En|² = 10, and B = (0.3,
+  // 0.4, 0.7), |Bt|² = 0.25 and |Bz|² = 0.49; each region has area 1/4.
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto serial = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::QUADRILATERAL, false, 1.0, 0.5));
+  for (int i = 0; i < serial->GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial->GetElementCenter(i, center);
+    serial->SetAttribute(i, (center(0) < 0.5) ? 1 : 2);
+  }
+  serial->SetAttributes();
+  Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial));
+  mfem::ND_FECollection nd_fec(order, 2);
+  mfem::H1_FECollection h1_fec(order, 2);
+  mfem::L2_FECollection l2_fec(order - 1, 2, mfem::BasisType::GaussLegendre,
+                               mfem::FiniteElement::INTEGRAL);
+  FiniteElementSpace nd_fespace(mesh, &nd_fec), h1_fespace(mesh, &h1_fec),
+      l2_fespace(mesh, &l2_fec);
+  std::vector<config::MaterialData> materials(2);
+  materials[0].attributes = {1};
+  materials[0].epsilon_r = config::SymmetricMatrixData<3>(2.0);
+  materials[0].permittivity_terms = {config::DrudeData{3.0, 0.2},
+                                     config::LorentzData{0.8, 2.5, 0.3}};
+  materials[1].attributes = {2};
+  materials[1].epsilon_r.s = {3.0, 3.0, 5.0};
+  materials[1].mu_r.s = {2.0, 2.0, 4.0};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op(materials, periodic, ProblemType::BOUNDARYMODE, mesh);
+  config::DomainPostData postpro;
+  postpro.energy[1].attributes = {1};
+  DomainPostOperator dom_post_op(postpro, mat_op, nd_fespace, h1_fespace, l2_fespace);
+
+  GridFunction Et(nd_fespace, true), En(h1_fespace, true), Bt(nd_fespace, true),
+      Bz(l2_fespace, true);
+  mfem::VectorConstantCoefficient Et_r(mfem::Vector({1.0, 2.0})),
+      Et_i(mfem::Vector({0.5, 0.0})), Bt_r(mfem::Vector({0.3, 0.4})),
+      zero_t(mfem::Vector({0.0, 0.0}));
+  mfem::ConstantCoefficient En_r(3.0), En_i(-1.0), Bz_r(0.7), zero(0.0);
+  Et.Real().ProjectCoefficient(Et_r);
+  Et.Imag().ProjectCoefficient(Et_i);
+  En.Real().ProjectCoefficient(En_r);
+  En.Imag().ProjectCoefficient(En_i);
+  Bt.Real().ProjectCoefficient(Bt_r);
+  Bt.Imag().ProjectCoefficient(zero_t);
+  Bz.Real().ProjectCoefficient(Bz_r);
+  Bz.Imag().ProjectCoefficient(zero);
+
+  const double omega = 1.7;
+  const double w_stored =
+      permittivity::StoredEnergySusceptibility(materials[0].permittivity_terms, omega);
+  const double w_material =
+      permittivity::Susceptibility(materials[0].permittivity_terms, {0.0, omega}).real();
+  const double E2 = 0.25 * 0.25 * 15.25, B2 = 0.25 * 0.25 * 0.74;
+  const double E2_aniso = 0.25 * 0.25 * (5.25 * 3.0 + 10.0 * 5.0),
+               B2_aniso = 0.25 * 0.25 * (0.25 / 2.0 + 0.49 / 4.0);
+  const auto [stored, material] = dom_post_op.GetElectricFieldEnergies(Et, omega, &En);
+  REQUIRE(stored);
+  CHECK_THAT(*stored, WithinRel(E2 * (2.0 + w_stored) + E2_aniso, 1.0e-12));
+  CHECK_THAT(material, WithinRel(E2 * (2.0 + w_material) + E2_aniso, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetHighFrequencyElectricFieldEnergy(Et, &En),
+             WithinRel(E2 * 2.0 + E2_aniso, 1.0e-12));
+  using ElectricEnergy = DomainPostOperator::ElectricEnergy;
+  CHECK_THAT(
+      dom_post_op.GetDomainElectricFieldEnergy(1, Et, omega, ElectricEnergy::STORED, &En),
+      WithinRel(E2 * (2.0 + w_stored), 1.0e-12));
+  CHECK_THAT(
+      dom_post_op.GetDomainElectricFieldEnergy(1, Et, omega, ElectricEnergy::MATERIAL, &En),
+      WithinRel(E2 * (2.0 + w_material), 1.0e-12));
+  CHECK_THAT(dom_post_op.GetMagneticFieldEnergy(Bz, &Bt),
+             WithinRel(B2 + B2_aniso, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetDomainMagneticFieldEnergy(1, Bz, &Bt), WithinRel(B2, 1.0e-12));
+}
+
 }  // namespace palace
