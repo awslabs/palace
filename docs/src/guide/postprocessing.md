@@ -432,9 +432,9 @@ are re-measured on the box's own census before its words lose the suffix. Nothin
 withheld: a value whose verdicts are not met is printed with them listed in `flags`.
 
 Read the rows whose `scope` is `Type` (the corrected participation of a `Type`, summed over
-its interfaces) or `region` (a box value): their verdicts are of that value; an
-`interface` row shows one interface's share and carries its `Type`'s verdicts. The values
-are the fixed-trace corrected participations (`p corrected (fixed-trace)`).
+its interfaces) or `region` (a box value): their verdicts are of that value; an `interface`
+row shows one interface's share and carries its `Type`'s verdicts. The values are the
+fixed-trace corrected participations (`p corrected (fixed-trace)`).
 
 The convergence indicator is the change per doubling of the unknowns, read against the
 latest earlier level with at least 20 % fewer unknowns and only when the mesh at that
@@ -447,10 +447,10 @@ need, not on a small plain change. What the words mean, measured on electrostati
 three designs against thick-metal references: RESOLVED means the value stopped moving inside
 the tested domain, not that it matches thick: the worst value printed RESOLVED was 4.0 % off
 thick and 26 of the 39 RESOLVED values were beyond 2 %, so a 2 % target is not supported.
-SETTLED cannot see a bias of the library or of the reference: one design settled at -2.8 % at
-all three orders. MARGINAL values were within 5 % in 61 % of the cases and outside in 39 %;
-RESOLVED came 1-2 rounds after a value was within 5 %, at 3-13 times its unknowns. The bars
-are the edge of the tested domain, not sizes that give 5 %. No eigenmode value has yet
+SETTLED cannot see a bias of the library or of the reference: one design settled at -2.8 %
+at all three orders. MARGINAL values were within 5 % in 61 % of the cases and outside in 39
+%; RESOLVED came 1-2 rounds after a value was within 5 %, at 3-13 times its unknowns. The
+bars are the edge of the tested domain, not sizes that give 5 %. No eigenmode value has yet
 settled or read RESOLVED in the tests: eigenmode and driven rows read `SETTLED-UNTESTED` /
 `RESOLVED-UNTESTED` until the rule is tested there.
 
@@ -460,15 +460,14 @@ that match is clear: the two are each other's nearest, the frequency moved by le
 the spacing to the next mode, their participations (with the junction ports' energy
 participations, the sharpest mark of a qubit mode) agree, no second mode of the same kind is
 nearly as close, and the modes of that kind keep their order. A mode whose match is not
-unique reads `UNMATCHED` for that level and its indicator `MOVING: UNMATCHED`: the safe side,
-it never borrows a neighbour's history. A mode of the same kind entering or leaving the
-solved window (for example a mode below it moving out of the `Target` range) unmatches its
-neighbours for one level. The log lists every join and every `UNMATCHED` mode with both
-frequencies. Data marked interim make the words read
-`-INTERIM`. The thresholds are data (see
-[the reference](../reference.md#The-per-iteration-table-of-the-response-correction)). The
-log prints the values in short form after each level. `PreflightOnly` does not evaluate the
-resolution census; every corrected run prints it before its first solve and in the first
-rows of this table. A run restarted from a saved adapted mesh starts a new history (its first
-level reads `MOVING: FIRST-ITERATION`) and replaces the table in its output directory: give
-it another `Output` directory to keep the earlier table.
+unique reads `UNMATCHED` for that level and its indicator `MOVING: UNMATCHED`: the safe
+side, it never borrows a neighbour's history. A mode of the same kind entering or leaving
+the solved window (for example a mode below it moving out of the `Target` range) unmatches
+its neighbours for one level. The log lists every join and every `UNMATCHED` mode with both
+frequencies. Data marked interim make the words read `-INTERIM`. The thresholds are data
+(see [the reference](../reference.md#The-per-iteration-table-of-the-response-correction)).
+The log prints the values in short form after each level. `PreflightOnly` does not evaluate
+the resolution census; every corrected run prints it before its first solve and in the first
+rows of this table. A run restarted from a saved adapted mesh starts a new history (its
+first level reads `MOVING: FIRST-ITERATION`) and replaces the table in its output directory:
+give it another `Output` directory to keep the earlier table.

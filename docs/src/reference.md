@@ -3747,38 +3747,38 @@ first mesh, and the census and the corrected values of each level are those of t
 level's mesh. Because a knot on a face shared by several elements takes the LARGEST owner,
 refinement on one side of a face only does not lower that knot's size: the census can read
 coarser than the finer side, never finer (the conservative side). `PreflightOnly` builds no
-response operator, so it evaluates no census: it prints `Resolution census: not evaluated
-in PreflightOnly; every corrected run prints it before its first solve`.
+response operator, so it evaluates no census: it prints
+`Resolution census: not evaluated in PreflightOnly; every corrected run prints it before its first solve`.
 
 ### The per-iteration table of the response correction
 
-Every corrected electrostatic, eigenmode or driven run writes `surface-participation.csv`
-at the top level of its output directory: one row per (adaptive iteration, point,
-excitation, interface), the same 27 columns for the three problem types, appended at the
-end of every converged level (the file of a finished run holds every level; the iteration
-archive leaves it at the top level; a new run in the directory replaces it; a level whose
-solve did not converge adds nothing). It changes no other output. The columns:
-`iteration` (1 = the first mesh), `unknowns` (the level's global unknowns), `problem`,
-`point` (the terminal index; the mode index; the 1-based index of the output frequency in
-its excitation's sweep), `f (GHz)` (the mode's Re{f}, the output frequency; `nan` for
-electrostatics), `exc` (the driven excitation; 0 otherwise), `interface`, `Type`, `scope`,
-`p raw`, `p corrected (fixed-trace)` (the fixed-trace postprocessed participation, the
-`p_surf postprocessed fixed-trace` column of an electrostatic `surface-Q-corrected.csv` and
-the `p_surf corrected` column of a Maxwell one: the same values; never another corrected
-column), `corrected / raw`, `Q raw`, `Q corrected`, `resolution`,
-`h/R m90`, `h/R m50` (the row's census cell), `coverage`, `uncovered+pending share of W`,
-`regime` (the coverage cell), `confidence` (`pass` / `fail`), `change corrected (fraction)`,
-`change raw (fraction)` (``p_k / p_{k-1} - 1`` against the joined row of the previous level,
-a fraction, information only; the log prints it in %), `change per doubling (%; an interface
-row: its Type's)` (the indicator below; an `interface` row prints its `Type`'s, the value its
-words are of, beside its own plain change), `convergence`, `flags` and `reason`. `scope` names THE VALUE a row's verdicts are of: `Type` (interface 0: the sum
-over the `Type`'s whole target interfaces of the point, ``Q = 1 / \sum 1/Q_i``; the value the
-rule was measured on), `region` (an entry with a `Region`: its box value) or `interface`
-(one whole interface: its own p and change, and its `Type`'s indicator and words). A `Type`
-row reads its `Type`'s cells; a `region` row reads cells of its own:
-the census of the patches that add to the box, each patch's fabricated energy counted with
-its region share, and a coverage cell of the box interface alone, so a box on coarse
-elements reads UNDER-RESOLVED where its `Type` does not. No value is withheld:
+Every corrected electrostatic, eigenmode or driven run writes `surface-participation.csv` at
+the top level of its output directory: one row per (adaptive iteration, point, excitation,
+interface), the same 27 columns for the three problem types, appended at the end of every
+converged level (the file of a finished run holds every level; the iteration archive leaves
+it at the top level; a new run in the directory replaces it; a level whose solve did not
+converge adds nothing). It changes no other output. The columns: `iteration` (1 = the first
+mesh), `unknowns` (the level's global unknowns), `problem`, `point` (the terminal index; the
+mode index; the 1-based index of the output frequency in its excitation's sweep), `f (GHz)`
+(the mode's Re{f}, the output frequency; `nan` for electrostatics), `exc` (the driven
+excitation; 0 otherwise), `interface`, `Type`, `scope`, `p raw`, `p corrected (fixed-trace)`
+(the fixed-trace postprocessed participation, the `p_surf postprocessed fixed-trace` column
+of an electrostatic `surface-Q-corrected.csv` and the `p_surf corrected` column of a Maxwell
+one: the same values; never another corrected column), `corrected / raw`, `Q raw`,
+`Q corrected`, `resolution`, `h/R m90`, `h/R m50` (the row's census cell), `coverage`,
+`uncovered+pending share of W`, `regime` (the coverage cell), `confidence` (`pass` /
+`fail`), `change corrected (fraction)`, `change raw (fraction)` (``p_k / p_{k-1} - 1``
+against the joined row of the previous level, a fraction, information only; the log prints
+it in %), `change per doubling (%; an interface row: its Type's)` (the indicator below; an
+`interface` row prints its `Type`'s, the value its words are of, beside its own plain
+change), `convergence`, `flags` and `reason`. `scope` names THE VALUE a row's verdicts are
+of: `Type` (interface 0: the sum over the `Type`'s whole target interfaces of the point,
+``Q = 1 / \sum 1/Q_i``; the value the rule was measured on), `region` (an entry with a
+`Region`: its box value) or `interface` (one whole interface: its own p and change, and its
+`Type`'s indicator and words). A `Type` row reads its `Type`'s cells; a `region` row reads
+cells of its own: the census of the patches that add to the box, each patch's fabricated
+energy counted with its region share, and a coverage cell of the box interface alone, so a
+box on coarse elements reads UNDER-RESOLVED where its `Type` does not. No value is withheld:
 `p corrected` is printed whatever the verdicts (`nan` only for an interface that is not a
 response target, reason `NOT-TARGET: raw only`, and on a raw fallback run, reason
 `RawFallback: <classes>`); `flags` lists the verdicts not met (resolution, coverage,
@@ -3789,16 +3789,16 @@ history of its value through these joins.
 
 An eigenmode's index can change between levels, so its rows join the previous level's mode
 that is the same physical mode, by its fingerprint: the raw participations of its whole
-interfaces with the magnitudes of its lumped ports' energy participations (`port-EPR.csv`;
-a junction mode sits on its own junction, while the surface participations of modes of one
+interfaces with the magnitudes of its lumped ports' energy participations (`port-EPR.csv`; a
+junction mode sits on its own junction, while the surface participations of modes of one
 field are nearly parallel, cosines 0.997-0.9993 on a measured device). Mode ``m`` joins the
 previous mode ``j`` nearest to it in Re{f} when (1) ``|f_m - f_j|`` is below half the
 distance from ``f_j`` to its nearest other previous mode, (2) ``m`` is the current mode
 nearest to ``f_j``, (3) their fingerprints overlap by at least 0.9 (cosine), (4) the join is
 unique: no other previous mode whose fingerprint overlaps ``m``'s by 0.9 lies within
 ``2 |f_m - f_j|`` of ``f_m``, and (5) ``j``'s rank in frequency among the previous modes of
-``m``'s field (overlap at least 0.9) equals ``m``'s among the current modes of ``j``'s field.
-A mode whose match is not unique is UNMATCHED for that level and its indicator reads
+``m``'s field (overlap at least 0.9) equals ``m``'s among the current modes of ``j``'s
+field. A mode whose match is not unique is UNMATCHED for that level and its indicator reads
 `MOVING: UNMATCHED`: the safe side, never the neighbour's history. A mode of the same field
 entering or leaving the solved window below a mode changes its rank, so it is UNMATCHED for
 one level. The log prints every join and every UNMATCHED mode with the two frequencies and
@@ -3810,58 +3810,60 @@ The verdicts. The indicator of a value ``p_k`` at a level of ``N_k`` unknowns is
 per doubling of the unknowns against the LATEST earlier level ``j`` of its history with
 ``N_k \ge G N_j``, read only when the value's own cell census fell since then,
 ``m_{90,k} \le F\, m_{90,j}``: ``g_k = 100\, |p_k / p_j - 1| / \log_2(N_k / N_j)`` (% per
-doubling).
-`convergence` reads `SETTLED` when ``g_k < T`` and `MOVING` otherwise; ``g_k`` is not
-evaluated, and the word reads `MOVING: FIRST-ITERATION` (the first level, every fixed mesh),
-`MOVING: UNKNOWNS-GREW-<20%` (no earlier level that much smaller: rounds that refine a few
-elements say nothing about the error), `MOVING: UNMATCHED` (no row of the previous level
-joined: an eigenmode with no match, a new driven frequency or interface),
+doubling). `convergence` reads `SETTLED` when ``g_k < T`` and `MOVING` otherwise; ``g_k`` is
+not evaluated, and the word reads `MOVING: FIRST-ITERATION` (the first level, every fixed
+mesh), `MOVING: UNKNOWNS-GREW-<20%` (no earlier level that much smaller: rounds that refine
+a few elements say nothing about the error), `MOVING: UNMATCHED` (no row of the previous
+level joined: an eigenmode with no match, a new driven frequency or interface),
 `MOVING: ZERO-ANCHOR-VALUE` (``p_j = 0``), `MOVING: NO-VALUE` (``p_k`` or ``p_j`` not
-finite) or `MOVING: CELL-NOT-REFINED` (the
-value's own census did not fall: on a large device the unknowns can grow elsewhere while
-this value's edges stay as they were, and no change then means nothing); ``g_k = T`` reads
-MOVING (strict). The plain change is not a stopping rule. `resolution` reads RESOLVED
-when the cell census ``m_{90} \le B(p)`` AND the value is SETTLED, UNDER-RESOLVED when
-``m_{90} > 2 B(p)``, MARGINAL otherwise (``m_{90} = B`` with ``g < T`` is RESOLVED; NO-BARS at
-orders 1 and 5 and above, which have no bar, the indicator still printed; NOT-EVALUATED
-without a census reading); the census alone does not resolve a value, so A SINGLE SOLVE
-NEVER READS RESOLVED. The interim share rule of `surface-response-resolution.csv` is
-unchanged there and is not the table's word. The numbers are data: the built-in values are
-the file `palace/models/surfaceparticipationverdict.json` of the source tree (embedded at
-build time), ``G = 1.2``, ``F = 0.95``, ``T = 1.0`` % per doubling, ``B = 1.7 / 2.0 / 4.0``
-(``h/R``) at orders 2 / 3 / 4, and the problem types the rule was tested on
-(electrostatic); the optional `"Verdict"` member of the `Resolution.BarsFile` file replaces
-them (`{"MinUnknownsRatio": G, "MaxCensusRatio": F, "MaxChangePerDoublingPercent": T,
-"CensusBarOverR": {"1": null | B, ..., "4": ...}, "UnderResolvedFactor": 2,
-"TestedProblems": ["Electrostatic"], "TestedScopes": ["Type"], "Interim": false,
-"Provenance": "..."}`). While data
-are interim the words read `SETTLED-INTERIM` and `RESOLVED-INTERIM` and the headers say
-INTERIM; on a problem type the rule was not tested on (eigenmode, driven) they read
-`SETTLED-UNTESTED` and `RESOLVED-UNTESTED` and the headers say NOT YET TESTED; such rows stay
-flagged. `TestedScopes` names the census the bars were graded with: the box values of the
-data were graded with their cell's census, while a `region` row reads the census of its own
-patches, which reads finer for junction boxes (2.85 against 3.27 ``R`` on one measured
-level), so with `["Type"]` the resolution words of `region` rows read `RESOLVED-UNTESTED`,
-`MARGINAL-UNTESTED` and `UNDER-RESOLVED-UNTESTED` (their convergence word and its guard on
-the box's own census are unchanged) until the box values are graded with their own census.
-They were
-measured on 634 values of three designs (two electrostatic windows and the junction boxes of
-a third; one eigenmode design; perfect conductors; ``R = 1.9`` µm): SETTLED values
-within the bar were within 5 % of a thick-metal reference in every case (39 values), the
-safe ``T`` per design was 1.26 / 1.28 / 2.97 % per doubling, a value printed RESOLVED was
-up to 4.0 % off (26 of 39 beyond 2 %), and ``B`` is the edge of the tested domain, not a size
-that gives 5 %. SETTLED cannot see a bias of the library or of the reference. NOT SUPPORTED by these data (the words are printed but
-not validated): a 2 % target; eigenmode values (no eigenmode value settled within the
-ladders' size bound, so none read RESOLVED there); driven problems; Ls sheets; the etched
-pocket; whole chips; stretched elements (the census reads the longest edge); orders 1 and 5
-and above; box values other than junction boxes; per-interface values (the rule was
-measured on `Type` totals and box values); designs beyond those three. For an eigenmode the
-history must follow the same physical mode across the rounds (the match above). The log
-prints the eigenmode joins and the values (the `Type` rows and the targeted `region` rows) in
-short form at the end of each level (above 40 values, one line per `Type` and scope with the
-ranges of the raw and the corrected values), and `palace.json` records
-`SurfaceResponse.ParticipationTable` (the file, the levels, the rows and the verdict data
-with their source).
+finite) or `MOVING: CELL-NOT-REFINED` (the value's own census did not fall: on a large
+device the unknowns can grow elsewhere while this value's edges stay as they were, and no
+change then means nothing); ``g_k = T`` reads MOVING (strict). The plain change is not a
+stopping rule. `resolution` reads RESOLVED when the cell census ``m_{90} \le B(p)`` AND the
+value is SETTLED, UNDER-RESOLVED when ``m_{90} > 2 B(p)``, MARGINAL otherwise
+(``m_{90} = B`` with ``g < T`` is RESOLVED; NO-BARS at orders 1 and 5 and above, which have
+no bar, the indicator still printed; NOT-EVALUATED without a census reading); the census
+alone does not resolve a value, so A SINGLE SOLVE NEVER READS RESOLVED. The interim share
+rule of `surface-response-resolution.csv` is unchanged there and is not the table's word.
+The numbers are data: the built-in values are the file
+`palace/models/surfaceparticipationverdict.json` of the source tree (embedded at build
+time), ``G = 1.2``, ``F = 0.95``, ``T = 1.0`` % per doubling, ``B = 1.7 / 2.0 / 4.0``
+(``h/R``) at orders 2 / 3 / 4, and the problem types the rule was tested on (electrostatic);
+the optional `"Verdict"` member of the `Resolution.BarsFile` file replaces them:
+
+```
+"Verdict": {"MinUnknownsRatio": G, "MaxCensusRatio": F, "MaxChangePerDoublingPercent": T,
+            "CensusBarOverR": {"1": null | B, ..., "4": ...}, "UnderResolvedFactor": 2,
+            "TestedProblems": ["Electrostatic"], "TestedScopes": ["Type"],
+            "Interim": false, "Provenance": "..."}
+```
+
+While data are interim the words read `SETTLED-INTERIM` and `RESOLVED-INTERIM` and the
+headers say INTERIM; on a problem type the rule was not tested on (eigenmode, driven) they
+read `SETTLED-UNTESTED` and `RESOLVED-UNTESTED` and the headers say NOT YET TESTED; such
+rows stay flagged. `TestedScopes` names the census the bars were graded with: the box values
+of the data were graded with their cell's census, while a `region` row reads the census of
+its own patches, which reads finer for junction boxes (2.85 against 3.27 ``R`` on one
+measured level), so with `["Type"]` the resolution words of `region` rows read
+`RESOLVED-UNTESTED`, `MARGINAL-UNTESTED` and `UNDER-RESOLVED-UNTESTED` (their convergence
+word and its guard on the box's own census are unchanged) until the box values are graded
+with their own census. They were measured on 634 values of three designs (two electrostatic
+windows and the junction boxes of a third; one eigenmode design; perfect conductors;
+``R = 1.9`` µm): SETTLED values within the bar were within 5 % of a thick-metal reference in
+every case (39 values), the safe ``T`` per design was 1.26 / 1.28 / 2.97 % per doubling, a
+value printed RESOLVED was up to 4.0 % off (26 of 39 beyond 2 %), and ``B`` is the edge of
+the tested domain, not a size that gives 5 %. SETTLED cannot see a bias of the library or of
+the reference. NOT SUPPORTED by these data (the words are printed but not validated): a 2 %
+target; eigenmode values (no eigenmode value settled within the ladders' size bound, so none
+read RESOLVED there); driven problems; Ls sheets; the etched pocket; whole chips; stretched
+elements (the census reads the longest edge); orders 1 and 5 and above; box values other
+than junction boxes; per-interface values (the rule was measured on `Type` totals and box
+values); designs beyond those three. For an eigenmode the history must follow the same
+physical mode across the rounds (the match above). The log prints the eigenmode joins and
+the values (the `Type` rows and the targeted `region` rows) in short form at the end of each
+level (above 40 values, one line per `Type` and scope with the ranges of the raw and the
+corrected values), and `palace.json` records `SurfaceResponse.ParticipationTable` (the file,
+the levels, the rows and the verdict data with their source).
 
 ## Electrostatic Simulations
 

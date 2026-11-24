@@ -59,8 +59,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
-  - Surface-response-corrected runs write `surface-participation.csv`: per adaptive level the
-    raw and corrected participations with their verdicts and a convergence indicator.
+  - Surface-response-corrected runs write `surface-participation.csv`: per adaptive level
+    the raw and corrected participations with their verdicts and a convergence indicator.
   - Added the configuration keys of the surface-response correction and of the features
     below to the schema, all optional (a configuration accepted before is accepted with the
     same meaning): `Solver.SurfaceResponseCorrection`; `Solver.Electrostatic`
