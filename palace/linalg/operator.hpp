@@ -532,6 +532,14 @@ double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym = false,
 double SpectralNorm(MPI_Comm comm, const ComplexOperator &A, bool herm = false,
                     ComplexVector *x0 = nullptr, double tol = 1.0e-4, int max_it = 1000);
 
+// The normalized starting vector v of an iteration for the dominant eigenvalue of an
+// operator: a random vector, or if x0 is given, has the size of v on all processes and a
+// finite nonzero norm, x0 with a small random component, so that an eigenvector which has
+// become dominant while orthogonal to x0 (the dominant one of a previous operator) is
+// still found. Returns whether the start is from x0. Collective.
+bool SetSpectralStartVector(MPI_Comm comm, const Vector *x0, Vector &v);
+bool SetSpectralStartVector(MPI_Comm comm, const ComplexVector *x0, ComplexVector &v);
+
 }  // namespace linalg
 
 }  // namespace palace

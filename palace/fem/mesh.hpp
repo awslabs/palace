@@ -65,6 +65,8 @@ struct CeedGeomFactorData
 
 }  // namespace ceed
 
+struct VertexAggregates;
+
 //
 // Wrapper for MFEM's ParMesh class, with extensions for Palace.
 //
@@ -113,6 +115,11 @@ private:
     bool root_valid = false;
   };
   mutable std::map<std::vector<int>, CrackSidesEntry> crack_sides;
+
+  // Aggregates of the mesh vertices for block smoothing (see linalg/vertexaggregates.hpp),
+  // cached for the mesh sequence they were computed for.
+  mutable std::shared_ptr<const VertexAggregates> vertex_aggregates;
+  mutable long vertex_aggregates_sequence = -1;
 
 public:
   template <typename... T>
@@ -203,6 +210,19 @@ public:
   // from (its last operation), so the side labels of the two meshes agree, as the
   // h-prolongation between broken spaces requires. Collective.
   void InheritCrackSides(const std::vector<int> &attr_list, const Mesh &coarse_mesh) const;
+
+  // Access the cached vertex aggregates of the mesh (nullptr if there are none for the
+  // mesh as it is now), and cache them.
+  const VertexAggregates *GetVertexAggregates() const
+  {
+    return (vertex_aggregates_sequence == mesh->GetSequence()) ? vertex_aggregates.get()
+                                                               : nullptr;
+  }
+  void SetVertexAggregates(std::shared_ptr<const VertexAggregates> aggregates) const
+  {
+    vertex_aggregates = std::move(aggregates);
+    vertex_aggregates_sequence = mesh->GetSequence();
+  }
 
   auto MaxCeedAttribute() const { return GetCeedAttributes().size(); }
   auto MaxCeedBdrAttribute() const

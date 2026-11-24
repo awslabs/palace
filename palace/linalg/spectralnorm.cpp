@@ -30,6 +30,36 @@ void MultAdjoint(const OperType &A, const VecType &x, VecType &y)
   }
 }
 
+template <typename VecType>
+bool SetStartVector(MPI_Comm comm, const VecType *x0, VecType &v)
+{
+  // The component of the random vector along an eigenvector is about start_random / √n, so
+  // the number of estimates needed to find one which has become dominant grows slowly with
+  // n (by about one per decade with this value).
+  constexpr double start_random = 1.0e-2;
+
+  // The choice is collective, since a process with no rows trivially matches any size. A
+  // zero (or non-finite) starting vector gives a cold start.
+  int warm = (x0 && x0->Size() == v.Size());
+  Mpi::GlobalMin(1, &warm, comm);
+  SetRandom(comm, v);
+  if (warm)
+  {
+    const double norm_x0 = Norml2(comm, *x0);
+    if (norm_x0 > 0.0 && std::isfinite(norm_x0))
+    {
+      v *= start_random / Norml2(comm, v);
+      AXPY(1.0 / norm_x0, *x0, v);
+    }
+    else
+    {
+      warm = 0;
+    }
+  }
+  Normalize(comm, v);
+  return warm;
+}
+
 template <typename VecType, typename OperType>
 double LanczosSpectralNorm(MPI_Comm comm, const OperType &A, bool herm, VecType *x0,
                            double tol, int max_it)
@@ -42,11 +72,9 @@ double LanczosSpectralNorm(MPI_Comm comm, const OperType &A, bool herm, VecType 
   MFEM_VERIFY(A.Height() == A.Width(), "Spectral norm requires a square matrix!");
   constexpr int max_basis = 8;
 
-  // A starting vector gets a small random component, and is iterated at least a few times,
-  // so that an eigenvector which becomes dominant while orthogonal to it is still found.
-  // The component of the random vector along it is about start_random / √n, so the number
-  // of estimates needed grows slowly with n (by about one per decade with these values).
-  constexpr double start_random = 1.0e-2;
+  // A starting vector gets a small random component (see SetSpectralStartVector), and is
+  // iterated at least a few times, so that an eigenvector which becomes dominant while
+  // orthogonal to it is still found.
   constexpr int min_warm_it = 4;
 
   const int n = A.Height();
@@ -65,28 +93,7 @@ double LanczosSpectralNorm(MPI_Comm comm, const OperType &A, bool herm, VecType 
     t.SetSize(n);
     t.UseDevice(true);
   }
-  // The choice is collective, since a process with no rows trivially matches any size. A
-  // zero (or non-finite) starting vector gives a cold start.
-  int warm = (x0 && x0->Size() == n);
-  Mpi::GlobalMin(1, &warm, comm);
-  {
-    VecType &v = AddVector();
-    SetRandom(comm, v);
-    if (warm)
-    {
-      const double norm_x0 = Norml2(comm, *x0);
-      if (norm_x0 > 0.0 && std::isfinite(norm_x0))
-      {
-        v *= start_random / Norml2(comm, v);
-        AXPY(1.0 / norm_x0, *x0, v);
-      }
-      else
-      {
-        warm = 0;
-      }
-    }
-    Normalize(comm, v);
-  }
+  const bool warm = SetStartVector(comm, x0, AddVector());
 
   // Iterate until the Ritz value of largest magnitude has converged. Both ends of the Ritz
   // spectrum move outward, so for an indefinite operator the other end also has to converge
@@ -204,6 +211,16 @@ double LanczosSpectralNorm(MPI_Comm comm, const OperType &A, bool herm, VecType 
 }
 
 }  // namespace
+
+bool SetSpectralStartVector(MPI_Comm comm, const Vector *x0, Vector &v)
+{
+  return SetStartVector(comm, x0, v);
+}
+
+bool SetSpectralStartVector(MPI_Comm comm, const ComplexVector *x0, ComplexVector &v)
+{
+  return SetStartVector(comm, x0, v);
+}
 
 double SpectralNorm(MPI_Comm comm, const Operator &A, bool sym, Vector *x0, double tol,
                     int max_it)
