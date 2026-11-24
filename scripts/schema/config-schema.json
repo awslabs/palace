@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-0-0",
+  "$id": "urn:palace:schema:6-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3248,6 +3248,12 @@
           "description": "Use 4th-kind Chebyshev polynomial smoother.",
           "default": true,
           "x-palace-advanced": true
+        },
+        "MGSmoothBlockSize": {
+          "type": "integer",
+          "enum": [1, 2, 4, 8, 16, 32, 64],
+          "description": "Largest number of degrees of freedom of a block of the block Jacobi relaxation in the Chebyshev smoothers of the geometric multigrid levels, including the levels of the auxiliary space smoothers. With `1`, the default, the relaxation is point Jacobi. Larger blocks group the degrees of freedom along the directions in which the mesh elements are thin, such as the lines of degrees of freedom through a stack of layers, which makes the smoother robust in the aspect ratio of the elements; `64` is recommended for meshes with thin layers. A group with more degrees of freedom is split, and a large group of a nodal space is solved approximately as a whole. On a mesh without thin elements there are no blocks and the smoothers are those of point Jacobi. With blocks, a smoother is also applied before and after the coarse solve when `\"Type\"` is `\"AMS\"` or `\"BoomerAMG\"`. With `\"Verbose\"` above 0, the blocks of each level are reported. Blocks are constructed and applied on the host and are not available with `\"Device\": \"GPU\"`. The option does not apply to the multigrid preconditioners of the divergence-free projection and of the error estimator.",
+          "default": 1
         },
         "PCMatReal": {
           "type": "boolean",

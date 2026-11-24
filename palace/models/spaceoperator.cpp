@@ -13,6 +13,7 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "linalg/gmg.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/iterative.hpp"
 #include "linalg/jacobi.hpp"
@@ -35,8 +36,9 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
                              ProblemType problem_type, const Units &units,
                              const std::vector<std::unique_ptr<Mesh>> &mesh)
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
-    pc_coarse_real(UseRealCoarseApproximation(solver.linear)), print_hdr(true),
-    print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
+    pc_coarse_real(UseRealCoarseApproximation(solver.linear)), pc_mat_blocks(false),
+    pc_mat_coarse(false), print_hdr(true), print_prec_hdr(true),
+    dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
         solver.order, mesh.back()->Dimension(), solver.linear.mg_max_levels,
         solver.linear.mg_coarsening, false)),
@@ -67,6 +69,14 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
 {
   // Configure the two shared libCEED element sets before any geometry data is built.
   SetUpCeedElementSets(mesh);
+
+  // The smoothers of the multigrid preconditioner, as its solver resolves them: nothing is
+  // assembled for blocks which the smoothers do not have.
+  {
+    const auto smoother = ResolveSmoother(solver.linear.mg_smoother, GetNDSpaces());
+    pc_mat_blocks = (smoother.block_size > 1);
+    pc_mat_coarse = smoother.coarse;
+  }
   SetUpFrequencyDependentPermittivityMassOperators();
 
   // The second-order absorbing boundary condition is not passive for large tangential
@@ -300,20 +310,21 @@ void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficients(
 }
 
 void SpaceOperator::AddFrequencyDependentPermittivityA2Coefficients(
-    std::complex<double> omega, MaterialPropertyCoefficient &f) const
+    std::complex<double> omega, MaterialPropertyCoefficient &f, bool shifted) const
 {
   const std::complex<double> s = 1i * omega;
   for (std::size_t i = 0; i < mat_op.NumFrequencyDependentPermittivityMaterials(); i++)
   {
     // Real preconditioners accumulate the real and imaginary slots into the same form, as
-    // for other A2 terms, with the mass-like real part shifted like the ε∞ mass.
+    // for other A2 terms, with the mass-like real part shifted like the ε∞ mass: the caller
+    // passes the shift it uses for that mass.
     if (!mat_op.HasFrequencyDependentPermittivitySupport(i))
     {
       continue;
     }
     const std::complex<double> g = mat_op.EvaluateFrequencyDependentPermittivityA2(i, s);
     AddFrequencyDependentPermittivityA2Coefficient(
-        i, (pc_mat_shifted ? std::abs(g.real()) : g.real()) + g.imag(), f);
+        i, (shifted ? std::abs(g.real()) : g.real()) + g.imag(), f);
   }
 }
 
@@ -638,7 +649,7 @@ auto AssembleOperators(
     const MaterialPropertyCoefficient *fb, const MaterialPropertyCoefficient *fp,
     const MaterialPropertyCoefficient *frb, const MaterialPropertyCoefficient *fpb,
     bool skip_zeros = false, bool assemble_q_data = false, bool flip_coarse_dfb = false,
-    const MaterialPropertyCoefficient *dfb_flip_add = nullptr)
+    const MaterialPropertyCoefficient *dfb_flip_add = nullptr, bool coarse_sparse = false)
 {
   // Optionally flip the sign of dfb on the coarse level only (see AssemblePreconditioner),
   // and add dfb_flip_add to the flipped copy.
@@ -668,7 +679,17 @@ auto AssembleOperators(
   AddConfiguredIntegrators(coarse, df, f, dfb_coarse, fb, fp, frb, fpb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
-  ops.push_back(coarse.Assemble(skip_zeros));
+  // This form is set up to be assembled once for the coarse solver, not to be applied. If
+  // a smoother around the coarse solve applies it in every cycle, keep the sparse matrix,
+  // which is also what the coarse solver's matrix is then assembled from.
+  if (coarse_sparse)
+  {
+    ops.push_back(coarse.FullAssemble(skip_zeros));
+  }
+  else
+  {
+    ops.push_back(coarse.Assemble(skip_zeros));
+  }
   if (fespaces.GetNumLevels() > 1)
   {
     BilinearForm fine(fespaces.GetFinestFESpace());
@@ -690,14 +711,21 @@ auto AssembleAuxOperators(const FiniteElementSpaceHierarchy &fespaces,
                           const MaterialPropertyCoefficient *f,
                           const MaterialPropertyCoefficient *fb,
                           const MaterialPropertyCoefficient *frb, bool skip_zeros = false,
-                          bool assemble_q_data = false)
+                          bool assemble_q_data = false, bool coarse_sparse = false)
 {
   // Match the configured coarse-support policy of the primary hierarchy above.
   BilinearForm coarse(fespaces.GetFESpaceAtLevel(0));
   AddConfiguredAuxIntegrators(coarse, f, fb, frb);
   std::vector<std::unique_ptr<Operator>> ops;
   ops.reserve(fespaces.GetNumLevels());
-  ops.push_back(coarse.Assemble(skip_zeros));
+  if (coarse_sparse)
+  {
+    ops.push_back(coarse.FullAssemble(skip_zeros));
+  }
+  else
+  {
+    ops.push_back(coarse.Assemble(skip_zeros));
+  }
   if (fespaces.GetNumLevels() > 1)
   {
     BilinearForm fine(fespaces.GetFinestFESpace());
@@ -1642,16 +1670,18 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty[0])
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
-                               skip_zeros, assemble_q_data, pc_coarse_real, &dfbr_flip_add);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+                               skip_zeros, assemble_q_data, pc_coarse_real, &dfbr_flip_add,
+                               pc_mat_coarse);
+    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
+                                      assemble_q_data, pc_mat_coarse);
   }
   if (!empty[1])
   {
     bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
-                               skip_zeros, assemble_q_data, pc_coarse_real, &dfbi_flip_add);
-    bi_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros, assemble_q_data);
+                               skip_zeros, assemble_q_data, pc_coarse_real, &dfbi_flip_add,
+                               pc_mat_coarse);
+    bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros,
+                                      assemble_q_data, pc_mat_coarse);
   }
 }
 
@@ -1659,10 +1689,20 @@ template <typename A3Type>
 void SpaceOperator::AssemblePreconditioner(
     std::complex<double> a0, std::complex<double> a1, std::complex<double> a2, A3Type a3,
     std::vector<std::unique_ptr<Operator>> &br_vec,
-    std::vector<std::unique_ptr<Operator>> &br_aux_vec)
+    std::vector<std::unique_ptr<Operator>> &br_aux_vec, bool definite)
 {
+  // With definite, the mass terms are taken with a positive sign whatever the options (the
+  // definite counterpart of the preconditioner matrix, see GetPreconditionerMatrix): the
+  // ε∞ mass, the real part of the terms of a frequency-dependent permittivity, and the
+  // Floquet term of a frequency-dependent wave vector, which is part of the mass. The
+  // other terms are those of the real preconditioner. They are positive for passive
+  // materials and ports, with two exceptions which keep their sign there and are not
+  // changed here: the real part of a rational surface impedance, and the rotated trace of
+  // a second-order absorbing boundary with a Floquet wave vector. The block Jacobi
+  // smoother verifies that the blocks it takes from the counterpart are definite.
   constexpr bool skip_zeros = false;
   const bool assemble_q_data = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+  const bool shifted = pc_mat_shifted || definite;
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
       dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       frbr(mat_op.MaxCeedBdrAttribute());
@@ -1670,14 +1710,14 @@ void SpaceOperator::AssemblePreconditioner(
   AddStiffnessBdrCoefficients(a0.real(), fbr);
   AddDampingCoefficients(a1.imag(), fr);
   AddDampingBdrCoefficients(a1.imag(), fbr);
-  const double a2_pc = pc_mat_shifted ? std::abs(a2.real()) : a2.real();
+  const double a2_pc = shifted ? std::abs(a2.real()) : a2.real();
   AddAbsMassCoefficients(a2_pc, fr);
   AddRealMassBdrCoefficients(a2_pc, fbr);
-  AddFrequencyDependentPermittivityA2Coefficients(a3, fr);
+  AddFrequencyDependentPermittivityA2Coefficients(a3, fr, shifted);
   AddRealPreconditionerExtraSystemBdrCoefficients(a3, dfbr, fbr, frbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
-    AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2.real()) : a2.real()), fr);
+    AddRealPeriodicCoefficients(-(shifted ? std::abs(a2.real()) : a2.real()), fr);
     AddDampingPeriodicBdrCoefficients(a1.imag(), frbr);
   }
   else
@@ -1688,20 +1728,22 @@ void SpaceOperator::AssemblePreconditioner(
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+    br_vec =
+        AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr, nullptr,
+                          skip_zeros, assemble_q_data, false, nullptr, pc_mat_coarse);
+    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
+                                      assemble_q_data, pc_mat_coarse);
   }
 }
 
 void SpaceOperator::AssemblePreconditioner(
     double a0, double a1, double a2, double a3,
     std::vector<std::unique_ptr<Operator>> &br_vec,
-    std::vector<std::unique_ptr<Operator>> &br_aux_vec)
+    std::vector<std::unique_ptr<Operator>> &br_aux_vec, bool definite)
 {
   constexpr bool skip_zeros = false;
   const bool assemble_q_data = !mfem::Device::Allows(mfem::Backend::DEVICE_MASK);
+  const bool shifted = pc_mat_shifted || definite;
   MaterialPropertyCoefficient dfr(mat_op.MaxCeedAttribute()), fr(mat_op.MaxCeedAttribute()),
       dfbr(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
       frbr(mat_op.MaxCeedBdrAttribute());
@@ -1709,14 +1751,14 @@ void SpaceOperator::AssemblePreconditioner(
   AddStiffnessBdrCoefficients(a0, fbr);
   AddDampingCoefficients(a1, fr);
   AddDampingBdrCoefficients(a1, fbr);
-  const double a2_pc = pc_mat_shifted ? std::abs(a2) : a2;
+  const double a2_pc = shifted ? std::abs(a2) : a2;
   AddAbsMassCoefficients(a2_pc, fr);
   AddRealMassBdrCoefficients(a2_pc, fbr);
-  AddFrequencyDependentPermittivityA2Coefficients(a3, fr);
+  AddFrequencyDependentPermittivityA2Coefficients(a3, fr, shifted);
   AddRealPreconditionerExtraSystemBdrCoefficients(a3, dfbr, fbr, frbr);
   if (mat_op.HasFloquetFrequencyScaling())
   {
-    AddRealPeriodicCoefficients(-(pc_mat_shifted ? std::abs(a2) : a2), fr);
+    AddRealPeriodicCoefficients(-(shifted ? std::abs(a2) : a2), fr);
     AddDampingPeriodicBdrCoefficients(a1, frbr);
   }
   else
@@ -1727,10 +1769,11 @@ void SpaceOperator::AssemblePreconditioner(
   Mpi::GlobalMin(1, &empty, GetComm());
   if (!empty)
   {
-    br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr,
-                               nullptr, skip_zeros, assemble_q_data);
-    br_aux_vec =
-        AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros, assemble_q_data);
+    br_vec =
+        AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, nullptr, &frbr, nullptr,
+                          skip_zeros, assemble_q_data, false, nullptr, pc_mat_coarse);
+    br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
+                                      assemble_q_data, pc_mat_coarse);
   }
 }
 
@@ -1760,6 +1803,26 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   else
   {
     AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec);
+  }
+
+  // The block relaxation of the smoothers needs definite blocks. Where the preconditioner
+  // matrix is complex or its mass term is negative, its levels also get their definite
+  // counterpart: the real preconditioner matrix, which takes the damping terms with their
+  // magnitude, with the mass term taken positive. A real preconditioner matrix with a
+  // positive mass term (a transient problem, or "PCMatReal" with "PCMatShifted") is its
+  // own. Nothing is assembled without blocks (a mesh without flat elements), or kept for
+  // a coarsest level without a smoother.
+  std::vector<std::unique_ptr<Operator>> dr_vec(n_levels), dr_aux_vec(n_levels);
+  if (pc_mat_blocks && (n_levels > 1 || pc_mat_coarse) &&
+      ((std::is_same_v<OperType, ComplexOperator> && !pc_mat_real) ||
+       (!pc_mat_shifted && std::real(a2) < 0.0)))
+  {
+    AssemblePreconditioner(a0, a1, a2, a3, dr_vec, dr_aux_vec, true);
+    if (!pc_mat_coarse)
+    {
+      dr_vec[0].reset();
+      dr_aux_vec[0].reset();
+    }
   }
 
   // Print after the assembly, which may first solve and print the wave port modes at a new
@@ -1801,6 +1864,12 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
       auto B_l =
           BuildLevelParOperator<OperType>(std::move(br_l), std::move(bi_l), fespace_l);
       B_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+      if (auto &dr_l = aux ? dr_aux_vec[l] : dr_vec[l])
+      {
+        auto D_l = std::make_unique<ParOperator>(std::move(dr_l), fespace_l);
+        D_l->SetEssentialTrueDofs(dbc_tdof_lists_l, Operator::DiagonalPolicy::DIAG_ONE);
+        B_l->SetDefiniteCounterpart(std::move(D_l));
+      }
       if (aux)
       {
         B->AddAuxiliaryOperator(std::move(B_l));

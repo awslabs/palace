@@ -51,6 +51,10 @@ private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
   const bool pc_coarse_real;  // Coarse-level solver is applied to the real-valued Br + Bi
+  bool pc_mat_blocks;         // The smoothers relax blocks, which need the definite
+                              // counterpart of an indefinite preconditioner matrix
+  bool pc_mat_coarse;         // Coarsest level of the preconditioner is a sparse matrix,
+                              // which the smoother around the coarse solve applies
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
@@ -178,15 +182,17 @@ private:
       const MaterialPropertyCoefficient &frbi, const MaterialPropertyCoefficient &fpbr,
       const MaterialPropertyCoefficient &fpbi, std::unique_ptr<Operator> &ar,
       std::unique_ptr<Operator> &ai, bool include_poles = true);
-  // Preconditioner coefficients for the volume A2 terms. With pc_mat_shifted, the
-  // mass-like real part is shifted like the ε∞ mass.
+  // Preconditioner coefficients for the volume A2 terms. With a shifted preconditioner,
+  // the mass-like real part is shifted like the ε∞ mass: pc_mat_shifted for the complex
+  // preconditioner, and for the real one the shift which its caller uses for that mass
+  // (also set for the definite counterpart of a preconditioner without a shift).
   void
   AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
                                                   MaterialPropertyCoefficient &fr,
                                                   MaterialPropertyCoefficient &fi) const;
-  void
-  AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
-                                                  MaterialPropertyCoefficient &f) const;
+  void AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
+                                                       MaterialPropertyCoefficient &f,
+                                                       bool shifted) const;
 
   // Helper functions for excitation vector assembly. The first adds the real part of the
   // frequency independent excitation to RHS1r, and its imaginary part (nonzero for a
@@ -215,10 +221,12 @@ private:
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
-                              std::vector<std::unique_ptr<Operator>> &br_aux_vec);
+                              std::vector<std::unique_ptr<Operator>> &br_aux_vec,
+                              bool definite = false);
   void AssemblePreconditioner(double a0, double a1, double a2, double a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
-                              std::vector<std::unique_ptr<Operator>> &br_aux_vec);
+                              std::vector<std::unique_ptr<Operator>> &br_aux_vec,
+                              bool definite = false);
 
 public:
   SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,

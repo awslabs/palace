@@ -1179,6 +1179,31 @@ public:
   BoundaryModeSolverData(const json &bm);
 };
 
+// Smoother of the levels of a geometric multigrid preconditioner: the Chebyshev polynomial
+// of a relaxation method. Resolved from the configuration (see LinearSolverData and
+// IoData::CheckConfiguration), and passed as it is to the multigrid solver, which creates
+// its smoothers from it (see linalg/gmg.hpp).
+struct SmootherData
+{
+  // Relaxation method M⁻¹: the largest number of DOFs of a block of the block Jacobi
+  // method, a power of two up to MAX_BLOCK_SIZE. With 1 the method is point Jacobi.
+  static constexpr int MAX_BLOCK_SIZE = 64;
+  int block_size = 1;
+
+  // Order of the Chebyshev polynomial in M⁻¹A, of the 4th kind or else the 1st, and safety
+  // factors for its eigenvalue estimates.
+  int cheby_order = 1;
+  bool cheby_4th_kind = true;
+  double cheby_sf_max = 1.0;
+  double cheby_sf_min = 0.0;
+
+  // Number of smoothing iterations.
+  int smooth_it = 1;
+
+  // Also smooth before and after the coarse solve.
+  bool coarse = false;
+};
+
 struct LinearSolverData
 {
 public:
@@ -1236,6 +1261,17 @@ public:
   // Smooth based on 4th-kind Chebyshev polynomials for geometric multigrid, otherwise
   // use standard 1st-kind polynomials.
   bool mg_smooth_cheby_4th = true;
+
+  // Largest number of DOFs of a block of the block Jacobi relaxation of the smoothers of
+  // the geometric multigrid preconditioner. The default is 1, the point Jacobi relaxation:
+  // blocks are an option.
+  static constexpr int DEFAULT_MG_SMOOTH_BLOCK_SIZE = 1;
+  int mg_smooth_block_size = DEFAULT_MG_SMOOTH_BLOCK_SIZE;
+
+  // Smoother of the levels of the geometric multigrid preconditioner, resolved by
+  // IoData::CheckConfiguration from the multigrid smoother options (not read from the
+  // configuration file).
+  SmootherData mg_smoother;
 
   // For frequency domain applications, precondition linear systems with a real-valued
   // approximation to the system matrix.

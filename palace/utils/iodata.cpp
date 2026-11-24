@@ -923,6 +923,32 @@ void IoData::CheckConfiguration()
       solver.linear.mg_cycle_it = 1;
     }
   }
+
+  // Resolve the smoother of the levels of the geometric multigrid preconditioner. The
+  // blocks of the block Jacobi relaxation have at most "MGSmoothBlockSize" DOFs, a power of
+  // two; 1 (the default) is the point Jacobi relaxation. They are constructed and applied
+  // on the host: on a GPU a larger size is refused. The point smoothers of an algebraic
+  // multigrid coarse solver are complemented by the block Jacobi smoother before and after
+  // the coarse solve. A sparse direct solver needs none. Whether the smoothers have blocks
+  // on the mesh of a simulation is resolved later (see ResolveSmoother in linalg/gmg.hpp).
+  {
+    auto &linear = solver.linear;
+    const int size = linear.mg_smooth_block_size;
+    MFEM_VERIFY(size >= 1 && size <= config::SmootherData::MAX_BLOCK_SIZE &&
+                    (size & (size - 1)) == 0,
+                "\"MGSmoothBlockSize\" must be one of 1, 2, 4, 8, 16, 32, 64!");
+    MFEM_VERIFY(size == 1 || solver.device != Device::GPU,
+                "\"MGSmoothBlockSize\" above 1 is not supported with \"Device\": "
+                "\"GPU\"!");
+    linear.mg_smoother.block_size = size;
+    linear.mg_smoother.cheby_order = linear.mg_smooth_order;
+    linear.mg_smoother.cheby_4th_kind = linear.mg_smooth_cheby_4th;
+    linear.mg_smoother.cheby_sf_max = linear.mg_smooth_sf_max;
+    linear.mg_smoother.cheby_sf_min = linear.mg_smooth_sf_min;
+    linear.mg_smoother.smooth_it = linear.mg_smooth_it;
+    linear.mg_smoother.coarse = (size > 1) && (linear.type == LinearSolver::AMS ||
+                                               linear.type == LinearSolver::BOOMER_AMG);
+  }
   if (solver.linear.reorder_reuse && solver.linear.drop_small_entries &&
       solver.linear.complex_coarse_solve && (problem.type == ProblemType::EIGENMODE) &&
       (!boundaries.waveport.empty() || !boundaries.conductivity.empty() ||

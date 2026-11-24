@@ -42,7 +42,7 @@ private:
   const OperType *A, *A_G;
   const mfem::Array<int> *dbc_tdof_list_G;
 
-  // Point smoother objects for each matrix.
+  // Smoother objects for each matrix.
   mutable std::unique_ptr<Solver<OperType>> B;
   std::unique_ptr<Solver<OperType>> B_G;
 
@@ -50,9 +50,11 @@ private:
   mutable VecType x_G, y_G, r_G, r;
 
 public:
-  DistRelaxationSmoother(MPI_Comm comm, const Operator &G, int smooth_it,
-                         int cheby_smooth_it, int cheby_order, double cheby_sf_max,
-                         double cheby_sf_min, bool cheby_4th_kind);
+  // The smoothers B for the operator and B_G for its projection are given, see
+  // GeometricMultigridSolver in linalg/gmg.hpp.
+  DistRelaxationSmoother(const Operator &G, int smooth_it,
+                         std::unique_ptr<Solver<OperType>> &&B,
+                         std::unique_ptr<Solver<OperType>> &&B_G);
 
   void SetOperator(const OperType &op) override
   {
