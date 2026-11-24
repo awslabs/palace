@@ -287,26 +287,29 @@ void QuasiNewtonSolver::SetInitialGuess()
   if (!refine_nonlinear)
     return;
 
-  // If the number of initial guesses is greater than the number of requested modes
-  // de-prioritize the initial guesses that have larger errors.
+  // The initial guesses are refined nearest the target first (smallest imaginary part, as
+  // for the TARGET_IMAGINARY ordering of the linear eigensolver), except that among the nev
+  // nearest, those with errors within 100 times the smallest of them are refined first: an
+  // accurate guess converges in a few iterations to the eigenpair it approximates, which is
+  // then deflated, rather than being taken by the iteration from a less accurate guess. The
+  // guesses beyond the nev nearest are refined only while they can lead to an eigenvalue
+  // nearer the target than those found (see Solve).
   std::vector<std::size_t> indices(nev_linear);
   std::iota(indices.begin(), indices.end(), 0);
-  if (nev_linear > nev)
+  std::ranges::stable_sort(indices, [&](const auto i, const auto j)
+                           { return eigenvalues[i].imag() < eigenvalues[j].imag(); });
+  const int num_nearest = std::min(nev, nev_linear);
+  if (num_nearest > 1)
   {
-    const double min_error = *std::min_element(res.get(), res.get() + nev_linear);
+    double min_error = res.get()[indices[0]];
+    for (int i = 1; i < num_nearest; i++)
+    {
+      min_error = std::min(min_error, res.get()[indices[i]]);
+    }
+    // A NaN error falls in the group of the larger errors.
     const double threshold = 100.0 * min_error;
-    // One partition key keeps a strict weak ordering when residuals equal the threshold.
-    std::ranges::sort(indices,
-                      [&](const auto i, const auto j)
-                      {
-                        const bool i_small = res.get()[i] <= threshold;
-                        const bool j_small = res.get()[j] <= threshold;
-                        if (i_small != j_small)
-                        {
-                          return i_small;
-                        }
-                        return eigenvalues[i].imag() < eigenvalues[j].imag();
-                      });
+    std::stable_partition(indices.begin(), indices.begin() + num_nearest,
+                          [&](const auto i) { return res.get()[i] <= threshold; });
   }
   for (int i = 0; i < nev_linear; i++)
   {
@@ -356,10 +359,19 @@ int QuasiNewtonSolver::Solve()
   // Reference: Effenberger, Robust successive computation of eigenpairs for nonlinear
   //            eigenvalue problems, SIAM J. Matrix Anal. Appl. (2013).
   // The deflation scheme solves an extended problem of size n + k, where n is the original
-  // problem size and k is the number of converged eigenpairs. The extended operators are
-  // never explicitly constructed and two separate vectors of length n and k are used to
-  // store the extended solution: [v, v2] where v is a ComplexVector distributed across all
-  // processes and v2 is an Eigen::VectorXcd stored redundantly on all processes.
+  // problem size and k is the number of deflated eigenpairs, those of the minimal invariant
+  // pair (X, H). The extended operators are never explicitly constructed and two separate
+  // vectors of length n and k are used to store the extended solution: [v, v2] where v is a
+  // ComplexVector distributed across all processes and v2 is an Eigen::VectorXcd stored
+  // redundantly on all processes. An extended eigenpair (λ, [v, v2]) gives the eigenpair
+  // (λ, x) of T, x = v + X (λ I - H)⁻¹ v2, and Xᴴ v = 0: v is the part of x orthogonal to
+  // the deflated eigenvectors.
+  //
+  // The iteration from an initial guess converges to an eigenpair which need not be the one
+  // the guess approximates, and can be farther from the target. The initial guesses are
+  // refined in the order of SetInitialGuess until no initial guess left is nearer the
+  // target than the requested number of eigenvalues found above it, and the nearest of
+  // those are returned.
 
   // Set initial guess from linear eigensolver.
   SetInitialGuess();
@@ -373,8 +385,8 @@ int QuasiNewtonSolver::Solve()
 
   // u/u2 hold the residual at the committed iterate; du/du2 the Newton correction.
   // v_trial/v2_trial are scratch for line-search trial normalization (v itself cannot
-  // be rolled back once normalized).
-  ComplexVector v, u, w, c, w0, z, du, v_trial;
+  // be rolled back once normalized). x holds the eigenvector of a converged iterate.
+  ComplexVector v, u, w, c, w0, z, du, v_trial, x;
   v.SetSize(n);
   u.SetSize(n);
   w.SetSize(n);
@@ -383,6 +395,7 @@ int QuasiNewtonSolver::Solve()
   z.SetSize(n);
   du.SetSize(n);
   v_trial.SetSize(n);
+  x.SetSize(n);
   v.UseDevice(true);
   u.UseDevice(true);
   w.UseDevice(true);
@@ -391,15 +404,21 @@ int QuasiNewtonSolver::Solve()
   z.UseDevice(true);
   du.UseDevice(true);
   v_trial.UseDevice(true);
+  x.UseDevice(true);
 
-  // Eigen Matrix/Vectors for extended operator of size k.
-  Eigen::MatrixXcd H;
+  // Eigen Matrix/Vectors for extended operator of size k, and the Gram matrix G = Xᴴ X of
+  // the deflated eigenvectors with its factorization.
+  Eigen::MatrixXcd H, G;
+  Eigen::FullPivLU<Eigen::MatrixXcd> G_lu;
   Eigen::VectorXcd u2, z2, c2, w2, v2, du2, v2_trial;
 
-  // Storage for eigenpairs.
+  // Storage for the deflated eigenvectors, and for the eigenpairs found above the target
+  // (eigenvalue, normalized eigenvector, and whether it is deflated).
   std::vector<ComplexVector> X;
-  std::vector<std::complex<double>> eigs;
   X.reserve(nev);
+  std::vector<std::complex<double>> found_eig;
+  std::vector<ComplexVector> found_vec;
+  std::vector<bool> found_deflated;
 
   // Set defaults.
   if (nleps_it <= 0)
@@ -423,11 +442,38 @@ int QuasiNewtonSolver::Solve()
   const double ksp_rel_tol = opInv->GetRelTol();
   const double inexact_tol = std::sqrt(rtol);
 
+  // An eigenvector computed to the tolerance which lies in the span of the deflated
+  // eigenvectors has a part orthogonal to them at the level of the tolerance (relative to
+  // its norm), and one of order one otherwise: the two are told apart at √tol.
+  const double span_tol = std::sqrt(rtol);
+
+  // The imaginary part of the num_requested-th nearest eigenvalue found above the target,
+  // when as many are found. An initial guess is refined while fewer are found, or if it is
+  // nearer the target than that eigenvalue: those farther are not expected to lead to a
+  // nearer eigenvalue.
+  const int num_requested = nev;
+  auto LastRequestedImag = [&]()
+  {
+    std::vector<double> imag;
+    for (const auto l : found_eig)
+    {
+      imag.push_back(l.imag());
+    }
+    std::ranges::nth_element(imag, imag.begin() + (num_requested - 1));
+    return imag[num_requested - 1];
+  };
+  auto Refine = [&](int i)
+  {
+    return static_cast<int>(found_eig.size()) < num_requested ||
+           eigenvalues[i].imag() < LastRequestedImag();
+  };
+
   int k = 0, restart = 0, guess_idx = 0;
-  while (k < nev)
+  while (true)
   {
     // If > max_restart with the same initial guess, skip to next initial guess.
-    // If we tried all initial guesses and the random guess, end search even if k < nev.
+    // If we tried all initial guesses and the random guess, end search even if fewer
+    // eigenpairs than requested were found.
     if (restart > max_restart)
     {
       if (guess_idx < num_init_guess)
@@ -439,6 +485,15 @@ int QuasiNewtonSolver::Solve()
       {
         break;
       }
+    }
+    while (guess_idx < num_init_guess && !Refine(guess_idx))
+    {
+      guess_idx++;
+      restart = 0;
+    }
+    if (static_cast<int>(found_eig.size()) >= num_requested && guess_idx >= num_init_guess)
+    {
+      break;
     }
 
     // Set the eigenpair estimate to the initial guess.
@@ -478,6 +533,12 @@ int QuasiNewtonSolver::Solve()
     }
     eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
 
+    // With no deflated eigenpair, a new attempt from the same initial guess repeats this
+    // one (the same guess and c vector, and no deflation component), except for the random
+    // guess made of two initial guesses: the search moves on to the next guess instead.
+    const bool same_attempt =
+        (k == 0) && (guess_idx < num_init_guess || num_init_guess < 3);
+
     // Set the "random" c vector and the deflation component of the eigenpair initial guess.
     linalg::SetRandom(GetComm(), c, seed);  // set seed for deterministic behavior
     c2.conservativeResize(k);
@@ -511,34 +572,24 @@ int QuasiNewtonSolver::Solve()
                               ComplexVector &x1, Eigen::VectorXcd &x2)
     {
       // Solve the block linear system
-      // |T(σ) U(σ)| |x1| = |b1|
-      // |A(σ) B(σ)| |x2|   |b2|
-      // x1 = T^-1 b1
-      // x2 = SS^-1 (b2 - A x1) where SS = (B - A T^-1 U) = - X^* X S^-1
-      // x1 = x1 - X S x2
+      // |T(σ)  T(σ) X S⁻¹| |x1| = |b1|
+      // |  Xᴴ         0  | |x2|   |b2|
+      // with S = σ I - H and G = Xᴴ X:
+      // x1 = T⁻¹ b1 + X G⁻¹ (b2 - Xᴴ T⁻¹ b1)
+      // x2 = -S G⁻¹ (b2 - Xᴴ T⁻¹ b1)
       opInv->Mult(b1, x1);
       if (k == 0)  // no deflation
       {
         return;
       }
-      x2.conservativeResize(k);
+      Eigen::VectorXcd y(k);
       for (int j = 0; j < k; j++)
       {
-        x2(j) = b2(j) - linalg::Dot(GetComm(), x1, X[j]);
+        y(j) = b2(j) - linalg::Dot(GetComm(), x1, X[j]);
       }
-      Eigen::MatrixXcd SS(k, k);
-      for (int i = 0; i < k; i++)
-      {
-        for (int j = 0; j < k; j++)
-        {
-          SS(i, j) = linalg::Dot(GetComm(), X[i], X[j]);
-        }
-      }
-      const Eigen::MatrixXcd S = eig_opInv * Eigen::MatrixXcd::Identity(k, k) - H;
-      SS = -S.fullPivLu().solve(SS);
-      x2 = SS.fullPivLu().solve(x2);
-      const ComplexVector XSx2 = MatVecMult(X, S.fullPivLu().solve(x2));
-      linalg::AXPY(-1.0, XSx2, x1);
+      y = G_lu.solve(y);
+      x2 = -(eig_opInv * Eigen::MatrixXcd::Identity(k, k) - H) * y;
+      linalg::AXPY(1.0, MatVecMult(X, y), x1);
     };
 
     // Compute w0 = T^-1 c and normalize it. The w0 vector is only used as a
@@ -602,37 +653,90 @@ int QuasiNewtonSolver::Solve()
                    restart, res);
       }
 
-      // End if residual below tolerance and eigenvalue above the target.
+      // End if residual below tolerance, for the extended eigenpair and for the eigenpair
+      // (λ, x) of T itself, T(λ) x = u: with deflation, x is not normalized, and ‖x‖ < 1
+      // when x lies near the span of the deflated eigenvectors.
+      double norm_x = 0.0;
       if (res < rtol)
       {
+        x = v;
+        if (k > 0)
+        {
+          const Eigen::MatrixXcd S = eig * Eigen::MatrixXcd::Identity(k, k) - H;
+          linalg::AXPY(1.0, MatVecMult(X, S.fullPivLu().solve(v2)), x);
+        }
+        norm_x = linalg::Norml2(GetComm(), x);
+      }
+      if (res < rtol && linalg::Norml2(GetComm(), u) < rtol * norm_x)
+      {
+        const bool in_range = (eig.imag() > sigma.imag());
+        // The eigenpair is deflated if its eigenvector is not in the span of the deflated
+        // eigenvectors (eigenvectors of distinct eigenvalues of a nonlinear eigenvalue
+        // problem can be linearly dependent). In that span, the invariant pair extended
+        // with it would not be minimal: its new column v / ‖v‖ would be rounding error,
+        // with the entries of H in 1 / ‖v‖, and the deflated problem of the next
+        // eigenpairs would be wrong.
+        const double scale = linalg::Norml2(GetComm(), v);
+        const bool deflate = (scale >= span_tol * norm_x);
+        // An eigenpair which is not deflated can be found again: it is the same eigenpair
+        // if its eigenvalue and eigenvector are those of one found before.
+        bool found_before = false;
+        if (!deflate && in_range)
+        {
+          for (std::size_t j = 0; j < found_eig.size(); j++)
+          {
+            found_before =
+                found_before ||
+                (!found_deflated[j] &&
+                 std::abs(found_eig[j] - eig) <= span_tol * std::abs(found_eig[j]) &&
+                 std::abs(linalg::Dot(GetComm(), x, found_vec[j])) >= 0.99 * norm_x);
+          }
+        }
         if (print > 0)
         {
           Mpi::Print(GetComm(),
                      "Eigenvalue {:d}, Quasi-Newton converged in {:d} iterations "
-                     "({:.3e}{:+.3e}i).\n",
-                     k, it, eig.real(), eig.imag());
+                     "({:.3e}{:+.3e}i){}.\n",
+                     k, it, eig.real(), eig.imag(),
+                     found_before ? ", found before"
+                     : !deflate   ? ", in the span of the deflated eigenvectors"
+                                  : "");
         }
-        // Update the invariant pair with normalization.
-        const auto scale = linalg::Norml2(GetComm(), v);
-        v *= 1.0 / scale;
-        eigs.resize(k + 1);
-        eigs[k] = eig;
-        X.resize(k + 1);
-        X[k] = v;
-        H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
-        H.col(k).head(k) = v2 / scale;
-        H(k, k) = eig;
-        k++;
-        // If the eigenvalue is inside the desired range, increment initial guess index
-        // Otherwise, use the same initial guess again and increment number of desired
-        // eigenvalues.
-        if (eig.imag() > sigma.imag())
+        if (found_before)
+        {
+          restart++;
+          break;
+        }
+        if (in_range)
+        {
+          found_eig.push_back(eig);
+          found_vec.push_back(x);
+          found_vec.back() *= 1.0 / norm_x;
+          found_deflated.push_back(deflate);
+        }
+        if (deflate)
+        {
+          // Update the invariant pair with normalization.
+          v *= 1.0 / scale;
+          X.resize(k + 1);
+          X[k] = v;
+          H.conservativeResizeLike(Eigen::MatrixXd::Zero(k + 1, k + 1));
+          H.col(k).head(k) = v2 / scale;
+          H(k, k) = eig;
+          G.conservativeResize(k + 1, k + 1);
+          for (int j = 0; j <= k; j++)
+          {
+            G(j, k) = linalg::Dot(GetComm(), X[k], X[j]);  // X[j]ᴴ X[k]
+            G(k, j) = std::conj(G(j, k));
+          }
+          G_lu.compute(G);
+          k++;
+        }
+        // If the eigenvalue is inside the desired range, increment initial guess index.
+        // Otherwise, use the same initial guess again once the eigenpair is deflated.
+        if (in_range || !deflate)
         {
           guess_idx++;
-        }
-        else
-        {
-          nev++;
         }
         restart = 0;  // reset restart counter
         break;
@@ -648,7 +752,7 @@ int QuasiNewtonSolver::Solve()
                      "restarting.\n",
                      k, it);
         }
-        restart++;
+        restart = same_attempt ? max_restart + 1 : restart + 1;
         break;
       }
 
@@ -766,61 +870,34 @@ int QuasiNewtonSolver::Solve()
                      "restarting.\n",
                      k, nleps_it);
         }
-        restart++;
+        restart = same_attempt ? max_restart + 1 : restart + 1;
       }
     }
   }
-  nev = k;  // in case some guesses did not converge
-  if (nev == 0)
-  {
-    // No eigenpair converged: there is no invariant pair to extract eigenpairs from (and
-    // the Schur decomposition does not support an empty matrix).
-    eigenvalues.clear();
-    eigenvectors.clear();
-    perm = std::make_unique<int[]>(0);
-    RescaleEigenvectors(0);
-    return 0;
-  }
 
-  // Eigenpair extraction from the invariant pair (X, H).
-  Eigen::ComplexEigenSolver<Eigen::MatrixXcd> eps;
-  eps.compute(H);
-  // H eigenvectors are ordered arbitrarily, need to match them to order of X.
-  std::vector<int> order(nev), order_eigen(nev), order2(nev);
+  // The requested eigenpairs are the num_requested nearest the target of those found above
+  // it, with their eigenvectors x (for a deflated eigenpair, the eigenvector of the
+  // invariant pair (X, H) for its eigenvalue).
+  std::vector<std::size_t> order(found_eig.size());
   std::iota(order.begin(), order.end(), 0);
-  std::iota(order_eigen.begin(), order_eigen.end(), 0);
-  std::iota(order2.begin(), order2.end(), 0);
-  std::ranges::sort(order, [&](auto l, auto r) { return eigs[l].imag() < eigs[r].imag(); });
-  std::ranges::sort(order_eigen, [&epseig = eps.eigenvalues()](auto l, auto r)
-                    { return epseig(l).imag() < epseig(r).imag(); });
-  std::ranges::sort(order2, [&](auto l, auto r) { return order[l] < order[r]; });
-
-  // Sort Eigen eigenvectors.
-  std::vector<Eigen::VectorXcd> Xeig;
-  for (int i = 0; i < nev; i++)
+  std::ranges::stable_sort(order, [&](auto l, auto r)
+                           { return found_eig[l].imag() < found_eig[r].imag(); });
+  if (order.size() > static_cast<std::size_t>(num_requested))
   {
-    Xeig.push_back(eps.eigenvectors().col(order_eigen[i]));
+    order.resize(num_requested);
   }
-
-  // Recover the eigenvectors in the target range.
   eigenvalues.clear();
   eigenvectors.clear();
-  for (int i = 0; i < nev; i++)
+  for (const auto i : order)
   {
-    if (eigs[i].imag() > sigma.imag())
-    {
-      ComplexVector eigv = MatVecMult(X, Xeig[order2[i]]);
-      eigenvalues.push_back(eigs[i]);
-      eigenvectors.push_back(eigv);
-    }
+    eigenvalues.push_back(found_eig[i]);
+    eigenvectors.push_back(std::move(found_vec[i]));
   }
   nev = eigenvalues.size();
 
-  // Get ordering of the reported eigenpairs.
+  // The reported eigenpairs are ordered by their imaginary part.
   perm = std::make_unique<int[]>(nev);
   std::iota(perm.get(), perm.get() + nev, 0);
-  std::sort(perm.get(), perm.get() + nev, [&eig = this->eigenvalues](auto l, auto r)
-            { return eig[l].imag() < eig[r].imag(); });
 
   // Compute the eigenpair residuals for eigenvalue λ.
   RescaleEigenvectors(nev);
