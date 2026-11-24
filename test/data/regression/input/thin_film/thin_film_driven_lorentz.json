@@ -1,0 +1,94 @@
+{
+  "Problem":
+  {
+    "Type": "Driven",
+    "Verbose": 2,
+    "Output": "postpro/driven_lorentz"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/thin_film.mesh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Substrate
+        "Permittivity": 11.7
+      },
+      {
+        "Attributes": [2],  // Film, 0.5 μm thick (cells of aspect ratio 1000), dispersive
+        "Permittivity":
+        {
+          "HighFrequencyLimit": 2.0,
+          "Terms":
+          [
+            {
+              "Type": "Lorentz",
+              "DeltaPermittivity": 12.0,
+              "ResonanceFrequency": 20.0,
+              "DampingFrequency": 0.2
+            }
+          ]
+        }
+      },
+      {
+        "Attributes": [3],  // Vacuum
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [2]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [1, 2, 3]
+    },
+    "LumpedPort":
+    [
+      {
+        "Index": 1,
+        "R": 50.0,
+        "Excitation": true,
+        "Attributes": [4],
+        "Direction": "+Z"
+      }
+    ]
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Driven":
+    {
+      "Samples":
+      [
+        {
+          "Type": "Point",
+          "Freq": [5.0]
+        }
+      ]
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 100,
+      "MGSmoothBlockSize": 64,
+      "PCMatShifted": false  // The definite counterpart takes its own shift
+    }
+  }
+}

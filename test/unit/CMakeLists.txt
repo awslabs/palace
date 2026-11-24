@@ -30,6 +30,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-amg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-ams.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-basesolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-blockjacobi.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
@@ -299,7 +300,7 @@ catch_discover_tests(unit-tests
 if(NOT (PALACE_WITH_CUDA OR PALACE_WITH_HIP))
   catch_discover_tests(unit-tests
     TEST_PREFIX "debug-"
-    TEST_SPEC "[lowrank][Parallel]"
+    TEST_SPEC "[lowrank][Parallel],[blockjacobi][Parallel]"
     TEST_EXECUTOR ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${PALACE_TESTS_NUMPROC} ${MPIEXEC_PREFLAGS}
     EXTRA_ARGS ${MPIEXEC_POSTFLAGS} --device debug --skip-benchmarks
     PROPERTIES

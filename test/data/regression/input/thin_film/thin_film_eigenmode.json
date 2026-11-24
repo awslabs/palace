@@ -1,0 +1,70 @@
+{
+  "Problem":
+  {
+    "Type": "Eigenmode",
+    "Verbose": 2,
+    "Output": "postpro/eigenmode"
+  },
+  "Model":
+  {
+    "Mesh": "mesh/thin_film.mesh",
+    "L0": 1.0e-3  // mm
+  },
+  "Domains":
+  {
+    "Materials":
+    [
+      {
+        "Attributes": [1],  // Substrate
+        "Permittivity": 11.7,
+        "LossTan": 0.001
+      },
+      {
+        "Attributes": [2],  // Film, 0.5 μm thick (cells of aspect ratio 1000)
+        "Permittivity": 4.0
+      },
+      {
+        "Attributes": [3],  // Vacuum
+        "Permittivity": 1.0
+      }
+    ],
+    "Postprocessing":
+    {
+      "Energy":
+      [
+        {
+          "Index": 1,
+          "Attributes": [2]
+        }
+      ]
+    }
+  },
+  "Boundaries":
+  {
+    "PEC":
+    {
+      "Attributes": [1, 2, 3, 4, 5, 6]
+    }
+  },
+  "Solver":
+  {
+    "Order": 2,
+    "Device": "CPU",
+    "Eigenmode":
+    {
+      "N": 2,
+      "Tol": 1.0e-8,
+      "Target": 10.0,  // The first mode is at 100 GHz
+      "Save": 0
+    },
+    "Linear":
+    {
+      "Type": "Default",
+      "KSPType": "GMRES",
+      "Tol": 1.0e-8,
+      "MaxIts": 100,
+      "MGSmoothBlockSize": 64,
+      "PCMatReal": true  // Real preconditioner without a shift: indefinite
+    }
+  }
+}

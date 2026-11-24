@@ -2892,3 +2892,92 @@ TEST_CASE("Linear solver Type cuDSS parses when built with cuDSS", "[config][Ser
   CHECK(iodata.solver.linear.type == LinearSolver::CUDSS);
 }
 #endif
+
+TEST_CASE("Config multigrid smoother options", "[config][Serial]")
+{
+  auto Resolve = [](const std::string &problem, const json &solver)
+  {
+    json config = {{"Problem", {{"Type", problem}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", solver}};
+    IoData iodata(config, false);
+    return std::pair{iodata.solver.linear,
+                     IoData::ConcretizeDefaults(iodata, config)["Solver"]["Linear"]};
+  };
+
+  SECTION("Default")
+  {
+    // The default is the point Jacobi relaxation, with the Chebyshev options of the
+    // multigrid smoothers and no smoother around the coarse solver: blocks are an option.
+    CHECK(config::LinearSolverData::DEFAULT_MG_SMOOTH_BLOCK_SIZE == 1);
+    const auto [linear, resolved] = Resolve("Electrostatic", {{"Order", 3}});
+    CHECK(linear.mg_smoother.block_size == 1);
+    CHECK(linear.mg_smoother.cheby_order == linear.mg_smooth_order);
+    CHECK(linear.mg_smoother.cheby_4th_kind == linear.mg_smooth_cheby_4th);
+    CHECK(linear.mg_smoother.cheby_sf_max == linear.mg_smooth_sf_max);
+    CHECK(linear.mg_smoother.cheby_sf_min == linear.mg_smooth_sf_min);
+    CHECK(linear.mg_smoother.smooth_it == linear.mg_smooth_it);
+    CHECK(!linear.mg_smoother.coarse);
+    CHECK(resolved["MGSmoothBlockSize"] == 1);
+  }
+
+  SECTION("Blocks")
+  {
+    // Blocks, and a smoother around the AMG coarse solver of an electrostatic simulation.
+    const auto [linear, resolved] =
+        Resolve("Electrostatic", {{"Order", 3}, {"Linear", {{"MGSmoothBlockSize", 64}}}});
+    CHECK(linear.mg_smoother.block_size == 64);
+    CHECK(linear.mg_smoother.cheby_order == linear.mg_smooth_order);
+    CHECK(linear.mg_smoother.coarse);
+    CHECK(resolved["MGSmoothBlockSize"] == 64);
+  }
+
+  SECTION("Every size class")
+  {
+    for (int size : {1, 2, 4, 8, 16, 32, 64})
+    {
+      const auto [linear, resolved] =
+          Resolve("Electrostatic", {{"Linear", {{"MGSmoothBlockSize", size}}}});
+      CHECK(linear.mg_smoother.block_size == size);
+      CHECK(linear.mg_smoother.coarse == (size > 1));
+    }
+  }
+
+  SECTION("No smoother around a coarse solver which is not AMG")
+  {
+    const auto [linear, resolved] = Resolve(
+        "Electrostatic", {{"Linear", {{"Type", "Jacobi"}, {"MGSmoothBlockSize", 16}}}});
+    CHECK(linear.mg_smoother.block_size == 16);
+    CHECK(!linear.mg_smoother.coarse);
+  }
+
+  SECTION("Invalid value")
+  {
+    for (int size : {0, 3, 33, 128})
+    {
+      CHECK_THROWS_WITH(
+          Resolve("Electrostatic", {{"Linear", {{"MGSmoothBlockSize", size}}}}),
+          Catch::Matchers::ContainsSubstring("MGSmoothBlockSize"));
+    }
+  }
+
+  SECTION("Point Jacobi on a GPU")
+  {
+    // The blocks are applied on the host: on a GPU they are refused.
+    {
+      const auto [linear, resolved] = Resolve("Electrostatic", {{"Device", "GPU"}});
+      CHECK(linear.mg_smoother.block_size == 1);
+      CHECK(!linear.mg_smoother.coarse);
+      CHECK(resolved["MGSmoothBlockSize"] == 1);
+    }
+    CHECK_NOTHROW(Resolve("Electrostatic",
+                          {{"Device", "GPU"}, {"Linear", {{"MGSmoothBlockSize", 1}}}}));
+    CHECK_THROWS_WITH(Resolve("Electrostatic",
+                              {{"Device", "GPU"}, {"Linear", {{"MGSmoothBlockSize", 64}}}}),
+                      Catch::Matchers::ContainsSubstring("MGSmoothBlockSize"));
+    CHECK_NOTHROW(Resolve("Electrostatic",
+                          {{"Device", "Debug"}, {"Linear", {{"MGSmoothBlockSize", 64}}}}));
+  }
+}
