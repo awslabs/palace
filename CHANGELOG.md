@@ -21,7 +21,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - The error indicators weight each frequency-dependent material by |ε(iω)| and are
     normalized by the energy norm with that weight, so typed and `PoleResidue` forms give
-    the same indicators. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    the same indicators. [PR 1302](https://github.com/awslabs/palace/pull/1302).
 
 ## [0.20.0] - 2026-11-23
 
