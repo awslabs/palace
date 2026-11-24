@@ -3367,8 +3367,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           if (std::abs(data.C) > 0.0)
           {
             const auto voltage = data.GetVoltage(corrected_field);
-            capacitor_energy +=
-                0.5 * std::abs(data.C) * std::real(voltage * std::conj(voltage));
+            capacitor_energy += TimeAveragedCapacitorEnergy(data.C, voltage);
           }
         }
         const auto corrected_frequency =

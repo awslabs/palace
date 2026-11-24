@@ -806,6 +806,20 @@ int FindPieceGroup(const PartitionedEdgePieces &pieces, std::size_t segment, dou
              : -1;
 }
 
+// The energies of a field E integrated from its quadratic form are time averages for a
+// complex peak phasor (electromagnetics::TimeAverageWeight: 1/2 of the Hermitian form),
+// instantaneous for a real field, as GetInterfaceElectricFieldEnergy reports them: the
+// weight is applied once, at every site where an energy of ours is integrated (summed over
+// the processes), and never again by a caller.
+void ApplyTimeAverage(const GridFunction &E, std::vector<double> &energies)
+{
+  const double weight = electromagnetics::TimeAverageWeight(E.HasImag());
+  for (auto &energy : energies)
+  {
+    energy *= weight;
+  }
+}
+
 }  // namespace
 
 SurfacePostOperator::SurfaceFluxData::SurfaceFluxData(
@@ -1802,6 +1816,7 @@ SurfacePostOperator::GetInterfaceEdgeElectricFieldEnergies(int idx, const GridFu
         GetLocalSurfaceIntegral(annulus, attr_marker, data.ownership_quadrature_order);
   }
   Mpi::GlobalSum(static_cast<int>(local_energy.size()), local_energy.data(), E.GetComm());
+  ApplyTimeAverage(E, local_energy);
   for (std::size_t i = 0; i < data.edge_distances.size(); i++)
   {
     energies.push_back(
@@ -1857,6 +1872,7 @@ SurfacePostOperator::GetInterfaceUncoveredEdgeEnergies(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   for (std::size_t i = 0; i < entries.size(); i++)
   {
     auto &energy = energies.at(entries[i].first);
@@ -1935,6 +1951,7 @@ SurfacePostOperator::PartitionInterfaceEdgeEnergies(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   for (std::size_t i = 0; i < entries.size(); i++)
   {
     energies.at(entries[i].first)[entries[i].second] += local_energies[i];
@@ -2091,6 +2108,7 @@ SurfacePostOperator::GetInterfaceUncoveredFeatureEdgeEnergies(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   for (std::size_t i = 0; i < entries.size(); i++)
   {
     const auto &[idx, type, label] = entries[i];
@@ -2534,12 +2552,14 @@ SurfacePostOperator::GetInterfaceCoveragePartition(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   // Rulings 2276 / 2277: the second array (every rank holds the same layout).
   if (!extra_energies.empty())
   {
     Mpi::GlobalSum(static_cast<int>(extra_energies.size()), extra_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, extra_energies);
   if (!overlap_masks.empty())
   {
     MPI_Allreduce(MPI_IN_PLACE, overlap_masks.data(),
@@ -2846,6 +2866,8 @@ SurfacePostOperator::GetInterfaceRegionPatchFootprints(
     {
       Mpi::GlobalSum(static_cast<int>(local.size()), local.data(), E.GetComm());
     }
+    // The energies carry the time average (ApplyTimeAverage), the areas do not.
+    const double time_average = electromagnetics::TimeAverageWeight(E.HasImag());
     auto &footprints = result[idx];
     footprints.resize(reference_points.size());
     for (std::size_t p = 0; p < reference_points.size(); p++)
@@ -2860,10 +2882,10 @@ SurfacePostOperator::GetInterfaceRegionPatchFootprints(
         MFEM_VERIFY(p < footprints.size(),
                     "A region patch footprint names a patch without a reference point!");
         auto &footprint = footprints[p];
-        footprint.open_energy += sums[0];
-        footprint.open_energy_in += sums[1];
-        footprint.energy += sums[2];
-        footprint.energy_in += sums[3];
+        footprint.open_energy += time_average * sums[0];
+        footprint.open_energy_in += time_average * sums[1];
+        footprint.energy += time_average * sums[2];
+        footprint.energy_in += time_average * sums[3];
         footprint.area += sums[4];
         footprint.area_in += sums[5];
       }
@@ -3148,6 +3170,7 @@ SurfacePostOperator::GetInterfaceWeightedPortionEdgeEnergies(
     Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                    E.GetComm());
   }
+  ApplyTimeAverage(E, local_energies);
   for (std::size_t i = 0; i < entries.size(); i++)
   {
     energies.at(entries[i].first)[entries[i].second] += local_energies[i];
@@ -3195,6 +3218,7 @@ SurfacePostOperator::GetInterfaceOuterElectricFieldEnergies(const std::set<int> 
   }
   Mpi::GlobalSum(static_cast<int>(local_energies.size()), local_energies.data(),
                  E.GetComm());
+  ApplyTimeAverage(E, local_energies);
   std::size_t i = 0;
   for (auto &[idx, energy] : energies)
   {
@@ -3330,6 +3354,11 @@ SurfacePostOperator::GetInterfaceLocalEdgeElectricFieldEnergies(int idx,
                  E.GetComm());
   Mpi::GlobalSum(static_cast<int>(local_polarized_energy.size()),
                  local_polarized_energy.data(), E.GetComm());
+  for (auto *energy : {&local_total_energy, &local_total_polarized_energy, &local_energy,
+                       &local_vertex_energy, &local_polarized_energy})
+  {
+    ApplyTimeAverage(E, *energy);
+  }
   const LocalVolumeEdgeEnergyCache *local_volume_energy = nullptr;
   if (include_volume)
   {
@@ -4019,7 +4048,10 @@ SurfacePostOperator::GetLocalVolumeEdgeElectricFieldEnergies(
   for (auto &component : entry.polarized_energies)
   {
     Mpi::GlobalSum(static_cast<int>(component.size()), component.data(), E.GetComm());
+    ApplyTimeAverage(E, component);
   }
+  ApplyTimeAverage(E, entry.energies);
+  ApplyTimeAverage(E, entry.vertex_energies);
   return entry;
 }
 

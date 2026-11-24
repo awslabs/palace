@@ -269,6 +269,27 @@ std::unique_ptr<GridFunction> ProjectSheetField(FiniteElementSpace &nd_fespace,
   return E;
 }
 
+// The complex peak phasor (e, 0), or (e, e), of a real field e on the same space.
+std::unique_ptr<GridFunction> ComplexTwin(FiniteElementSpace &nd_fespace,
+                                          const GridFunction &E, bool imag_equals_real)
+{
+  auto Ec = std::make_unique<GridFunction>(nd_fespace, true);
+  Vector e(nd_fespace.GetTrueVSize());
+  E.Real().GetTrueDofs(e);
+  Ec->Real().SetFromTrueDofs(e);
+  if (imag_equals_real)
+  {
+    Ec->Imag().SetFromTrueDofs(e);
+  }
+  else
+  {
+    Ec->Imag() = 0.0;
+  }
+  Ec->Real().ExchangeFaceNbrData();
+  Ec->Imag().ExchangeFaceNbrData();
+  return Ec;
+}
+
 // Perimeter portions of the island (on its plane, in mesh coordinates): the edge z = 0.25
 // labelled "m0", the edge x = 0.25 labelled "m1" and the edge z = 0.75 labelled "u" (the
 // edge x = 0.75 stays unclaimed).
@@ -531,6 +552,86 @@ TEST_CASE("SurfacePostOperator raw interface energy equals the sum of its parts"
     {
       INFO(label);
       CHECK_THAT(energy, WithinRel(partitioned.at(label), 1.0e-9));
+    }
+
+    // Palace 0.20.0's convention (decision 2383; the plan check's MAJOR-3 (ii)), per
+    // function: every energy of the complex peak phasor (e, 0) is exactly 1/2 of the real
+    // field e's (the time average, electromagnetics::TimeAverageWeight), and of (e, e)
+    // exactly e's. A missed weight (x1 for (e, 0)) or a doubled one (x1/4) fails.
+    surf_post_op.ResetInterfaceLocalEdgeEnergyCache();
+    const auto local = surf_post_op.GetInterfaceLocalEdgeElectricFieldEnergies(idx, *E);
+    REQUIRE(!local.empty());
+    for (const bool imag_equals_real : {false, true})
+    {
+      INFO((imag_equals_real ? "(e, e)" : "(e, 0)"));
+      const double w = imag_equals_real ? 1.0 : 0.5;
+      const auto Ec = ComplexTwin(*problem.nd_fespace, *E, imag_equals_real);
+      CHECK(surf_post_op.GetInterfaceElectricFieldEnergy(idx, *Ec, 0.0) == w * raw);
+      CHECK(surf_post_op.GetInterfaceElectricFieldEnergy(idx + 3, *Ec, 0.0) ==
+            w * coefficient_path);
+      const auto edges_c = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(idx, *Ec);
+      REQUIRE(edges_c.size() == edges.size());
+      for (std::size_t i = 0; i < edges.size(); i++)
+      {
+        CHECK(edges_c[i].energy_outside == w * edges[i].energy_outside);
+        CHECK(edges_c[i].energy_annulus == w * edges[i].energy_annulus);
+      }
+      CHECK(surf_post_op.GetInterfaceOuterElectricFieldEnergy(idx, *Ec).energy_outside ==
+            w * outer.energy_outside);
+      const auto partitioned_c =
+          surf_post_op.GetInterfacePartitionedEdgeEnergies({idx}, *Ec, nullptr, portions)
+              .at(idx);
+      // (The classified partition, GetInterfaceClassifiedEdgeEnergies, is the same
+      // integration site, PartitionInterfaceEdgeEnergies, on another tree.)
+      REQUIRE(partitioned_c.size() == partitioned.size());
+      for (const auto &[label, energy] : partitioned)
+      {
+        INFO(label);
+        CHECK(partitioned_c.at(label) == w * energy);
+      }
+      const auto uncovered_c =
+          surf_post_op
+              .GetInterfaceUncoveredEdgeEnergies({idx}, *Ec, nullptr, uncovered_portions)
+              .at(idx);
+      CHECK(uncovered_c.energy == w * uncovered.energy);
+      CHECK(uncovered_c.by_type.at("u") == w * uncovered.by_type.at("u"));
+      const auto weighted_c = surf_post_op
+                                  .GetInterfaceWeightedPortionEdgeEnergies(
+                                      {idx}, *Ec, nullptr, portions, {1.0, 1.0, 1.0})
+                                  .at(idx);
+      for (const auto &[label, energy] : weighted)
+      {
+        INFO(label);
+        CHECK(weighted_c.at(label) == w * energy);
+      }
+      surf_post_op.ResetInterfaceLocalEdgeEnergyCache();
+      const auto local_c =
+          surf_post_op.GetInterfaceLocalEdgeElectricFieldEnergies(idx, *Ec);
+      REQUIRE(local_c.size() == local.size());
+      for (std::size_t i = 0; i < local.size(); i++)
+      {
+        CHECK(local_c[i].energy_total == w * local[i].energy_total);
+        CHECK(local_c[i].energy_inside == w * local[i].energy_inside);
+        CHECK(local_c[i].energy_annulus == w * local[i].energy_annulus);
+        CHECK(local_c[i].energy_vertex_inside == w * local[i].energy_vertex_inside);
+        for (std::size_t k = 0; k < 2; k++)
+        {
+          CHECK(local_c[i].energy_total_polarized[k] ==
+                w * local[i].energy_total_polarized[k]);
+          CHECK(local_c[i].energy_inside_polarized[k] ==
+                w * local[i].energy_inside_polarized[k]);
+          CHECK(local_c[i].energy_annulus_polarized[k] ==
+                w * local[i].energy_annulus_polarized[k]);
+        }
+        CHECK(local_c[i].energy_volume_annulus == w * local[i].energy_volume_annulus);
+        CHECK(local_c[i].energy_volume_vertex_annulus ==
+              w * local[i].energy_volume_vertex_annulus);
+        for (std::size_t k = 0; k < 6; k++)
+        {
+          CHECK(local_c[i].energy_volume_annulus_polarized[k] ==
+                w * local[i].energy_volume_annulus_polarized[k]);
+        }
+      }
     }
 
     // The batched Gram and the streamed rows of the response evaluators.

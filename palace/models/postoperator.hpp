@@ -33,6 +33,7 @@
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/ceedparaviewdatacollection.hpp"
 #include "utils/configfile.hpp"
+#include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/units.hpp"
 
@@ -65,16 +66,17 @@ struct SolverData;
 // (2 U_raw) with U_e,defect = response.domain_correction (the electric fixed-trace domain
 // correction, lowering the frequency when positive), U_m,defect =
 // response.magnetic_domain_correction (the magnetic one, raising it) and U_raw the raw
-// normalization energy (1/2 E^H M E plus the lumped-port capacitor energy); NaN unless the
-// response carries the magnetic term and passes magnetic_confident (the magnetic term's
-// own loop gate). Decision 1250 (mx-sc-magnetic Phase 2): the shift follows the SAME
-// coverage rule as the electric fixed-trace correction it extends, which the binary prints
-// on partial coverage with the uncovered requirements kept raw (decision 394 F2); it is NOT
-// gated by closure_independent_confident (whose coverage criterion >= 1 - 1e-10 withheld
-// it on every device with ends) nor by the trace-closure spread: those flags are printed
-// beside it, and `fixed-trace shift coverage` (FixedTraceShiftCoverage) names the matched
-// energy share the shift rests on. One function, so that the column of record and its
-// unit test read the same formula (review d1227 MAJOR-2).
+// normalization energy (the time-averaged 1/4 E^H M E plus the lumped-port capacitor
+// energy, all three energies time averages, so the ratio is the one before Palace 0.20.0);
+// NaN unless the response carries the magnetic term and passes magnetic_confident (the
+// magnetic term's own loop gate). Decision 1250 (mx-sc-magnetic Phase 2): the shift follows
+// the SAME coverage rule as the electric fixed-trace correction it extends, which the
+// binary prints on partial coverage with the uncovered requirements kept raw (decision 394
+// F2); it is NOT gated by closure_independent_confident (whose coverage criterion >= 1 -
+// 1e-10 withheld it on every device with ends) nor by the trace-closure spread: those flags
+// are printed beside it, and `fixed-trace shift coverage` (FixedTraceShiftCoverage) names
+// the matched energy share the shift rests on. One function, so that the column of record
+// and its unit test read the same formula (review d1227 MAJOR-2).
 double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &response,
                                 double raw_normalization_energy);
 
@@ -92,6 +94,15 @@ double FixedTraceShiftCoverage(double within_radius_raw_energy, double kept_raw_
 inline constexpr const char *kRecoveredFluxSpaceMessage =
     "The recovered electric flux does not match the flux recovery space of the error "
     "estimators (broken across the interior boundary sheet faces when the mesh has any)!";
+
+// The time-averaged stored energy 1/2 C <v(t)²> = 1/4 |C| |V|² of a lumped capacitor C at
+// the peak-phasor port voltage V, as the raw E_cap of the port measurements (Palace
+// 0.20.0's convention): the capacitor energy of the self-consistent corrected field.
+inline double TimeAveragedCapacitorEnergy(double C, std::complex<double> V)
+{
+  return 0.5 * electromagnetics::TimeAverageWeight(true) * std::abs(C) *
+         std::real(V * std::conj(V));
+}
 
 // Statically specify if solver uses real or complex fields.
 

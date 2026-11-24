@@ -1557,6 +1557,7 @@ struct ResistorLossCase
 struct ResistorLossResult
 {
   std::map<int, double> R;  // Nondimensional port resistance
+  std::map<int, double> C;  // Nondimensional port capacitance
   std::map<int, Measurement::PortPostData> vi;
   std::optional<double> energy_electric;  // Measured E_elec, empty if not available
   double damping_ratio;                   // Eᴴ C E / Eᴴ M E of the system matrices
@@ -1605,6 +1606,7 @@ ResistorLossResult MeasureResistorLoss(ResistorLossCase &c, const fs::path &outp
   for (const auto &[idx, data] : space_op.GetLumpedPortOp())
   {
     result.R[idx] = data.R;
+    result.C[idx] = data.C;
   }
   result.vi = post_op.GetMeasurement().lumped_port_vi;
   result.energy_electric = post_op.GetMeasurement().domain_E_field_energy_all;
@@ -1890,4 +1892,54 @@ TEST_CASE_METHOD(test::SharedTempDir,
     CHECK(header.find("E_cap") != std::string::npos);
     CHECK(row.find("nan") == std::string::npos);
   }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir,
+                 "Self-consistent capacitor energy follows the port measurement convention",
+                 "[lumped_port][surfaceresponse][Serial][Parallel]")
+{
+  // Decision 2383 (P11): the capacitor energy of the self-consistent corrected field
+  // (PostOperator, TimeAveragedCapacitorEnergy) is the time-averaged stored energy of the
+  // peak-phasor port voltage, exactly the raw port measurement's E_cap = 1/4 |C| |V|² of
+  // Palace 0.20.0 for the same voltage; without the time average it would be twice it.
+  ResistorLossCase c;
+  c.mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian2D(3, 1, mfem::Element::QUADRILATERAL, false, 1.0, 0.5));
+  for (int i = 0; i < c.mesh->GetNBE(); i++)
+  {
+    mfem::Vector center;
+    auto *T = c.mesh->GetBdrElementTransformation(i);
+    T->Transform(mfem::Geometries.GetCenter(c.mesh->GetBdrElementGeometry(i)), center);
+    c.mesh->SetBdrAttribute(i, (center(1) == 0.0) ? 2 : 3);
+  }
+  c.mesh->SetAttributes();
+  c.boundaries = {
+      {"LumpedPort", json::array({json::object({{"Index", 1},
+                                                {"Attributes", json::array({2})},
+                                                {"Direction", "+X"},
+                                                {"R", 50.0},
+                                                {"C", 1.0e-12}})})}};
+  c.Er = [](const mfem::Vector &x, mfem::Vector &v)
+  {
+    v(0) = 1.0;
+    v(1) = 0.0;
+  };
+  c.Ei = [](const mfem::Vector &x, mfem::Vector &v)
+  {
+    v(0) = 0.5;
+    v(1) = 0.0;
+  };
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Root(comm))
+  {
+    fs::remove_all(temp_dir);
+    fs::create_directories(temp_dir);
+  }
+  Mpi::Barrier(comm);
+  const auto result = MeasureResistorLoss(c, temp_dir);
+  const auto &vi = result.vi.at(1);
+  REQUIRE(vi.capacitor_energy > 0.0);
+  // (Our form |V|² = Re{V V*} and upstream's std::norm(V) may round differently.)
+  CHECK_THAT(TimeAveragedCapacitorEnergy(result.C.at(1), vi.V),
+             WithinRel(vi.capacitor_energy, 1.0e-14));
 }

@@ -41,6 +41,7 @@
 #include "models/surfaceresponseidentification.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
@@ -2571,6 +2572,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 
   // (a) One label per corner; per type the labels sum to the uncovered energy.
   const auto &surf_post_op = post_op.GetSurfacePostOp();
+  // The real field e of the complex peak phasor (e, 0) above: its energies are twice the
+  // phasor's, the time average (Palace 0.20.0's convention; decision 2383).
+  GridFunction field_real(space_op.GetNDSpace(), false);
+  field_real.Real().SetFromTrueDofs(e.Real());
+  field_real.Real().ExchangeFaceNbrData();
   auto CheckSums =
       [&](const std::vector<SurfacePostOperator::UncoveredPerimeterPortion> &portions)
   {
@@ -2580,6 +2586,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         {4}, field, nullptr, portions);
     REQUIRE(by_type.count(4) == 1);
     REQUIRE(by_feature.count(4) == 1);
+    const auto by_feature_real = surf_post_op.GetInterfaceUncoveredFeatureEdgeEnergies(
+        {4}, field_real, nullptr, portions);
+    REQUIRE(by_feature_real.at(4).size() == by_feature.at(4).size());
+    for (const auto &[key, energy] : by_feature_real.at(4))
+    {
+      CHECK(by_feature.at(4).at(key) == electromagnetics::TimeAverageWeight(true) * energy);
+    }
     std::map<std::string, double> sums;
     for (const auto &[key, energy] : by_feature.at(4))
     {
@@ -2964,6 +2977,26 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(plain.count(4) == 1);
   const auto &a = plain.at(4);
   CHECK_THAT(BinSum(a), WithinRel(a.within, 1.0e-12));
+  // Palace 0.20.0's convention (decision 2383): the partition of the complex peak phasor
+  // (e, 0) is exactly 1/2 of the real field e's, bin by bin (the time average).
+  {
+    GridFunction field_real(space_op.GetNDSpace(), false);
+    field_real.Real().SetFromTrueDofs(e.Real());
+    field_real.Real().ExchangeFaceNbrData();
+    const auto plain_real =
+        surf_post_op
+            .GetInterfaceCoveragePartition({4}, field_real, nullptr,
+                                           {{"Missing", &missing}}, no_claims)
+            .at(4);
+    const double w = electromagnetics::TimeAverageWeight(true);
+    CHECK(a.within == w * plain_real.within);
+    CHECK(a.unclaimed == w * plain_real.unclaimed);
+    REQUIRE(a.classes.size() == plain_real.classes.size());
+    for (const auto &[key, energy] : plain_real.classes)
+    {
+      CHECK(a.classes.at(key) == w * energy);
+    }
+  }
   const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field, 0.0);
   const double outside =
       surf_post_op.GetInterfaceOuterElectricFieldEnergy(4, field).energy_outside;
@@ -3688,13 +3721,21 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(entry.model == reference.model);
   CHECK(entry.patch_count == reference.patch_count);
   CHECK_THAT(entry.patch_weight, WithinRel(reference.patch_weight, 1.0e-12));
-  CHECK_THAT(entry.domain_correction, WithinRel(reference.domain_correction, 1.0e-10));
+  CHECK_THAT(entry.domain_correction, WithinRel(electromagnetics::TimeAverageWeight(true) *
+                                                    reference.domain_correction,
+                                                1.0e-10));
   CHECK_THAT(entry.domain_correction_fixed_flux,
-             WithinRel(reference.domain_correction_fixed_flux, 1.0e-10));
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           reference.domain_correction_fixed_flux,
+                       1.0e-10));
   CHECK_THAT(entry.fabricated_surface_energy.at(4),
-             WithinRel(reference.fabricated_surface_energy.at(4), 1.0e-10));
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           reference.fabricated_surface_energy.at(4),
+                       1.0e-10));
   CHECK_THAT(entry.fabricated_surface_energy_fixed_flux.at(4),
-             WithinRel(reference.fabricated_surface_energy_fixed_flux.at(4), 1.0e-10));
+             WithinRel(electromagnetics::TimeAverageWeight(true) *
+                           reference.fabricated_surface_energy_fixed_flux.at(4),
+                       1.0e-10));
   const auto &surf_post_op = post_op.GetSurfacePostOp();
   const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(4, field);
   REQUIRE(edge_energies.size() == 1);
@@ -3778,13 +3819,16 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                WithinRel(reference.patch_weight, 1.0e-10));
     const bool fixed_flux = evaluation == 1;
     CHECK_THAT(std::stod(row[table.Column("domain correction (J)")]),
-               WithinRel(Joule(fixed_flux ? reference.domain_correction_fixed_flux
-                                          : reference.domain_correction),
+               WithinRel(electromagnetics::TimeAverageWeight(true) *
+                             Joule(fixed_flux ? reference.domain_correction_fixed_flux
+                                              : reference.domain_correction),
                          1.0e-10));
     CHECK_THAT(
         std::stod(row[table.Column("fabricated surface energy[4] (J)")]),
-        WithinRel(Joule(fixed_flux ? reference.fabricated_surface_energy_fixed_flux.at(4)
-                                   : reference.fabricated_surface_energy.at(4)),
+        WithinRel(electromagnetics::TimeAverageWeight(true) *
+                      Joule(fixed_flux
+                                ? reference.fabricated_surface_energy_fixed_flux.at(4)
+                                : reference.fabricated_surface_energy.at(4)),
                   1.0e-10));
     for (int cell = 5; cell <= 7; cell++)
     {
@@ -4109,8 +4153,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   }
   REQUIRE(by_label.count(label) == 1);
   REQUIRE(by_label.count("unclaimed") == 1);
-  CHECK_THAT(std::stod(by_label.at(label)[table.Column("raw energy[4] (J)")]),
-             WithinRel(Joule(model_raw), 1.0e-10));
+  CHECK_THAT(
+      std::stod(by_label.at(label)[table.Column("raw energy[4] (J)")]),
+      WithinRel(electromagnetics::TimeAverageWeight(true) * Joule(model_raw), 1.0e-10));
   REQUIRE(fs::is_regular_file(output_dir / "surface-response-model-raw-groups.csv"));
   const TextCsv groups =
       ReadTrimmedCsv(output_dir / "surface-response-model-raw-groups.csv");
@@ -6919,8 +6964,10 @@ TEST_CASE_METHOD(
     REQUIRE(fs::is_regular_file(straddling_dir / scp_table));
     const double scp_ft = PortionTableTotal(straddling_dir / scp_table, 0);
     const double scp_ff = PortionTableTotal(straddling_dir / scp_table, 1);
-    CHECK_THAT(scp_ft, WithinRel(kept_joule, 1.0e-10));
-    CHECK_THAT(scp_ff, WithinRel(kept_joule, 1.0e-10));
+    CHECK_THAT(scp_ft,
+               WithinRel(electromagnetics::TimeAverageWeight(true) * kept_joule, 1.0e-10));
+    CHECK_THAT(scp_ff,
+               WithinRel(electromagnetics::TimeAverageWeight(true) * kept_joule, 1.0e-10));
     const TextCsv table = ReadTrimmedCsv(straddling_dir / scp_table);
     int corner_rows = 0;
     for (const auto &row : table.rows)

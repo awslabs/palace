@@ -32217,10 +32217,13 @@ SurfaceResponseOperator::GetWithinRVolumeEnergies(const GridFunction &E,
     // bytes are what the table reads); the per-patch result is kept on the root only.
     return {};
   }
+  // The energies are time averages for a complex peak phasor (TimeAverageWeight), the
+  // volumes are not.
+  const double time_average = electromagnetics::TimeAverageWeight(E.HasImag());
   for (std::size_t b = 0; b < box_count; b++)
   {
-    result[b].electric = reduction[3 * b];
-    result[b].magnetic = reduction[3 * b + 1];
+    result[b].electric = time_average * reduction[3 * b];
+    result[b].magnetic = time_average * reduction[3 * b + 1];
     result[b].volume = reduction[3 * b + 2];
   }
   SortByPatch();
@@ -41903,11 +41906,17 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       }
     }
 
+    // The library's responses are static (real-field) quadratic forms; contracted with
+    // the complex peak-phasor trace, their energy is the time average, 1/2 of the
+    // Hermitian form (electromagnetics::TimeAverageWeight), the convention of Palace's
+    // time-harmonic energies with which these energies are combined: every energy of this
+    // response carries it, once, here (and in the magnetic weight below).
     auto HermitianForm =
         [&](const mfem::DenseMatrix &matrix, const Vector &real, const Vector &imag)
     {
-      return QuadraticForm(matrix, real, workspace) +
-             QuadraticForm(matrix, imag, workspace);
+      return electromagnetics::TimeAverageWeight(true) *
+             (QuadraticForm(matrix, real, workspace) +
+              QuadraticForm(matrix, imag, workspace));
     };
     // The detector weight (decision 955 D3): the patch's response energy on the CHAIN
     // trace, the weight of the loop / hat statistics as before the fit (bitwise records).
@@ -42316,7 +42325,9 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
                         model.basis_size);
       Vector patch_imag(magnetic_trace_imag.GetData() + patch.trace_offset,
                         model.basis_size);
-      const double magnetic_weight = 0.5 * patch.weight * patch.domain_weight / omega_abs2;
+      // The time average of the complex trace's form, as HermitianForm above.
+      const double magnetic_weight = electromagnetics::TimeAverageWeight(true) * 0.5 *
+                                     patch.weight * patch.domain_weight / omega_abs2;
       // COL-2 (R-MAG-14): the patch's within-R magnetic thin energy, read on every leaf
       // patch (the dual gate's exclusion withholds the CORRECTION, not the field's energy).
       const double magnetic_thin_energy =

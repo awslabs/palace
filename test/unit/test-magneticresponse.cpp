@@ -31,6 +31,7 @@
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
+#include "utils/constants.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/units.hpp"
@@ -546,10 +547,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // No electric loop-fit fallback on a closed-loop field: nothing withheld (decision 1235).
   CHECK(result.magnetic_fallback_patch_count == 0);
   CHECK(result.loop_fallback_magnetic_domain_correction == 0.0);
-  CHECK_THAT(result.magnetic_domain_correction, WithinRel(0.5 * form, 1.0e-9));
+  CHECK_THAT(result.magnetic_domain_correction,
+             WithinRel(0.5 * electromagnetics::TimeAverageWeight(true) * form, 1.0e-9));
   // |omega| = 2 halves nothing of E but the trace is B = curl E / omega: a quarter.
   const auto result_2 = response.GetMaxwellResponse(field, 2.0);
-  CHECK_THAT(result_2.magnetic_domain_correction, WithinRel(0.125 * form, 1.0e-9));
+  CHECK_THAT(result_2.magnetic_domain_correction,
+             WithinRel(0.125 * electromagnetics::TimeAverageWeight(true) * form, 1.0e-9));
   REQUIRE(result.model_magnetic_domain_corrections.size() == 1);
   CHECK_THAT(result.model_magnetic_domain_corrections[0],
              WithinRel(result.magnetic_domain_correction, 1.0e-12));
@@ -1505,7 +1508,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     REQUIRE(result.has_magnetic);
     CHECK(result.magnetic_fallback_patch_count == 0);
     CHECK(result.magnetic_excluded_patch_count == 0);
-    CHECK_THAT(result.magnetic_domain_correction, WithinRel(0.5 * form, 1.0e-9));
+    CHECK_THAT(result.magnetic_domain_correction,
+               WithinRel(0.5 * electromagnetics::TimeAverageWeight(true) * form, 1.0e-9));
     // On the EXACT linear field (the sheet dofs not zeroed: the zeroing bends the discrete
     // curl in the sheet's elements, which the twin lines starting on the metal cross) every
     // twin loop closes: the magnetic loop residual at roundoff under the leaf as in the
@@ -1706,7 +1710,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     REQUIRE(result.has_magnetic);
     CHECK(result.magnetic_fallback_patch_count == 0);
     CHECK(result.magnetic_excluded_patch_count == 0);
-    CHECK_THAT(result.magnetic_domain_correction, WithinRel(0.5 * form, 1.0e-9));
+    CHECK_THAT(result.magnetic_domain_correction,
+               WithinRel(0.5 * electromagnetics::TimeAverageWeight(true) * form, 1.0e-9));
     // Every twin loop of both free arcs closes on the exact field: the anchor line, the
     // steps, the step onto the PEC knot and the TWIN RETURN LINE (the extra line) sum to
     // zero (the residual at roundoff) under the leaf as in the legacy form.
@@ -2104,9 +2109,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   mfem::Vector e(const_cast<double *>(E0.data()), 3), b(const_cast<double *>(B0.data()), 3),
       tmp(3);
   epsilon.Mult(e, tmp);
-  const double electric_density = 0.5 * (e * tmp);
+  // Time averages of the complex peak phasor (Palace 0.20.0; decision 2383).
+  const double w = electromagnetics::TimeAverageWeight(true);
+  const double electric_density = w * 0.5 * (e * tmp);
   muinv.Mult(b, tmp);
-  const double magnetic_density = 0.5 * (b * tmp);
+  const double magnetic_density = w * 0.5 * (b * tmp);
   const auto energies = response.GetWithinRVolumeEnergies(E, B, mat_op);
   REQUIRE(energies.size() == static_cast<std::size_t>(response.GetPatchCount()));
   // The local patches' boxes give the exact volumes (every rank checks its own patches

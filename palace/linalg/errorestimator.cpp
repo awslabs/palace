@@ -885,7 +885,7 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, const 
               "interior boundaries when there are any, see GetFluxSpace)!");
   auto estimates =
       IntegrateErrorEstimates(E, E_gf, D, D_gf, nd_fespace, rt_fespace, integ_op);
-  linalg::Sqrt(estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
+  linalg::Sqrt(estimates, ErrorEstimateNormalization<VecType>(Et));
   indicator.AddIndicator(estimates);
 }
 
@@ -1125,7 +1125,9 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
                             curl_estimator.rt_fespace, curl_estimator.nd_fespace,
                             curl_estimator.projector, curl_estimator.integ_op);
   grad_estimates += curl_estimates;
-  linalg::Sqrt(grad_estimates, (*Et > 0.0) ? 0.5 / *Et : 1.0);
+  // Normalized by the total energy as upstream's indicators (time-averaged for complex
+  // fields), so that the indicators with a recovered D equal the recomputed ones.
+  linalg::Sqrt(grad_estimates, ErrorEstimateNormalization<VecType>(*Et));
   indicator.AddIndicator(grad_estimates);
 }
 
@@ -1196,7 +1198,9 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
                             curl_estimator.rt_fespace, curl_estimator.nd_fespace,
                             curl_estimator.projector, curl_estimator.integ_op);
   grad_estimates += curl_estimates;
-  linalg::Sqrt(grad_estimates, (*Et > 0.0) ? 0.5 / *Et : 1.0);
+  // Normalized by the total energy as upstream's indicators (time-averaged for complex
+  // fields), so that the indicators with a recovered D equal the recomputed ones.
+  linalg::Sqrt(grad_estimates, ErrorEstimateNormalization<VecType>(*Et));
   indicator.AddIndicator(grad_estimates);
 }
 
