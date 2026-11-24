@@ -413,3 +413,48 @@ contributed by each entity depends on its geometry at a given finite-element ord
 the counts this way makes the exact global degree-of-freedom size recoverable for mixed or
 non-simplicial meshes, where triangle and quadrilateral faces (and tetrahedral,
 hexahedral, prism, and pyramid cells) each contribute a different per-order count.
+
+### Following the corrected values over adaptive rounds
+
+A run with a surface-response correction (electrostatic, eigenmode or driven) writes one
+table, `surface-participation.csv`, at the top level of the output directory and appends to
+it at the end of every adaptive level, so you can start from a coarse mesh and follow the
+values over the rounds as you would follow raw values. Each row is one interface of one
+point (terminal, mode or output frequency) at one level: the raw and the corrected
+participation side by side, then in the same row the resolution verdict (with the element
+size near the metal edges over ``R``), the coverage and regime verdicts, the confidence
+flag, the change since the previous level and the convergence indicator. A box target (an
+entry with a `Region`) gets verdicts of its own patches, so a box on coarse elements is
+flagged even when the rest of the device is resolved. Nothing is withheld: a value whose
+verdicts are not met is printed with them listed in `flags`.
+
+Read the rows whose `scope` is `Type` (the corrected participation of a `Type`, summed over
+its interfaces) or `region` (a box value): their verdicts are of that value; an
+`interface` row shows one interface's share and carries its `Type`'s verdicts. The values
+are the fixed-trace corrected participations (`p corrected (fixed-trace)`).
+
+The convergence indicator is the change per doubling of the unknowns, read against the
+latest earlier level with at least 20 % fewer unknowns and only when the mesh at that
+value's own edges was refined since then (otherwise `MOVING: CELL-NOT-REFINED`: on a large
+device the unknowns can grow elsewhere). A value is SETTLED below 1 % per doubling, and
+RESOLVED only when it is SETTLED and the mesh near its edges is within the bar of its order.
+A SINGLE SOLVE NEVER READS RESOLVED, so run adaptive rounds (order 3 with the default
+adaptive rounds is the cheapest route measured). Stop on RESOLVED rows of the values you
+need, not on a small plain change. What the words mean, measured on electrostatic values of
+three designs against thick-metal references: RESOLVED means the value stopped moving inside
+the tested domain, not that it matches thick: the worst value printed RESOLVED was 4.0 % off
+thick and 26 of the 39 RESOLVED values were beyond 2 %, so a 2 % target is not supported.
+SETTLED cannot see a bias of the library or of the reference: one design settled at -2.8 % at
+all three orders. MARGINAL values were within 5 % in 61 % of the cases and outside in 39 %;
+RESOLVED came 1-2 rounds after a value was within 5 %, at 3-13 times its unknowns. The bars
+are the edge of the tested domain, not sizes that give 5 %. For an eigenmode the history must
+follow the same physical mode across rounds (match the mode, not its index: the table
+matches modes by frequency and participation and prints `UNMATCHED` otherwise); this was
+tested on one mode of one design only, and no eigenmode value has yet settled or read
+RESOLVED in the tests: eigenmode and driven rows read `SETTLED-UNTESTED` /
+`RESOLVED-UNTESTED` until the rule is tested there. Data marked interim make the words read
+`-INTERIM`. The thresholds are data (see
+[the reference](../reference.md#The-per-iteration-table-of-the-response-correction)). The
+log prints the values in short form after each level. `PreflightOnly` does not evaluate the
+resolution census; every corrected run prints it before its first solve and in the first
+rows of this table.
