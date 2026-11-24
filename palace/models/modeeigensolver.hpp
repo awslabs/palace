@@ -12,6 +12,7 @@
 #include "linalg/eps.hpp"
 #include "linalg/ksp.hpp"
 #include "linalg/operator.hpp"
+#include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
 #include "models/modeoperatorassembly.hpp"
 #include "models/waveportreducedmodel.hpp"
@@ -207,6 +208,10 @@ private:
   // Eigenvalue and linear solvers (null on processes without solver_comm).
   std::unique_ptr<EigenvalueSolver> eigen;
   std::unique_ptr<ComplexKspSolver> ksp;
+
+  // The sparse direct preconditioner of ksp without multigrid, which is given direct_pc_op.
+  MfemWrapperSolver<ComplexOperator> *direct_pc = nullptr;
+  bool direct_pc_block_form = false;
 
   // Communicator used by the eigensolver. For wave ports this is the sub-communicator of
   // ranks owning port unknowns, not the parent FE-space communicator.

@@ -201,6 +201,8 @@ public:
 
 public:
   EigenvalueSolver() = default;
+  EigenvalueSolver(const EigenvalueSolver &) = delete;
+  EigenvalueSolver &operator=(const EigenvalueSolver &) = delete;
   virtual ~EigenvalueSolver() = default;
 
   // Set operators for the generalized eigenvalue problem, quadratic polynomial

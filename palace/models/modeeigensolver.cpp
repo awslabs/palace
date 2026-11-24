@@ -249,6 +249,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   // Ar + Ai keeps their magnitude. The conductivity term dominates the system matrix in a
   // conductor meshed as a volume, where Ar is that of vacuum.
   direct_pc_op.reset();
+  direct_pc_block_form = false;
   if (!block_pc_ptr)
   {
     const auto *Ar = dynamic_cast<const mfem::HypreParMatrix *>(opA->Real());
@@ -278,6 +279,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
       block_coeffs(1, 1) = -1.0;
       std::unique_ptr<Operator> P(mfem::HypreParMatrixFromBlocks(blocks, &block_coeffs));
       direct_pc_op = std::make_unique<ComplexWrapperOperator>(std::move(P), nullptr);
+      direct_pc_block_form = true;
     }
     else if (Ar && Ai)
     {
@@ -329,6 +331,7 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   else
   {
     MFEM_VERIFY(direct_pc_op, "Missing complex-aware boundary mode preconditioner!");
+    direct_pc->SetCallerBlockForm(direct_pc_block_form);
     ksp->SetOperators(*opA, *direct_pc_op);
   }
   eigen->SetOperators(*opB, *opA, EigenvalueSolver::ScaleType::NONE);
@@ -598,6 +601,7 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
         return {};
       }(),
       false, false, false, reorder_reuse);
+  direct_pc = pc.get();
   ksp = std::make_unique<ComplexKspSolver>(std::move(gmres), std::move(pc));
 }
 
@@ -637,7 +641,7 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
                 bmo->GetNDSpaceHierarchy().GetFESpaceAtLevel(0),
                 bmo->GetH1AuxSpaceHierarchy().GetFESpaceAtLevel(0), linear.ams_max_it,
                 linear.mg_smooth_it, linear.ams_vector_interp, linear.ams_singular_op,
-                linear.amg_agg_coarsen, print),
+                linear.amg_agg_coarsen, linear.ams_agglomeration_target, print),
             true, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
       case LinearSolver::BOOMER_AMG:

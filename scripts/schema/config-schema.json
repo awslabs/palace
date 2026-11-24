@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:5-2-0",
+  "$id": "urn:palace:schema:6-1-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -1324,7 +1324,7 @@
           "default": 0.0
         },
         "Excitation": {
-          "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "description": "Turns on or off port excitation for driven or transient simulations. Driven excitations carry 1 W of time-averaged incident power (peak phasors); transient excitations carry unit instantaneous power at unit pulse amplitude. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
           "default": false,
           "oneOf": [
             {
@@ -1422,7 +1422,7 @@
           "default": 0.0
         },
         "Excitation": {
-          "description": "Turns on or off port excitation for driven or transient simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "description": "Turns on or off port excitation for driven or transient simulations. Driven excitations carry 1 W of time-averaged incident power (peak phasors); transient excitations carry unit instantaneous power at unit pulse amplitude. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
           "default": false,
           "oneOf": [
             {
@@ -1594,7 +1594,7 @@
           ]
         },
         "Excitation": {
-          "description": "Turns on or off port excitation for driven simulations. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
+          "description": "Turns on or off port excitation for driven simulations, normalized to 1 W of time-averaged incident power for lossless propagating modes. Lossy wave ports normalize the magnitude of complex power. Can be specified as a boolean or as a non-negative integer (excitation group index). See the [boundary conditions guide](../guide/boundaries.md#Lumped-and-wave-port-excitation) for details.",
           "default": false,
           "oneOf": [
             {
@@ -1698,7 +1698,7 @@
           "description": "Integer array of mesh boundary attributes for this Floquet port. The port face must be planar and lie on the true boundary of the computational domain; the adjacent medium must be homogeneous and isotropic."
         },
         "Excitation": {
-          "description": "Excitation flag or positive excitation index. When excited, injects a unit-power plane wave in the specular `(0, 0)` diffraction order.",
+          "description": "Excitation flag or positive excitation index. When excited, injects a 1 W time-averaged plane wave in the specular `(0, 0)` diffraction order.",
           "default": false,
           "oneOf": [
             {
@@ -3348,6 +3348,13 @@
           "type": "integer",
           "description": "Number of AMS iterations per preconditioner application when geometric multigrid is enabled (`\"MGMaxLevels\"` > 1). If omitted, Palace uses [`/Solver/Order`](@ref config-solver-order).",
           "exclusiveMinimum": 0
+        },
+        "AMSAgglomerationTarget": {
+          "type": "integer",
+          "description": "Target number of rows per process for the coarse levels of the auxiliary space AMG hierarchies of AMS. During the solve, the levels with much fewer rows per process are gathered onto fewer processes, so that they are not dominated by message latency at high process counts. The hierarchies are unchanged and the results agree up to the summation order. `0` disables the agglomeration. Requires a patch to hypre, which the superbuild and the Spack package apply, and is ignored without it.",
+          "minimum": 0,
+          "default": 2048,
+          "x-palace-advanced": true
         },
         "DivFreeTol": {
           "type": "number",

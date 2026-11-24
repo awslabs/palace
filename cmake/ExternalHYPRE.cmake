@@ -131,6 +131,14 @@ list(APPEND HYPRE_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/hypre/hypre_ams_fixed_iterations.diff"
 )
 
+# AMS: agglomerate the coarse levels of the auxiliary space BoomerAMG hierarchies onto
+# fewer processes during the solve (same hierarchies and V-cycles), and run the additive
+# Pi-space corrections concurrently (prototype for
+# https://github.com/hypre-space/hypre/issues/1654). Applies after the patch above.
+list(APPEND HYPRE_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/hypre/hypre_ams_coarse_agglomeration.diff"
+)
+
 include(ExternalProject)
 ExternalProject_Add(hypre
   DEPENDS           ${HYPRE_DEPENDENCIES}

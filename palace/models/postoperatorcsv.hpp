@@ -122,22 +122,22 @@ struct Measurement
     // S-Parameter.
     std::complex<double> S = 0.0;
 
-    // Wave port mode characteristic impedance Z_PV = |V_exc|² / |P_exc| computed from
+    // Wave port mode characteristic impedance Z_PV = |V_exc|² / (2 P_exc) computed from
     // the boundary-mode-solved E-field along the user-specified VoltagePath. Independent
     // of which port is excited (property of the mode, not the simulation result). Only
     // populated for wave ports with VoltagePath configured; left as 0 otherwise.
     std::complex<double> Z_PV = 0.0;
 
-    // Energies (currently only for lumped port).
-    double inductor_energy = 0.0;   // E_ind = ∑_j 1/2 L_j I_mj².
-    double capacitor_energy = 0.0;  // E_cap = ∑_j 1/2 C_j V_mj².
+    // Time-averaged stored energies (currently only for lumped port).
+    double inductor_energy = 0.0;   // E_ind = ∑_j 1/4 L_j |I_mj|².
+    double capacitor_energy = 0.0;  // E_cap = ∑_j 1/4 C_j |V_mj|².
 
-    // Resistive lumped port (only eigenmode), normalized by the total energy, so empty
-    // without one (Measurement::TotalEnergyNormalization).
+    // Resistive lumped port (only eigenmode), normalized by the total stored energy 2 U, so
+    // empty without U (Measurement::ElectricEnergyNormalization).
     std::optional<double> mode_port_kappa;
     std::optional<double> quality_factor;
 
-    // Inductive lumped port (only eigenmode), empty without a total energy.
+    // Inductive lumped port (only eigenmode), normalized by U, so empty without it.
     std::optional<double> inductive_energy_participation;
   };
 
@@ -199,12 +199,13 @@ struct Measurement
   // Equal to domain_E_field_energy_all without such materials.
   double domain_E_field_energy_material = 0.0;
 
-  // The total stored energy a mode's participation ratios and coupling rates are normalized
-  // by, from electric-side quantities only (they converge faster than the magnetic ones):
+  // The time-averaged electric-side energy U a mode's participation ratios are normalized
+  // by, and its coupling rates by the total stored energy 2 U, from electric-side
+  // quantities only (they converge faster than the magnetic ones):
   // (E_elec + E_elec_material)/2 + E_cap, which is E_elec + E_cap for constant materials
   // and the mean of the electric and magnetic energies for a lossless mode in general.
   // Empty without the stored electric field energy.
-  std::optional<double> TotalEnergyNormalization() const
+  std::optional<double> ElectricEnergyNormalization() const
   {
     if (!domain_E_field_energy_all)
     {
@@ -243,7 +244,7 @@ struct Measurement
   std::vector<std::complex<double>> probe_B_field;
 
   std::vector<FluxData> surface_flux_i;
-  // Interface participations, normalized by the total energy, so empty without one.
+  // Interface participations, normalized by U, so empty without it.
   std::vector<InterfaceData> interface_eps_i;
   FarFieldData farfield;
 
@@ -292,9 +293,9 @@ protected:
   void FlushDeferredTables();
 
   // Remove the file of a configured table which this run omits (it is normalized by an
-  // energy which is not available), so that a fresh run does not leave the file of an
-  // earlier run beside its other outputs. A restart (reload_table) keeps existing files.
-  // Called on the root process, like the table writes.
+  // energy which is not available, or its excitations define no S-parameters), so that a
+  // fresh run does not leave the file of an earlier run beside its other outputs. A restart
+  // (reload_table) keeps existing files. Called on the root process, like the table writes.
   void RemoveOmittedTable(const fs::path &file_name) const;
 
   // Flush deferred tables if the flush interval has elapsed. Call only at a step boundary,

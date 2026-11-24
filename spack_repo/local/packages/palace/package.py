@@ -329,11 +329,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # As in the superbuild, https://github.com/hypre-space/hypre/pull/1651 (hybrid
     # Gauss-Seidel relaxation without the halo exchange of a zero initial guess), the
     # implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes
-    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination), and the copy
-    # in extern/patch/hypre of the patch for AMS with a fixed number of iterations (no
+    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination), and the
+    # copies in extern/patch/hypre of the patch for AMS with a fixed number of iterations (no
     # residual norms with a zero tolerance, and the zero flag of the initial guess used and
-    # maintained). Kept off the `with` blocks so the Palace variants are not folded into the
-    # patch conditions.
+    # maintained) and of the patch for the AMS coarse-level agglomeration (a prototype for
+    # https://github.com/hypre-space/hypre/issues/1654), which applies after it. Kept off
+    # the `with` blocks so the Palace variants are not folded into the patch conditions.
     depends_on(
         "hypre",
         when="@develop",
@@ -356,6 +357,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "a8da5d214eb2992c225fc601b640a097b8766e39/extern/patch/hypre/"
                 "hypre_ams_fixed_iterations.diff",
                 sha256="441d1709c745fc74707087511f3f1bdb2a2924e1502305586ab945f24639bb54",
+                when="@3.2.0:3.2.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "d67d010416475b56381e565001ad168568df15ac/extern/patch/hypre/"
+                "hypre_ams_coarse_agglomeration.diff",
+                sha256="e72059250253adc29275a936a0ab322b9d8f231aa72a486c8c74755dfb2f152c",
                 when="@3.2.0:3.2.1",
             ),
         ],
@@ -602,6 +610,17 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "5bee0d22ad3a88626bf577778aa7b31b28e87db0.diff",
                 sha256="da325c815dc513f0bc9fc32c17757e82144eaeee5ad734d8b537e816e630c856",
                 when="@4.10.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5780: without GPU support in hypre,
+            # HypreParVector wraps the host data of hypre as MemoryType::HOST, so that the
+            # debug device does not protect its pages (narrow to @4.10.0 once merged
+            # upstream and Lookahead flags it)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "48f86fa81ed110995e8bf6eda738650673077b2c/extern/patch/mfem/"
+                "mfem_pr5780.diff",
+                sha256="07c7214581cb5c11a4999e7bc473a67a16ae6a400c7220e1b2d743600fdee6f4",
+                when="@4.10:",
             ),
         ],
     )

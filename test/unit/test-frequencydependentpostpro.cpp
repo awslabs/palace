@@ -752,9 +752,11 @@ TEST_CASE("Metal-substrate interface of a frequency-dependent substrate",
           "[frequencydependent][Serial][Parallel][GPU]")
 {
   // The MS participation of a uniform normal field E = E_n n on the substrate side of the
-  // face is 1/2 t / ε_MS |D_n|² A with |D_n| = |ε(iω)| |E_n|: the complete displacement,
-  // not Re ε² of a lossy model. The substrate has ε∞ = 1, so it is identified as substrate
-  // by its configured model, not by its light speed. The other side is vacuum.
+  // face is the raw integrand 1/2 t / ε_MS |D_n|² A with |D_n| = |ε(iω)| |E_n|: the
+  // complete displacement, not Re ε² of a lossy model. The reported energy of the complex
+  // field is its time average, 1/2 of the raw integral. The substrate has ε∞ = 1, so it is
+  // identified as substrate by its configured model, not by its light speed. The other side
+  // is vacuum.
   const int dim = GENERATE(3, 2);
   CAPTURE(dim);
   test::IntegrationSettingsGuard guard;
@@ -825,7 +827,7 @@ TEST_CASE("Metal-substrate interface of a frequency-dependent substrate",
     const double expected =
         0.5 * data.t / data.epsilon_r * eps_abs * eps_abs * std::norm(En);
     CHECK_THAT(surf_post_op.GetInterfaceElectricFieldEnergy(1, E, omega),
-               WithinRel(expected, 1.0e-10));
+               WithinRel(0.5 * expected, 1.0e-10));
 
     // The MFEM coefficient of the legacy path, with the same substrate table (and the
     // neighbor field values of interfaces on process boundaries).
@@ -1220,9 +1222,10 @@ TEST_CASE("Flux error estimator without a total energy normalization",
                                ProblemType::DRIVEN, mesh);
   TimeDependentFluxErrorEstimator<ComplexVector> constant_estimator(
       constant_op, nd_fespaces, rt_fespaces, 1.0e-14, 1000, 0, false);
-  // The established scale for Et ≤ 0 is 1, that of Et = 0.5.
+  // The established scale for Et ≤ 0 is 1, that of the time-averaged Et = 0.25 of the
+  // complex fields (ErrorEstimateNormalization).
   ErrorIndicator established;
-  constant_estimator.AddErrorIndicator(E, B, 0.5, omega, established);
+  constant_estimator.AddErrorIndicator(E, B, 0.25, omega, established);
   for (double Et : {0.0, -1.0})
   {
     CAPTURE(Et);

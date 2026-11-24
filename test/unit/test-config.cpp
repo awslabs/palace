@@ -1995,6 +1995,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
     CHECK(iodata.solver.linear.ams_singular_op == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.ams_agglomeration_target == 2048);
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
 
@@ -2002,8 +2003,32 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "AMS");
     CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["AMSAgglomerationTarget"].get<int>() == 2048);
     CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
     CHECK(config["Solver"]["Magnetostatic"]["InactivePorts"] == "Open");
+  }
+
+  SECTION("AMSAgglomerationTarget is read, with 0 to disable the agglomeration")
+  {
+    auto Config = [](int target)
+    {
+      return json{
+          {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+          {"Model", {{"Mesh", "test.msh"}}},
+          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+          {"Boundaries", json::object()},
+          {"Solver", {{"Linear", {{"Type", "AMS"}, {"AMSAgglomerationTarget", target}}}}}};
+    };
+    for (int target : {0, 512})
+    {
+      json config = Config(target);
+      CHECK(ValidateConfig(config).empty());
+      IoData iodata(config, false);
+      CHECK(iodata.solver.linear.ams_agglomeration_target == target);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["AMSAgglomerationTarget"].get<int>() == target);
+    }
+    CHECK_FALSE(ValidateConfig(Config(-1)).empty());
   }
 
   SECTION("User-specified values survive concretization")
@@ -2369,6 +2394,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
     CHECK(l2.ams_singular_op == l1.ams_singular_op);
     CHECK(l2.ams_max_it == l1.ams_max_it);
+    CHECK(l2.ams_agglomeration_target == l1.ams_agglomeration_target);
     CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
     CHECK(l2.reorder_reuse == l1.reorder_reuse);
     CHECK(l2.pc_side == l1.pc_side);
