@@ -4,6 +4,7 @@
 #include "errorestimator.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -494,6 +495,12 @@ double IndicatorScale(const std::optional<double> &Et, const MaterialOperator &m
 }
 
 }  // namespace
+
+// The flux recovery uses the material properties of all attributes, which in the PML
+// regions are those of their background material (see MaterialOperator): the stretch
+// factors are continuous, so that the normal component of the flux of the background
+// material is continuous across the PML interface and between the elements of the PML up
+// to discretization error.
 
 template <typename VecType>
 GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(

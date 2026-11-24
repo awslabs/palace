@@ -3,10 +3,14 @@
 
 #include "gmg.hpp"
 
+#include <algorithm>
+#include <cstdio>
+#include <vector>
 #include <mfem.hpp>
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
+#include "utils/communication.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -63,6 +67,9 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
 }
 
 template <OperatorType OperType>
+GeometricMultigridSolver<OperType>::~GeometricMultigridSolver() = default;
+
+template <OperatorType OperType>
 void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
 {
   using ParOperType = std::conditional_t<std::is_same_v<OperType, ComplexOperator>,
@@ -77,6 +84,11 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
       mg_op->GetNumLevels() == n_levels &&
           (!mg_op->HasAuxiliaryOperators() || mg_op->GetNumAuxiliaryLevels() == n_levels),
       "Invalid number of levels for operators in multigrid solver setup!");
+
+  // Factor the subdomain matrix before the coarse-level matrix, so that the memory peak of
+  // the (typically larger) subdomain factorization does not add to the coarse-level
+  // factors.
+  SetUpSubdomainCorrection(*mg_op);
   for (std::size_t l = 0; l < n_levels; l++)
   {
     A[l] = &mg_op->GetOperatorAtLevel(l);
@@ -95,17 +107,33 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
       dbc_tdof_lists[l] = PtAP_l->GetEssentialTrueDofs();
     }
 
+    // The smoothers do not update the masked true DOFs (for example, of strongly stretched
+    // PML elements, see SpaceOperator::GetPreconditionerMatrix).
     auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(B[l].get());
     if (dist_smoother)
     {
       MFEM_VERIFY(mg_op->HasAuxiliaryOperators(),
                   "Distributive relaxation smoother relies on both primary space and "
                   "auxiliary space operators for multigrid smoothing!");
+      dist_smoother->SetMasks(mg_op->GetSmootherMask(l),
+                              mg_op->GetAuxiliarySmootherMask(l));
       dist_smoother->SetOperators(mg_op->GetOperatorAtLevel(l),
                                   mg_op->GetAuxiliaryOperatorAtLevel(l));
     }
     else
     {
+      if (l > 0)
+      {
+        if (auto *cheby = dynamic_cast<ChebyshevSmoother<OperType> *>(B[l].get()))
+        {
+          cheby->SetMask(mg_op->GetSmootherMask(l));
+        }
+        else if (auto *cheby_1st =
+                     dynamic_cast<ChebyshevSmoother1stKind<OperType> *>(B[l].get()))
+        {
+          cheby_1st->SetMask(mg_op->GetSmootherMask(l));
+        }
+      }
       B[l]->SetOperator(mg_op->GetOperatorAtLevel(l));
     }
 
@@ -119,6 +147,154 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
 
   this->height = op.Height();
   this->width = op.Width();
+}
+
+template <OperatorType OperType>
+void GeometricMultigridSolver<OperType>::SetUpSubdomainCorrection(
+    const BaseMultigridOperator<OperType> &mg_op)
+{
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    if (!subdomain_solver)
+    {
+      return;
+    }
+    const auto &tdofs = mg_op.GetSubdomainTrueDofs();
+    const auto *A_fine =
+        dynamic_cast<const ComplexParOperator *>(&mg_op.GetFinestOperator());
+    MFEM_VERIFY(A_fine, "Subdomain correction requires a ComplexParOperator!");
+    const MPI_Comm comm = A_fine->GetComm();
+    HYPRE_BigInt n_sub = static_cast<HYPRE_BigInt>(tdofs.size()), n_glob = n_sub;
+    Mpi::GlobalSum(1, &n_glob, comm);
+    if (n_glob == 0)
+    {
+      subdomain_S.reset();
+      return;
+    }
+
+    // Assembled operator whose restriction to the subdomain true DOFs is the subdomain
+    // matrix.
+    const auto *A_sub =
+        dynamic_cast<const ComplexParOperator *>(mg_op.GetSubdomainOperator());
+    MFEM_VERIFY(A_sub, "Missing operator for the subdomain correction!");
+    auto Assemble = [](const Operator *op) -> std::unique_ptr<mfem::HypreParMatrix>
+    {
+      return op ? dynamic_cast<const ParOperator &>(*op).StealParallelAssemble() : nullptr;
+    };
+    auto hAr = Assemble(A_sub->Real()), hAi = Assemble(A_sub->Imag());
+    MFEM_VERIFY(hAr || hAi, "Missing operator for the subdomain correction!");
+    const mfem::HypreParMatrix &hA = hAr ? *hAr : *hAi;
+
+    // Selection operator S: the columns of the identity of the subdomain true DOFs. The
+    // subdomain unknowns are numbered in the order of the global true DOFs and distributed
+    // evenly over the processes, since the subdomain in general is not (some processes may
+    // own no subdomain unknowns, which the sparse direct solvers do not support).
+    MFEM_VERIFY(HYPRE_AssumedPartitionCheck(),
+                "Subdomain correction requires Hypre's assumed partition!");
+    const int n_proc = Mpi::Size(comm), rank = Mpi::Rank(comm);
+    const HYPRE_BigInt n_fine = hA.GetGlobalNumRows();
+    const HYPRE_BigInt fine_start = hA.RowPart()[0];
+    std::vector<HYPRE_BigInt> counts(n_proc), offsets(n_proc + 1, 0);
+    MPI_Allgather(&n_sub, 1, HYPRE_MPI_BIG_INT, counts.data(), 1, HYPRE_MPI_BIG_INT, comm);
+    for (int p = 0; p < n_proc; p++)
+    {
+      offsets[p + 1] = offsets[p] + counts[p];
+    }
+    auto ChunkStart = [&](int p) { return (n_glob * p) / n_proc; };
+    const HYPRE_BigInt chunk_start = ChunkStart(rank), chunk_end = ChunkStart(rank + 1);
+
+    // Send the global true DOF indices of the local subdomain unknowns to the processes
+    // owning them in the even distribution.
+    std::vector<HYPRE_BigInt> send(n_sub);
+    for (HYPRE_BigInt k = 0; k < n_sub; k++)
+    {
+      send[k] = fine_start + tdofs[k];
+    }
+    auto Overlap = [](HYPRE_BigInt a0, HYPRE_BigInt a1, HYPRE_BigInt b0, HYPRE_BigInt b1)
+    { return std::max<HYPRE_BigInt>(0, std::min(a1, b1) - std::max(a0, b0)); };
+    std::vector<int> send_counts(n_proc), send_displs(n_proc), recv_counts(n_proc),
+        recv_displs(n_proc);
+    for (int p = 0; p < n_proc; p++)
+    {
+      send_counts[p] = static_cast<int>(
+          Overlap(offsets[rank], offsets[rank + 1], ChunkStart(p), ChunkStart(p + 1)));
+      send_displs[p] = static_cast<int>(
+          std::clamp(ChunkStart(p), offsets[rank], offsets[rank + 1]) - offsets[rank]);
+      recv_counts[p] =
+          static_cast<int>(Overlap(offsets[p], offsets[p + 1], chunk_start, chunk_end));
+      recv_displs[p] =
+          static_cast<int>(std::clamp(offsets[p], chunk_start, chunk_end) - chunk_start);
+    }
+    const int m_loc = static_cast<int>(chunk_end - chunk_start);
+    std::vector<HYPRE_BigInt> J(m_loc);
+    MPI_Alltoallv(send.data(), send_counts.data(), send_displs.data(), HYPRE_MPI_BIG_INT,
+                  J.data(), recv_counts.data(), recv_displs.data(), HYPRE_MPI_BIG_INT,
+                  comm);
+
+    // Assemble Sᵀ (one unit entry per row) and transpose.
+    std::vector<int> I(m_loc + 1);
+    std::vector<double> D(m_loc, 1.0);
+    for (int k = 0; k <= m_loc; k++)
+    {
+      I[k] = k;
+    }
+    HYPRE_BigInt row_starts[2] = {chunk_start, chunk_end};
+    HYPRE_BigInt col_starts[2] = {fine_start, hA.RowPart()[1]};
+    mfem::HypreParMatrix St(comm, m_loc, n_glob, n_fine, I.data(), J.data(), D.data(),
+                            row_starts, col_starts);
+    subdomain_S.reset(St.Transpose());
+
+    // Print the size of the subdomain before its factorization, which dominates the memory
+    // of the preconditioner when the subdomain is a significant fraction of the domain (and
+    // flush the output, in case the factorization runs out of memory).
+    Mpi::Print(" Subdomain correction: {:d} unknowns ({:.1f}% of the finest level)\n",
+               n_glob, 100.0 * static_cast<double>(n_glob) / static_cast<double>(n_fine));
+    std::fflush(stdout);
+
+    // Subdomain operator A_S = Sᵀ A S.
+    std::unique_ptr<Operator> Ar_S, Ai_S;
+    if (hAr)
+    {
+      Ar_S.reset(mfem::RAP(hAr.get(), subdomain_S.get()));
+    }
+    if (hAi)
+    {
+      Ai_S.reset(mfem::RAP(hAi.get(), subdomain_S.get()));
+    }
+    hAr.reset();
+    hAi.reset();
+    ComplexWrapperOperator A_S(std::move(Ar_S), std::move(Ai_S));
+    {
+      // The complex arithmetic sparse direct solvers factor the matrix here, during the
+      // setup of the preconditioner: count its time and memory with the subdomain solves.
+      BlockTimer bt(Timer::KSP_SUBDOMAIN_SOLVE, use_timer);
+      subdomain_solver->SetOperator(A_S);
+    }
+    subdomain_r.SetSize(subdomain_S->Width());
+    subdomain_x.SetSize(subdomain_S->Width());
+    subdomain_r.UseDevice(true);
+    subdomain_x.UseDevice(true);
+  }
+}
+
+template <OperatorType OperType>
+void GeometricMultigridSolver<OperType>::SubdomainCorrection(int l) const
+{
+  if constexpr (std::is_same_v<OperType, ComplexOperator>)
+  {
+    if (!subdomain_S || l != static_cast<int>(A.size()) - 1)
+    {
+      return;
+    }
+    BlockTimer bt(Timer::KSP_SUBDOMAIN_SOLVE, use_timer);
+    A[l]->Mult(Y[l], R[l]);
+    linalg::AXPBY(1.0, X[l], -1.0, R[l]);
+    subdomain_S->MultTranspose(R[l].Real(), subdomain_r.Real());
+    subdomain_S->MultTranspose(R[l].Imag(), subdomain_r.Imag());
+    subdomain_solver->Mult(subdomain_r, subdomain_x);
+    subdomain_S->Mult(1.0, subdomain_x.Real(), 1.0, Y[l].Real());
+    subdomain_S->Mult(1.0, subdomain_x.Imag(), 1.0, Y[l].Imag());
+  }
 }
 
 template <OperatorType OperType>
@@ -198,7 +374,8 @@ void GeometricMultigridSolver<OperType>::VCycle(int l, bool initial_guess) const
   RealMult(*P[l - 1], Y[l - 1], R[l]);
   Y[l] += R[l];
 
-  // Post-smooth, with nonzero initial guess.
+  // Subdomain correction (finest level only), then post-smooth with nonzero initial guess.
+  SubdomainCorrection(l);
   B[l]->SetInitialGuess(true);
   B[l]->MultTranspose2(X[l], Y[l], R[l]);
 }
