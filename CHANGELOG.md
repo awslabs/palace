@@ -35,7 +35,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the deflated problem. The solve of the deflated problem now uses the Gram matrix of the
     deflated eigenvectors (Effenberger, 2013), and an attempt which would repeat the last
     one from the same initial guess is skipped.
-    [Issue 1290](https://github.com/awslabs/palace/issues/1290).
+    [PR 1299](https://github.com/awslabs/palace/pull/1299).
 
 ## [0.20.0] - 2026-11-23
 
