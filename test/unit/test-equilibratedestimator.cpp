@@ -136,8 +136,9 @@ mfem::Mesh WithBoundary(const mfem::Mesh &base, const Classifier &attribute)
 // The test geometries: a box with a terminal on part of one side and the ground on the
 // opposite side (BOX), the same with an interior ground sheet across the middle instead
 // (SHEET) or with a second, disconnected part of the ground on a strip of a third side
-// (SPLIT), a thin slab with a terminal strip below and the ground above (SLAB), and a box
-// with two terminals (TWO).
+// (SPLIT), a thin slab with a terminal strip below and the ground above (SLAB), a box
+// with two terminals (TWO), and the same with the second part of the ground of SPLIT
+// (TWO_SPLIT).
 struct Geometry
 {
   mfem::Element::Type type;
@@ -149,7 +150,10 @@ struct Geometry
     SHEET,
     SPLIT,
     SLAB,
-    TWO
+    TWO,
+    TWO_SPLIT,
+    PLATE,
+    PLATES
   } kind;
 
   int Attribute(const std::array<double, 3> &x, bool exterior) const
@@ -183,6 +187,7 @@ struct Geometry
         }
         return 1;
       case TWO:
+      case TWO_SPLIT:
         if (!exterior)
         {
           return 0;
@@ -195,7 +200,22 @@ struct Geometry
         {
           return second;
         }
+        if (kind == TWO_SPLIT && x[1] < tol && x[0] > 0.25 * s[0] && x[0] < 0.75 * s[0])
+        {
+          return ground;
+        }
         return (x[0] > s[0] - tol) ? ground : 1;
+      case PLATE:
+      case PLATES:
+        if (!exterior)
+        {
+          return 0;
+        }
+        if (x[0] < tol)
+        {
+          return terminal;
+        }
+        return (x[0] > s[0] - tol) ? ((kind == PLATE) ? ground : second) : 1;
       case SLAB:
         if (!exterior)
         {
@@ -226,13 +246,16 @@ struct Geometry
 
   std::vector<int> Terminals() const
   {
-    return (kind == TWO) ? std::vector<int>{terminal, second} : std::vector<int>{terminal};
+    return (kind == TWO || kind == TWO_SPLIT || kind == PLATES)
+               ? std::vector<int>{terminal, second}
+               : std::vector<int>{terminal};
   }
 
   std::vector<int> Dirichlet() const
   {
-    return (kind == TWO) ? std::vector<int>{terminal, second, ground}
-                         : std::vector<int>{terminal, ground};
+    return (kind == PLATES)                     ? std::vector<int>{terminal, second}
+           : (kind == TWO || kind == TWO_SPLIT) ? std::vector<int>{terminal, second, ground}
+                                                : std::vector<int>{terminal, ground};
   }
 };
 
@@ -296,7 +319,7 @@ struct SerialSolve
 };
 
 SerialSolve SolveSerial(mfem::Mesh &mesh, const std::vector<int> &dirichlet, int p,
-                        int excited)
+                        const std::vector<int> &excited)
 {
   SerialSolve s;
   s.fec = std::make_unique<mfem::H1_FECollection>(p, 3);
@@ -312,7 +335,7 @@ SerialSolve SolveSerial(mfem::Mesh &mesh, const std::vector<int> &dirichlet, int
   s.v = std::make_unique<mfem::GridFunction>(s.fes.get());
   *s.v = 0.0;
   mfem::ConstantCoefficient one(1.0);
-  s.v->ProjectBdrCoefficient(one, mesh::AttrToMarker(max, std::vector<int>{excited}));
+  s.v->ProjectBdrCoefficient(one, mesh::AttrToMarker(max, excited));
   mfem::LinearForm b(s.fes.get());
   b = 0.0;
   mfem::SparseMatrix A;
@@ -338,6 +361,12 @@ SerialSolve SolveSerial(mfem::Mesh &mesh, const std::vector<int> &dirichlet, int
     }
   }
   return s;
+}
+
+SerialSolve SolveSerial(mfem::Mesh &mesh, const std::vector<int> &dirichlet, int p,
+                        int excited)
+{
+  return SolveSerial(mesh, dirichlet, p, std::vector<int>{excited});
 }
 
 // The reference: the dual mixed problem over the RT(q) fluxes of the cells of the serial
@@ -541,7 +570,7 @@ struct Solve
 };
 
 Solve SolveTerminal(FiniteElementSpace &primal, const std::vector<int> &dirichlet,
-                    int excited)
+                    int excited, double rel_tol = 1.0e-14)
 {
   auto &fes = primal.Get();
   EpsCoefficient coefficient;
@@ -568,7 +597,7 @@ Solve SolveTerminal(FiniteElementSpace &primal, const std::vector<int> &dirichle
   mfem::HypreBoomerAMG amg(A);
   amg.SetPrintLevel(0);
   mfem::CGSolver cg(fes.GetComm());
-  cg.SetRelTol(1.0e-14);
+  cg.SetRelTol(rel_tol);
   cg.SetMaxIter(4000);
   cg.SetOperator(A);
   cg.SetPreconditioner(amg);
@@ -685,8 +714,7 @@ void CheckDualMixed(const Case &c, int flux_order_offset, std::vector<double> &C
                                            flux_order_offset, Linear());
   ErrorIndicator indicator;
   const auto summaries = estimator.AddErrorIndicators(V, G, energies, indicator);
-  const auto &C_h = estimator.GetCapacitance(),
-             &C_low = estimator.GetCapacitanceLowerBound();
+  const auto &C_h = estimator.GetCapacitance(), &C_low = estimator.GetCapacitanceLower();
 
   // A fine reference (order p + 1 on the uniformly refined mesh) for the true error:
   // its capacitance is above the exact one, so C_h - C_fine is below the true error².
@@ -744,7 +772,7 @@ void CheckDualMixed(const Case &c, int flux_order_offset, std::vector<double> &C
                                          flux_order_offset, linear);
     ErrorIndicator loose_indicator;
     const auto loose_summaries = loose.AddErrorIndicators(V, G, energies, loose_indicator);
-    const auto &loose_C_low = loose.GetCapacitanceLowerBound();
+    const auto &loose_C_low = loose.GetCapacitanceLower();
     for (int t = 0; t < n; t++)
     {
       const double C_star = C_h(t, t) - refs[t] * refs[t];
@@ -763,10 +791,11 @@ void CheckDualMixed(const Case &c, int flux_order_offset, std::vector<double> &C
 
 // The converged flux, after the capacitive step, is the dual mixed solution of its space:
 // the bound equals the one of the direct mixed RT(k) x L2(k) solve, k = p - 1 (the space of
-// L2ZZ) or p, and C_low equals the mixed capacitance C* = C_h - η*². Also: the bound is
-// above the true error (C_low below the capacitance of a much finer solve), the flux is
-// equilibrated, and the indicators sum to the relative bound, which is above the bound
-// relative to the computed energy. Tets, hexes and wedges, p 1 to 3, conforming and
+// L2ZZ) or p, and the lower bracket of each diagonal capacitance equals the mixed
+// capacitance C* = C_h - η*². Also: the bound is above the true error (the lower bracket
+// below the capacitance of a much finer solve), the flux is equilibrated, and the
+// indicators sum to the relative bound, which is above the bound relative to the computed
+// energy. Tets, hexes and wedges, p 1 to 3, conforming and
 // nonconforming, a thin slab, an interior Dirichlet sheet (broken spaces), two terminals.
 // A representative subset of the cases: every element type, geometry, polynomial order and
 // flux space, the nonconforming refinements of a box (tets and hexes) and of an interior
@@ -1134,6 +1163,172 @@ TEST_CASE("Curl correction decreases the bound monotonically",
       CHECK(std::sqrt(sums[1]) <= 1.0e-10 * std::sqrt(sums[2]));
       CHECK(sums[0] <= eta2 * (1.0 + 1.0e-10));
       CHECK(sums[0] <= converged_sums[0] * (1.0 + 1.0e-10));
+    }
+  }
+}
+
+namespace
+{
+
+// The capacitance matrix of the terminals (and its mutual capacitance matrix) of a fine
+// reference, by polarization of the energies of the solves with one and two excited
+// terminals (exact for PLATE and PLATES, whose potentials are linear).
+mfem::DenseMatrix ReferenceCapacitance(mfem::Mesh &fine, const Geometry &g, int p)
+{
+  const auto dirichlet = g.Dirichlet(), terminals = g.Terminals();
+  const int n = static_cast<int>(terminals.size());
+  mfem::DenseMatrix C(n);
+  if (g.kind == Geometry::PLATE || g.kind == Geometry::PLATES)
+  {
+    // u = 1 - x and u = x across the unit box: C = ∫ ε_xx = (2 + 14) / 2 per terminal.
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = 0; j < n; j++)
+      {
+        C(i, j) = (i == j) ? 8.0 : -8.0;
+      }
+    }
+    return C;
+  }
+  for (int i = 0; i < n; i++)
+  {
+    C(i, i) = SolveSerial(fine, dirichlet, p, terminals[i]).energy2;
+  }
+  for (int i = 0; i < n; i++)
+  {
+    for (int j = i + 1; j < n; j++)
+    {
+      const double q =
+          SolveSerial(fine, dirichlet, p, std::vector<int>{terminals[i], terminals[j]})
+              .energy2;
+      C(i, j) = C(j, i) = 0.5 * (q - C(i, i) - C(j, j));
+    }
+  }
+  return C;
+}
+
+mfem::DenseMatrix Mutual(const mfem::DenseMatrix &C)
+{
+  const int n = C.Height();
+  mfem::DenseMatrix Cm(n);
+  for (int i = 0; i < n; i++)
+  {
+    Cm(i, i) = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+      Cm(i, i) += C(i, j);
+      if (j != i)
+      {
+        Cm(i, j) = -C(i, j);
+      }
+    }
+  }
+  return Cm;
+}
+
+}  // namespace
+
+// The brackets of every entry of the capacitance matrix and of the mutual capacitance
+// matrix contain the capacitances of the problem as meshed, whatever the tolerance of the
+// terminal solves: exactly known for parallel plates (one terminal and a ground, two
+// terminals without a ground), and against a fine reference (order p + 1 on the uniformly
+// refined mesh) on two terminals with a nonconforming refinement and with a ground of two
+// parts. The reference is above the exact capacitance on the diagonal (a lower bracket
+// below it is necessary); off the diagonal and for C_m, its own error is taken as its
+// difference to the solve of order p on the refined mesh. At loose tolerances the mixed
+// capacitance C_h - η² of the plates is above the exact one (the algebraic error leaves a
+// divergence which η does not see), and on two terminals the entries of the Loewner bound Q
+// G⁻¹ Qᵀ off the diagonal are above the reference, even converged: the brackets fail
+// without their balance terms or with those entries.
+TEST_CASE("Equilibrated capacitance brackets", "[equilibratedestimator][Serial][Parallel]")
+{
+  using G = Geometry;
+  const std::vector<Case> cases = {
+      {G{mfem::Element::TETRAHEDRON, {4, 2, 2}, {1.0, 1.0, 1.0}, G::PLATE}, false, 0.0, 2},
+      {G{mfem::Element::TETRAHEDRON, {4, 2, 2}, {1.0, 1.0, 1.0}, G::PLATES}, false, 0.0, 2},
+      {G{mfem::Element::HEXAHEDRON, {4, 4, 2}, {1.0, 1.0, 1.0}, G::TWO}, true, 0.0, 2},
+      {G{mfem::Element::TETRAHEDRON, {4, 4, 2}, {1.0, 1.0, 1.0}, G::TWO_SPLIT}, false, 0.0,
+       2}};
+  for (const auto &c : cases)
+  {
+    auto [reference, mesh] = MakeMeshes(c);
+    const RunQuadrature run(c.p);
+    const auto dirichlet = c.g.Dirichlet(), terminals = c.g.Terminals();
+    const int n = static_cast<int>(terminals.size());
+    mfem::Mesh fine(reference);
+    fine.UniformRefinement();
+    const bool exact = (c.g.kind == G::PLATE || c.g.kind == G::PLATES);
+    const auto C_ref = ReferenceCapacitance(fine, c.g, c.p + 1);
+    const auto C_ref1 = exact ? C_ref : ReferenceCapacitance(fine, c.g, c.p);
+    const auto Cm_ref = Mutual(C_ref), Cm_ref1 = Mutual(C_ref1);
+    double scale = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+      scale = std::max(scale, std::abs(C_ref(i, i)));
+    }
+    for (const double tol : {1.0e-14, 1.0e-4, 1.0e-2})
+    {
+      mfem::H1_FECollection h1_fec(c.p, 3);
+      mfem::ND_FECollection nd_fec(c.p, 3);
+      mfem::RT_FECollection rt_fec(c.p - 1, 3);
+      FiniteElementSpace primal(*mesh, &h1_fec), nd(*mesh, &nd_fec), rt(*mesh, &rt_fec);
+      std::vector<Vector> V, Gd;
+      std::vector<double> energies;
+      for (int t : terminals)
+      {
+        auto s = SolveTerminal(primal, dirichlet, t, tol);
+        V.push_back(s.V);
+        Gd.push_back(s.G);
+        energies.push_back(s.energy);
+      }
+      config::PeriodicBoundaryData periodic;
+      MaterialOperator mat_op(Materials(), periodic, ProblemType::ELECTROSTATIC, *mesh);
+      mfem::Array<int> dirichlet_attr;
+      for (int attr : dirichlet)
+      {
+        dirichlet_attr.Append(attr);
+      }
+      auto linear = Linear();
+      linear.estimator_error_tol = 1.0e-2;
+      EquilibratedFluxErrorEstimator estimator(mat_op, primal, rt, nd, dirichlet_attr, -1,
+                                               linear);
+      ErrorIndicator indicator;
+      estimator.AddErrorIndicators(V, Gd, energies, indicator);
+      const auto &C_h = estimator.GetCapacitance();
+      for (const bool mutual : {false, true})
+      {
+        const auto &lower = mutual ? estimator.GetMutualCapacitanceLower()
+                                   : estimator.GetCapacitanceLower();
+        const auto &upper = mutual ? estimator.GetMutualCapacitanceUpper()
+                                   : estimator.GetCapacitanceUpper();
+        const auto &ref = mutual ? Cm_ref : C_ref, &ref1 = mutual ? Cm_ref1 : C_ref1;
+        for (int i = 0; i < n; i++)
+        {
+          for (int j = 0; j < n; j++)
+          {
+            // Rounding, and off the diagonal (and for C_m) the error of the reference.
+            const bool one_sided = !exact && !mutual && i == j;
+            const double slack =
+                1.0e-12 * scale +
+                (exact || one_sided ? 0.0 : std::abs(ref(i, j) - ref1(i, j)));
+            INFO("kind " << c.g.kind << " type " << c.g.type << " refine " << c.refine
+                         << " tol " << tol << (mutual ? " C_m" : " C") << "(" << i << ", "
+                         << j << "): [" << lower(i, j) << ", " << upper(i, j)
+                         << "], reference " << ref(i, j) << " (" << ref1(i, j) << ")");
+            CHECK(lower(i, j) <= upper(i, j));
+            CHECK(lower(i, j) <= ref(i, j) + slack);
+            if (!one_sided)
+            {
+              CHECK(upper(i, j) >= ref(i, j) - slack);
+            }
+          }
+        }
+      }
+      for (int i = 0; i < n; i++)
+      {
+        CHECK(estimator.GetCapacitanceUpper()(i, i) == C_h(i, i));
+        CHECK(C_h(i, i) >= C_ref(i, i) - 1.0e-12 * scale);
+      }
     }
   }
 }

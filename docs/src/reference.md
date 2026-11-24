@@ -1135,10 +1135,7 @@ flux is built in three steps:
     corrected fluxes of all terminal solves and, when a ground or a terminal consists of
     several disconnected parts, of the fluxes of order-one potentials (one per part which the
     terminal data do not distinguish), corrected as far as the tolerance requires for their
-    weight in the combination. This also gives, with the computed capacitance matrix
-    ``\bm{C}_h``, the capacitance bounds ``\bm{C}_{low}\leq\bm{C}\leq\bm{C}_h`` (in the
-    sense of positive semidefinite matrices, so also for each diagonal entry), written to
-    `terminal-C-lower.csv`; converged, the flux is the dual mixed solution.
+    weight in the combination. Converged, the flux is the dual mixed solution.
 
 The divergence of the flux which the algebraic error of the linear solve leaves, and the
 Dirichlet values at the essential degrees of freedom, are accounted for in the bound by the
@@ -1148,6 +1145,35 @@ is an upper bound of its relative error ``\|\varepsilon_r^{1/2}\nabla(V-V_h)\| /
 `config["Model"]["Refinement"]["Tol"]` only when the root mean square over the terminals of
 the true relative errors is below it. The bounds are guaranteed up to the quadrature on
 curved elements.
+
+The estimator also brackets every entry of the capacitance matrix ``\bm{C}`` and of the
+mutual capacitance matrix ``\bm{C}_m`` of the problem as meshed: the geometry of the mesh
+with the configured materials and boundary conditions, not the CAD model. The brackets are
+exact on straight-sided elements and only as good as the quadrature on curved elements,
+and they hold at any tolerance of the linear solver. The potentials ``V_i`` of the terminal
+solves, with the terminal voltages imposed on the Dirichlet boundaries, have the energy
+matrix ``\bm{C}_h=(\varepsilon_r\nabla V_i,\nabla V_j)``, and ``\bm{C}_h-\bm{C}=\bm{E}``
+is the Gram matrix of their errors in the energy inner product. The error of any
+combination ``\sum_i x_iV_i`` is bounded by the estimate of the combined flux, including
+the balance term of the divergence which the algebraic error of the solves leaves, so
+``0\leq E_{ii}\leq L_i^2`` with the bound ``L_i`` of solve ``i``, and for ``i\neq j``
+both ``|E_{ij}|\leq L_iL_j`` and, with the bounds of the combinations
+``sV_i\pm V_j/s``, ``-L(sV_i-V_j/s)^2/4\leq E_{ij}\leq L(sV_i+V_j/s)^2/4``. The diagonal
+entries of ``\bm{C}_m``, the row sums of ``\bm{C}``, are bracketed in the same way with the
+combination of all the terminals. The brackets are written to `terminal-C-lower.csv`,
+`terminal-C-upper.csv`, `terminal-Cm-lower.csv` and `terminal-Cm-upper.csv`, and logged;
+`terminal-C.csv` keeps the capacitances of the computed solution. A loose linear solver
+tolerance widens the brackets through the balance term rather than invalidating them (on
+the two spheres of the [example](examples/spheres.md), at order 3 with the corrections
+converged, they are 0.01% to 0.04% of each entry wide at
+`config["Solver"]["Linear"]["Tol"]: 1e-10`, and 0.03% to 0.4% at `1e-6`). The brackets
+of the mutual capacitances ``C_{ij}``, ``i\neq j``, can be wide relative to ``C_{ij}``:
+they come from the energy errors of the two solves, so a small ``|C_{ij}|`` against
+``C_{ii}`` and ``C_{jj}`` has a wide bracket, which bounds in the energy norm cannot avoid;
+tighter brackets of a pair would need a goal-oriented bound for it. The inverse ``\bm{C}^{-1}`` (`terminal-Cinv.csv`) is not bracketed:
+``\bm{C}\preceq\bm{C}_h`` only gives ``(\bm{C}^{-1})_{ii}\geq(\bm{C}_h^{-1})_{ii}``, and
+its other bounds would need a positive definite lower bound of ``\bm{C}`` in the Loewner
+order, which is not computed.
 
 ## Far-field extraction
 

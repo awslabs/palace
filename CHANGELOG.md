@@ -59,8 +59,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     curl correction solved with the magnetostatic preconditioner (every iterate is a bound),
     and the best combination of the fluxes of the terminal solves. Its indicator norm bounds
     the relative error, so `config["Model"]["Refinement"]["Tol"]` bounds the true error at
-    the end of an adaptive refinement, and it gives guaranteed lower bounds of the
-    capacitance matrix, written to `terminal-C-lower.csv`.
+    the end of an adaptive refinement, and it gives guaranteed brackets of every entry of the
+    capacitance and mutual capacitance matrices of the problem as meshed, at any linear
+    solver tolerance (exact on straight-sided elements, up to quadrature on curved ones;
+    the brackets of mutual capacitances can be wide relative to them), written to
+    `terminal-C-lower.csv`, `terminal-C-upper.csv`, `terminal-Cm-lower.csv` and
+    `terminal-Cm-upper.csv`.
     `config["Solver"]["Linear"]["EstimatorFluxOrder"]` selects the flux space of order p - 1
     (`"Reduced"`, default) or p (`"Primal"`). SchemaVer 6-2-0
     [PR 1262](https://github.com/awslabs/palace/pull/1262).

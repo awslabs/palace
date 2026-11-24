@@ -193,10 +193,8 @@ public:
 //     ground, or a terminal, of several parts), corrected as far as their weight in the
 //     combination requires (see AddErrorIndicators), are all admissible, so for solve i the
 //     best combination D = Σⱼ αⱼ D⁽ʲ⁾ is admissible: with Gⱼₗ = (ε⁻¹ D⁽ʲ⁾, D⁽ˡ⁾) and Qᵢⱼ =
-//     (ε⁻¹ D⁽ʲ⁾, D_v⁽ⁱ⁾), α = G⁻¹ Qᵢ.ᵀ and η² = (C_h)ᵢᵢ - Qᵢ. G⁻¹ Qᵢ.ᵀ. When D_v⁽ⁱ⁾ is the
-//     flux of the computed solution of terminal i, C_h = (ε ∇v⁽ⁱ⁾, ∇v⁽ʲ⁾) is the computed
-//     capacitance matrix and the complementary energy principle gives the two-sided
-//     bounds C_low = Q G⁻¹ Qᵀ ≤ C ≤ C_h of the exact capacitance matrix (Loewner order).
+//     (ε⁻¹ D⁽ʲ⁾, D_v⁽ⁱ⁾), α = G⁻¹ Qᵢ.ᵀ and η² = (C_h)ᵢᵢ - Qᵢ. G⁻¹ Qᵢ.ᵀ, with C_h = (ε
+//     ∇v⁽ⁱ⁾, ∇v⁽ʲ⁾) the capacitance matrix of the companions.
 // When converged, the flux is the dual mixed RT(k) x L2(k) solution. The bound is
 // evaluated as for a locally equilibrated flux, accounting for what remains of the
 // divergence (the algebraic error of the solve) and for the Dirichlet data. For the
@@ -212,7 +210,10 @@ public:
 // norm of the indicators of a solve is a guaranteed upper bound of its relative error
 // |||u - u_h||| / |||u||| (see RelativeBound), and an adaptive refinement with
 // Refinement.Tol stops only when the root mean square over the solves of the true relative
-// errors is below it. Integrals use quadrature, exact on affine cells.
+// errors is below it. The capacitance matrix C of the problem as meshed is C_h - E, with E
+// the Gram matrix of the errors of the companions, bounded entry by entry from the bounds
+// of the solves and of combinations of them (see CapacitanceBrackets), at any tolerance of
+// the terminal solves. Integrals use quadrature, exact on affine cells.
 class EquilibratedFluxErrorEstimator
 {
 public:
@@ -261,7 +262,9 @@ private:
   // Reference RT(0) → RT(k) embedding of each element geometry.
   mutable std::map<int, mfem::DenseMatrix> embedding;
 
-  mfem::DenseMatrix C_h, C_low;
+  // The capacitance matrix of the companions and the entrywise brackets of the exact
+  // capacitance and mutual capacitance matrices (see CapacitanceBrackets).
+  mfem::DenseMatrix C_h, C_lower, C_upper, Cm_lower, Cm_upper;
 
   // The connected components of the Dirichlet boundary, the number of fields of the
   // capacitive step besides those of the solves and of those corrected, in the last
@@ -291,6 +294,15 @@ private:
                     const FiniteElementSpace &hats, const std::vector<Vector> &f,
                     const std::vector<Vector> &w, mfem::DenseMatrix &G,
                     mfem::DenseMatrix &Q, std::vector<double> &mismatch) const;
+
+  // The entrywise brackets of C and C_m from the final fluxes and companions (L-vectors),
+  // the intended values at the essential DOFs, the summaries of the solves and the Gram
+  // matrix H of the mismatches of the fluxes. Collective.
+  void CapacitanceBrackets(const std::vector<Vector> &fluxes,
+                           const std::vector<Vector> &companions,
+                           const std::vector<Vector> &G,
+                           const std::vector<Summary> &summaries,
+                           const mfem::DenseMatrix &H);
 
   // The bounds and element indicators of the fluxes (L-vectors) for the companions
   // (L-vectors and true DOFs), liftings (L-vectors), Dirichlet ranges and energies.
@@ -326,9 +338,14 @@ public:
                                           const std::vector<double> &energies,
                                           ErrorIndicator &indicator);
 
-  // The matrices C_h and C_low of the last AddErrorIndicators (in its solve order).
+  // The capacitance matrix C_h of the companions and the entrywise brackets lower ≤ C ≤
+  // upper of the exact capacitance matrix and of the mutual capacitance matrix C_m of the
+  // last AddErrorIndicators (in its solve order).
   const auto &GetCapacitance() const { return C_h; }
-  const auto &GetCapacitanceLowerBound() const { return C_low; }
+  const auto &GetCapacitanceLower() const { return C_lower; }
+  const auto &GetCapacitanceUpper() const { return C_upper; }
+  const auto &GetMutualCapacitanceLower() const { return Cm_lower; }
+  const auto &GetMutualCapacitanceUpper() const { return Cm_upper; }
 
   // The number of connected components of the Dirichlet boundary and of the fields which
   // the capacitive step of the last AddErrorIndicators added to those of the solves.

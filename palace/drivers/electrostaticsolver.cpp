@@ -194,28 +194,55 @@ void ElectrostaticSolver::EstimateEquilibrated(LaplaceOperator &laplace_op,
              estimator.GetNumDirichletComponents(), estimator.GetNumHarmonicFields(),
              estimator.GetNumCorrectedHarmonicFields());
 
-  // Guaranteed bounds of the relative error of each solve and of the capacitance matrix:
-  // C_low ≤ C ≤ C_h in the Loewner order, so also for each diagonal entry.
-  const auto &C_h = estimator.GetCapacitance();
-  const auto &C_low = estimator.GetCapacitanceLowerBound();
+  // Guaranteed bounds of the relative error of each solve, and guaranteed brackets of each
+  // entry of the capacitance matrix and of the mutual capacitance matrix.
+  const auto &C_lower = estimator.GetCapacitanceLower();
+  const auto &C_upper = estimator.GetCapacitanceUpper();
+  const auto &Cm_lower = estimator.GetMutualCapacitanceLower();
+  const auto &Cm_upper = estimator.GetMutualCapacitanceUpper();
   using VT = Units::ValueType;
   const double F = iodata.units.Dimensionalize<VT::CAPACITANCE>(1.0);
-  int i = 0;
+  std::vector<int> index;
   for (const auto &[idx, data] : laplace_op.GetSources())
   {
+    index.push_back(idx);
+  }
+  for (std::size_t i = 0; i < index.size(); i++)
+  {
     const auto &s = summaries[i];
+    const int idx = index[i];
     Mpi::Print(
         " Index = {:d}: relative error <= {:.3e}, {:.6e} F <= C[{:d}][{:d}] <= {:.6e} F\n",
-        idx, s.relative, C_low(i, i) * F, idx, idx, C_h(i, i) * F);
+        idx, s.relative, C_lower(i, i) * F, idx, idx, C_upper(i, i) * F);
     Mpi::Print("  (|||u - u_h||| <= {:.3e}: eta = {:.3e} (vertex patches {:.3e}, {:d} CG "
                "iterations), divergence {:.3e}, Neumann {:.3e}, lifting {:.3e})\n",
                s.bound, s.eta, s.initial, s.iterations, s.divergence, s.neumann, s.lifting);
-    i++;
+  }
+  Mpi::Print(" Capacitance brackets (problem as meshed, any solver tolerance):\n");
+  for (std::size_t i = 0; i < index.size(); i++)
+  {
+    for (std::size_t j = i + 1; j < index.size(); j++)
+    {
+      Mpi::Print("  {:.6e} F <= C[{:d}][{:d}] <= {:.6e} F\n", C_lower(i, j) * F, index[i],
+                 index[j], C_upper(i, j) * F);
+    }
+  }
+  for (std::size_t i = 0; i < index.size(); i++)
+  {
+    Mpi::Print("  {:.6e} F <= C_m[{:d}][{:d}] <= {:.6e} F\n", Cm_lower(i, i) * F, index[i],
+               index[i], Cm_upper(i, i) * F);
   }
   if (root)
   {
-    PrintTerminalMatrix(post_dir, laplace_op.GetSources(), "terminal-C-lower.csv", "C_low",
-                        "(F)", C_low, F);
+    const auto &sources = laplace_op.GetSources();
+    PrintTerminalMatrix(post_dir, sources, "terminal-C-lower.csv", "C_lower", "(F)",
+                        C_lower, F);
+    PrintTerminalMatrix(post_dir, sources, "terminal-C-upper.csv", "C_upper", "(F)",
+                        C_upper, F);
+    PrintTerminalMatrix(post_dir, sources, "terminal-Cm-lower.csv", "C_m_lower", "(F)",
+                        Cm_lower, F);
+    PrintTerminalMatrix(post_dir, sources, "terminal-Cm-upper.csv", "C_m_upper", "(F)",
+                        Cm_upper, F);
   }
 }
 

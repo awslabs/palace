@@ -39,8 +39,10 @@ private:
                             const std::vector<Vector> &V) const;
 
   // The equilibrated error estimate of the terminal solves (see
-  // EquilibratedFluxErrorEstimator), its guaranteed bounds of the relative errors and of
-  // the capacitance matrix (log, and terminal-C-lower.csv).
+  // EquilibratedFluxErrorEstimator), its guaranteed bounds of the relative errors and its
+  // guaranteed brackets of the entries of the capacitance and mutual capacitance matrices
+  // (log, and terminal-C-lower.csv, terminal-C-upper.csv, terminal-Cm-lower.csv and
+  // terminal-Cm-upper.csv).
   void EstimateEquilibrated(LaplaceOperator &laplace_op, const std::vector<Vector> &V,
                             const std::vector<Vector> &G,
                             const std::vector<double> &energies,

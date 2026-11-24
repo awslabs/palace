@@ -647,6 +647,193 @@ double BoundL(double eta2, double b)
   return 0.5 * (eta + std::sqrt(eta * eta + 4.0 * std::max(b, 0.0)));
 }
 
+// The terms of the bound of the combinations D_x = Σᵢ xᵢ Dᵢ of fluxes (L-vectors of the
+// flux space) for the combinations v_x = Σᵢ xᵢ vᵢ of their companions (L-vectors of the
+// primal space), as Gram matrices (global): H of the mismatches Dᵢ - D_v⁽ⁱ⁾ (in the ε⁻¹
+// inner product, given), of the divergences and of the normal traces on the Neumann
+// faces, of the companions in L² on the cells and on the Neumann faces, and the integrals
+// of the companions, the volume and the area of the Neumann faces. Then η(x)² = xᵀ H x,
+// and by the Cauchy-Schwarz inequality over the domain the balance term of D_x is at most
+// b(x) = ‖div D_x‖ (R |Ω|^{1/2} + ‖v_x - c‖) + ‖D_x ⋅ n‖_N (R |Γ_N|^{1/2} + ‖v_x - c‖_N)
+// for the Dirichlet range c ± R of the combination (see CombinationBound).
+struct CombinationTerms
+{
+  mfem::DenseMatrix H, div, trace, v2, vn2;
+  std::vector<double> v1, vn1;
+  double volume = 0.0, area = 0.0;
+};
+
+CombinationTerms EvaluateCombinationTerms(const FiniteElementSpace &flux,
+                                          const FiniteElementSpace &primal,
+                                          const equilibrated::CellQuadrature &quadrature,
+                                          const std::vector<int> &dirichlet_attr,
+                                          const std::vector<Vector> &fluxes,
+                                          const std::vector<Vector> &companions,
+                                          const mfem::DenseMatrix &H)
+{
+  const auto &mesh = primal.GetParMesh();
+  const int n = static_cast<int>(fluxes.size());
+  const std::set<int> dirichlet(dirichlet_attr.begin(), dirichlet_attr.end());
+  // Packed sums: div, trace, v2, vn2 (n x n each, upper triangles), v1, vn1 (n each),
+  // volume, area.
+  std::vector<double> sums(4 * n * n + 2 * n + 2, 0.0);
+  double *sD = sums.data(), *sT = sD + n * n, *sV = sT + n * n, *sVn = sV + n * n,
+         *s1 = sVn + n * n, *s1n = s1 + n;
+  double &volume = sums[4 * n * n + 2 * n], &area = sums[4 * n * n + 2 * n + 1];
+  mfem::IsoparametricTransformation T;
+  CellMap map;
+  mfem::Vector D(3);
+  std::vector<mfem::Vector> c(n), u(n);
+  std::vector<double> div(n), val(n);
+  mfem::Array<int> fdofs, pdofs;
+  mfem::DofTransformation fdt, pdt;
+  auto Values = [&](int e)
+  {
+    flux.GetElementDofs(e, fdofs, fdt);
+    primal.GetElementDofs(e, pdofs, pdt);
+    for (int t = 0; t < n; t++)
+    {
+      c[t].SetSize(fdofs.Size());
+      fluxes[t].GetSubVector(fdofs, c[t]);
+      fdt.InvTransformPrimal(c[t]);
+      u[t].SetSize(pdofs.Size());
+      companions[t].GetSubVector(pdofs, u[t]);
+      pdt.InvTransformPrimal(u[t]);
+    }
+  };
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    mesh.GetElementTransformation(e, &T);
+    const auto &tab = quadrature.GetTables(e, T);
+    Values(e);
+    for (int q = 0; q < tab.rule->GetNPoints(); q++)
+    {
+      if (q == 0 || !quadrature.IsAffine(e))
+      {
+        map.Update(T.GetPointMat(), tab.map[q]);
+      }
+      const double w = tab.rule->IntPoint(q).weight * std::abs(map.det);
+      for (int t = 0; t < n; t++)
+      {
+        div[t] = (tab.div[q] * c[t]) / map.det;
+        val[t] = tab.shape[q] * u[t];
+      }
+      for (int i = 0; i < n; i++)
+      {
+        for (int j = i; j < n; j++)
+        {
+          sD[i * n + j] += w * div[i] * div[j];
+          sV[i * n + j] += w * val[i] * val[j];
+        }
+        s1[i] += w * val[i];
+      }
+      volume += w;
+    }
+  }
+  const auto face_to_bdr = mesh.GetFaceToBdrElMap();
+  mfem::Vector normal(3), pshape;
+  mfem::DenseMatrix shape;
+  mfem::FaceElementTransformations FT;
+  mfem::IsoparametricTransformation T1, T2;
+  std::vector<double> Dn(n);
+  for (int f = 0; f < mesh.GetNumFaces(); f++)
+  {
+    if (!mesh.GetFaceInformation(f).IsBoundary() ||
+        (face_to_bdr[f] >= 0 && dirichlet.count(mesh.GetBdrAttribute(face_to_bdr[f]))))
+    {
+      continue;
+    }
+    mesh.GetFaceElementTransformations(f, FT, T1, T2);
+    const int e = FT.Elem1No;
+    const auto &fe = *flux.Get().GetFE(e), &pe = *primal.Get().GetFE(e);
+    Values(e);
+    shape.SetSize(fe.GetDof(), 3);
+    pshape.SetSize(pe.GetDof());
+    const auto &rule = mfem::IntRules.Get(FT.GetGeometryType(), quadrature.Order());
+    for (int q = 0; q < rule.GetNPoints(); q++)
+    {
+      const auto &ip = rule.IntPoint(q);
+      FT.SetAllIntPoints(&ip);
+      const double w = ip.weight * FT.Weight();
+      fe.CalcVShape(*FT.Elem1, shape);
+      mfem::CalcOrtho(FT.Jacobian(), normal);
+      pe.CalcShape(FT.GetElement1IntPoint(), pshape);
+      for (int t = 0; t < n; t++)
+      {
+        shape.MultTranspose(c[t], D);
+        Dn[t] = (D * normal) / normal.Norml2();
+        val[t] = pshape * u[t];
+      }
+      for (int i = 0; i < n; i++)
+      {
+        for (int j = i; j < n; j++)
+        {
+          sT[i * n + j] += w * Dn[i] * Dn[j];
+          sVn[i * n + j] += w * val[i] * val[j];
+        }
+        s1n[i] += w * val[i];
+      }
+      area += w;
+    }
+  }
+  Mpi::GlobalSum(static_cast<int>(sums.size()), sums.data(), primal.GetComm());
+  CombinationTerms terms;
+  terms.H = H;
+  for (auto [M, S] : {std::pair{&terms.div, sD}, std::pair{&terms.trace, sT},
+                      std::pair{&terms.v2, sV}, std::pair{&terms.vn2, sVn}})
+  {
+    M->SetSize(n);
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = 0; j < n; j++)
+      {
+        (*M)(i, j) = S[std::min(i, j) * n + std::max(i, j)];  // Upper triangle.
+      }
+    }
+  }
+  terms.v1.assign(s1, s1 + n);
+  terms.vn1.assign(s1n, s1n + n);
+  terms.volume = volume;
+  terms.area = area;
+  return terms;
+}
+
+// L(x)² for the combination x of the solves with the Dirichlet range [lo, hi] of its data
+// (see CombinationTerms): L(x) ≥ |||u_x - v_x||| by the bound of the estimator with the
+// balance term b(x).
+double CombinationBound(const CombinationTerms &terms, const std::vector<double> &x,
+                        double lo, double hi)
+{
+  const int n = static_cast<int>(x.size());
+  auto Quad = [&](const mfem::DenseMatrix &M)
+  {
+    double q = 0.0;
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = 0; j < n; j++)
+      {
+        q += x[i] * M(i, j) * x[j];
+      }
+    }
+    return std::max(q, 0.0);
+  };
+  const double c = 0.5 * (lo + hi), R = 0.5 * (hi - lo);
+  double m = 0.0, mn = 0.0;
+  for (int i = 0; i < n; i++)
+  {
+    m += x[i] * terms.v1[i];
+    mn += x[i] * terms.vn1[i];
+  }
+  // ‖v_x - c‖² on the cells and on the Neumann faces.
+  const double o2 = std::max(Quad(terms.v2) - 2.0 * c * m + c * c * terms.volume, 0.0),
+               on2 = std::max(Quad(terms.vn2) - 2.0 * c * mn + c * c * terms.area, 0.0);
+  const double b =
+      std::sqrt(Quad(terms.div)) * (R * std::sqrt(terms.volume) + std::sqrt(o2)) +
+      std::sqrt(Quad(terms.trace)) * (R * std::sqrt(terms.area) + std::sqrt(on2));
+  const double L = BoundL(Quad(terms.H), b);
+  return L * L;
+}
+
 }  // namespace
 
 namespace equilibrated
@@ -1611,14 +1798,22 @@ EquilibratedFluxErrorEstimator::AddErrorIndicators(const std::vector<Vector> &V,
 
   // 3. The capacitive step over the corrected fluxes of the solves and the fields of the
   // potentials, for the fluxes of the solves, in place (the fields not appended to the
-  // fluxes are embedded one at a time).
+  // fluxes are embedded one at a time). The Gram matrix of the mismatches of the final
+  // fluxes is H = C_h - Q G⁻¹ Qᵀ (with the least-squares α), so that η² = Hᵢᵢ.
+  mfem::DenseMatrix H(n);
   {
     mfem::DenseMatrix Qt(Qm), GiQt(m, n);
     Qt.Transpose();
     mfem::DenseMatrixInverse inverse(Gm);
     inverse.Mult(Qt, GiQt);  // Column i: α of solve i.
-    C_low.SetSize(n);
-    mfem::Mult(Qm, GiQt, C_low);
+    mfem::Mult(Qm, GiQt, H);
+    for (int i = 0; i < n; i++)
+    {
+      for (int j = 0; j < n; j++)
+      {
+        H(i, j) = C_h(i, j) - H(i, j);
+      }
+    }
     const int mf = static_cast<int>(fluxes.size());
     std::vector<double> h(mf);
     std::vector<double *> f(mf);
@@ -1660,7 +1855,163 @@ EquilibratedFluxErrorEstimator::AddErrorIndicators(const std::vector<Vector> &V,
     evaluated[t].initial = summaries[t].initial;
     evaluated[t].iterations = summaries[t].iterations;
   }
+  CapacitanceBrackets(fluxes, companions, G, evaluated, H);
   return evaluated;
+}
+
+void EquilibratedFluxErrorEstimator::CapacitanceBrackets(
+    const std::vector<Vector> &fluxes, const std::vector<Vector> &companions,
+    const std::vector<Vector> &G, const std::vector<Summary> &summaries,
+    const mfem::DenseMatrix &H)
+{
+  // C_h - C = E, the Gram matrix of the errors eᵢ = vᵢ - uᵢ of the companions in the
+  // energy inner product (u minimizes the energy for its Dirichlet data, so (ε ∇u,
+  // ∇(v - u)) = 0), and xᵀ E x = |||u_x - v_x|||² ≤ L(x)² for any combination x of the
+  // solves (see CombinationTerms; for the solves themselves, the tighter bound L of
+  // Evaluate). For i ≠ j, Eᵢⱼ is in [-Lᵢ Lⱼ, Lᵢ Lⱼ] (Cauchy-Schwarz) and, with x± = s eᵢ ±
+  // s⁻¹ eⱼ, in [-L(x₋)² / 4, L(x₊)² / 4] (polarization; s² = Lⱼ / Lᵢ makes the widths
+  // smallest for orthogonal errors); the diagonal of C_m, Σⱼ Cᵢⱼ = eᵢᵀ C 1, likewise with 1
+  // for eⱼ and the sums of the brackets of row i.
+  const MPI_Comm comm = h1_fespace.GetComm();
+  const int n = static_cast<int>(fluxes.size());
+  const auto terms = EvaluateCombinationTerms(Flux(), h1_fespace, *quadrature,
+                                              dirichlet_attr, fluxes, companions, H);
+  // The bounds L(x)² of combinations, with their Dirichlet ranges from the intended values
+  // at the essential DOFs (the distinct vectors of the values of the solves at a DOF: for
+  // terminal data, one per terminal and the ground).
+  std::set<std::vector<double>> values;
+  {
+    std::vector<const double *> g(n);
+    for (int t = 0; t < n; t++)
+    {
+      g[t] = G[t].HostRead();
+    }
+    std::vector<double> value(n);
+    for (int k : essential)
+    {
+      for (int t = 0; t < n; t++)
+      {
+        value[t] = g[t][k];
+      }
+      values.insert(value);
+    }
+  }
+  auto Bounds = [&](const std::vector<std::vector<double>> &X)
+  {
+    const int nx = static_cast<int>(X.size());
+    std::vector<double> mm(2 * nx, std::numeric_limits<double>::infinity());
+    for (const auto &value : values)
+    {
+      for (int a = 0; a < nx; a++)
+      {
+        double g = 0.0;
+        for (int t = 0; t < n; t++)
+        {
+          g += X[a][t] * value[t];
+        }
+        mm[2 * a] = std::min(mm[2 * a], g);
+        mm[2 * a + 1] = std::min(mm[2 * a + 1], -g);
+      }
+    }
+    Mpi::GlobalMin(2 * nx, mm.data(), comm);
+    std::vector<double> L2(nx);
+    for (int a = 0; a < nx; a++)
+    {
+      L2[a] = CombinationBound(terms, X[a], mm[2 * a], -mm[2 * a + 1]);
+    }
+    return L2;
+  };
+  std::vector<std::vector<double>> X;
+  for (int i = 0; i <= n; i++)
+  {
+    X.emplace_back(n, (i == n) ? 1.0 : 0.0);
+    if (i < n)
+    {
+      X.back()[i] = 1.0;
+    }
+  }
+  const auto L2 = Bounds(X);
+  std::vector<double> L(n + 1);  // Of the solves, then of 1.
+  for (int i = 0; i < n; i++)
+  {
+    const double Li = BoundL(summaries[i].eta * summaries[i].eta, summaries[i].balance);
+    L[i] = std::sqrt(std::min(Li * Li, L2[i]));
+  }
+  L[n] = std::sqrt(L2[n]);
+  // The polarization pairs (i, j), j = n for 1.
+  std::vector<std::pair<int, int>> pairs;
+  X.clear();
+  for (int i = 0; i < n; i++)
+  {
+    for (int j = i + 1; j <= n; j++)
+    {
+      if (L[i] > 0.0 && L[j] > 0.0)
+      {
+        const double s = std::sqrt(L[j] / L[i]);
+        for (const double sign : {1.0, -1.0})
+        {
+          X.emplace_back(n, 0.0);
+          for (int t = 0; t < n; t++)
+          {
+            X.back()[t] = sign * ((j == n) ? 1.0 : (t == j) ? 1.0 : 0.0) / s;
+          }
+          X.back()[i] += s;
+        }
+        pairs.emplace_back(i, j);
+      }
+    }
+  }
+  const auto P2 = Bounds(X);
+  // Brackets of E (entries, then the row sums with 1).
+  mfem::DenseMatrix E_lo(n, n + 1), E_hi(n, n + 1);
+  for (int i = 0; i < n; i++)
+  {
+    for (int j = 0; j <= n; j++)
+    {
+      E_lo(i, j) = (i == j) ? 0.0 : -L[i] * L[j];
+      E_hi(i, j) = (i == j) ? L[i] * L[i] : L[i] * L[j];
+    }
+  }
+  for (std::size_t k = 0; k < pairs.size(); k++)
+  {
+    const auto [i, j] = pairs[k];
+    E_hi(i, j) = std::min(E_hi(i, j), 0.25 * P2[2 * k]);
+    E_lo(i, j) = std::max(E_lo(i, j), -0.25 * P2[2 * k + 1]);
+    if (j < n)
+    {
+      E_hi(j, i) = E_hi(i, j);
+      E_lo(j, i) = E_lo(i, j);
+    }
+  }
+  for (int i = 0; i < n; i++)
+  {
+    double lo = 0.0, hi = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+      lo += E_lo(i, j);
+      hi += E_hi(i, j);
+    }
+    E_lo(i, n) = std::max(E_lo(i, n), lo);
+    E_hi(i, n) = std::min(E_hi(i, n), hi);
+  }
+  C_lower.SetSize(n);
+  C_upper.SetSize(n);
+  Cm_lower.SetSize(n);
+  Cm_upper.SetSize(n);
+  for (int i = 0; i < n; i++)
+  {
+    double row = 0.0;
+    for (int j = 0; j < n; j++)
+    {
+      C_lower(i, j) = C_h(i, j) - E_hi(i, j);
+      C_upper(i, j) = C_h(i, j) - E_lo(i, j);
+      Cm_lower(i, j) = -C_upper(i, j);
+      Cm_upper(i, j) = -C_lower(i, j);
+      row += C_h(i, j);
+    }
+    Cm_lower(i, i) = row - E_hi(i, n);
+    Cm_upper(i, i) = row - E_lo(i, n);
+  }
 }
 
 std::vector<EquilibratedFluxErrorEstimator::Summary>

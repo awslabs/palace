@@ -206,6 +206,11 @@ which are written to an ASCII file named `terminal-C.csv` and `terminal-Cinv.csv
 respectively, in the directory specified by
 [`config["Problem"]["Output"]`](../config/reference.md#config-problem). The mutual
 capacitance matrix is also computed and written to `terminal-Cm.csv` in the same directory.
+With the equilibrated error estimator
+([`config["Solver"]["Linear"]["EstimatorType"]: "Equilibrated"`](../config/reference.md#config-solver-linear)),
+guaranteed brackets of every entry of both matrices are written to `terminal-C-lower.csv`,
+`terminal-C-upper.csv`, `terminal-Cm-lower.csv` and `terminal-Cm-upper.csv` (see the
+[reference](../reference.md#Equilibrated-error-estimate)).
 
 ## Magnetostatic problems
 
