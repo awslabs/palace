@@ -432,6 +432,16 @@ class BaseMultigridOperator : public OperType
 private:
   std::vector<std::unique_ptr<OperType>> ops, aux_ops;
 
+  // Optional subdomain of the finest level for a subdomain correction of the multigrid
+  // preconditioner (see GeometricMultigridSolver): its local true DOFs, and an operator
+  // whose rows and columns for these DOFs are those of the finest-level operator.
+  std::vector<int> subdomain_tdofs;
+  std::unique_ptr<OperType> subdomain_op;
+
+  // Local true DOFs of the primary and auxiliary spaces at each level which are not updated
+  // by the multigrid smoothers (empty if none).
+  std::vector<std::vector<int>> smoother_masks, aux_smoother_masks;
+
 public:
   BaseMultigridOperator(std::size_t l) : OperType(0)
   {
@@ -452,6 +462,31 @@ public:
   }
 
   bool HasAuxiliaryOperators() const { return !aux_ops.empty(); }
+
+  void SetSubdomain(std::vector<int> &&tdofs, std::unique_ptr<OperType> &&op)
+  {
+    subdomain_tdofs = std::move(tdofs);
+    subdomain_op = std::move(op);
+  }
+  const std::vector<int> &GetSubdomainTrueDofs() const { return subdomain_tdofs; }
+  const OperType *GetSubdomainOperator() const { return subdomain_op.get(); }
+
+  void SetSmootherMasks(std::vector<std::vector<int>> &&masks,
+                        std::vector<std::vector<int>> &&aux_masks)
+  {
+    smoother_masks = std::move(masks);
+    aux_smoother_masks = std::move(aux_masks);
+  }
+  const std::vector<int> &GetSmootherMask(std::size_t l) const
+  {
+    static const std::vector<int> empty;
+    return (l < smoother_masks.size()) ? smoother_masks[l] : empty;
+  }
+  const std::vector<int> &GetAuxiliarySmootherMask(std::size_t l) const
+  {
+    static const std::vector<int> empty;
+    return (l < aux_smoother_masks.size()) ? aux_smoother_masks[l] : empty;
+  }
   auto GetNumLevels() const { return ops.size(); }
   auto GetNumAuxiliaryLevels() const { return aux_ops.size(); }
 

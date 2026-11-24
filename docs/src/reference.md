@@ -561,6 +561,9 @@ specifying an offset distance ``d`` for each wave port:
 \tilde{S}_{ij} = S_{ij}e^{ik_{n,i}d_i}e^{ik_{n,j}d_j} \,.
 ```
 
+Lumped and Floquet ports have ``d = 0``, so the S-parameters between a wave port and a port of
+another type carry the factor of the wave port once, whichever of the two is excited.
+
 ## Adaptive driven solver and reduced-order modeling
 
 The driven solver assembles a frequency-dependent linear system of the form
