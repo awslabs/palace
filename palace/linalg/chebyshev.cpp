@@ -4,92 +4,13 @@
 #include "chebyshev.hpp"
 
 #include <cmath>
-#include <mfem/general/forall.hpp>
+#include "linalg/jacobi.hpp"
 
 namespace palace
 {
 
 namespace
 {
-
-bool HasFiniteNonzeroDiagonal(MPI_Comm comm, const Vector &real,
-                              const Vector *imag = nullptr)
-{
-  int valid = 1;
-  if (real.Size() > 0)
-  {
-    const auto *R = real.HostRead();
-    const auto *I = imag ? imag->HostRead() : nullptr;
-    for (int i = 0; i < real.Size(); i++)
-    {
-      if (!(std::isfinite(R[i]) && R[i] != 0.0) ||
-          (I && !(std::isfinite(I[i]) && I[i] == 0.0)))
-      {
-        valid = 0;
-        break;
-      }
-    }
-  }
-  Mpi::GlobalMin(1, &valid, comm);
-  return valid;
-}
-
-double LambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0)
-{
-  // D⁻¹A is generally not Hermitian. With Σ = sgn(D), it is similar to ΣS for the
-  // Hermitian S = |D|⁻¹ᐟ²A|D|⁻¹ᐟ², so ρ(D⁻¹A) ≤ ‖S‖₂, with equality when Σ commutes with S:
-  // for a diagonal of uniform sign (A definite of either sign), and for a negative definite
-  // A with essential DOFs eliminated using a unit diagonal.
-  Vector dinv_sqrt(dinv);
-  dinv_sqrt.Abs();
-  linalg::Sqrt(dinv_sqrt);
-  DiagonalOperator DinvSqrt(dinv_sqrt);
-  ProductOperator ADinvSqrt(A, DinvSqrt);
-  ProductOperator S(DinvSqrt, ADinvSqrt);
-  return linalg::SpectralNorm(comm, S, true, &x0);
-}
-
-double GetLambdaMax(MPI_Comm comm, const Operator &A, const Vector &dinv, Vector &x0)
-{
-  MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv),
-              "Chebyshev smoother spectral estimation requires a finite, nonzero operator "
-              "diagonal!");
-  return LambdaMax(comm, A, dinv, x0);
-}
-
-double GetLambdaMax(MPI_Comm comm, const ComplexOperator &A, const ComplexVector &dinv,
-                    ComplexVector &x0)
-{
-  if (A.IsReal())
-  {
-    MFEM_VERIFY(HasFiniteNonzeroDiagonal(comm, dinv.Real(), &dinv.Imag()),
-                "Chebyshev smoother spectral estimation requires a finite, nonzero real "
-                "operator diagonal!");
-
-    // Estimate in real arithmetic, which halves the cost, starting from and returning the
-    // real part of x0.
-    const int n = A.Height();
-    Vector x0r;
-    if (x0.Size() == n)
-    {
-      x0r.SetSize(n);
-      x0r.UseDevice(true);
-      x0r = x0.Real();
-    }
-    const double lambda_max = LambdaMax(comm, *A.Real(), dinv.Real(), x0r);
-    if (x0r.Size() == n)
-    {
-      x0.SetSize(n);
-      x0.UseDevice(true);
-      x0.Real() = x0r;
-      x0.Imag() = 0.0;
-    }
-    return lambda_max;
-  }
-  ComplexDiagonalOperator Dinv(dinv);
-  ComplexProductOperator DinvA(Dinv, A);
-  return linalg::SpectralNorm(comm, DinvA, false, &x0);
-}
 
 template <bool Transpose = false>
 inline void ApplyOp(const Operator &A, const Vector &x, Vector &y)
@@ -130,103 +51,23 @@ inline void ApplyOp(const ComplexOperator &A, const ComplexVector &x, ComplexVec
   }
 }
 
-template <bool Transpose = false>
-inline void ApplyOrder0(double sr, const Vector &dinv, const Vector &r, Vector &d)
-{
-  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
-  const int N = d.Size();
-  const auto *DI = dinv.Read(use_dev);
-  const auto *R = r.Read(use_dev);
-  auto *D = d.Write(use_dev);
-  mfem::forall_switch(use_dev, N,
-                      [=] MFEM_HOST_DEVICE(int i) { D[i] = sr * DI[i] * R[i]; });
-}
-
-template <bool Transpose = false>
-inline void ApplyOrder0(const double sr, const ComplexVector &dinv, const ComplexVector &r,
-                        ComplexVector &d)
-{
-  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
-  const int N = dinv.Size();
-  const auto *DIR = dinv.Real().Read(use_dev);
-  const auto *DII = dinv.Imag().Read(use_dev);
-  const auto *RR = r.Real().Read(use_dev);
-  const auto *RI = r.Imag().Read(use_dev);
-  auto *DR = d.Real().Write(use_dev);
-  auto *DI = d.Imag().Write(use_dev);
-  if constexpr (!Transpose)
-  {
-    mfem::forall_switch(use_dev, N,
-                        [=] MFEM_HOST_DEVICE(int i)
-                        {
-                          DR[i] = sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
-                          DI[i] = sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
-                        });
-  }
-  else
-  {
-    mfem::forall_switch(use_dev, N,
-                        [=] MFEM_HOST_DEVICE(int i)
-                        {
-                          DR[i] = sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
-                          DI[i] = sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
-                        });
-  }
-}
-
-template <bool Transpose = false>
-inline void ApplyOrderK(const double sd, const double sr, const Vector &dinv,
-                        const Vector &r, Vector &d)
-{
-  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
-  const int N = dinv.Size();
-  const auto *DI = dinv.Read(use_dev);
-  const auto *R = r.Read(use_dev);
-  auto *D = d.ReadWrite(use_dev);
-  mfem::forall_switch(use_dev, N, [=] MFEM_HOST_DEVICE(int i)
-                      { D[i] = sd * D[i] + sr * DI[i] * R[i]; });
-}
-
-template <bool Transpose = false>
-inline void ApplyOrderK(const double sd, const double sr, const ComplexVector &dinv,
-                        const ComplexVector &r, ComplexVector &d)
-{
-  const bool use_dev = dinv.UseDevice() || r.UseDevice() || d.UseDevice();
-  const int N = dinv.Size();
-  const auto *DIR = dinv.Real().Read(use_dev);
-  const auto *DII = dinv.Imag().Read(use_dev);
-  const auto *RR = r.Real().Read(use_dev);
-  const auto *RI = r.Imag().Read(use_dev);
-  auto *DR = d.Real().ReadWrite(use_dev);
-  auto *DI = d.Imag().ReadWrite(use_dev);
-  if constexpr (!Transpose)
-  {
-    mfem::forall_switch(use_dev, N,
-                        [=] MFEM_HOST_DEVICE(int i)
-                        {
-                          DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] - DII[i] * RI[i]);
-                          DI[i] = sd * DI[i] + sr * (DII[i] * RR[i] + DIR[i] * RI[i]);
-                        });
-  }
-  else
-  {
-    mfem::forall_switch(use_dev, N,
-                        [=] MFEM_HOST_DEVICE(int i)
-                        {
-                          DR[i] = sd * DR[i] + sr * (DIR[i] * RR[i] + DII[i] * RI[i]);
-                          DI[i] = sd * DI[i] + sr * (-DII[i] * RR[i] + DIR[i] * RI[i]);
-                        });
-  }
-}
-
 }  // namespace
 
 template <OperatorType OperType>
 ChebyshevSmoother<OperType>::ChebyshevSmoother(MPI_Comm comm, int smooth_it, int poly_order,
                                                double sf_max)
-  : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
+  : ChebyshevSmoother(std::make_unique<JacobiSmoother<OperType>>(comm), smooth_it,
+                      poly_order, sf_max)
+{
+}
+
+template <OperatorType OperType>
+ChebyshevSmoother<OperType>::ChebyshevSmoother(std::unique_ptr<Relaxation<OperType>> &&M,
+                                               int smooth_it, int poly_order, double sf_max)
+  : Solver<OperType>(), pc_it(smooth_it), order(poly_order), A(nullptr), M(std::move(M)),
     lambda_max(0.0), sf_max(sf_max)
 {
+  MFEM_VERIFY(this->M, "Chebyshev smoothing requires a relaxation method!");
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
 
@@ -235,17 +76,14 @@ void ChebyshevSmoother<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
   d.SetSize(op.Height());
-  dinv.SetSize(op.Height());
   d.UseDevice(true);
-  dinv.UseDevice(true);
-  op.AssembleDiagonal(dinv);
-  dinv.Reciprocal();
+  M->SetOperator(op);
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. See
   // mfem::OperatorChebyshevSmoother or Adams et al. (2003). The estimate starts from the
   // dominant vector of the previous operator, which is usually a nearby one (for example,
   // the next frequency of a driven sweep).
-  lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
+  lambda_max = sf_max * M->EstimateMaxEigenvalue(*A, lambda_vec);
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
 
@@ -270,28 +108,83 @@ void ChebyshevSmoother<OperType>::Mult2(const VecType &x, VecType &y, VecType &r
       y = 0.0;
     }
 
-    // 4th-kind Chebyshev smoother, from Phillips and Fischer or Lottes (with k -> k + 1
-    // shift due to 1-based indexing).
-    ApplyOrder0(4.0 / (3.0 * lambda_max), dinv, r, d);
-    for (int k = 1; k < order; k++)
+    Polynomial(y, r);
+
+    // Correction of the relaxation on the residual after the polynomial, if it has one.
+    if (M->HasSweepCorrection())
     {
-      y += d;
-      ApplyOp(*A, d, r, -1.0);
-      const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
-      const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
-      ApplyOrderK(sd, sr, dinv, r, d);
+      ApplyOp(*A, y, r);
+      linalg::AXPBY(1.0, x, -1.0, r);
+      M->AddSweepCorrection(r, y);
     }
-    y += d;
   }
+}
+
+template <OperatorType OperType>
+void ChebyshevSmoother<OperType>::MultTranspose2(const VecType &x, VecType &y,
+                                                 VecType &r) const
+{
+  if (!M->HasSweepCorrection())
+  {
+    Mult2(x, y, r);  // Assumes operator symmetry
+    return;
+  }
+
+  // Apply the transposed smoother, which has the correction of the relaxation before the
+  // polynomial (both are symmetric).
+  for (int it = 0; it < pc_it; it++)
+  {
+    if (this->initial_guess || it > 0)
+    {
+      ApplyOp(*A, y, r);
+      linalg::AXPBY(1.0, x, -1.0, r);
+    }
+    else
+    {
+      r = x;
+      y = 0.0;
+    }
+    M->AddSweepCorrection(r, y);
+    ApplyOp(*A, y, r);
+    linalg::AXPBY(1.0, x, -1.0, r);
+    Polynomial(y, r);
+  }
+}
+
+template <OperatorType OperType>
+void ChebyshevSmoother<OperType>::Polynomial(VecType &y, VecType &r) const
+{
+  // 4th-kind Chebyshev smoother, from Phillips and Fischer or Lottes (with k -> k + 1
+  // shift due to 1-based indexing): y = y + p(M⁻¹A) M⁻¹ r for the residual r of y.
+  M->ScaledMult(4.0 / (3.0 * lambda_max), r, d);
+  for (int k = 1; k < order; k++)
+  {
+    y += d;
+    ApplyOp(*A, d, r, -1.0);
+    const double sd = (2.0 * k - 1.0) / (2.0 * k + 3.0);
+    const double sr = (8.0 * k + 4.0) / ((2.0 * k + 3.0) * lambda_max);
+    M->ScaledAddMult(sd, sr, r, d);
+  }
+  y += d;
 }
 
 template <OperatorType OperType>
 ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(MPI_Comm comm, int smooth_it,
                                                              int poly_order, double sf_max,
                                                              double sf_min)
-  : Solver<OperType>(), comm(comm), pc_it(smooth_it), order(poly_order), A(nullptr),
+  : ChebyshevSmoother1stKind(std::make_unique<JacobiSmoother<OperType>>(comm), smooth_it,
+                             poly_order, sf_max, sf_min)
+{
+}
+
+template <OperatorType OperType>
+ChebyshevSmoother1stKind<OperType>::ChebyshevSmoother1stKind(
+    std::unique_ptr<Relaxation<OperType>> &&M, int smooth_it, int poly_order, double sf_max,
+    double sf_min)
+  : Solver<OperType>(), pc_it(smooth_it), order(poly_order), A(nullptr), M(std::move(M)),
     theta(0.0), sf_max(sf_max), sf_min(sf_min)
 {
+  MFEM_VERIFY(this->M, "Chebyshev smoothing requires a relaxation method!");
   MFEM_VERIFY(order > 0, "Polynomial order for Chebyshev smoothing must be positive!");
 }
 
@@ -300,11 +193,8 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
 {
   A = &op;
   d.SetSize(op.Height());
-  dinv.SetSize(op.Height());
   d.UseDevice(true);
-  dinv.UseDevice(true);
-  op.AssembleDiagonal(dinv);
-  dinv.Reciprocal();
+  M->SetOperator(op);
 
   // Set up Chebyshev coefficients using the computed maximum eigenvalue estimate. The
   // optimized estimate of lambda_min comes from (2.24) of Phillips and Fischer (2022). See
@@ -313,7 +203,7 @@ void ChebyshevSmoother1stKind<OperType>::SetOperator(const OperType &op)
   {
     sf_min = 1.69 / (std::pow(order, 1.68) + 2.11 * order + 1.98);
   }
-  const double lambda_max = sf_max * GetLambdaMax(comm, *A, dinv, lambda_vec);
+  const double lambda_max = sf_max * M->EstimateMaxEigenvalue(*A, lambda_vec);
   MFEM_VERIFY(std::isfinite(lambda_max) && lambda_max > 0.0,
               "Encountered invalid maximum eigenvalue in Chebyshev smoother!");
   const double lambda_min = sf_min * lambda_max;
@@ -342,21 +232,67 @@ void ChebyshevSmoother1stKind<OperType>::Mult2(const VecType &x, VecType &y,
       y = 0.0;
     }
 
-    // 1th-kind Chebyshev smoother, from Phillips and Fischer or Adams.
-    ApplyOrder0(1.0 / theta, dinv, r, d);
-    double rhop = delta / theta;
-    for (int k = 1; k < order; k++)
+    Polynomial(y, r);
+
+    // Correction of the relaxation on the residual after the polynomial, if it has one.
+    if (M->HasSweepCorrection())
     {
-      y += d;
-      ApplyOp(*A, d, r, -1.0);
-      const double rho = 1.0 / (2.0 * theta / delta - rhop);
-      const double sd = rho * rhop;
-      const double sr = 2.0 * rho / delta;
-      ApplyOrderK(sd, sr, dinv, r, d);
-      rhop = rho;
+      ApplyOp(*A, y, r);
+      linalg::AXPBY(1.0, x, -1.0, r);
+      M->AddSweepCorrection(r, y);
     }
-    y += d;
   }
+}
+
+template <OperatorType OperType>
+void ChebyshevSmoother1stKind<OperType>::MultTranspose2(const VecType &x, VecType &y,
+                                                        VecType &r) const
+{
+  if (!M->HasSweepCorrection())
+  {
+    Mult2(x, y, r);  // Assumes operator symmetry
+    return;
+  }
+
+  // Apply the transposed smoother, which has the correction of the relaxation before the
+  // polynomial (both are symmetric).
+  for (int it = 0; it < pc_it; it++)
+  {
+    if (this->initial_guess || it > 0)
+    {
+      ApplyOp(*A, y, r);
+      linalg::AXPBY(1.0, x, -1.0, r);
+    }
+    else
+    {
+      r = x;
+      y = 0.0;
+    }
+    M->AddSweepCorrection(r, y);
+    ApplyOp(*A, y, r);
+    linalg::AXPBY(1.0, x, -1.0, r);
+    Polynomial(y, r);
+  }
+}
+
+template <OperatorType OperType>
+void ChebyshevSmoother1stKind<OperType>::Polynomial(VecType &y, VecType &r) const
+{
+  // 1th-kind Chebyshev smoother, from Phillips and Fischer or Adams: y = y + p(M⁻¹A) M⁻¹ r
+  // for the residual r of y.
+  M->ScaledMult(1.0 / theta, r, d);
+  double rhop = delta / theta;
+  for (int k = 1; k < order; k++)
+  {
+    y += d;
+    ApplyOp(*A, d, r, -1.0);
+    const double rho = 1.0 / (2.0 * theta / delta - rhop);
+    const double sd = rho * rhop;
+    const double sr = 2.0 * rho / delta;
+    M->ScaledAddMult(sd, sr, r, d);
+    rhop = rho;
+  }
+  y += d;
 }
 
 template class ChebyshevSmoother<Operator>;

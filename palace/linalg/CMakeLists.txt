@@ -46,7 +46,6 @@ target_sources(${LIB_TARGET_NAME}
 set(TARGET_SOURCES_DEVICE
   ${TARGET_SOURCES_DEVICE}
   ${CMAKE_CURRENT_SOURCE_DIR}/blockprecond.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/chebyshev.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/cudss.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/densematrix.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/jacobi.cpp
