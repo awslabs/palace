@@ -822,4 +822,20 @@ TEST_CASE("Quasi-Newton finds eigenpairs with linearly dependent eigenvectors",
     CHECK(r.backward_error[m] <= tol);
     CHECK(r.weight[m] >= 1.0 - 1.0e-12);
   }
+  if (Mpi::Root(Mpi::World()))
+  {
+    // Each guess converges in a few iterations: after a deflation, the first attempt
+    // starts from the guess itself, not from the guess plus a random combination of the
+    // deflated eigenvectors.
+    const std::regex converged(R"(Quasi-Newton converged in (\d+) iterations)");
+    int count = 0;
+    for (auto it = std::sregex_iterator(r.out.begin(), r.out.end(), converged);
+         it != std::sregex_iterator(); ++it)
+    {
+      CAPTURE((*it)[0].str());
+      CHECK(std::stoi((*it)[1].str()) <= 6);
+      count++;
+    }
+    CHECK(count == 4);
+  }
 }
