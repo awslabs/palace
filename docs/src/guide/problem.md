@@ -210,7 +210,7 @@ With the equilibrated error estimator
 ([`config["Solver"]["Linear"]["EstimatorType"]: "Equilibrated"`](../config/reference.md#config-solver-linear)),
 guaranteed brackets of every entry of both matrices are written to `terminal-C-lower.csv`,
 `terminal-C-upper.csv`, `terminal-Cm-lower.csv` and `terminal-Cm-upper.csv` (see the
-[reference](../reference.md#Equilibrated-error-estimate)).
+[reference](../reference.md#Capacitance-brackets)).
 
 ## Magnetostatic problems
 
