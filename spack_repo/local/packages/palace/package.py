@@ -208,7 +208,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # the Palace variants are not folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
-        when="@develop+strumpack",
+        when="@0.20:+strumpack",
         patches=[
             patch(
                 "https://github.com/pghysels/STRUMPACK/commit/"
@@ -338,7 +338,7 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # the `with` blocks so the Palace variants are not folded into the patch conditions.
     depends_on(
         "hypre",
-        when="@develop",
+        when="@0.20:",
         patches=[
             patch(
                 "https://github.com/hypre-space/hypre/commit/"
