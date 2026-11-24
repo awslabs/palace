@@ -5,9 +5,7 @@
 
 #include <algorithm>
 #include <cstring>
-#include <functional>
 #include <limits>
-#include <optional>
 #include <string>
 #include "fem/bilinearform.hpp"
 #include "fem/integrator.hpp"
@@ -449,48 +447,19 @@ Vector ComputeErrorEstimates(const VecType &F, VecType &F_gf, VecType &G, VecTyp
   return IntegrateRealErrors(fespace.GetMesh(), integ_op, F_gf, G_gf);
 }
 
-// The energy norms of the recovered flux of the last estimate, with a zero discontinuous
-// flux input. This overwrites the field workspace F_gf.
-template <typename VecType>
-Vector RecoveredNorms(const Mesh &mesh, const ceed::Operator &integ_op, VecType &F_gf,
-                      const VecType &G_gf)
-{
-  F_gf = 0.0;
-  return IntegrateRealErrors(mesh, integ_op, F_gf, G_gf);
-}
-
-// Normalization of the squared element error estimates by the total field energy Et, so the
-// indicators are relative to the energy norm of the fields, ||e_K|| / ||F||. Et is the
-// physical stored energy of the solution: 1/2 ||F||² for a real-valued field and the time
-// average 1/4 ||F||² for a complex peak phasor (see electromagnetics::TimeAverageWeight),
-// so the matching factor keeps the same relative indicator for both.
+// Normalization of the squared element error estimates by the energy Et of the fields, so
+// the indicators are relative to the energy norm of the fields, ||e_K|| / ||F||. Et is the
+// stored energy of a real-valued field, 1/2 ||F||², and the time average 1/4 ||F||² of a
+// complex peak phasor (see electromagnetics::TimeAverageWeight), so the matching factor
+// keeps the same relative indicator for both. For complex fields, Et is the energy norm of
+// the post operator (Measurement::FieldEnergyNorm), with the weight |ε(iω)| of the
+// indicator for a frequency-dependent material, and the stored energy otherwise.
 template <typename VecType>
 double ErrorEstimateNormalization(double Et)
 {
   constexpr double weight =
       0.5 * electromagnetics::TimeAverageWeight(std::is_same_v<VecType, ComplexVector>);
   return (Et > 0.0) ? weight / Et : 1.0;
-}
-
-// The scale of the squared indicators of a complex field normalized by the total energy Et
-// (ErrorEstimateNormalization), or 1 for a zero field. Without a physical total energy (a
-// frequency-dependent material without a stored electric energy,
-// MaterialOperator::HasStoredElectricEnergy), the indicators are normalized by the energy
-// norm of the recovered fluxes instead: a numerical norm, not a physical energy, which
-// keeps them positive and comparable across samples. That norm Er carries the factor of
-// 1/2 of its own definition, which its scale removes, and no time average.
-double IndicatorScale(const std::optional<double> &Et, const MaterialOperator &mat_op,
-                      const std::function<double()> &recovered_energy)
-{
-  MFEM_VERIFY(Et.has_value() == mat_op.HasStoredElectricEnergy(),
-              "The error indicator normalization requires the total field energy exactly "
-              "when it is available (MaterialOperator::HasStoredElectricEnergy)!");
-  if (Et)
-  {
-    return ErrorEstimateNormalization<ComplexVector>(*Et);
-  }
-  const double Er = recovered_energy();
-  return (Er > 0.0) ? 0.5 / Er : 1.0;
 }
 
 }  // namespace
@@ -564,20 +533,6 @@ GradFluxErrorEstimator<VecType>::GradFluxErrorEstimator(
   {
     MFEM_VERIFY(!complex_route, "Real-valued flux error estimation does not support "
                                 "frequency-dependent permittivity!");
-  }
-  for (auto m : fd_materials)
-  {
-    if (!mat_op.HasStoredElectricEnergy(m))
-    {
-      // The same on every process: the status is that of the configured model.
-      Mpi::Warning(nd_fespace.GetComm(),
-                   "Material {:d} has no stored electric energy ({}); its error "
-                   "indicator weight is ε∞ = {:.3e}, and the indicators are normalized by "
-                   "the energy norm of the recovered fluxes. These are numerical norms, "
-                   "not physical energies!\n",
-                   m + 1, mat_op.GetStoredElectricEnergyReason(m),
-                   mat_op.GetFrequencyDependentPermittivityHighFrequency(m));
-    }
   }
 
   // Construct the libCEED operator used for integrating the element-wise error. The
@@ -733,15 +688,13 @@ void GradFluxErrorEstimator<VecType>::SetFrequency(double omega) const
   }
   MFEM_VERIFY(omega > 0.0, "Error estimation for a frequency-dependent material requires "
                            "a positive frequency!");
-  // The positive stored-energy permittivity W(ω) ≥ ε∞ > 0 of each model weights the
-  // indicator. A material without a stored electric energy uses ε∞ > 0 instead, a
-  // numerical weight (warned at construction).
+  // The modulus W(ω) = |ε(iω)| > 0 of the permittivity of each frequency-dependent
+  // material weights the indicator, as it weights the material in the energy norm of the
+  // post operator (one definition for both).
   std::vector<double> W(mat_op.NumFrequencyDependentPermittivityMaterials(), 0.0);
   for (auto m : fd_materials)
   {
-    W[m] = mat_op.HasStoredElectricEnergy(m)
-               ? mat_op.GetFrequencyDependentStoredEnergyPermittivity(m, omega)
-               : mat_op.GetFrequencyDependentPermittivityHighFrequency(m);
+    W[m] = mat_op.GetFrequencyDependentPermittivityModulus(m, omega);
   }
   auto winv = mat_op.MapFrequencyDependentMaterials(
       linalg::MatrixPow(mat_op.GetPermittivityReal(), -1.0),
@@ -814,27 +767,6 @@ Vector GradFluxErrorEstimator<VecType>::ComputeEstimates(const VecType &E,
 }
 
 template <typename VecType>
-Vector GradFluxErrorEstimator<VecType>::RecoveredFluxNorms() const
-{
-  const auto &mesh = nd_fespace.GetMesh();
-  if constexpr (std::is_same_v<VecType, ComplexVector>)
-  {
-    if (!fd_materials.empty())
-    {
-      E_gf = 0.0;
-      auto norms = ZeroEstimates(mesh);
-      if (mesh.GetNE() > 0)
-      {
-        IntegrateErrors(integ_op, {&E_gf.Real(), &E_gf.Imag(), &D_gf.Real(), &D_gf.Imag()},
-                        norms);
-      }
-      return norms;
-    }
-  }
-  return RecoveredNorms(mesh, integ_op, E_gf, D_gf);
-}
-
-template <typename VecType>
 void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double Et,
                                                         ErrorIndicator &indicator) const
   requires(!std::is_same_v<VecType, ComplexVector>)
@@ -845,17 +777,13 @@ void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double
 }
 
 template <typename VecType>
-void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E,
-                                                        std::optional<double> Et,
+void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, double Et,
                                                         double omega,
                                                         ErrorIndicator &indicator) const
   requires std::is_same_v<VecType, ComplexVector>
 {
   auto estimates = ComputeEstimates(E, omega);
-  const auto comm = nd_fespace.GetComm();
-  linalg::Sqrt(estimates,
-               IndicatorScale(Et, mat_op, [&]()
-                              { return 0.5 * linalg::Sum(comm, RecoveredFluxNorms()); }));
+  linalg::Sqrt(estimates, ErrorEstimateNormalization<VecType>(Et));
   indicator.AddIndicator(estimates);
 }
 
@@ -994,12 +922,6 @@ Vector CurlFluxErrorEstimator<VecType>::ComputeEstimates(const VecType &B) const
 }
 
 template <typename VecType>
-Vector CurlFluxErrorEstimator<VecType>::RecoveredFluxNorms() const
-{
-  return RecoveredNorms(rt_fespace.GetMesh(), integ_op, B_gf, H_gf);
-}
-
-template <typename VecType>
 void CurlFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &B, double Et,
                                                         ErrorIndicator &indicator) const
 {
@@ -1046,21 +968,13 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
 
 template <typename VecType>
 void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
-    const VecType &E, const VecType &B, std::optional<double> Et, double omega,
+    const VecType &E, const VecType &B, double Et, double omega,
     ErrorIndicator &indicator) const
   requires std::is_same_v<VecType, ComplexVector>
 {
-  auto grad_estimates = grad_estimator.ComputeEstimates(E, omega);
-  auto curl_estimates = curl_estimator.ComputeEstimates(B);
-  const auto comm = grad_estimator.nd_fespace.GetComm();
-  const double scale = IndicatorScale(
-      Et, grad_estimator.mat_op,
-      [&]()
-      {
-        return 0.5 * (linalg::Sum(comm, grad_estimator.RecoveredFluxNorms()) +
-                      linalg::Sum(comm, curl_estimator.RecoveredFluxNorms()));
-      });
-  AddFluxErrorIndicator(std::move(grad_estimates), curl_estimates, scale, indicator);
+  AddFluxErrorIndicator(grad_estimator.ComputeEstimates(E, omega),
+                        curl_estimator.ComputeEstimates(B),
+                        ErrorEstimateNormalization<VecType>(Et), indicator);
 }
 
 template <typename VecType>
@@ -1088,21 +1002,13 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
 
 template <typename VecType>
 void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
-    const VecType &E, const VecType &B, std::optional<double> Et, double omega,
+    const VecType &E, const VecType &B, double Et, double omega,
     ErrorIndicator &indicator) const
   requires std::is_same_v<VecType, ComplexVector>
 {
-  auto grad_estimates = grad_estimator.ComputeEstimates(E, omega);
-  auto curl_estimates = curl_estimator.ComputeEstimates(B);
-  const auto comm = grad_estimator.nd_fespace.GetComm();
-  const double scale = IndicatorScale(
-      Et, grad_estimator.mat_op,
-      [&]()
-      {
-        return 0.5 * (linalg::Sum(comm, grad_estimator.RecoveredFluxNorms()) +
-                      linalg::Sum(comm, curl_estimator.RecoveredFluxNorms()));
-      });
-  AddFluxErrorIndicator(std::move(grad_estimates), curl_estimates, scale, indicator);
+  AddFluxErrorIndicator(grad_estimator.ComputeEstimates(E, omega),
+                        curl_estimator.ComputeEstimates(B),
+                        ErrorEstimateNormalization<VecType>(Et), indicator);
 }
 
 template class FluxProjector<Vector>;

@@ -15,6 +15,14 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Interface Changes
+
+  - The error indicators weight each frequency-dependent material by |ε(iω)| and are
+    normalized by the energy norm with that weight, so typed and `PoleResidue` forms give
+    the same indicators. [PR 1302](https://github.com/awslabs/palace/pull/1302).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features

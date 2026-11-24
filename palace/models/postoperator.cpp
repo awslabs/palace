@@ -1734,9 +1734,11 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // every process), the energies with it, and the participations in the total, are
     // left empty.
     const double omega = measurement_cache.freq.real();
-    const auto [energy, material] = dom_post_op.GetElectricFieldEnergies(field, omega);
+    const auto [energy, material, energy_norm] =
+        dom_post_op.GetElectricFieldEnergies(field, omega);
     measurement_cache.domain_E_field_energy_all = energy;
     measurement_cache.domain_E_field_energy_material = material;
+    measurement_cache.domain_E_field_energy_norm = energy_norm;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
@@ -1756,6 +1758,7 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   {
     // Magnetic field only.
     measurement_cache.domain_E_field_energy_all = 0.0;
+    measurement_cache.domain_E_field_energy_norm = 0.0;
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
       measurement_cache.domain_E_field_energy_i.emplace_back(
@@ -2290,10 +2293,10 @@ void PostOperator<solver_t>::MeasureProbes() const
 using fmt::format;
 
 template <ProblemType solver_t>
-std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
-                                                                 const ComplexVector &e,
-                                                                 const ComplexVector &b,
-                                                                 std::complex<double> omega)
+double PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int step,
+                                                  const ComplexVector &e,
+                                                  const ComplexVector &b,
+                                                  std::complex<double> omega)
   requires(solver_t == ProblemType::DRIVEN)
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -2324,7 +2327,7 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(int ex_idx, int
     WriteMFEMGridFunctions(freq.real(), ind, ExcitationSubFolder(ex_idx));
     Mpi::Print(" Wrote fields to disk (grid function) at step {:d}\n", step + 1);
   }
-  return measurement_cache.TotalFieldEnergy();
+  return measurement_cache.FieldEnergyNorm();
 }
 
 template <ProblemType solver_t>
@@ -2669,9 +2672,11 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
 }
 
 template <ProblemType solver_t>
-std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
-    int step, const ComplexVector &e, const ComplexVector &b, std::complex<double> omega,
-    double error_abs, double error_bkwd, int num_conv)
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &e,
+                                                  const ComplexVector &b,
+                                                  std::complex<double> omega,
+                                                  double error_abs, double error_bkwd,
+                                                  int num_conv)
   requires(solver_t == ProblemType::EIGENMODE)
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -2719,7 +2724,7 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
     WriteMFEMGridFunctions(step, print_idx);
     Mpi::Print(" Wrote mode {:d} to disk (grid function)\n", print_idx);
   }
-  return measurement_cache.TotalFieldEnergy();
+  return measurement_cache.FieldEnergyNorm();
 }
 
 template <ProblemType solver_t>
@@ -2850,9 +2855,9 @@ void PostOperator<solver_t>::MeasureFinalize(const ErrorIndicator &indicator)
 }
 
 template <ProblemType solver_t>
-std::optional<double>
-PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
-                                                     const ComplexVector &b, double omega)
+double PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
+                                                            const ComplexVector &b,
+                                                            double omega)
   requires(solver_t == ProblemType::DRIVEN)
 {
   SetEGridFunction(e);
@@ -2861,14 +2866,16 @@ PostOperator<solver_t>::MeasureDomainFieldEnergyOnly(const ComplexVector &e,
   MeasureDomainFieldEnergy();
   Mpi::Barrier(fem_op->GetComm());
 
-  // Return total domain energy for normalizing error indicator.
-  return measurement_cache.TotalFieldEnergy();
+  // Return the energy norm of the fields for normalizing the error indicator.
+  return measurement_cache.FieldEnergyNorm();
 }
 
 template <ProblemType solver_t>
-std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
-    int step, const ComplexVector &et, const ComplexVector &en, std::complex<double> kn,
-    double omega, double error_abs, double error_bkwd, int num_conv)
+double PostOperator<solver_t>::MeasureAndPrintAll(int step, const ComplexVector &et,
+                                                  const ComplexVector &en,
+                                                  std::complex<double> kn, double omega,
+                                                  double error_abs, double error_bkwd,
+                                                  int num_conv)
   requires(solver_t == ProblemType::BOUNDARYMODE)
 {
   BlockTimer bt0(Timer::POSTPRO);
@@ -3186,7 +3193,9 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
     WriteMFEMGridFunctions(step, print_idx);
     Mpi::Print(" Wrote mode {:d} to disk (grid function)\n", print_idx);
   }
-  return measurement_cache.domain_E_field_energy_all;
+  // The error indicators of mode analysis are normalized by the electric part of the
+  // energy norm of the tangential field only.
+  return measurement_cache.domain_E_field_energy_norm;
 }
 
 // Explicit template instantiation.

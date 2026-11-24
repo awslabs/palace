@@ -131,10 +131,9 @@ is the same term as
 {"Type": "PoleResidue", "Pole": -1.0e11, "Residue": 5.0e10}
 ```
 
-The two forms give the same ``\epsilon(\omega)`` and the same field solve, but the
-`PoleResidue` form specifies no stored energy (see below): `E_elec` and the outputs
-normalized by it are omitted, and the error indicators are normalized differently, so that
-adaptive mesh refinement can differ.
+The two forms give the same ``\epsilon(\omega)``, the same field solve, and the same error
+indicators, but the `PoleResidue` form specifies no stored energy (see below): `E_elec` and
+the outputs normalized by it are omitted.
 
 A pole and residue fit in GHz must be multiplied by ``2\pi \times 10^9`` first: the check for
 gain does not depend on the scale of the rates, and does not detect a fit in other units.
@@ -245,12 +244,12 @@ materials. The wave number retains the mode's complex frequency.
 
 With frequency-dependent materials, the electric flux estimator recovers the complex
 physical displacement ``\mathbf{D}=\epsilon(i\omega)\mathbf{E}`` and weights its residual by
-the inverse stored-energy tensor ``W^{-1}(\omega)``. The recovery is the projection weighted
+``|\epsilon(i\omega)|^{-1}``, for typed and `PoleResidue` terms alike
+(``\operatorname{Re}\epsilon`` for a constant material). The indicators are normalized by
+the energy norm of the fields with the same weights: the field energy with
+``|\epsilon(i\omega)|`` in place of the stored-energy permittivity of each
+frequency-dependent material. It needs no stored energy, is not reported, and is the total
+field energy without frequency-dependent materials. The recovery is the projection weighted
 by ``\epsilon_\infty^{-1}``, the same at every frequency. It is therefore not the exact
 minimizer of the residual at the interfaces of a frequency-dependent material, where
-``W(\omega)`` and ``\epsilon_\infty`` differ, most of all near a resonance. For a material
-whose stored electric energy *Palace* cannot report, the indicator uses ``\epsilon_\infty``
-in place of ``W`` and is normalized by the energy norm of the recovered fluxes in place of
-the total field energy, with a warning. These are numerical norms, which keep adaptive
-refinement usable; they are not physical energies and do not validate the physics of a fit
-outside its useful band.
+``|\epsilon(i\omega)|`` and ``\epsilon_\infty`` differ, most of all near a resonance.

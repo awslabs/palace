@@ -111,11 +111,19 @@ public:
   double GetMagneticFieldEnergy(const GridFunction &B) const;
 
   // The STORED (if HasStoredElectricFieldEnergy()) and MATERIAL electric energies in the
-  // entire domain, from one set of field products.
+  // entire domain, and the electric part of the energy norm of the error indicators, from
+  // one set of field products. The energy norm weights each frequency-dependent material
+  // by |ε(iω)| (MaterialOperator::GetFrequencyDependentPermittivityModulus), as the
+  // indicators weight its flux error, so that they are relative errors in one norm. It is
+  // not the stored energy: that weights a model by its stored-energy permittivity W(ω),
+  // which is not |ε(iω)|, and a PoleResidue material does not specify it. The energy norm
+  // is always available, and equals the stored energy without frequency-dependent
+  // materials.
   struct ElectricFieldEnergies
   {
     std::optional<double> stored;
     double material;
+    double energy_norm;
   };
   ElectricFieldEnergies GetElectricFieldEnergies(const GridFunction &E, double omega) const;
 

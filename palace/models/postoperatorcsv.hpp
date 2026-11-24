@@ -198,6 +198,10 @@ struct Measurement
   // without their polarization energy, which equals the magnetic energy of a lossless mode.
   // Equal to domain_E_field_energy_all without such materials.
   double domain_E_field_energy_material = 0.0;
+  // The electric part of the energy norm of the error indicators: the electric field
+  // energy with |ε(iω)| for the stored-energy permittivity of each frequency-dependent
+  // material (DomainPostOperator::ElectricFieldEnergies). Not reported.
+  double domain_E_field_energy_norm = 0.0;
 
   // The time-averaged electric-side energy U a mode's participation ratios are normalized
   // by, and its coupling rates by the total stored energy 2 U, from electric-side
@@ -215,8 +219,7 @@ struct Measurement
            lumped_port_capacitor_energy;
   }
 
-  // The total field energy E_elec + E_mag which normalizes the error indicators, empty
-  // without the stored electric field energy.
+  // The total field energy E_elec + E_mag, empty without the stored electric field energy.
   std::optional<double> TotalFieldEnergy() const
   {
     if (!domain_E_field_energy_all)
@@ -224,6 +227,14 @@ struct Measurement
       return std::nullopt;
     }
     return *domain_E_field_energy_all + domain_H_field_energy_all;
+  }
+
+  // The energy norm of the fields which normalizes the error indicators, the total field
+  // energy with the electric part of domain_E_field_energy_norm: always available, and
+  // equal to the total field energy without frequency-dependent materials.
+  double FieldEnergyNorm() const
+  {
+    return domain_E_field_energy_norm + domain_H_field_energy_all;
   }
 
   std::vector<DomainData> domain_E_field_energy_i;

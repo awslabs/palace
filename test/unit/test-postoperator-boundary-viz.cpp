@@ -1406,8 +1406,12 @@ TEST_CASE_METHOD(test::SharedTempDir,
        {std::complex<double>(0.4, 0.05), {3.0, 0.1}, {0.4, 0.05}})
   {
     CAPTURE(omega);
-    const auto total = post_op.MeasureAndPrintAll(0, e_true, b_true, omega, 0.0, 0.0, 1);
-    CHECK(total.has_value() == stored);
+    // The energy norm which normalizes the error indicators is defined for every model,
+    // also without a stored electric energy, whose outputs are omitted (below).
+    const double energy_norm =
+        post_op.MeasureAndPrintAll(0, e_true, b_true, omega, 0.0, 0.0, 1);
+    CHECK(std::isfinite(energy_norm));
+    CHECK(energy_norm > 0.0);
     const auto domain_vtu =
         ReadFile(out / "paraview" / "eigenmode" / "Cycle000001" / "proc000000.vtu");
     const auto boundary_vtu = ReadFile(out / "paraview" / "eigenmode_boundary" /
