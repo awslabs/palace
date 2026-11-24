@@ -100,6 +100,46 @@ impedance of free space. Similarly, the non-dimensional electric field `E` is
     dimension ``d``. See `ScaleGridFunction` in `palace/models/postoperator.cpp` for
     details.
 
+## Phasor and power conventions
+
+Frequency domain solutions (driven, eigenmode, boundary mode) are complex peak phasors: the
+physical field is ``\text{Re}\{\bm{E}\,e^{i\omega t}\}``. Fields, voltages and currents are reported as peak phasors; S and Z are ratios. Every quadratic physical output
+(stored energies, powers, Poynting vectors, dissipation) is reported as the time average over
+one period, which carries a factor of ``1/2`` relative to the same product of the phasors,
+while real-valued (time domain, static) fields are instantaneous and carry no such factor. All
+port excitations (lumped, wave, Floquet) carry unit *time-averaged* incident power (for a
+``50\,\Omega`` lumped port, ``V^{inc} = 10`` V and ``I^{inc} = 0.2`` A peak); time domain
+excitations carry unit instantaneous power at unit pulse amplitude. Stored wave-port modes
+have unit raw overlap ``\vert\int (\bm{E}\times\bm{H}^*)\cdot\bm{n}\,dS\vert=1``:
+0.5 W time-averaged for lossless propagating modes. The incident wave is ``\sqrt{2}``
+times the stored mode. With a lossy cross section, this normalizes the magnitude of
+complex power, not its transported real part (see issue #960).
+
+The convention is defined in exactly one place, `electromagnetics::TimeAverageWeight` and
+`electromagnetics::UnitPowerAmplitude` in `palace/utils/constants.hpp`, and is applied by the
+*owners* of the physical quantities — `DomainPostOperator` (field energies),
+`SurfacePostOperator` (power flux, interface energies), `LumpedPortData`/`WavePortData`
+(port power, incident amplitudes, S-parameter normalization), `PostOperator` (lumped C/L
+energies, `U_e`/`U_m`/`S` visualization densities), `BoundaryModeOperator` (the Poynting
+power of boundary modes) and `linalg/errorestimator.cpp` (energy normalization of the error
+indicators). It is never applied inside generic norms, mass matrices, or mode-overlap
+functionals, which keep their mathematical definitions.
+
+Normalization mistakes of this kind are easy to introduce and hard to notice, because
+ratios (Q, EPR, participation, S) stay correct while absolute values drift. When adding or
+modifying a quadratic output or a port normalization:
+
+ 1. Apply the weight once, at the owner of the physical quantity, using the named helpers
+    (never a literal `0.5` or `sqrt(2)`), and make the header comment state the convention.
+ 2. Add an analytic case to `test/unit/test-timeaverage.cpp`. That test pins the absolute
+    scale of the domain, surface and lumped-port outputs it exercises against values written directly from the physical
+    definitions (uniform ``\bm{E} = (1+i, 0, 0)`` V/m and ``\bm{H} = (0, 2+3i, 0)`` A/m in
+    vacuum) and checks the invariant that a purely real complex phasor gives exactly half of
+    the real instantaneous result. Extend these checks when adding a new output; untested outputs are not covered automatically.
+ 3. Do not regenerate regression references to make the suite pass: the reference CSVs
+    store absolute energies, powers, voltages and currents and are the second line of
+    defense against convention drift.
+
 ## Style guide
 
 Automated source code formatting is performed using
@@ -236,12 +276,13 @@ documentation build generates this table from that file.
 <!-- BEGIN GENERATED SCHEMA COMPATIBILITY TABLE -->
 ```
 
-| Schema version | First *Palace* release | Notes                                                                                                                                                                                                                                                                                                                                                                                      |
-|:--------------:|:----------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema.                                                                                                                                                                                                                                                                                                                                                         |
-| `1-6-0`        | `0.18.0`               |                                                                                                                                                                                                                                                                                                                                                                                            |
-| `1-7-0`        | `0.18.1`               |                                                                                                                                                                                                                                                                                                                                                                                            |
-| `4-1-0`        | `0.19.0`               | Breaking: `FluxLoop` keys renamed ([PR 929](https://github.com/awslabs/palace/pull/929)), `NSamples` removed ([PR 1049](https://github.com/awslabs/palace/pull/1049)), interior boundaries not cracked by default ([PR 994](https://github.com/awslabs/palace/pull/994)); see the [0.19.0 CHANGELOG](https://github.com/awslabs/palace/blob/main/CHANGELOG.md#0190---2026-11-02) for more. |
+| Schema version | First *Palace* release | Notes                                                                                                                                                                                                                                                                                                                                                                                                                     |
+|:--------------:|:----------------------:|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `1-0-0`        | `0.17.0`               | First explicitly-versioned schema.                                                                                                                                                                                                                                                                                                                                                                                        |
+| `1-6-0`        | `0.18.0`               |                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `1-7-0`        | `0.18.1`               |                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `4-1-0`        | `0.19.0`               | Breaking: `FluxLoop` keys renamed ([PR 929](https://github.com/awslabs/palace/pull/929)), `NSamples` removed ([PR 1049](https://github.com/awslabs/palace/pull/1049)), interior boundaries not cracked by default ([PR 994](https://github.com/awslabs/palace/pull/994)); see the [0.19.0 CHANGELOG](https://github.com/awslabs/palace/blob/main/CHANGELOG.md#0190---2026-11-02) for more.                                |
+| `6-0-0`        | `0.20.0`               | Breaking: frequency-domain energies and powers are time averages, and port excitations carry 1 W of incident power ([PR 937](https://github.com/awslabs/palace/pull/937)); `InitialGuess` defaults to `true` for adaptive frequency sweeps too ([PR 1126](https://github.com/awslabs/palace/pull/1126)); see the [0.20.0 CHANGELOG](https://github.com/awslabs/palace/blob/main/CHANGELOG.md#0200---2026-11-23) for more. |
 
 ```@raw html
 <!-- END GENERATED SCHEMA COMPATIBILITY TABLE -->
@@ -366,6 +407,8 @@ Linear Solve                    // < Linear solver time
   Preconditioner                // < Preconditioner application time for linear solve
   Coarse Solve                  // < Coarse solve time for geometric multigrid
                                 //   preconditioners
+  Initial Guess                 // < Time spent computing initial guesses from previous
+                                //   solutions (uniform driven frequency sweeps)
 Time Stepping                   // < Time spent in the time integrator for transient
                                 //   simulation types
 Eigenvalue Solve                // < Time spent in the eigenvalue solver (not including

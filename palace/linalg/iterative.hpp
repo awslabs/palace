@@ -174,7 +174,9 @@ public:
 };
 
 // Preconditioned Generalized Minimum Residual Method (GMRES) for general nonsymmetric
-// linear systems.
+// linear systems. A nonzero initial guess is scaled to minimize the initial residual in the
+// norm of the stopping test, which is then never larger than that of a zero initial guess,
+// unless a correction limit is set (see SetMaxRelativeCorrection).
 template <OperatorType OperType>
 class GmresSolver : public IterativeSolver<OperType>
 {
@@ -217,14 +219,24 @@ protected:
   mutable std::vector<ScalarType> s, sn;
   mutable std::vector<RealType> cs;
 
+  // Stop as soon as the correction to a nonzero initial guess exceeds this fraction of the
+  // solution norm (no limit if zero), and whether the previous solve stopped for it.
+  RealType max_rel_correction;
+  mutable bool correction_exceeded;
+
   // Allocate storage for solve.
   virtual void Initialize() const;
   virtual void Update(int j) const;
 
+  // Norm of the correction x_j - x₀ = V_j y_j in the current Krylov cycle, with y_j solving
+  // the rotated least-squares system of iteration j. V_j is orthonormal, so this is ‖y_j‖.
+  RealType CorrectionNorm(int j) const;
+
 public:
   GmresSolver(MPI_Comm comm, int print)
     : IterativeSolver<OperType>(comm, print), max_dim(-1),
-      gs_orthog(Orthogonalization::MGS), pc_side(PreconditionerSide::LEFT)
+      gs_orthog(Orthogonalization::MGS), pc_side(PreconditionerSide::LEFT),
+      max_rel_correction(0.0), correction_exceeded(false)
   {
   }
 
@@ -236,6 +248,17 @@ public:
 
   // Set the side for preconditioning.
   virtual void SetPreconditionerSide(PreconditionerSide side) { pc_side = side; }
+
+  // Stop the solve, unconverged, as soon as the norm of the correction to a nonzero initial
+  // guess x₀ exceeds tol times the norm of the iterate: ‖x_j - x₀‖ > tol (‖x₀‖ + ‖x_j -
+  // x₀‖) (no limit if tol = 0). The correction norm is exact and free for left (or no)
+  // preconditioning, where it is ‖y_j‖; it is not monitored with right preconditioning, by
+  // FGMRES, or after a restart. With a limit, x₀ is not scaled (also by FGMRES), so that
+  // the correction is to x₀ itself, as when certifying x₀.
+  void SetMaxRelativeCorrection(double tol) { max_rel_correction = tol; }
+
+  // Whether the previous solve was stopped by the correction limit.
+  bool GetCorrectionExceeded() const { return correction_exceeded; }
 
   void Mult(const VecType &b, VecType &x) const override;
 };
@@ -275,6 +298,7 @@ protected:
   using GmresSolver<OperType>::s;
   using GmresSolver<OperType>::sn;
   using GmresSolver<OperType>::cs;
+  using GmresSolver<OperType>::max_rel_correction;
 
   // Temporary workspace for solve.
   mutable std::vector<VecType> Z;

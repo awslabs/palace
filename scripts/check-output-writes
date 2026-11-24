@@ -1,0 +1,61 @@
+#!/bin/bash
+
+# Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+help()
+{
+    echo "Usage: check-output-writes [OPTIONS] [SOURCE_DIR]
+
+Check that the sources in SOURCE_DIR write files only through the writers of
+palace/utils/outputfile.hpp, which check the open, the write, and the close of the file:
+an output stream opened anywhere else could fail to write without anyone noticing. MFEM
+functions which open a file by name, like Mesh::Save(const std::string &), are not
+detected.
+
+Options:
+  -h, --help                       Show this help message and exit
+
+Arguments:
+  SOURCE_DIR                       Directory to scan (default: palace)
+"
+}
+
+# Parse arguments
+POSITIONAL=()
+while [[ $# -gt 0 ]]; do
+    key="$1"
+    case $key in
+        -h|--help)
+        help
+        exit 0
+        ;;
+        *)
+        POSITIONAL+=("$1")
+        shift
+        ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
+SOURCE_DIR="${1:-palace}"
+SOURCE_DIR="${SOURCE_DIR%/}"
+
+if [[ ! -d "$SOURCE_DIR" ]]; then
+    echo "Error: Source directory '$SOURCE_DIR' does not exist"
+    exit 1
+fi
+
+FOUND=$(grep -rnE --include='*.cpp' --include='*.hpp' --include='*.h' \
+    'std::(basic_)?(ofstream|fstream)|zstr::ofstream|fmt::output_file|ofgzstream|\bfopen\(' \
+    "$SOURCE_DIR" |
+    grep -v "^$SOURCE_DIR/utils/outputfile.hpp:")
+
+if [[ -n "$FOUND" ]]; then
+    echo "Error: Found files written without the writers of palace/utils/outputfile.hpp:"
+    echo "$FOUND"
+    exit 1
+else
+    echo "All output files are written through the checked writers"
+    exit 0
+fi

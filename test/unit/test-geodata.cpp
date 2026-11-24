@@ -414,9 +414,11 @@ TEST_CASE("TetToHex", "[geodata][Serial]")
                              tet_FESpace->GetOrdering());
     fem::InterpolateFunction(xyz_samples, hex_nodes_on_linear_hex, hex_vals,
                              hex_FESpace->GetOrdering());
+    const auto *T = tet_vals.HostRead();
+    const auto *H = hex_vals.HostRead();
     for (int i = 0; i < tet_vals.Size(); i++)
     {
-      CHECK_THAT(tet_vals(i), WithinAbs(hex_vals(i), 1e-9));
+      CHECK_THAT(T[i], WithinAbs(H[i], 1e-9));
     }
   }
 #endif

@@ -4,14 +4,16 @@
 #ifndef PALACE_UTILS_OUTPUTDIR_HPP
 #define PALACE_UTILS_OUTPUTDIR_HPP
 
-#include <exception>
-#include <fstream>
+#include <deque>
+#include <ios>
 #include <string>
-#include <system_error>
+#include <utility>
+#include <vector>
 #include <fmt/format.h>
 #include "communication.hpp"
 #include "filesystem.hpp"
 #include "iodata.hpp"
+#include "outputfile.hpp"
 #include "timer.hpp"
 
 namespace palace
@@ -48,23 +50,8 @@ inline void AbortOnNodeFilesystemError(MPI_Comm comm, const std::string &operati
 template <typename Func>
 inline void ApplyOnRootFilesystem(MPI_Comm comm, const std::string &operation, Func &&func)
 {
-  std::string local_error;
-  if (Mpi::Root(comm))
-  {
-    try
-    {
-      func();
-    }
-    catch (const std::exception &e)
-    {
-      local_error = e.what();
-    }
-    catch (...)
-    {
-      local_error = "Unknown filesystem error";
-    }
-  }
-  internal::AbortOnNodeFilesystemError(comm, operation, local_error);
+  internal::AbortOnNodeFilesystemError(
+      comm, operation, Mpi::Root(comm) ? internal::CatchError(func) : std::string());
 }
 
 // Apply an operation once to each node's view of the filesystem. The global root runs
@@ -76,21 +63,7 @@ inline void ApplyOnEachNodeFilesystem(MPI_Comm comm, const std::string &operatio
                                       Func &&func)
 {
   std::string local_error;
-  auto apply_here = [&]()
-  {
-    try
-    {
-      func();
-    }
-    catch (const std::exception &e)
-    {
-      local_error = e.what();
-    }
-    catch (...)
-    {
-      local_error = "Unknown filesystem error";
-    }
-  };
+  auto apply_here = [&]() { local_error = internal::CatchError(func); };
 
   if (Mpi::Root(comm))
   {
@@ -175,44 +148,173 @@ inline void RemovePreviousOutput(const fs::path &dir, MPI_Comm comm)
                             [&]() { fs::remove_all(dir); });
 }
 
-// Replace a root-written output file without following a symlink left by SaveIteration.
-// The postprocessing directory is Palace-owned, so any existing file, directory, or
-// symlink at the path can be removed. Open and write failures are propagated collectively
-// to keep all ranks on the same MPI control path.
-//
-// With compress = true the file is written through mfem::ofgzstream, which gzip-compresses
-// the bytes when MFEM is built with zlib (MFEM_USE_ZLIB) and writes them verbatim
-// otherwise.
+// Write a file on this process, each process to its own path, as by internal::WriteFile,
+// keeping the first failure in error. Not collective: report the failures of all processes
+// with AbortOnOutputFileErrors, once their files are written. Errors of write_func itself
+// are not caught, since it may communicate with the other processes.
+template <typename Func>
+inline void WriteRankOutputFile(const fs::path &path, Func &&write_func, std::string &error)
+{
+  try
+  {
+    internal::WriteFile(path, write_func);
+  }
+  catch (const internal::OutputFileError &e)
+  {
+    if (error.empty())
+    {
+      error = e.what();
+    }
+  }
+}
+
+// Abort on all processes if any has an error from WriteRankOutputFile. Collective.
+inline void AbortOnOutputFileErrors(MPI_Comm comm, const std::string &error)
+{
+  internal::AbortOnNodeFilesystemError(comm, "Writing output files", error);
+}
+
+#if defined(MFEM_USE_ZLIB)
+namespace internal
+{
+
+// The sink of a zlib stream, writing to an output stream, whose state records a failure:
+// the zlib stream writes its last bytes when destroyed, and ignores a failure there.
+struct ZlibSink : std::streambuf
+{
+  std::ostream &os;
+  explicit ZlibSink(std::ostream &os) : os(os) {}
+  std::streamsize xsputn(const char *s, std::streamsize n) override
+  {
+    return os.write(s, n) ? n : 0;
+  }
+};
+
+}  // namespace internal
+#endif
+
+// Write a file on the root, replacing it as by internal::ReplaceFile (without following a
+// symlink left by SaveIteration), and abort on all processes if it fails. Collective. With
+// compress = true the file is gzip-compressed when MFEM is built with zlib (MFEM_USE_ZLIB)
+// and written verbatim otherwise.
 template <typename Func>
 inline void WriteRootOutputFile(const fs::path &path, MPI_Comm comm, Func &&write_func,
                                 bool compress = false)
 {
-  BlockTimer bt(Timer::IO);
-  ApplyOnRootFilesystem(
-      comm, fmt::format("Writing output file \"{}\"", path.string()),
-      [&]()
+  auto write = [&](std::ostream &os)
+  {
+#if defined(MFEM_USE_ZLIB)
+    if (compress)
+    {
+      internal::ZlibSink sink(os);
+      zstr::ostream zstream(&sink);
+      zstream.exceptions(std::ios::goodbit);
+      write_func(zstream);
+      if (!zstream)
       {
-        fs::remove_all(path);
-        if (compress)
+        os.setstate(std::ios::badbit);  // a failure of the zlib stream itself
+      }
+      return;
+    }
+#endif
+    write_func(os);
+  };
+  internal::AbortOnNodeFilesystemError(
+      comm, "Writing output files",
+      Mpi::Root(comm)
+          ? internal::CatchFileError(path, [&]() { internal::ReplaceFile(path, write); })
+          : std::string());
+}
+
+// Write a file made of the parts of all processes, part index by part index and process by
+// process within each, without gathering it: the root writes, as for WriteRootOutputFile,
+// and asks the other processes for their parts, a few ahead. Collective; each part must be
+// smaller than 2 GiB.
+inline void WriteRootOutputFileParts(const fs::path &path, MPI_Comm comm,
+                                     const std::vector<std::string> &parts)
+{
+  BlockTimer bt(Timer::IO);
+  const int P = Mpi::Size(comm), S = static_cast<int>(parts.size());
+  std::vector<long long> size(S), sizes(Mpi::Root(comm) ? S * P : 0);
+  for (int s = 0; s < S; s++)
+  {
+    size[s] = static_cast<long long>(parts[s].size());
+  }
+  MPI_Gather(size.data(), S, MPI_LONG_LONG, sizes.data(), S, MPI_LONG_LONG, 0, comm);
+  MPI_Comm wcomm;
+  MPI_Comm_dup(comm, &wcomm);
+  std::string error;
+  if (Mpi::Root(comm))
+  {
+    // Ask the other processes for their parts even if the file does not open (as
+    // internal::WriteFile runs write_func then), since they wait to send them.
+    auto write_parts = [&](std::ostream &fo)
+    {
+      std::deque<std::pair<std::string, MPI_Request>> pending;  // at most 16 parts, 256 MB
+      std::size_t bytes = 0;
+      int next = 0;  // the next part to ask for, as s * P + p
+      auto Ask = [&]()
+      {
+        for (; next < S * P &&
+               (pending.empty() ||
+                (pending.size() < 16 &&
+                 bytes + sizes[(next % P) * S + next / P] < (std::size_t(1) << 28)));
+             next++)
         {
-          mfem::ofgzstream stream(path.string(), true);
-          write_func(stream);
-          return;
+          const int s = next / P, p = next % P, n = static_cast<int>(sizes[p * S + s]);
+          if (p > 0 && n > 0)
+          {
+            auto &[buf, req] = pending.emplace_back(std::string(n, '\0'), MPI_REQUEST_NULL);
+            const char go = 0;
+            MPI_Send(&go, 1, MPI_BYTE, p, s, wcomm);
+            MPI_Irecv(buf.data(), n, MPI_BYTE, p, s, wcomm, &req);
+            bytes += n;
+          }
         }
-        std::ofstream stream(path);
-        if (!stream.is_open())
+      };
+      for (int s = 0; s < S; s++)
+      {
+        for (int p = 0; p < P; p++)
         {
-          throw fs::filesystem_error("Could not open output file", path,
-                                     std::make_error_code(std::errc::io_error));
+          if (sizes[p * S + s] > 0 && p == 0)
+          {
+            fo.write(parts[s].data(), parts[s].size());
+          }
+          else if (sizes[p * S + s] > 0)
+          {
+            Ask();
+            auto &[buf, req] = pending.front();
+            MPI_Wait(&req, MPI_STATUS_IGNORE);
+            fo.write(buf.data(), buf.size());
+            bytes -= buf.size();
+            pending.pop_front();
+          }
         }
-        write_func(stream);
-        stream.close();
-        if (stream.fail())
-        {
-          throw fs::filesystem_error("Could not write output file", path,
-                                     std::make_error_code(std::errc::io_error));
-        }
-      });
+      }
+    };
+    try
+    {
+      internal::ReplaceFile(path, write_parts);
+    }
+    catch (const internal::OutputFileError &e)
+    {
+      error = e.what();
+    }
+  }
+  else
+  {
+    for (int s = 0; s < S; s++)
+    {
+      if (size[s] > 0)
+      {
+        char go;
+        MPI_Recv(&go, 1, MPI_BYTE, 0, s, wcomm, MPI_STATUS_IGNORE);
+        MPI_Send(parts[s].data(), static_cast<int>(size[s]), MPI_BYTE, 0, s, wcomm);
+      }
+    }
+  }
+  MPI_Comm_free(&wcomm);
+  internal::AbortOnNodeFilesystemError(comm, "Writing output files", error);
 }
 
 inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)
@@ -274,14 +376,15 @@ inline void MakeOutputFolder(IoData &iodata, MPI_Comm &comm)
       [&]()
       {
         auto tmp = output_path / fmt::format("tmp_test_file_{}.txt", Mpi::Rank(comm));
+        try
         {
-          std::ofstream f(tmp);
-          f << "Test Print";
+          internal::WriteFile(tmp, [](std::ostream &os) { os << "Test Print"; });
         }
-        if (!fs::is_regular_file(tmp))
+        catch (...)
         {
-          throw fs::filesystem_error("Could not create test file in output folder", tmp,
-                                     std::make_error_code(std::errc::permission_denied));
+          std::error_code ec;
+          fs::remove(tmp, ec);
+          throw;
         }
         fs::remove(tmp);
       });

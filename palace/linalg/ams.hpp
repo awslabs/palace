@@ -5,6 +5,7 @@
 #define PALACE_LINALG_AMS_HPP
 
 #include <memory>
+#include <vector>
 #include <mfem.hpp>
 #include "linalg/operator.hpp"
 #include "utils/iodata.hpp"
@@ -26,6 +27,11 @@ private:
   // Parameters used for preconditioner construction.
   const int cycle_type, space_dim, ams_it, ams_smooth_it;
   const bool ams_singular, agg_coarsen;
+
+  // Target number of rows per process for the agglomeration of the coarse levels of the
+  // auxiliary space AMG hierarchies during the solve (0: no agglomeration). Ignored
+  // without the hypre patch for it in extern/patch/hypre.
+  [[maybe_unused]] const int agglomeration_target;
 
   // Control print level for debugging.
   const int print;
@@ -50,7 +56,7 @@ public:
   // internally as needed.
   HypreAmsSolver(FiniteElementSpace &nd_fespace, FiniteElementSpace &h1_fespace,
                  int cycle_it, int smooth_it, bool vector_interp, bool singular_op,
-                 bool agg_coarsen, int print);
+                 bool agg_coarsen, int agglomeration_target, int print);
   HypreAmsSolver(const IoData &iodata, bool coarse_solver, FiniteElementSpace &nd_fespace,
                  FiniteElementSpace &h1_fespace, int print)
     : HypreAmsSolver(
@@ -58,9 +64,12 @@ public:
           coarse_solver ? iodata.solver.linear.ams_max_it
                         : iodata.solver.linear.mg_cycle_it,
           iodata.solver.linear.mg_smooth_it, iodata.solver.linear.ams_vector_interp,
-          iodata.solver.linear.ams_singular_op, iodata.solver.linear.amg_agg_coarsen, print)
+          iodata.solver.linear.ams_singular_op, iodata.solver.linear.amg_agg_coarsen,
+          iodata.solver.linear.ams_agglomeration_target, print)
   {
   }
+  HypreAmsSolver(const HypreAmsSolver &) = delete;
+  HypreAmsSolver &operator=(const HypreAmsSolver &) = delete;
   ~HypreAmsSolver() override;
 
   void SetOperator(const Operator &op) override;
@@ -81,6 +90,18 @@ public:
     return (HYPRE_PtrToParSolverFcn)HYPRE_AMSSolve;
   }
 };
+
+// Number of smoothing sweeps on the Nedelec space in each AMS iteration, applied before and
+// after the auxiliary space corrections, when AMS is the coarse solver of geometric
+// multigrid for a singular operator. Takes the global numbers of true dofs of the
+// multigrid levels, coarsest first, and the number of smoothing sweeps of the multigrid
+// levels (MGSmoothIts), which is a lower bound. For a singular curl-curl operator, the
+// number of outer iterations depends strongly on this smoothing, which is cheap next to
+// the auxiliary space corrections. More sweeps pay off as long as the coarse solve costs
+// little next to the work on the finer levels, so their number grows with the ratio of the
+// sizes of the finer levels to the size of the coarsest one, between 8 and 32.
+int GetAmsSingularCoarseSmoothIts(const std::vector<HYPRE_BigInt> &level_sizes,
+                                  int mg_smooth_it);
 
 }  // namespace palace
 
