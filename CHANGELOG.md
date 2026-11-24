@@ -39,7 +39,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     surface-response correction, whose default `"PerExcitation"` CHANGES the meaning of a
     configuration whose run has a conductor-consistency exclusion before a later excitation
     (that excitation's correction no longer omits the patch unless its own test fails; set
-    `"Sticky"` for the former rule). SchemaVer 4-5-4
+    `"Sticky"` for the former rule). SchemaVer 6-1-0
   - Added the edge-resolution census of the surface-response correction (lane
     rescensus-product; outputs only, ON by default whenever the correction is on:
     `"Resolution": {"Enabled", "BarsFile"}`): one added point location of every applied
