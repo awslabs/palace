@@ -54,8 +54,13 @@ boundaries next to a frequency-dependent material, and `DjordjevicSarkar` terms.
 With any of them, for constant and frequency-dependent materials alike, the nonlinear
 eigensolver of `"NonlinearType"` is used. With `"Hybrid"`, its starting values come from the
 same linearization of the pole terms of the materials, with only the other
-frequency-dependent terms interpolated between `Target` and `TargetUpper`. It returns
-converged modes, but not always the ones nearest the target: a small error for a returned
+frequency-dependent terms interpolated between `Target` and `TargetUpper`. The iteration
+from a starting value converges to a mode which need not be the one the starting value
+approximates: the starting values are refined nearest the target first, until none left is
+nearer the target than the requested number of modes found, and the nearest of those are
+returned. These are converged modes, but not always the ones nearest the target: a mode
+which no starting value leads to is missed, such as a strongly damped mode far from the
+real frequencies where the interpolated terms are accurate, and a small error for a returned
 mode does not show that no lower mode was missed. Changing `Target`, `TargetUpper`, or the
 number of modes changes its starting values. It can also converge fewer modes than were
 requested, for example near a material resonance with a wave port or an absorbing boundary
