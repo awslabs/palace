@@ -153,6 +153,34 @@ TEST_CASE("Eigenmode warm-start gate", "[eigenmode][Serial]")
   }
 }
 
+TEST_CASE("Eigenmode subspace growth", "[eigenmode][Serial]")
+{
+  // The configuration resolves an unset dimension to max(2 N, N + 15): 18 for 3 modes, and
+  // 40 for 20.
+  constexpr long long int size = 1000000;
+  SubspaceGrowth growth;
+  CHECK(growth.GetMaxSize(3, 18, size) == 18);
+
+  // Without the quality factor region, or after solves of at most 10 cycles, the dimension
+  // stays the configured one.
+  growth.Update(false, 50);
+  growth.Update(true, 10);
+  CHECK(growth.GetMaxSize(3, 18, size) == 18);
+
+  // With the region, after a solve of more than 10 cycles, the later solves use 6 more
+  // vectors than the default, also after solves which converge fast.
+  growth.Update(true, 11);
+  CHECK(growth.GetMaxSize(3, 18, size) == 24);
+  growth.Update(true, 1);
+  CHECK(growth.GetMaxSize(3, 18, size) == 24);
+  CHECK(growth.GetMaxSize(20, 40, size) == 46);
+
+  // Another configured dimension is kept, and the dimension is at most the size of the
+  // problem.
+  CHECK(growth.GetMaxSize(3, 30, size) == 30);
+  CHECK(growth.GetMaxSize(3, 18, 20) == 20);
+}
+
 #if defined(PALACE_WITH_SLEPC)
 
 namespace

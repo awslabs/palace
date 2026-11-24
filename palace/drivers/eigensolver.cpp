@@ -533,7 +533,16 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
       eigen->SetOperators(*K, *M, scale);
     }
   }
-  eigen->SetNumModes(iodata.solver.eigenmode.n, iodata.solver.eigenmode.max_size);
+  const int max_size = subspace_growth.GetMaxSize(iodata.solver.eigenmode.n,
+                                                  iodata.solver.eigenmode.max_size,
+                                                  space_op.GetNDSpace().GlobalTrueVSize());
+  if (max_size != iodata.solver.eigenmode.max_size)
+  {
+    Mpi::Print(" Krylov subspace of {:d} vectors: a previous solve took more than {:d} "
+               "cycles\n",
+               max_size, SubspaceGrowth::max_cycles);
+  }
+  eigen->SetNumModes(iodata.solver.eigenmode.n, max_size);
   const double tol =
       hybrid_seed ? iodata.solver.eigenmode.linear_tol : iodata.solver.eigenmode.tol;
   eigen->SetTol(tol);
@@ -782,6 +791,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
   warm_start_gate.Update(num_warm > 0, eigen->GetNumIterations());
+  subspace_growth.Update(q_region, eigen->GetNumIterations());
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,

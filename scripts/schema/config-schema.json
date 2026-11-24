@@ -2647,7 +2647,7 @@
         },
         "MaxSize": {
           "type": "integer",
-          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(2 \u00d7 N, N + 15)`.",
+          "description": "Maximum subspace dimension for the eigenvalue solver. If omitted, Palace uses `max(2 \u00d7 N, N + 15)`, and with the quality factor region of `MinQ`, 6 more for the solves of adaptive mesh refinement after one which took more than 10 Krylov cycles.",
           "exclusiveMinimum": 0
         },
         "N": {
