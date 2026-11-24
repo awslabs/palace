@@ -25,6 +25,7 @@
 #include "linalg/strumpack.hpp"
 #include "linalg/superlu.hpp"
 #include "models/materialoperator.hpp"
+#include "models/modeoperatorassembly.hpp"
 #include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
@@ -393,15 +394,21 @@ public:
       Uim += dU;
     }
 
-    // Scale by 1/(ωμ) with μ (real) evaluated in the neighboring element. With complex 1/ω
-    // = a + i·b the real/imag parts of n×H = (1/ω)·μ⁻¹·(Ure + i·Uim) couple:
-    //   Re = a·μ⁻¹Ure - b·μ⁻¹Uim,  Im = a·μ⁻¹Uim + b·μ⁻¹Ure.
-    // Note U uses the scalar kₙ from the cross-section EVP; for a rotated μ tensor that
-    // couples axes this reconstruction is approximate.
-    double MUre_data[3], MUim_data[3];
-    mfem::Vector MUre(MUre_data, vdim), MUim(MUim_data, vdim);
-    mat_op.GetInvPermeability(attr).Mult(Ure, MUre);
-    mat_op.GetInvPermeability(attr).Mult(Uim, MUim);
+    // Scale by 1/(ωμ) with μ (real) evaluated in the neighboring element: n×H = n×(μ⁻¹B)
+    // has the inverse permeability of the cross-section rotated by 90 degrees about its
+    // normal, ν = [n×]ᵀ μ⁻¹ [n×] (mode_assembly::GetTransverseInvPermeability), as the mode
+    // eigenproblem. With complex 1/ω = a + i·b the real/imag parts of n×H =
+    // (1/ω)·ν·(Ure + i·Uim) couple:
+    //   Re = a·νUre - b·νUim,  Im = a·νUim + b·νUre.
+    // Note U uses the scalar kₙ from the cross-section EVP; for a μ tensor that couples
+    // the normal axis to the plane of the port this reconstruction is approximate.
+    double normal_data[3], MUre_data[3], MUim_data[3];
+    mfem::Vector normal(normal_data, vdim), MUre(MUre_data, vdim), MUim(MUim_data, vdim);
+    BdrGridFunctionCoefficient::GetNormal(*T_submesh, normal);
+    const auto nu = mode_assembly::GetTransverseInvPermeability(
+        mat_op.GetInvPermeability(attr), &normal);
+    nu.Mult(Ure, MUre);
+    nu.Mult(Uim, MUim);
     const std::complex<double> inv_omega = 1.0 / omega;
     const double a = inv_omega.real(), b = inv_omega.imag();
     V.SetSize(vdim);
@@ -492,7 +499,8 @@ void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
 
     // Mode field element dofs (same primal transformation as GridFunction::GetVectorValue
     // and GridFunction::GetGradient), and the permeability of the neighboring parent domain
-    // element (as in BdrSubmeshHVectorCoefficient).
+    // element, rotated about the normal of the port element (as in
+    // BdrSubmeshHVectorCoefficient).
     gather(Etr_data, vdofs, loc_tr);
     gather(Eti_data, vdofs, loc_ti);
     doftrans.InvTransformPrimal(loc_tr);
@@ -504,7 +512,11 @@ void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
     int face, o, iel1, iel2;
     parent.GetBdrElementFace(parent_elem_ids[e], &face, &o);
     parent.GetFaceElements(face, &iel1, &iel2);
-    const auto &mu_inv = mat_op.GetInvPermeability(parent.GetAttribute(iel1));
+    T.SetIntPoint(&mfem::Geometries.GetCenter(fe.GetGeomType()));
+    mfem::Vector normal(sdim);
+    BdrGridFunctionCoefficient::GetNormal(T, normal);
+    const auto nu = mode_assembly::GetTransverseInvPermeability(
+        mat_op.GetInvPermeability(parent.GetAttribute(iel1)), &normal);
 
     vshape.SetSize(dof, dim);
     vshape_phys.SetSize(dof, sdim);
@@ -531,7 +543,7 @@ void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
       dshape.MultTranspose(loc_ni, gh);
       T.InverseJacobian().MultTranspose(gh, dUi);
 
-      // U = -kₙEₜ + i∇ₜEₙ (full) and U = -kₙEₜ (scalar-admittance), then n×H = μ⁻¹U/ω.
+      // U = -kₙEₜ + i∇ₜEₙ (full) and U = -kₙEₜ (scalar-admittance), then n×H = νU/ω.
       // With Eₜ = Etr + i·Eti, -kₙEₜ = -(kr·Etr - ki·Eti) - i·(kr·Eti + ki·Etr).
       for (int d = 0; d < sdim; d++)
       {
@@ -544,7 +556,7 @@ void AssembleModeForms(const GridFunction &Et, const GridFunction &En,
       const double w = ip.weight * T.Weight();
       for (int k = 0; k < 4; k++)
       {
-        mu_inv.Mult(U[k], MU[k]);
+        nu.Mult(U[k], MU[k]);
         MU[k] *= inv_omega;
         T.InverseJacobian().Mult(MU[k], f_hat);
         f_hat *= w;
@@ -1968,8 +1980,12 @@ void WavePortOperator::AddBoundaryMassBdrCoefficients(int port_idx,
   // port to normalize its node and compute reference data.
   const auto &data = it->second;
   const MaterialOperator &mat_op = data.mat_op;
-  MaterialPropertyCoefficient muinv_func(mat_op.GetBdrAttributeToMaterial(),
-                                         mat_op.GetInvPermeability());
+  // The inverse permeability of the cross-section rotated by 90 degrees about the port
+  // normal, that of the in-plane magnetic field of the mode.
+  MaterialPropertyCoefficient muinv_func(
+      mat_op.GetBdrAttributeToMaterial(),
+      mode_assembly::GetTransverseInvPermeability(mat_op.GetInvPermeability(),
+                                                  &data.port_normal));
   muinv_func.RestrictCoefficient(mat_op.GetCeedBdrAttributes(data.GetAttrList()));
   fb.AddCoefficient(muinv_func.GetAttributeToMaterial(), muinv_func.GetMaterialProperties(),
                     scale);

@@ -83,7 +83,7 @@ ModeEigenSolver::ModeEigenSolver(
 {
   // Assemble Atn, Btn = -Atn^T, Btt locally (no BMO available on this path).
   std::tie(owned_Atnr, owned_Atni) =
-      mode_assembly::AssembleAtn(nd_fespace, h1_fespace, mat_op);
+      mode_assembly::AssembleAtn(nd_fespace, h1_fespace, mat_op, normal);
   owned_Btnr.reset(owned_Atnr->Transpose());
   *owned_Btnr *= -1.0;
   if (owned_Atni)
@@ -91,7 +91,7 @@ ModeEigenSolver::ModeEigenSolver(
     owned_Btni.reset(owned_Atni->Transpose());
     *owned_Btni *= -1.0;
   }
-  auto [bttr_tmp, btti_tmp] = mode_assembly::AssembleBtt(nd_fespace, mat_op);
+  auto [bttr_tmp, btti_tmp] = mode_assembly::AssembleBtt(nd_fespace, mat_op, normal);
   owned_Bttr = std::move(bttr_tmp);
 
   Atnr = owned_Atnr.get();
@@ -788,7 +788,9 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
                                             mat_op.GetCurlCurlInvPermeability());
 
   // Preconditioner mass coefficient, from that of the system matrix at the real frequency
-  // ω: -ω² ε (1 - i tan(δ)) + iωσ - σ_shift μ⁻¹ (+ London). When pc_mat_shifted is enabled
+  // ω: -ω² ε (1 - i tan(δ)) + iωσ - σ_shift ν (+ London), with the in-plane inverse
+  // permeability rotated by 90 degrees, ν, of Btt (mode_assembly::
+  // GetTransverseInvPermeability). When pc_mat_shifted is enabled
   // (config), use absolute values of the real terms to ensure well-conditioning near the
   // shift target (where -ω² ε + kₙ²/μ ≈ 0). This follows SpaceOperator's pc_mat_shifted
   // pattern. As for frequency domain problems (SpaceOperator::AssemblePreconditioner), the
@@ -803,7 +805,10 @@ ModeEigenSolver::AssembleAttPreconditioner(double omega, double sigma) const
   MaterialPropertyCoefficient fr(
       attr_to_mat, real_pc ? mat_op.GetPermittivityAbs() : mat_op.GetPermittivityReal(),
       mass_coeff);
-  fr.AddCoefficient(attr_to_mat, mat_op.GetInvPermeability(), shift_coeff);
+  fr.AddCoefficient(
+      attr_to_mat,
+      mode_assembly::GetTransverseInvPermeability(mat_op.GetInvPermeability(), normal),
+      shift_coeff);
   if (mat_op.HasLondonDepth())
   {
     fr.AddCoefficient(attr_to_mat, mat_op.GetInvLondonDepth(), 1.0);
@@ -951,12 +956,16 @@ ModeEigenSolver::AssembleAnnPreconditioner(double omega) const
   // Material coefficients matching the system matrix at the real frequency ω, with the
   // negative diffusion from the IBP and the mass coefficient ω² ε (1 - i tan(δ)) - iωσ
   // (- London), whose loss terms are treated as for the ND block (see
-  // AssembleAttPreconditioner). In-plane tensors (μ⁻¹, ε) and scalar out-of-plane
-  // components are already in the local frame.
+  // AssembleAttPreconditioner), and the diffusion with the in-plane inverse permeability
+  // rotated by 90 degrees, ν, of Ann (mode_assembly::GetTransverseInvPermeability).
+  // In-plane tensors (μ⁻¹, ε) and scalar out-of-plane components are already in the
+  // local frame.
   const auto &attr_to_mat = mat_op.GetAttributeToMaterial();
   const bool real_pc = linear.pc_mat_real;
-  MaterialPropertyCoefficient neg_muinv_func(attr_to_mat, mat_op.GetInvPermeability(),
-                                             -1.0);
+  MaterialPropertyCoefficient neg_muinv_func(
+      attr_to_mat,
+      mode_assembly::GetTransverseInvPermeability(mat_op.GetInvPermeability(), normal),
+      -1.0);
   MaterialPropertyCoefficient fr(attr_to_mat,
                                  real_pc ? mat_op.GetPermittivityAbsScalar()
                                          : mat_op.GetPermittivityScalar(),

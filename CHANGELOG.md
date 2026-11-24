@@ -32,6 +32,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     boundary condition, as the other simulation types do, instead of adding the terms of
     each.
     [PR 1298](https://github.com/awslabs/palace/pull/1298).
+  - Fixed the modes of `"BoundaryMode"` simulations and wave ports with an anisotropic
+    permeability: for μ = diag(μx, μy, μz), the mode with its electric field along y had the
+    propagation constant of μy instead of μx, and TM and hybrid wave port modes were wrong
+    even for a permeability that is isotropic in the plane of the port.
+    [PR 1298](https://github.com/awslabs/palace/pull/1298).
 
 ## [0.20.0] - 2026-11-23
 

@@ -970,6 +970,88 @@ TEST_CASE("WavePortOperator absorbing boundaries on the port edges",
   }
 }
 
+TEST_CASE("WavePortOperator anisotropic permeability",
+          "[waveportoperator][Serial][Parallel]")
+{
+  // The port z = 0 of a PEC box W x H x L with μ = diag(μx, μy, μz) has the modes of
+  // "ModeEigenSolver anisotropic permeability": the mode with E along y, varying along x,
+  // has kₙ² = μx (k₀² - (π/W)²/μz), that with E along x, varying along y, kₙ² = μy (k₀² -
+  // (π/H)²/μz), and with the uniaxial μ = diag(μₜ, μₜ, μz), the TM11 mode has kₙ² = μₜ k₀²
+  // - (π/W)² - (π/H)², independent of μz. The in-plane magnetic field of the mode, of its
+  // n×H and of the port boundary condition, has the inverse permeability rotated by 90
+  // degrees as well: for the first mode, with the voltage V = E₀ H across the guide at
+  // x = W/2, Z_PV = 2 (H/W) Z₀ k₀ μx / kₙ.
+  MPI_Comm comm = Mpi::World();
+  constexpr double W = 1.0, H = 0.5, L = 0.25, freq_ghz = 0.5;
+  const double k0 = 2.0 * std::numbers::pi * freq_ghz * 1.0e9 / electromagnetics::c0_;
+  struct Mode
+  {
+    std::array<double, 3> mu;
+    double kn2;
+    bool te10;
+  };
+  const Mode modes[] = {
+      {{2.0, 3.0, 1.0}, 2.0 * (k0 * k0 - std::pow(std::numbers::pi / W, 2)), true},
+      {{2.0, 3.0, 1.0}, 3.0 * (k0 * k0 - std::pow(std::numbers::pi / H, 2)), false},
+      {{1.5, 1.5, 1.0},
+       1.5 * k0 * k0 - std::pow(std::numbers::pi / W, 2) -
+           std::pow(std::numbers::pi / H, 2),
+       false}};
+  for (const auto &mode : modes)
+  {
+    const double kn_exact = std::sqrt(mode.kn2);
+    // MakeCartesian3D boundary attributes: z = 0 is 1, and the other faces 2 to 6.
+    json port = {{"Index", 1},          {"Attributes", {1}},
+                 {"Excitation", true},  {"Target", kn_exact / k0},
+                 {"EigenTol", 1.0e-10}, {"KSPTol", 1.0e-10}};
+    if (mode.te10)
+    {
+      port["VoltagePath"] = json::array({{0.5 * W, 0.0, 0.0}, {0.5 * W, H, 0.0}});
+    }
+    json setup = {
+        {"Problem", {{"Type", "Driven"}, {"Output", ""}}},
+        {"Model", {{"Mesh", "box.mesh"}, {"L0", 1.0}}},
+        {"Domains",
+         {{"Materials", json::array({{{"Attributes", {1}}, {"Permeability", mode.mu}}})}}},
+        {"Boundaries",
+         {{"PEC", {{"Attributes", {2, 3, 4, 5, 6}}}}, {"WavePort", json::array({port})}}},
+        {"Solver",
+         {{"Order", 2},
+          {"Driven",
+           {{"Samples", json::array({{{"Type", "Point"}, {"Freq", {freq_ghz}}}})}}}}}};
+    IoData iodata(setup, /*print=*/false);
+    auto smesh = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(16, 8, 1, mfem::Element::HEXAHEDRON, W, H, L));
+    iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);
+    iodata.NondimensionalizeInputs(smesh);
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *smesh)));
+    SpaceOperator space_op(iodata, mesh);
+
+    auto &wp_op = space_op.GetWavePortOp();
+    REQUIRE(wp_op.Size() == 1);
+    const double omega =
+        2.0 * std::numbers::pi *
+        iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
+    wp_op.PrepareFrequency(omega);
+    for (const auto &[idx, data] : wp_op)
+    {
+      const std::complex<double> n_eff = data.kn0 / omega;
+      CAPTURE(mode.mu, n_eff, kn_exact / k0);
+      CHECK(std::abs(n_eff - kn_exact / k0) < 1.0e-5 * kn_exact / k0);
+      if (mode.te10)
+      {
+        const double Z_PV =
+            data.GetCharacteristicImpedance().real() * electromagnetics::Z0_;
+        const double Z_PV_exact =
+            2.0 * (H / W) * electromagnetics::Z0_ * k0 * mode.mu[0] / kn_exact;
+        CAPTURE(Z_PV, Z_PV_exact);
+        CHECK_THAT(Z_PV, WithinRel(Z_PV_exact, 1.0e-4));
+      }
+    }
+  }
+}
+
 // The traces of cpw_wave_uniform are interior PEC sheets crossing the wave ports when the
 // mesh is not cracked. Refining the elements next to the ports on one side of the trace
 // plane makes the port submeshes nonconforming, with master edges on the unrefined side of
