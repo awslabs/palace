@@ -2785,8 +2785,8 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
       {
         measurement_cache.interface_edge_i.emplace_back(Measurement::InterfaceEdgeData{
             idx, edge.distance, edge.energy_outside,
-            edge.energy_outside / energy_electric_all, edge.energy_annulus,
-            edge.energy_annulus / energy_electric_all});
+            edge.energy_outside / *energy_electric_all, edge.energy_annulus,
+            edge.energy_annulus / *energy_electric_all});
       }
       if (!data.save_local_edge_energy)
       {
@@ -2809,33 +2809,33 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
                 edge.length,
                 edge.distance,
                 edge.energy_total,
-                edge.energy_total / energy_electric_all,
+                edge.energy_total / *energy_electric_all,
                 edge.energy_total_polarized,
-                {edge.energy_total_polarized[0] / energy_electric_all,
-                 edge.energy_total_polarized[1] / energy_electric_all},
+                {edge.energy_total_polarized[0] / *energy_electric_all,
+                 edge.energy_total_polarized[1] / *energy_electric_all},
                 edge.energy_inside,
-                edge.energy_inside / energy_electric_all,
+                edge.energy_inside / *energy_electric_all,
                 edge.energy_inside_polarized,
-                {edge.energy_inside_polarized[0] / energy_electric_all,
-                 edge.energy_inside_polarized[1] / energy_electric_all},
+                {edge.energy_inside_polarized[0] / *energy_electric_all,
+                 edge.energy_inside_polarized[1] / *energy_electric_all},
                 edge.energy_annulus,
-                edge.energy_annulus / energy_electric_all,
+                edge.energy_annulus / *energy_electric_all,
                 edge.energy_annulus_polarized,
-                {edge.energy_annulus_polarized[0] / energy_electric_all,
-                 edge.energy_annulus_polarized[1] / energy_electric_all},
+                {edge.energy_annulus_polarized[0] / *energy_electric_all,
+                 edge.energy_annulus_polarized[1] / *energy_electric_all},
                 edge.energy_vertex_inside,
-                edge.energy_vertex_inside / energy_electric_all,
+                edge.energy_vertex_inside / *energy_electric_all,
                 edge.energy_volume_annulus,
-                edge.energy_volume_annulus / energy_electric_all,
+                edge.energy_volume_annulus / *energy_electric_all,
                 edge.energy_volume_vertex_annulus,
-                edge.energy_volume_vertex_annulus / energy_electric_all,
+                edge.energy_volume_vertex_annulus / *energy_electric_all,
                 edge.energy_volume_annulus_polarized,
-                {edge.energy_volume_annulus_polarized[0] / energy_electric_all,
-                 edge.energy_volume_annulus_polarized[1] / energy_electric_all,
-                 edge.energy_volume_annulus_polarized[2] / energy_electric_all,
-                 edge.energy_volume_annulus_polarized[3] / energy_electric_all,
-                 edge.energy_volume_annulus_polarized[4] / energy_electric_all,
-                 edge.energy_volume_annulus_polarized[5] / energy_electric_all}});
+                {edge.energy_volume_annulus_polarized[0] / *energy_electric_all,
+                 edge.energy_volume_annulus_polarized[1] / *energy_electric_all,
+                 edge.energy_volume_annulus_polarized[2] / *energy_electric_all,
+                 edge.energy_volume_annulus_polarized[3] / *energy_electric_all,
+                 edge.energy_volume_annulus_polarized[4] / *energy_electric_all,
+                 edge.energy_volume_annulus_polarized[5] / *energy_electric_all}});
       }
     }
   }
@@ -2880,8 +2880,14 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
       conductor_consistency_portions.push_back(
           {portion.p0, portion.p1, portion.topology, portion.feature});
     }
-    result.raw_normalization_energy = measurement_cache.domain_E_field_energy_all +
-                                      measurement_cache.lumped_port_capacitor_energy;
+    // U = E_elec + E_cap for constant materials (the correction refuses a
+    // frequency-dependent permittivity, IoData::CheckConfiguration).
+    const auto raw_normalization_energy = measurement_cache.ElectricEnergyNormalization();
+    MFEM_VERIFY(
+        raw_normalization_energy,
+        "Maxwell surface-response normalization energy requires the stored electric "
+        "field energy!");
+    result.raw_normalization_energy = *raw_normalization_energy;
     MFEM_VERIFY(result.raw_normalization_energy > 0.0,
                 "Maxwell surface-response normalization energy must be positive!");
     result.corrected_normalization_energy = nan;
@@ -3399,8 +3405,9 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         result.self_consistent_mode_overlap =
             surface_response_corrected_mode_overlap.value_or(1.0);
         result.self_consistent_normalization_energy =
-            dom_post_op.GetElectricFieldEnergy(corrected_field) + capacitor_energy +
-            corrected_response.domain_correction;
+            dom_post_op.GetElectricFieldEnergy(corrected_field,
+                                               corrected_frequency.real()) +
+            capacitor_energy + corrected_response.domain_correction;
         MFEM_VERIFY(result.self_consistent_normalization_energy > 0.0,
                     "Self-consistent Maxwell surface-response normalization energy must "
                     "be positive!");
@@ -3408,7 +3415,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
         for (auto &[index, interface] : result.interfaces)
         {
           interface.self_consistent_energy = surf_post_op.GetInterfaceElectricFieldEnergy(
-              index, corrected_field, corrected_flux);
+              index, corrected_field, corrected_frequency.real(), corrected_flux);
         }
         {
           BlockTimer energy_timer(Timer::POSTPRO_RESPONSE_ENERGY);
@@ -6581,8 +6588,10 @@ void PostOperator<solver_t>::MeasureAndPrintImpedanceRuleCandidate(
     const double frequency =
         units.Dimensionalize<VT::FREQUENCY>(measurement_cache.freq.real()) / (2 * M_PI);
     const SurfaceResponseOperator *candidate = impedance_candidate_op.get();
-    const double raw_normalization = measurement_cache.domain_E_field_energy_all +
-                                     measurement_cache.lumped_port_capacitor_energy;
+    const auto electric_energy = measurement_cache.ElectricEnergyNormalization();
+    MFEM_VERIFY(electric_energy, "Impedance-candidate normalization energy requires the "
+                                 "stored electric field energy!");
+    const double raw_normalization = *electric_energy;
 
     // The values of record of this measurement (read only): the record's corrected energy
     // where it applied a correction, else the raw energy (no correction applied today).

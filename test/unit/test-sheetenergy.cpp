@@ -481,9 +481,9 @@ TEST_CASE("SurfacePostOperator raw interface energy equals the sum of its parts"
   for (const int idx : {1, 2, 3})
   {
     INFO("interface " << idx);
-    const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E);
+    const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, 0.0);
     const double coefficient_path =
-        surf_post_op.GetInterfaceElectricFieldEnergy(idx + 3, *E);
+        surf_post_op.GetInterfaceElectricFieldEnergy(idx + 3, *E, 0.0);
     REQUIRE(raw > 0.0);
     CHECK_THAT(coefficient_path, WithinRel(raw, 1.0e-10));
 
@@ -611,16 +611,18 @@ TEST_CASE("SurfacePostOperator two-qualifying-side sheet energies cracked and un
   for (const int idx : {1, 2})
   {
     INFO("interface " << idx);
-    const double raw_legacy = legacy_op.GetInterfaceElectricFieldEnergy(idx, *E_legacy);
+    const double raw_legacy =
+        legacy_op.GetInterfaceElectricFieldEnergy(idx, *E_legacy, 0.0);
     const double raw_uncracked =
-        uncracked_op.GetInterfaceElectricFieldEnergy(idx, *E_uncracked);
+        uncracked_op.GetInterfaceElectricFieldEnergy(idx, *E_uncracked, 0.0);
     REQUIRE(raw_legacy > 0.0);
     CHECK_THAT(raw_uncracked, WithinRel(raw_legacy, 1.0e-10));
-    CHECK_THAT(uncracked_op.GetInterfaceElectricFieldEnergy(idx + 2, *E_uncracked),
+    CHECK_THAT(uncracked_op.GetInterfaceElectricFieldEnergy(idx + 2, *E_uncracked, 0.0),
                WithinRel(raw_legacy, 1.0e-10));
-    CHECK_THAT(legacy_op.GetInterfaceElectricFieldEnergy(idx + 2, *E_legacy),
+    CHECK_THAT(legacy_op.GetInterfaceElectricFieldEnergy(idx + 2, *E_legacy, 0.0),
                WithinRel(raw_legacy, 1.0e-10));
-    const double averaged = averaged_op.GetInterfaceElectricFieldEnergy(idx, *E_uncracked);
+    const double averaged =
+        averaged_op.GetInterfaceElectricFieldEnergy(idx, *E_uncracked, 0.0);
     CAPTURE(raw_legacy, raw_uncracked, averaged);
     CHECK(std::abs(averaged - raw_uncracked) > 0.1 * raw_uncracked);
   }
@@ -696,7 +698,7 @@ TEST_CASE("Batched interface response refuses a two-qualifying-side sheet",
     SurfacePostOperator surf_post_op(problem.iodata, *problem.mat_op, *problem.h1_fespace,
                                      *problem.nd_fespace);
     const auto E = ProjectSheetField(*problem.nd_fespace);
-    const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(1, *E);
+    const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(1, *E, 0.0);
     REQUIRE(raw > 0.0);
     const auto samples = surf_post_op.CacheInterfaceResponseSamples();
     REQUIRE(samples.size() == 1);

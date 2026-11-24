@@ -80,8 +80,8 @@ public:
 
   // As above, with the electric flux D already recovered by RecoverElectricFlux for the
   // interface postprocessing of the same field E (not recovered a second time).
-  void AddErrorIndicator(const VecType &E, const VecType &B, const VecType &D, double Et,
-                         ErrorIndicator &indicator) const
+  void AddErrorIndicator(const VecType &E, const VecType &B, const VecType &D,
+                         std::optional<double> Et, ErrorIndicator &indicator) const
   {
     if (estimator_2d)
     {

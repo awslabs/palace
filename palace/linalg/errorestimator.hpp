@@ -206,8 +206,11 @@ public:
   void AddErrorIndicator(const VecType &E, std::optional<double> Et, double omega,
                          ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
+  // With the electric flux D recovered by RecoverFlux: real (electrostatic) fields only, so
+  // that a complex field's call is never taken for it.
   void AddErrorIndicator(const VecType &E, const VecType &D, double Et,
-                         ErrorIndicator &indicator) const;
+                         ErrorIndicator &indicator) const
+    requires(!std::is_same_v<VecType, ComplexVector>);
 
   // Recover D = epsilon E in the H(div)-conforming flux space.
   void RecoverFlux(const VecType &E, VecType &D) const;
@@ -289,8 +292,10 @@ public:
   void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
                          double omega, ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
-  void AddErrorIndicator(const VecType &E, const VecType &B, const VecType &D, double Et,
-                         ErrorIndicator &indicator) const;
+  // With the electric flux D recovered by RecoverElectricFlux, for real and complex fields
+  // (D is recovered with the frequency-independent permittivity, so Et is always given).
+  void AddErrorIndicator(const VecType &E, const VecType &B, const VecType &D,
+                         std::optional<double> Et, ErrorIndicator &indicator) const;
   void RecoverElectricFlux(const VecType &E, VecType &D) const;
   const FiniteElementSpace &GetElectricFluxSpace() const
   {
@@ -327,8 +332,10 @@ public:
   void AddErrorIndicator(const VecType &E, const VecType &B, std::optional<double> Et,
                          double omega, ErrorIndicator &indicator) const
     requires std::is_same_v<VecType, ComplexVector>;
-  void AddErrorIndicator(const VecType &E, const VecType &B, const VecType &D, double Et,
-                         ErrorIndicator &indicator) const;
+  // With the electric flux D recovered by RecoverElectricFlux, for real and complex fields
+  // (D is recovered with the frequency-independent permittivity, so Et is always given).
+  void AddErrorIndicator(const VecType &E, const VecType &B, const VecType &D,
+                         std::optional<double> Et, ErrorIndicator &indicator) const;
   void RecoverElectricFlux(const VecType &E, VecType &D) const;
   const FiniteElementSpace &GetElectricFluxSpace() const
   {

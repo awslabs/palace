@@ -300,7 +300,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
       if (E_prev.Size() > 1)
       {
         BlockTimer bt(Timer::KSP_INITIAL_GUESS);
-        E_prev.MinimalResidualCombination(space_op.GetComm(), *A, RHS, E);
+        E_prev.MinimalResidualCombination(space_op.GetComm(), *system_op.A, RHS, E);
       }
 
       Mpi::Print("\n");

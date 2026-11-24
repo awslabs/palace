@@ -510,7 +510,7 @@ TEST_CASE("Reused recovered D gives the recomputed indicator",
     FillRandom(Bc.Imag(), 29);
     Dc_wrong = 0.0;
     ErrorIndicator recomputed_c, reused_c, unused_c;
-    estimator.AddErrorIndicator(Ec, Bc, 1.0, recomputed_c);
+    estimator.AddErrorIndicator(Ec, Bc, 1.0, 1.0, recomputed_c);
     estimator.RecoverElectricFlux(Ec, Dc);
     estimator.AddErrorIndicator(Ec, Bc, Dc, 1.0, reused_c);
     CheckSameIndicator(comm, reused_c.Local(), recomputed_c.Local(), "drivers' estimator");

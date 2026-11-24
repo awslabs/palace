@@ -835,7 +835,8 @@ TEST_CASE("Metal-substrate interface of a frequency-dependent substrate",
     E.Imag().ExchangeFaceNbrData();
     const auto epsilon_s = MetalSubstratePermittivity(mat_op, omega);
     InterfaceDielectricCoefficient<InterfaceDielectric::MS> coeff(
-        E, mat_op, data.t, data.epsilon_r, nullptr, &epsilon_s);
+        E, mat_op, data.t, data.epsilon_r, nullptr, nullptr,
+        InterfaceDielectricComponent::TOTAL, &epsilon_s);
     const auto &pmesh = mesh.Get();
     auto marker = mesh::AttrToMarker(pmesh.bdr_attributes.Max(), data.attributes);
     mfem::LinearForm lf(&h1_fespace.Get());

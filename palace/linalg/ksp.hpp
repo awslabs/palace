@@ -84,7 +84,6 @@ public:
   double GetAbsTol() const { return ksp->GetAbsTol(); }
   void SetRelTol(double tol) { ksp->SetRelTol(tol); }
   void SetAbsTol(double tol) { ksp->SetAbsTol(tol); }
-  void SetInitialGuess(bool initial_guess) { ksp->SetInitialGuess(initial_guess); }
 
   // CG coefficient history of the last solve (diagnostics, see IterativeSolver).
   void EnableCgHistory(bool enable) { ksp->EnableCgHistory(enable); }

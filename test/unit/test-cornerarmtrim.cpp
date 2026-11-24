@@ -2312,7 +2312,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // The terms of the assembly, each from its own evaluation of the same field.
   const auto &surf_post_op = post_op.GetSurfacePostOp();
   auto RawEnergy = [&](int interface)
-  { return surf_post_op.GetInterfaceElectricFieldEnergy(interface, field, nullptr); };
+  { return surf_post_op.GetInterfaceElectricFieldEnergy(interface, field, 0.0, nullptr); };
   const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(4, field);
   REQUIRE(edge_energies.size() == 1);
   CHECK_THAT(edge_energies[0].distance, WithinAbs(R, 1.0e-12));
@@ -2964,7 +2964,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(plain.count(4) == 1);
   const auto &a = plain.at(4);
   CHECK_THAT(BinSum(a), WithinRel(a.within, 1.0e-12));
-  const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field);
+  const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field, 0.0);
   const double outside =
       surf_post_op.GetInterfaceOuterElectricFieldEnergy(4, field).energy_outside;
   CHECK_THAT(a.within, WithinRel(raw - outside, 1.0e-10));
@@ -3974,7 +3974,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                             const GridFunction &field, const char *path)
   {
     INFO(path);
-    const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field);
+    const double raw = surf_post_op.GetInterfaceElectricFieldEnergy(4, field, 0.0);
     const auto edge_energies = surf_post_op.GetInterfaceEdgeElectricFieldEnergies(4, field);
     REQUIRE(edge_energies.size() == 1);
     const double within = raw - edge_energies[0].energy_outside;

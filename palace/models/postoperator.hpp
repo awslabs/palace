@@ -1109,7 +1109,9 @@ public:
       -> std::enable_if_t<U == ProblemType::ELECTROSTATIC, ElectrostaticEnergyData>
   {
     ElectrostaticEnergyData energies;
-    energies.domain = measurement_cache.domain_E_field_energy_all;
+    MFEM_VERIFY(measurement_cache.domain_E_field_energy_all,
+                "Missing cached electrostatic domain energy!");
+    energies.domain = *measurement_cache.domain_E_field_energy_all;
     for (const auto &interface : measurement_cache.interface_eps_i)
     {
       energies.interfaces.emplace(interface.idx,
@@ -1144,7 +1146,7 @@ public:
     }
 
     ElectrostaticEnergyData energies;
-    energies.domain = dom_post_op.GetElectricFieldEnergy(*V);
+    energies.domain = dom_post_op.GetElectricFieldEnergy(*V, 0.0);
     surf_post_op.ResetInterfaceLocalEdgeEnergyCache();
     const auto outside_energies =
         response_targets ? surf_post_op.GetInterfaceOuterElectricFieldEnergies(
@@ -1164,12 +1166,12 @@ public:
       else
       {
         energies.interfaces.emplace(
-            idx,
-            typename ElectrostaticEnergyData::Interface{
-                surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, D_recovered.get()),
-                surf_post_op.GetInterfaceLossTangent(idx),
-                surf_post_op.GetInterfaceEdgeElectricFieldEnergies(idx, *E,
-                                                                   D_recovered.get())});
+            idx, typename ElectrostaticEnergyData::Interface{
+                     surf_post_op.GetInterfaceElectricFieldEnergy(idx, *E, 0.0,
+                                                                  D_recovered.get()),
+                     surf_post_op.GetInterfaceLossTangent(idx),
+                     surf_post_op.GetInterfaceEdgeElectricFieldEnergies(
+                         idx, *E, D_recovered.get())});
       }
     }
     return energies;

@@ -2203,7 +2203,7 @@ TEST_CASE_METHOD(test::SharedTempDir, "Transient FluxRecovery sets the recovered
     GridFunction D(space_op.GetRTSpace());
     D.Real().SetFromTrueDofs(flux);
     D.Real().ExchangeFaceNbrData();
-    return post_op.GetSurfacePostOp().GetInterfaceElectricFieldEnergy(1, E, &D);
+    return post_op.GetSurfacePostOp().GetInterfaceElectricFieldEnergy(1, E, 0.0, &D);
   };
   const double energy = Measured(d, 0);
   CHECK(energy > 0.0);

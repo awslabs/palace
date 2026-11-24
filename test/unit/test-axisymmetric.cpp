@@ -59,7 +59,7 @@ double UniformFieldEnergy(Mesh &palace_mesh, const Units &units, int order)
   mfem::FunctionCoefficient V_coeff(V_linear);
   V.Real().ProjectCoefficient(V_coeff);
   return units.Dimensionalize<Units::ValueType::ENERGY>(
-      dom_post_op.GetElectricFieldEnergy(V));
+      dom_post_op.GetElectricFieldEnergy(V, 0.0));
 }
 
 }  // namespace

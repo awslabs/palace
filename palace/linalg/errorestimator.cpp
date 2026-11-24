@@ -878,6 +878,7 @@ template <typename VecType>
 void GradFluxErrorEstimator<VecType>::AddErrorIndicator(const VecType &E, const VecType &D,
                                                         double Et,
                                                         ErrorIndicator &indicator) const
+  requires(!std::is_same_v<VecType, ComplexVector>)
 {
   MFEM_VERIFY(D.Size() == rt_fespace.GetTrueVSize(),
               "Recovered flux size does not match the flux recovery space (broken across "
@@ -1103,9 +1104,11 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
 
 template <typename VecType>
 void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
-    const VecType &E, const VecType &B, const VecType &D, double Et,
+    const VecType &E, const VecType &B, const VecType &D, std::optional<double> Et,
     ErrorIndicator &indicator) const
 {
+  MFEM_VERIFY(Et, "The error indicators with a recovered electric flux require the total "
+                  "field energy!");
   MFEM_VERIFY(D.Size() == grad_estimator.rt_fespace.GetTrueVSize(),
               "Recovered flux size does not match the flux recovery space (broken across "
               "interior boundaries when there are any, see GetFluxSpace)!");
@@ -1117,7 +1120,7 @@ void TimeDependentFluxErrorEstimator<VecType>::AddErrorIndicator(
                             curl_estimator.rt_fespace, curl_estimator.nd_fespace,
                             curl_estimator.projector, curl_estimator.integ_op);
   grad_estimates += curl_estimates;
-  linalg::Sqrt(grad_estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
+  linalg::Sqrt(grad_estimates, (*Et > 0.0) ? 0.5 / *Et : 1.0);
   indicator.AddIndicator(grad_estimates);
 }
 
@@ -1172,9 +1175,11 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
 
 template <typename VecType>
 void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
-    const VecType &E, const VecType &B, const VecType &D, double Et,
+    const VecType &E, const VecType &B, const VecType &D, std::optional<double> Et,
     ErrorIndicator &indicator) const
 {
+  MFEM_VERIFY(Et, "The error indicators with a recovered electric flux require the total "
+                  "field energy!");
   MFEM_VERIFY(D.Size() == grad_estimator.rt_fespace.GetTrueVSize(),
               "Recovered flux size does not match the flux recovery space (broken across "
               "interior boundaries when there are any, see GetFluxSpace)!");
@@ -1186,7 +1191,7 @@ void BoundaryModeFluxErrorEstimator<VecType>::AddErrorIndicator(
                             curl_estimator.rt_fespace, curl_estimator.nd_fespace,
                             curl_estimator.projector, curl_estimator.integ_op);
   grad_estimates += curl_estimates;
-  linalg::Sqrt(grad_estimates, (Et > 0.0) ? 0.5 / Et : 1.0);
+  linalg::Sqrt(grad_estimates, (*Et > 0.0) ? 0.5 / *Et : 1.0);
   indicator.AddIndicator(grad_estimates);
 }
 
