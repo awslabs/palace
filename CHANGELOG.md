@@ -49,8 +49,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`"EdgeDistances"`, `"LocalizeEdgeEnergy"` and `"SaveLocalEdgeEnergy"`,
     `"FluxRecovery"`, the ownership keys and `"Region"`), for every problem type, with a
     message naming the key.
-  - The response-corrected adaptive driven sweep (developer only) follows *Palace*'s
-    certification of the PROM and its sample refinement; every output file of the
+  - The response-corrected adaptive driven sweep (the parked self-consistent path, with
+    `"Developer": true` and `"CorrectionMode"` `"SelfConsistent"` or `"Both"`) follows
+    *Palace*'s certification of the PROM and its sample refinement (its samples are solved
+    from zero, as *Palace*'s, not from the previous corrected field: values move within the
+    corrected solve's `"SolveTol"`); every output file of the
     surface-response product is written through *Palace*'s checked writers (a failed
     write aborts).
 

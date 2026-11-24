@@ -985,9 +985,10 @@ TEST_CASE(
   // Decision 2383, ruling Q1 and the plan check's MAJOR-4: the correction and the interface
   // postprocessing keys of the surface-response product integrate Re{eps} of a static
   // library and recover D with the static permittivity, so a frequency-dependent
-  // "Permittivity" is refused with each of them, for Maxwell and electrostatic problems,
-  // with a message naming the key; without them the material is accepted as upstream's.
-  const auto type = GENERATE("Driven", "Electrostatic");
+  // "Permittivity" is refused with each of them, for Maxwell (driven and eigenmode) and
+  // electrostatic problems, with a message naming the key; without them the material is
+  // accepted as upstream's.
+  const auto type = GENERATE("Driven", "Eigenmode", "Electrostatic");
   CAPTURE(type);
   const json drude = {
       {"HighFrequencyLimit", 2.08},
@@ -1008,7 +1009,8 @@ TEST_CASE(
         {"Boundaries", {{"Postprocessing", {{"Dielectric", {entry}}}}}},
         {"Solver",
          {{"Driven",
-           {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 1.0}, {"FreqStep", 1.0}}}}}}}}};
+           {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 1.0}, {"FreqStep", 1.0}}}}}},
+          {"Eigenmode", {{"Target", 1.0}}}}}};
   };
   auto CheckRefused = [](const json &config, const std::string &key)
   {
@@ -1047,7 +1049,7 @@ TEST_CASE(
                            {"TargetInterfaces", {1}},
                            {"UnmatchedPolicy", "Error"}};
   auto config = MakeConfig(json::object());
-  if (std::string(type) == "Driven")
+  if (std::string(type) != "Electrostatic")
   {
     config["Solver"]["SurfaceResponseCorrection"] = correction;
     CheckRefused(config, "SurfaceResponseCorrection");

@@ -866,7 +866,6 @@ RomOperator::RomOperator(const IoData &iodata, SpaceOperator &space_op,
     MFEM_VERIFY(iodata.solver.surface_response_correction,
                 "A response-corrected PROM requires SurfaceResponseCorrection solver "
                 "configuration!");
-    ksp->SetInitialGuess(true);
     ksp->SetRelTol(iodata.solver.surface_response_correction->solve_tol);
   }
 
