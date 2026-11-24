@@ -469,16 +469,16 @@ CEED_QFUNCTION(f_integ_surf_flux_p_2_32)(void *__restrict__ ctx_, CeedInt Q,
 
 // Stratton-Chu far-field integrand following AddStrattonChuIntegrandAtElement
 // (models/strattonchu.cpp): for each observation direction r0,
-//   I = (ik/4pi) [n x E - r0 x (n x ZH)] e^{ik r0.r'} dS,  ZH = c0 B, k = omega/c0,
-// with complex omega and fields. The context is a CeedIntScalar array: [0].second =
-// normal sign, [1].second = omega_re, [2].second = omega_im, [3].first = number of
-// directions N, [4].first = B-field Piola map (0 = H(curl), 1 = H(div)),
-// [5..5+3N).second = directions, followed by the (isotropic) light speed material
-// property context. The B-field Piola map matches GridFunction::GetVectorValue for the
-// supplied B space. Output: 6N components per element (Re I, Im I per direction, 3
-// each).
-// Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 = E_re, E_im, B_re, B_im
-// (one side, see SurfaceFunctional::AssembleLocal).
+//   I = (ik/4pi) [n x E - r0 x (n x ZH)] e^{ik r0.r'} e^{-i k_F.r'} dS,  ZH = c0 B,
+// k = omega/c0, with complex omega and fields, which are the periodic envelopes of the
+// physical fields E e^{-i k_F.r'} with a Floquet wave vector k_F. The context is a
+// CeedIntScalar array: [0].second = normal sign, [1].second = omega_re, [2].second =
+// omega_im, [3].first = number of directions N, [4].first = B-field Piola map (0 =
+// H(curl), 1 = H(div)), [5..8).second = k_F, [8..8+3N).second = directions, followed by
+// the (isotropic) light speed material property context. The B-field Piola map matches
+// GridFunction::GetVectorValue for the supplied B space. Output: 6N components per element
+// (Re I, Im I per direction, 3 each). Inputs: qw, grad_x_f, attr_1, grad_x_1, x, u_1..u_4 =
+// E_re, E_im, B_re, B_im (one side, see SurfaceFunctional::AssembleLocal).
 CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
                                          const CeedScalar *const *in,
                                          CeedScalar *const *out)
@@ -489,7 +489,8 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
   CeedScalar *v = out[0];
   const CeedScalar s_n = ctx[0].second, omega_re = ctx[1].second, omega_im = ctx[2].second;
   const CeedInt N = ctx[3].first, b_hdiv = ctx[4].first;
-  const CeedIntScalar *dirs = ctx + 5, *mat = ctx + 5 + 3 * N;
+  const CeedScalar kF[3] = {ctx[5].second, ctx[6].second, ctx[7].second};
+  const CeedIntScalar *dirs = ctx + 8, *mat = ctx + 8 + 3 * N;
 
   CeedPragmaSIMD for (CeedInt i = 0; i < Q; i++)
   {
@@ -534,6 +535,7 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
                                  n[2] * ZH_i[0] - n[0] * ZH_i[2],
                                  n[0] * ZH_i[1] - n[1] * ZH_i[0]};
     const CeedScalar xp[3] = {x[i + Q * 0], x[i + Q * 1], x[i + Q * 2]};
+    const CeedScalar kF_dot = kF[0] * xp[0] + kF[1] * xp[1] + kF[2] * xp[2];
 
     for (CeedInt d = 0; d < N; d++)
     {
@@ -541,7 +543,7 @@ CEED_QFUNCTION(f_integ_surf_farfield_32)(void *__restrict__ ctx_, CeedInt Q,
                        r2 = dirs[3 * d + 2].second;
       const CeedScalar dot = r0 * xp[0] + r1 * xp[1] + r2 * xp[2];
       const CeedScalar amp = exp(-k_im * dot);
-      const CeedScalar cph = cos(k_re * dot), sph = sin(k_re * dot);
+      const CeedScalar cph = cos(k_re * dot - kF_dot), sph = sin(k_re * dot - kF_dot);
       const CeedScalar w_re = amp * (pre_re * cph - pre_im * sph);
       const CeedScalar w_im = amp * (pre_re * sph + pre_im * cph);
 

@@ -791,17 +791,22 @@ std::vector<CeedIntScalar> SurfaceFunctional::BuildBaseContext(int dim, bool is_
                     b_map_type == mfem::FiniteElement::H_DIV,
                 "Far-field postprocessing requires an H(curl) or H(div) magnetic field "
                 "space!");
-    base_ctx.resize(5 + 3 * N);
+    base_ctx.resize(8 + 3 * N);
     base_ctx[0].second = 1.0;  // Normal sign, set per group
     base_ctx[1].second = farfield_omega.real();
     base_ctx[2].second = farfield_omega.imag();
     base_ctx[3].first = N;
     base_ctx[4].first = (b_map_type == mfem::FiniteElement::H_DIV) ? 1 : 0;
+    const auto k_F = mat_op->GetFloquetWaveVector(farfield_omega.real());
+    for (int c = 0; c < 3; c++)
+    {
+      base_ctx[5 + c].second = k_F[c];
+    }
     for (int d = 0; d < N; d++)
     {
       for (int c = 0; c < 3; c++)
       {
-        base_ctx[5 + 3 * d + c].second = farfield_dirs[d][c];
+        base_ctx[8 + 3 * d + c].second = farfield_dirs[d][c];
       }
     }
     AppendMaterialTable(3, base_ctx);
@@ -2681,12 +2686,14 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
   // Frequency and directions enter only the retained QFunction contexts. Reuse the
   // assembled bases, restrictions, and geometry inputs while processing bounded
   // direction batches. FARFIELD context layout is [0] normal sign, [1..2] omega,
-  // [3] batch size, [4] B Piola map, [5..] batch directions, then material data.
+  // [3] batch size, [4] B Piola map, [5..7] Floquet wave vector k_F, [8..] batch
+  // directions, then material data.
   const int N = static_cast<int>(farfield_dirs.size());
   MFEM_VERIFY(farfield_batch_size > 0 && local_out.Size() == 6 * farfield_batch_size,
               "Invalid far-field batch output layout!");
   // The wave speed of a frequency-dependent exterior medium is that at Re{ω}.
   UpdateMaterialTable(omega.real());
+  const auto k_F = mat_op->GetFloquetWaveVector(omega.real());
   std::vector<double> integrals(6 * N, 0.0);
   const std::array<const Vector *, 4> srcs = {&E.Real(), &E.Imag(), &B.Real(), &B.Imag()};
   if (face_nbr_exchange)
@@ -2709,11 +2716,15 @@ SurfaceFunctional::EvalFarField(const GridFunction &E, const GridFunction &B,
                      CeedQFunctionContextGetData(group.ctx, CEED_MEM_HOST, &data));
       data[1].second = omega.real();
       data[2].second = omega.imag();
+      for (int c = 0; c < 3; c++)
+      {
+        data[5 + c].second = k_F[c];
+      }
       for (int d = 0; d < farfield_batch_size; d++)
       {
         for (int c = 0; c < 3; c++)
         {
-          data[5 + 3 * d + c].second =
+          data[8 + 3 * d + c].second =
               (d < batch_count) ? farfield_dirs[first + d][c] : 0.0;
         }
       }

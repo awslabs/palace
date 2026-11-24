@@ -15,6 +15,23 @@ The format of this changelog is based on
 
 See the [developer notes on schema versioning](https://awslabs.github.io/palace/dev/developer/notes/#Schema-versioning) for how versions are bumped.
 
+## In progress
+
+#### Interface Changes
+
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) with periodic boundaries
+    (`Boundaries.Periodic`) is now an error when the far-field surface touches the periodic
+    boundaries: such a surface is not closed inside the unit cell, and its integral is the
+    element factor of an infinite array, not the far field of the periodic structure.
+    [PR 1295](https://github.com/awslabs/palace/pull/1295).
+
+#### Bug Fixes
+
+  - Fixed far-field extraction with a Floquet wave vector
+    (`Boundaries.Periodic.FloquetWaveVector`): the Stratton-Chu integral took the periodic
+    envelopes of the fields, without their Floquet phase.
+    [PR 1295](https://github.com/awslabs/palace/pull/1295).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features

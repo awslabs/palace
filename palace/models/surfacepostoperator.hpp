@@ -121,12 +121,14 @@ public:
 
   // Interface dielectric energies on interior boundaries with attributes in
   // sheet_attributes, which separate the fields on their two sides, sum the energies of
-  // both sides.
+  // both sides. Far-field surfaces must not touch the boundaries with attributes in
+  // periodic_attributes (the donor and receiver boundaries of periodic pairs).
   SurfacePostOperator(const config::BoundaryPostData &postpro, ProblemType problem_type,
                       const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace,
                       mfem::ParFiniteElementSpace &nd_fespace,
-                      const std::vector<int> &sheet_attributes = {});
+                      const std::vector<int> &sheet_attributes = {},
+                      const std::vector<int> &periodic_attributes = {});
   SurfacePostOperator(const IoData &iodata, const MaterialOperator &mat_op,
                       mfem::ParFiniteElementSpace &h1_fespace,
                       mfem::ParFiniteElementSpace &nd_fespace);

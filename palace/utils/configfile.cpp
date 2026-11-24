@@ -1271,6 +1271,21 @@ BoundaryData::BoundaryData(const json &boundaries)
   attributes.shrink_to_fit();
 }
 
+std::vector<int> BoundaryData::GetPeriodicAttributes() const
+{
+  std::vector<int> attr_list;
+  for (const auto &data : periodic.boundary_pairs)
+  {
+    attr_list.insert(attr_list.end(), data.donor_attributes.begin(),
+                     data.donor_attributes.end());
+    attr_list.insert(attr_list.end(), data.receiver_attributes.begin(),
+                     data.receiver_attributes.end());
+  }
+  std::ranges::sort(attr_list);
+  attr_list.erase(std::ranges::unique(attr_list).begin(), attr_list.end());
+  return attr_list;
+}
+
 std::vector<int> BoundaryData::GetSheetAttributes() const
 {
   std::vector<int> attr_list;

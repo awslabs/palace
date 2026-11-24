@@ -246,7 +246,8 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
                                          const MaterialOperator &mat_op,
                                          mfem::ParFiniteElementSpace &h1_fespace,
                                          mfem::ParFiniteElementSpace &nd_fespace,
-                                         const std::vector<int> &sheet_attributes)
+                                         const std::vector<int> &sheet_attributes,
+                                         const std::vector<int> &periodic_attributes)
   : mat_op(mat_op), h1_fespace(h1_fespace), nd_fespace(nd_fespace)
 {
   // Check that boundary attributes have been specified correctly.
@@ -371,6 +372,60 @@ SurfacePostOperator::SurfacePostOperator(const config::BoundaryPostData &postpro
                     "permittivity.");
   }
 
+  // On a periodic cell, the Stratton-Chu integral over a closed surface away from the
+  // periodic boundaries gives the far field of the sources inside it, from the physical
+  // fields with their Floquet phase (see AddStrattonChuIntegrandAtElement). A surface which
+  // touches the periodic boundaries closes only through the periodic seams, and its
+  // integral is not a far field (for an open cell, it is the element factor of the
+  // infinite array): reject it. A far-field boundary element touches them when it shares
+  // a vertex with one of their boundary elements, also across the processes.
+  if (!postpro.farfield.empty() && !periodic_attributes.empty())
+  {
+    auto &mesh = const_cast<mfem::ParMesh &>(*nd_fespace.GetParMesh());
+    const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+    mfem::H1_FECollection vertex_fec(1, mesh.Dimension());
+    mfem::ParFiniteElementSpace vertex_fespace(&mesh, &vertex_fec);
+    mfem::Array<int> periodic_tdofs;
+    vertex_fespace.GetEssentialTrueDofs(
+        mesh::AttrToMarker(bdr_attr_max, periodic_attributes, true), periodic_tdofs);
+    mfem::Array<int> tmarker(vertex_fespace.GetTrueVSize()),
+        lmarker(vertex_fespace.GetVSize());
+    tmarker = 0;
+    for (auto tdof : periodic_tdofs)
+    {
+      tmarker[tdof] = 1;
+    }
+    vertex_fespace.Dof_TrueDof_Matrix()->BooleanMult(1, tmarker.HostRead(), 0,
+                                                     lmarker.HostWrite());
+    const mfem::Array<int> farfield_marker =
+        mesh::AttrToMarker(bdr_attr_max, postpro.farfield.attributes, true);
+    int touching = bdr_attr_max + 1;
+    mfem::Array<int> vdofs;
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      const int attr = mesh.GetBdrAttribute(i);
+      if (!farfield_marker[attr - 1] || attr >= touching)
+      {
+        continue;
+      }
+      vertex_fespace.GetBdrElementVDofs(i, vdofs);
+      for (auto vdof : vdofs)
+      {
+        if (lmarker[(vdof >= 0) ? vdof : -1 - vdof])
+        {
+          touching = attr;
+          break;
+        }
+      }
+    }
+    Mpi::GlobalMin(1, &touching, mesh.GetComm());
+    MFEM_VERIFY(touching > bdr_attr_max,
+                "FarField surfaces must not touch the periodic boundaries, but attribute "
+                    << touching
+                    << " does: on a periodic cell, the far field is computed on a closed "
+                       "surface inside the cell!");
+  }
+
   farfield = FarFieldData(postpro.farfield, *nd_fespace.GetParMesh(), bdr_attr_marker);
   if (!farfield.attr_list.IsEmpty())
   {
@@ -388,7 +443,8 @@ SurfacePostOperator::SurfacePostOperator(const IoData &iodata,
                                          mfem::ParFiniteElementSpace &h1_fespace,
                                          mfem::ParFiniteElementSpace &nd_fespace)
   : SurfacePostOperator(iodata.boundaries.postpro, iodata.problem.type, mat_op, h1_fespace,
-                        nd_fespace, iodata.boundaries.GetSheetAttributes())
+                        nd_fespace, iodata.boundaries.GetSheetAttributes(),
+                        iodata.boundaries.GetPeriodicAttributes())
 {
 }
 
@@ -622,6 +678,7 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
   // everything at the end. We make them std::vector<std::array<double, 3>>
   // because we want a very simple memory layout so that we can reduce
   // everything with two MPI calls.
+  const auto k_F = mat_op.GetFloquetWaveVector(omega.real());
   std::vector<std::array<double, 3>> integrals_r(theta_phi_pairs.size());
   std::vector<std::array<double, 3>> integrals_i(theta_phi_pairs.size());
 
@@ -635,7 +692,7 @@ std::vector<std::array<std::complex<double>, 3>> SurfacePostOperator::GetFarFiel
     const auto *ir =
         &mfem::IntRules.Get(fe->GetGeomType(), fem::DefaultIntegrationOrder::Get(*T));
 
-    AddStrattonChuIntegrandAtElement(E, B, mat_op, c0, omega.real(), omega.imag(),
+    AddStrattonChuIntegrandAtElement(E, B, mat_op, c0, omega.real(), omega.imag(), k_F,
                                      r_naughts, *T, *ir, integrals_r, integrals_i);
   }
 
