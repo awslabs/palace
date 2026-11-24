@@ -1121,12 +1121,12 @@ global key set to `true` stays accepted where the interior metal it cracks is im
 (Ls) sheets: it then cracks the same sheets as `"Crack": true` on each of them, with its
 per-face law as before. With the global key each face of an Ls sheet carries 2 Ls (the
 cracked sheet equals the uncracked one); with `"Crack": true` each face carries the
-configured Ls, a different sheet (0.35 % apart in energy on the cpw3d all-Ls case). Where
-it would crack an interior
-perfect conductor (PEC or `Ground`, `Terminal`, `PrescribedPotential`) the run stops at
-mesh load with a message naming those attributes and the per-sheet `"Crack"`, since the
-correction never cracks perfect conductors; with `"Developer": true` in the correction
-block it cracks them as before and the run lists the option (`DEVELOPER OPTIONS (mesh)`).
+configured Ls, a different sheet (0.35 % apart in energy on the cpw3d all-Ls case). Where it
+would crack an interior perfect conductor (PEC or `Ground`, `Terminal`,
+`PrescribedPotential`) the run stops at mesh load with a message naming those attributes and
+the per-sheet `"Crack"`, since the correction never cracks perfect conductors; with
+`"Developer": true` in the correction block it cracks them as before and the run lists the
+option (`DEVELOPER OPTIONS (mesh)`).
 
 The coupon generators and library-build tools under `examples/` write the key explicitly:
 `--crack-policy legacy`, their default in this version, writes
