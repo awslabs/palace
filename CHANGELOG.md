@@ -75,21 +75,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - `--dry-run` with more than one process no longer hangs when the configuration file
     fails the schema validation. [PR 1260](https://github.com/awslabs/palace/pull/1260).
   - Fixed the quasi-Newton refinement of the `"Hybrid"` nonlinear eigenvalue solver
-    returning modes farther from the target than modes it found, and returning eigenpairs
-    which had not converged. The iteration from an initial guess can converge to a mode
-    other than the one the guess approximates: the solver stopped at the first `"N"` modes
-    converged above the target, after refining first the initial guesses with the smallest
-    residuals, however far from the target. The initial guesses are now refined nearest the
-    target first (among the `"N"` nearest, those with the smallest residuals first), until
-    none left is nearer the target than the `"N"` nearest modes found, which are returned.
-    The eigenvectors of distinct eigenvalues of a nonlinear eigenvalue problem can be
-    linearly dependent, as in a waveguide with absorbing boundaries at both ends: an
-    eigenpair whose eigenvector lies in the span of the deflated ones is now returned
-    without being deflated, which corrupted the deflation of the next eigenpairs, and an
-    eigenpair is accepted when its own residual is below the tolerance, not only that of
-    the deflated problem. The solve of the deflated problem now uses the Gram matrix of the
-    deflated eigenvectors (Effenberger, 2013), and an attempt which would repeat the last
-    one from the same initial guess is skipped.
+    returning modes farther from the target than those its other initial guesses converge
+    to, and returning unconverged eigenpairs when eigenvectors of distinct eigenvalues are
+    linearly dependent. The initial guesses are now refined nearest the target first, until
+    none left is nearer than the `"N"` nearest modes found.
     [PR 1299](https://github.com/awslabs/palace/pull/1299).
 
 #### Documentation
