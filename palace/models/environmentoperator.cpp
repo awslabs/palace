@@ -9,6 +9,7 @@
 #include <numbers>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include "linalg/lowertriangle.hpp"
 #include "models/portexcitations.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -308,125 +309,25 @@ EnvironmentOperator::Rows EnvironmentOperator::ReadRecord(int j) const
 
 std::vector<std::complex<double>> EnvironmentOperator::ReadSchur(long long pos) const
 {
-  // The lower triangle is by columns (column b holds rows a >= b, from entry
-  // b n - b (b - 1) / 2): each process reads its share in rounds of at most kChunk entries,
-  // and sends S_ab, and S_ba for a > b, to the entries of S_cur = M^-T S M^-1 they add to.
+  // Each process reads its share of the lower triangle (see TriangleShare), whose entries
+  // go to the entries of S_cur = M^-T S M^-1 on the grid they add to.
   using T = std::complex<double>;
-  constexpr long long kChunk = 1LL << 18;
-  const int nranks = Mpi::Size(comm), rank = Mpi::Rank(comm);
-  const long long n = nG, total = n * (n + 1) / 2;
-  const long long e0 = total * rank / nranks, e1 = total * (rank + 1) / nranks;
-  long long rounds = (e1 - e0 + kChunk - 1) / kChunk;
-  Mpi::GlobalMax(1, &rounds, comm);
+  std::vector<T> local(grid->LocalSize(), 0.0);
   std::ifstream f(model_path, std::ios::binary);
-  auto check = [&](bool ok)
-  {
-    int all = ok;
-    Mpi::GlobalMin(1, &all, comm);
-    MFEM_VERIFY(all, "Truncated substructuring model \"" << model_path << "\"!");
-  };
-  check(f.good());
-  auto start = [n](long long c) { return c * n - c * (c - 1) / 2; };
-  long long lo = 0, hi = n;
-  while (hi - lo > 1)
-  {
-    const long long mid = (lo + hi) / 2;
-    (start(mid) <= e0 ? lo : hi) = mid;
-  }
-  long long b = lo, a = b + (e0 - start(b));
-
-  const int mb = grid->BlockSize(), nprow = grid->NumProcessRows(),
-            npcol = grid->NumProcessCols();
-  const std::size_t lld = grid->LeadingDim();
-  const auto type = mpi::DataType<T>();
-  std::vector<T> local(grid->LocalSize(), 0.0), buf, svals, rvals;
-  std::vector<std::vector<int>> idx(nranks);
-  std::vector<std::vector<T>> vals(nranks);
-  std::vector<int> sidx, ridx, scnt(nranks), rcnt(nranks), sdsp(nranks), rdsp(nranks);
-  auto add = [&](int g, int h, T v)
-  {
-    const int q = ((g / mb) % nprow) * npcol + (h / mb) % npcol;
-    idx[q].push_back(g);
-    idx[q].push_back(h);
-    vals[q].push_back(v);
-  };
-  for (long long round = 0, e = e0; round < rounds; round++)
-  {
-    const long long e_end = std::min(e1, e + kChunk);
-    buf.resize(static_cast<std::size_t>(e_end - e));
-    if (!buf.empty())
-    {
-      f.seekg(pos + e * static_cast<long long>(sizeof(T)));
-      f.read(reinterpret_cast<char *>(buf.data()),
-             static_cast<std::streamsize>(buf.size() * sizeof(T)));
-    }
-    check(f.good());
-    for (int q = 0; q < nranks; q++)
-    {
-      idx[q].clear();
-      vals[q].clear();
-    }
-    for (const T s : buf)
-    {
-      for (const auto &[g, tg] : saved_to_current[a])
+  bool ok = f.good();
+  RedistributeTriangle<T>(
+      comm, nG,
+      [&](long long e, long long m, T *x)
       {
-        for (const auto &[h, th] : saved_to_current[b])
-        {
-          add(g, h, (tg * th) * s);
-          if (a != b)
-          {
-            add(h, g, (tg * th) * s);
-          }
-        }
-      }
-      if (++a == n)
-      {
-        a = ++b;
-      }
-    }
-    e = e_end;
-
-    // The entries to the processes holding them, which add them up.
-    for (int q = 0; q < nranks; q++)
-    {
-      scnt[q] = static_cast<int>(vals[q].size());
-    }
-    MPI_Alltoall(scnt.data(), 1, MPI_INT, rcnt.data(), 1, MPI_INT, comm);
-    sdsp[0] = rdsp[0] = 0;
-    for (int q = 1; q < nranks; q++)
-    {
-      sdsp[q] = sdsp[q - 1] + scnt[q - 1];
-      rdsp[q] = rdsp[q - 1] + rcnt[q - 1];
-    }
-    svals.clear();
-    sidx.clear();
-    for (int q = 0; q < nranks; q++)
-    {
-      svals.insert(svals.end(), vals[q].begin(), vals[q].end());
-      sidx.insert(sidx.end(), idx[q].begin(), idx[q].end());
-    }
-    const int nrecv = rdsp[nranks - 1] + rcnt[nranks - 1];
-    rvals.resize(nrecv);
-    ridx.resize(2 * static_cast<std::size_t>(nrecv));
-    MPI_Alltoallv(svals.data(), scnt.data(), sdsp.data(), type, rvals.data(), rcnt.data(),
-                  rdsp.data(), type, comm);
-    for (int q = 0; q < nranks; q++)
-    {
-      scnt[q] *= 2;
-      sdsp[q] *= 2;
-      rcnt[q] *= 2;
-      rdsp[q] *= 2;
-    }
-    MPI_Alltoallv(sidx.data(), scnt.data(), sdsp.data(), MPI_INT, ridx.data(), rcnt.data(),
-                  rdsp.data(), MPI_INT, comm);
-    for (int k = 0; k < nrecv; k++)
-    {
-      const int g = ridx[2 * k], h = ridx[2 * k + 1];
-      const std::size_t il = (g / (mb * nprow)) * mb + g % mb,
-                        jl = (h / (mb * npcol)) * mb + h % mb;
-      local[il + lld * jl] += rvals[k];
-    }
-  }
+        f.seekg(pos + static_cast<std::streamoff>(sizeof(T)) * e);
+        f.read(reinterpret_cast<char *>(x), static_cast<std::streamsize>(sizeof(T) * m));
+        ok = ok && f.good();
+      },
+      saved_to_current, [&](int g, int h) { return grid->Owner(g, h); },
+      [&](int g, int h) { return grid->LocalIndex(g, h); }, local);
+  int all = ok;
+  Mpi::GlobalMin(1, &all, comm);
+  MFEM_VERIFY(all, "Truncated substructuring model \"" << model_path << "\"!");
   return local;
 }
 
