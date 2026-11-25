@@ -1248,6 +1248,10 @@ void IoData::CheckConfiguration()
                                { return material.HasFrequencyDependentPermittivity(); }),
                   "Driven substructuring does not support frequency-dependent material "
                   "Permittivity yet!");
+      // The PML integrators are assembled on the elements of their attributes, not on each
+      // side of Γ (see BilinearForm::PartialAssemble).
+      MFEM_VERIFY(domains.pml.empty(),
+                  "Driven substructuring does not support PML regions yet!");
       // From a model (online, or after an adaptive sweep's samples), the field is known in
       // the region and on Γ only.
       MFEM_VERIFY(

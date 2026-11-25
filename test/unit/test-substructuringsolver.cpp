@@ -4668,6 +4668,18 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     Catch::Matchers::ContainsSubstring(
                         "does not support frequency-dependent material Permittivity"));
 }
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "Driven substructuring rejects PML regions",
+                 "[substructure][Serial][Parallel]")
+{
+  // A PML region, in the region or in the environment, is rejected: its integrators are
+  // assembled on its own elements, not on each side of Γ.
+  const int attribute = GENERATE(1, 2);
+  auto config = DrivenBoxConfig(temp_dir, "Offline");
+  config["Domains"]["PML"] = {{{"Attributes", {attribute}}}};
+  CHECK_THROWS_WITH(IoData(config, false),
+                    Catch::Matchers::ContainsSubstring("does not support PML regions"));
+}
 #endif
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
