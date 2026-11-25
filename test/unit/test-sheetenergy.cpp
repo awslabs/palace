@@ -1221,6 +1221,208 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+namespace
+{
+
+// The island mesh of MakeSerialIslandMesh with every hexahedron above the metal plane split
+// into six pyramids about its center: each face of the hexahedron is the base of one
+// pyramid, so the faces shared with the hexahedra below and every boundary element stay as
+// they are. A conforming mesh of hexahedra and pyramids whose pyramids meet on triangular
+// faces (register G18).
+mfem::Mesh MakeHexPyramidIslandMesh(mfem::Mesh hexahedra)
+{
+  // The faces of the reference cube are oriented outward; a pyramid's base, seen from its
+  // apex inside the hexahedron, is the reversed face.
+  const auto &faces = mfem::Geometry::Constants<mfem::Geometry::CUBE>::FaceVert;
+  int split = 0;
+  mfem::Vector center(3);
+  for (int e = 0; e < hexahedra.GetNE(); e++)
+  {
+    hexahedra.GetElementCenter(e, center);
+    split += (center(1) > plane_y);
+  }
+  mfem::Mesh mesh(3, hexahedra.GetNV() + split, hexahedra.GetNE() + 5 * split,
+                  hexahedra.GetNBE());
+  for (int v = 0; v < hexahedra.GetNV(); v++)
+  {
+    mesh.AddVertex(hexahedra.GetVertex(v));
+  }
+  for (int e = 0; e < hexahedra.GetNE(); e++)
+  {
+    mfem::Array<int> vertices;
+    hexahedra.GetElementVertices(e, vertices);
+    const int attribute = hexahedra.GetAttribute(e);
+    hexahedra.GetElementCenter(e, center);
+    if (center(1) < plane_y)
+    {
+      mesh.AddHex(vertices.GetData(), attribute);
+      continue;
+    }
+    const int apex = mesh.AddVertex(center);
+    for (const auto &face : faces)
+    {
+      mesh.AddPyramid(vertices[face[3]], vertices[face[2]], vertices[face[1]],
+                      vertices[face[0]], apex, attribute);
+    }
+  }
+  for (int be = 0; be < hexahedra.GetNBE(); be++)
+  {
+    mesh.AddBdrElement(hexahedra.GetBdrElement(be)->Duplicate(&mesh));
+  }
+  mesh.FinalizeTopology();
+  mesh.Finalize();
+  return mesh;
+}
+
+}  // namespace
+
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "Impedance-metal rule default serves an Ls sheet on hexahedra and pyramids "
+    "at order 2 as an explicit Apply",
+    "[surfaceresponsefilmrule][impedancemetalrule][sheetenergy][maxwell]"
+    "[MixedElementFaces][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // Integration round v1integ1, interaction (i): the pyramid fix (register G18: the H(curl)
+  // DofTransformation of the libCEED restrictions taken from the space, and the guard that
+  // no transformation reaches a sign-only restriction) and the Maxwell default "Apply" of
+  // CUT-PLAN step 3 on one problem: the Maxwell island problem at order 2 on the island
+  // mesh whose hexahedra above the plane are split into pyramids, its island a purely
+  // inductive sheet at the designers' Ls, cracked and uncracked. With no rule key the
+  // order-2 H(curl) operators assemble (the guard does not fire), the sheet is served by
+  // the perfect-conductor models, and the response equals the one with "Apply" named, bit
+  // for bit. The perfect-conductor island on the same mesh (no Impedance boundary) leaves
+  // the rule inert: no rule, the response of "Off" bit for bit.
+  constexpr int metal_attr = 9;  // the island of MakeSerialIslandMesh
+  mfem::Mesh serial = MakeHexPyramidIslandMesh(MakeSerialIslandMesh());
+  int pyramids = 0, hexahedra = 0;
+  double volume = 0.0, smallest = 1.0;
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    pyramids += (serial.GetElementGeometry(e) == mfem::Geometry::PYRAMID);
+    hexahedra += (serial.GetElementGeometry(e) == mfem::Geometry::CUBE);
+    volume += serial.GetElementVolume(e);
+    smallest = std::min(smallest, serial.GetElementVolume(e));
+  }
+  REQUIRE(pyramids > 0);
+  REQUIRE(hexahedra > 0);
+  REQUIRE(pyramids + hexahedra == serial.GetNE());
+  REQUIRE(smallest > 0.0);  // every element positively oriented
+  CHECK_THAT(volume, WithinRel(1.0, 1.0e-12));
+  const auto mesh_path = WriteSheetMesh(temp.temp_dir, serial, "island-pyramids.mesh");
+  const fs::path sa_library_path = temp.temp_dir / "impedance-default-pyramids-sa-3d.json";
+  if (Mpi::Root(Mpi::World()))
+  {
+    json library = json::parse(std::ifstream(convex_library_3d_path));
+    library["Name"] = "unit-test-process-impedance-default-pyramids-sa-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream(sa_library_path) << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(Mpi::World());
+  auto IslandConfig = [&](const std::string &rule)
+  {
+    json config = ConvexMaxwellIslandConfig();
+    auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction["Library"] = sa_library_path.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["GeometryFailurePolicy"] = "RecordRaw";
+    correction["TraceCoupling"] = "Collocated";
+    correction["CorrectionMode"] = "PostprocessOnly";
+    if (!rule.empty())  // empty: the key absent, the Maxwell default
+    {
+      correction["ImpedanceMetalRule"] = rule;
+    }
+    config["Solver"]["Order"] = 2;
+    config["Model"]["Mesh"] = mesh_path.string();
+    config["Model"].erase("CrackInternalBoundaryElements");
+    return config;
+  };
+  mfem::Vector normal_value(3);
+  normal_value = 0.0;
+  normal_value[1] = -0.4;
+  mfem::VectorConstantCoefficient normal_coefficient(normal_value);
+  auto LoadedPyramids = [](const MaxwellIslandResponse &problem)
+  {
+    const auto &pmesh = problem.meshes.front()->Get();
+    int count = 0;
+    for (int e = 0; e < pmesh.GetNE(); e++)
+    {
+      count += (pmesh.GetElementGeometry(e) == mfem::Geometry::PYRAMID);
+    }
+    Mpi::GlobalSum(1, &count, pmesh.GetComm());
+    return count;
+  };
+
+  for (const bool crack : {true, false})
+  {
+    INFO("Crack " << crack);
+    auto SheetConfig = [&](const std::string &rule)
+    {
+      json config = IslandConfig(rule);
+      config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+      config["Boundaries"]["Impedance"] =
+          json::array({{{"Attributes", {metal_attr}}, {"Ls", 4.5e-14}, {"Crack", crack}}});
+      config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {metal_attr};
+      return config;
+    };
+    std::unique_ptr<MaxwellIslandResponse> by_default, named;
+    REQUIRE_NOTHROW(by_default = std::make_unique<MaxwellIslandResponse>(SheetConfig("")));
+    REQUIRE_NOTHROW(named = std::make_unique<MaxwellIslandResponse>(SheetConfig("Apply")));
+    CHECK(LoadedPyramids(*by_default) == pyramids);
+    // The order-2 H(curl) operators of the solve assemble through the libCEED restrictions
+    // of the pyramids (where the guard stands).
+    REQUIRE_NOTHROW(
+        by_default->space_op->GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE));
+    const auto *film = by_default->response->GetImpedanceApplyRule();
+    REQUIRE(film != nullptr);
+    REQUIRE(named->response->GetImpedanceApplyRule() != nullptr);
+    CHECK(film->attributes.at(metal_attr).service == FilmService::FILM_INDUCTIVE);
+    CHECK(film->lines == named->response->GetImpedanceApplyRule()->lines);
+    CHECK(std::count_if(film->lines.begin(), film->lines.end(), [](const std::string &line)
+                        { return line.find("(APPLY): regime: ") != std::string::npos; }) ==
+          1);
+    REQUIRE(by_default->response->GetPatchCount() > 0);
+    CHECK(PatchSignatures(*by_default->response) == PatchSignatures(*named->response));
+    const auto default_normal = by_default->ConstantFieldResponse(normal_coefficient);
+    const auto named_normal = named->ConstantFieldResponse(normal_coefficient);
+    CHECK_THAT(default_normal.matched_length_fraction, WithinAbs(1.0, 1.0e-12));
+    CHECK(default_normal.boundary_law_verified);
+    CHECK(default_normal.domain_correction == named_normal.domain_correction);
+    CHECK(default_normal.fabricated_surface_energy ==
+          named_normal.fabricated_surface_energy);
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto &features = by_default->response->GetImpedanceLawFeatures();
+      REQUIRE(!features.empty());
+      const auto counts = CountImpedanceApplyFeatures(features);
+      CHECK(counts.sheet == static_cast<int>(features.size()));
+      CHECK(counts.substituted == counts.sheet);
+      CHECK(counts.corrected == counts.sheet);
+      CHECK(counts.not_served == 0);
+    }
+  }
+
+  // No Impedance boundary: the default "Apply" is inert, as "Off".
+  MaxwellIslandResponse pec(IslandConfig(""));
+  MaxwellIslandResponse pec_off(IslandConfig("Off"));
+  CHECK(pec.response->GetImpedanceApplyRule() == nullptr);
+  CHECK(pec_off.response->GetImpedanceApplyRule() == nullptr);
+  REQUIRE(pec.response->GetPatchCount() > 0);
+  CHECK(PatchSignatures(*pec.response) == PatchSignatures(*pec_off.response));
+  const auto pec_normal = pec.ConstantFieldResponse(normal_coefficient);
+  const auto off_normal = pec_off.ConstantFieldResponse(normal_coefficient);
+  CHECK(pec_normal.domain_correction == off_normal.domain_correction);
+  CHECK(pec_normal.fabricated_surface_energy == off_normal.fabricated_surface_energy);
+#endif
+}
+
 TEST_CASE_METHOD(
     test::SurfaceResponseFiles,
     "Driven reduced postprocessing is refused with a surface response correction",
