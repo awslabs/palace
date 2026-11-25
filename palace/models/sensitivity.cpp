@@ -135,13 +135,12 @@ InputVelocities::InputVelocities(const IoData &iodata, MPI_Comm comm)
     names = table.names;
     input_mesh = mesh::ReadInputMesh(iodata);
     input_mesh->EnsureNodes();
-    SetNodes();
+    IndexNodes();
 
     // The velocity fields, from the table.
     const auto &fespace = *input_mesh->GetNodes()->FESpace();
     const int sdim = input_mesh->SpaceDimension();
-    fields.assign(names.size(),
-                  mfem::GridFunction(const_cast<mfem::FiniteElementSpace *>(&fespace)));
+    fields.assign(names.size(), mfem::GridFunction(input_mesh->GetNodes()->FESpace()));
     std::vector<double *> V;
     for (auto &field : fields)
     {
@@ -195,11 +194,11 @@ InputVelocities::InputVelocities(const IoData &iodata, MPI_Comm comm)
         }
       }
       input_mesh->SetCurvature(1);
-      SetNodes();
+      IndexNodes();
       const auto &linear = *input_mesh->GetNodes()->FESpace();
       for (std::size_t p = 0; p < fields.size(); p++)
       {
-        fields[p].SetSpace(const_cast<mfem::FiniteElementSpace *>(&linear));
+        fields[p].SetSpace(input_mesh->GetNodes()->FESpace());
         auto *h_V = fields[p].HostWrite();
         for (int v = 0; v < input_mesh->GetNV(); v++)
         {
@@ -211,12 +210,6 @@ InputVelocities::InputVelocities(const IoData &iodata, MPI_Comm comm)
         }
       }
     }
-#if defined(MFEM_USE_GSLIB)
-    finder = std::make_unique<mfem::FindPointsGSLIB>(MPI_COMM_SELF);
-    finder->Setup(*input_mesh, 0.01, 1.0e-12);
-    finder->SetDefaultInterpolationValue(0.0);
-    finder->SetL2AvgType(mfem::FindPointsGSLIB::NONE);
-#endif
   }
   int n = static_cast<int>(names.size());
   Mpi::Broadcast(1, &n, 0, comm);
@@ -240,7 +233,7 @@ InputVelocities::~InputVelocities()
 #endif
 }
 
-void InputVelocities::SetNodes()
+void InputVelocities::IndexNodes()
 {
   // The positions of the nodes, by their cells in a grid of a spacing relative to the size
   // of the mesh.
@@ -343,6 +336,13 @@ InputVelocities::Evaluate(const std::vector<double> &x) const
     return v;
   }
 #if defined(MFEM_USE_GSLIB)
+  if (!finder)
+  {
+    finder = std::make_unique<mfem::FindPointsGSLIB>(MPI_COMM_SELF);
+    finder->Setup(*input_mesh, 0.01, 1.0e-12);
+    finder->SetDefaultInterpolationValue(0.0);
+    finder->SetL2AvgType(mfem::FindPointsGSLIB::NONE);
+  }
   const int m = static_cast<int>(search.size());
   mfem::Vector xyz(m * sdim);
   for (int i = 0; i < m; i++)

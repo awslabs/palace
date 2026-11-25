@@ -80,7 +80,7 @@ x, y, z, gap.x, gap.y, gap.z, radius.x, radius.y, radius.z
 
 Its rows must be nodes of the mesh file, with the full precision of their coordinates,
 including the high-order nodes of a curved mesh. The velocity is zero at the nodes it does
-not list, and it may be compressed with gzip. With
+not list, and the table may be compressed with gzip. With
 [`config["Model"]["RemoveCurvature"]`](../config/reference.md#config-model),
 the mesh moves with its vertices, so the velocities of the other nodes are ignored. The
 table is read when the simulation starts, and its evaluation requires *Palace* built with

@@ -33,17 +33,18 @@ private:
   std::vector<std::string> names;
 
   // On the root: the input mesh, the velocity of each parameter on its nodal space, its
-  // nodes by their cells in a grid of spacing tol, and a point search.
+  // nodes by their cells in a grid of spacing tol, and a point search, set up when first
+  // needed.
   std::unique_ptr<mfem::Mesh> input_mesh;
   std::vector<mfem::GridFunction> fields;
   std::vector<std::array<double, 3>> nodes;
   std::unordered_map<std::uint64_t, std::vector<int>> cells;
   double tol = 0.0;
 #if defined(MFEM_USE_GSLIB)
-  std::unique_ptr<mfem::FindPointsGSLIB> finder;
+  mutable std::unique_ptr<mfem::FindPointsGSLIB> finder;
 #endif
 
-  void SetNodes();
+  void IndexNodes();
   std::vector<int> FindNodes(const std::array<double, 3> &x) const;
 
 public:
