@@ -4363,9 +4363,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mesh::RefineMesh(iodata, pmesh);
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(std::move(pmesh[0])));
-  SpaceOperator space_op(iodata, mesh);
-  EnvironmentOperator env(iodata, space_op, grid_procs);
-  space_op.SetEnvironment(env);
+  SpaceOperator full_op(iodata, mesh);
+  EnvironmentOperator env(iodata, full_op, grid_procs);
+  SpaceOperator space_op(iodata, mesh, &env);
 
   const double omega = iodata.solver.driven.sample_f[0];
   const std::complex<double> a0(1.0, 0.0), a1(0.0, omega), a2(-omega * omega, 0.0);
@@ -4457,9 +4457,9 @@ struct OnlineRegion
     pmesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));
     mesh::RefineMesh(iodata, pmesh);
     meshes.push_back(std::make_unique<Mesh>(std::move(pmesh[0])));
-    space_op = std::make_unique<SpaceOperator>(iodata, meshes);
-    env = std::make_unique<EnvironmentOperator>(iodata, *space_op);
-    space_op->SetEnvironment(*env);
+    SpaceOperator full_op(iodata, meshes);
+    env = std::make_unique<EnvironmentOperator>(iodata, full_op);
+    space_op = std::make_unique<SpaceOperator>(iodata, meshes, env.get());
   }
 };
 

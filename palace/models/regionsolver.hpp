@@ -75,8 +75,8 @@ private:
 
 //
 // The direct solver of the region of a driven substructuring with the environment's S_E on
-// Γ (see SpaceOperator::SetEnvironment): a RegionSolver of the preconditioner matrix of the
-// region, which leaves S_E out, on its free DOFs (the Dirichlet and pinned ones are
+// Γ (see the SpaceOperator of an environment): a RegionSolver of the preconditioner matrix
+// of the region, which leaves S_E out, on its free DOFs (the Dirichlet and pinned ones are
 // identity rows), with S_E(ω) on the grid of the environment (EnvironmentOperator::Grid),
 // refactored at each frequency. It is exact but for rounding, except near a
 // resonance of the region with Γ held fixed, where the region's interior, factored alone,

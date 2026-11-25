@@ -34,7 +34,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
 EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
                                          const DrivenSubstructureModel *sampled,
                                          const RecordFunction &record, int grid_procs)
-  : space_op(space_op), comm(space_op.GetComm()), root(Mpi::Root(comm)),
+  : comm(space_op.GetComm()), root(Mpi::Root(comm)),
     model_path(iodata.solver.substructuring->model_file),
     region_attrs(iodata.solver.substructuring->region_attributes)
 {
@@ -66,7 +66,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
     model.environment.CheckConfig(*iodata.resolved_config, sub.environment_attributes,
                                   region_mesh);
   }
-  ds = std::make_unique<DrivenSubstructure>(
+  auto ds = std::make_unique<DrivenSubstructure>(
       space_op, sub.region_attributes, sub.environment_attributes, true, &model,
       region_mesh, sub.direct_solver, iodata.solver.linear.sym_factorization);
   if (region_mesh)

@@ -137,7 +137,7 @@ void DrivenRegionSolver::SetOperator(const ComplexOperator &op)
   const auto &fes = space_op.GetNDSpace().Get();
   MPI_Comm comm = fes.GetComm();
   const int nt = fes.GetTrueVSize();
-  const auto &dbc = space_op.GetNDDbcTDofLists().back();
+  const auto &dbc = space_op.GetEliminatedTrueDofs();
   eliminated.assign(dbc.HostRead(), dbc.HostRead() + dbc.Size());
   std::vector<char> keep(nt, 1);
   for (int i : eliminated)

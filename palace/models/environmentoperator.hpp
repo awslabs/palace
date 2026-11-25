@@ -31,8 +31,8 @@ class SpaceOperator;
 // its saved model (see DrivenSubstructureModel): its Schur complement S_E(ω), the
 // condensation g_E(ω) of the sources of the excitations, and the values of its ports, at
 // the frequencies of an exact model or anywhere between the samples of a rational one. The
-// region is then the driven problem on its elements with S_E(ω) added on Γ (see
-// SpaceOperator::SetEnvironment).
+// region is then the driven problem on its elements with S_E(ω) added on Γ (see the
+// SpaceOperator of an environment).
 //
 // The terms at a frequency are those of the model's record there, or of the combination
 // Σ_k c_k(ω) of its records with the barycentric coefficients of a rational model, on the
@@ -141,13 +141,11 @@ private:
                       const DrivenSubstructureModel *sampled, const RecordFunction &record,
                       int grid_procs);
 
-  SpaceOperator &space_op;
   MPI_Comm comm;
   const bool root;
   const std::string model_path;
   std::vector<int> region_attrs;
   DrivenSubstructureModel model;
-  std::unique_ptr<DrivenSubstructure> ds;
   bool region_mesh = false;
   int nG = 0, np = 0, ne = 0;
   std::vector<int> env_ports;

@@ -112,10 +112,12 @@ private:
   void RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
                                  std::initializer_list<MaterialPropertyCoefficient *> fb);
 
-  // The environment of the region of a driven substructuring, and the restriction of the
-  // assembly to the region (see SetEnvironment).
+  // The environment of the region of a driven substructuring, the restriction of the
+  // assembly to the region, and the true DOFs its operators eliminate (see the
+  // constructor).
   EnvironmentOperator *environment = nullptr;
   std::optional<AssemblyDomains::Restriction> region_restriction;
+  mfem::Array<int> region_eliminated;
 
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
@@ -263,19 +265,20 @@ public:
   SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,
                 const config::BoundaryData &boundaries, ProblemType problem_type,
                 const Units &units, const std::vector<std::unique_ptr<Mesh>> &mesh);
-  SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+  // With an environment, the operators are those of the region of a driven substructuring
+  // against it: assembled on the region's elements, with the DOFs of the environment that
+  // the region pins (EnvironmentOperator::PinnedTrueDofs) eliminated alongside the PEC ones
+  // (see GetEliminatedTrueDofs), and with its terms on Γ in the extra system operator, the
+  // preconditioner matrix (its single level, for a sparse direct solver) and the
+  // excitations. The environment must outlive the operators.
+  SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
+                EnvironmentOperator *env = nullptr);
 
   // The domains to which the stiffness, damping, mass, extra system and preconditioner
   // matrices are restricted while an AssemblyDomains::Restriction is in scope. The
   // matrix-free wave-port and Floquet terms of GetExtraSystemOperator are not restricted.
   AssemblyDomains &GetAssemblyDomains() { return assembly_domains; }
 
-  // Make the operators those of the region of a driven substructuring against its condensed
-  // environment: assembled on the region's elements, with the environment's DOFs off Γ
-  // eliminated as essential DOFs, and its terms on Γ in the extra system operator, the
-  // preconditioner matrix (its single level, for a sparse direct solver) and the
-  // excitations. The environment must outlive the operators.
-  void SetEnvironment(EnvironmentOperator &env);
   EnvironmentOperator *GetEnvironment() const { return environment; }
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
@@ -286,6 +289,14 @@ public:
   const std::vector<mfem::Array<int>> &GetH1DbcTDofLists() const
   {
     return h1_dbc_tdof_lists;
+  }
+
+  // The true DOFs the operators eliminate as essential: the PEC ones (on the finest level)
+  // and, for the region of a driven substructuring, the DOFs of its environment that it
+  // pins.
+  const mfem::Array<int> &GetEliminatedTrueDofs() const
+  {
+    return environment ? region_eliminated : nd_dbc_tdof_lists.back();
   }
 
   // Returns lists of all boundary condition true dofs, PEC included, for the auxiliary

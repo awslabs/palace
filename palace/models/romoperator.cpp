@@ -1108,7 +1108,7 @@ void RomOperator::CheckWavePortModePairings(double omega, const Eigen::MatrixXcd
   auto &wave_port_op = space_op.GetWavePortOp();
   Eigen::MatrixXcd Wr_hdm = Eigen::MatrixXcd::Zero(Wr.rows(), Wr.cols());
   for (const auto &term : wave_port_op.GetModalCorrectionTerms(
-           omega, space_op.GetNDSpace(), space_op.GetNDDbcTDofLists().back()))
+           omega, space_op.GetNDSpace(), space_op.GetEliminatedTrueDofs()))
   {
     const Eigen::VectorXcd sV = ProjectVectors(comm, V, {term.s.get()}).col(0);
     Wr_hdm.noalias() += term.g * sV * sV.transpose();

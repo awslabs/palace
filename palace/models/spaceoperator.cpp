@@ -232,10 +232,27 @@ void SpaceOperator::PrintPML(const Units &units) const
 }
 
 SpaceOperator::SpaceOperator(const IoData &iodata,
-                             const std::vector<std::unique_ptr<Mesh>> &mesh)
+                             const std::vector<std::unique_ptr<Mesh>> &mesh,
+                             EnvironmentOperator *env)
   : SpaceOperator(iodata.solver, iodata.domains, iodata.boundaries, iodata.problem.type,
                   iodata.units, mesh)
 {
+  if (env)
+  {
+    MFEM_VERIFY(GetNDSpaces().GetNumLevels() == 1,
+                "The region of a driven substructuring is set up on one level!");
+    environment = env;
+    region_restriction.emplace(assembly_domains, env->RegionAttributes());
+    const auto &dbc = nd_dbc_tdof_lists.back();
+    const auto &pinned = env->PinnedTrueDofs();
+    std::vector<int> eliminated(dbc.HostRead(), dbc.HostRead() + dbc.Size());
+    eliminated.insert(eliminated.end(), pinned.HostRead(),
+                      pinned.HostRead() + pinned.Size());
+    std::ranges::sort(eliminated);
+    eliminated.erase(std::unique(eliminated.begin(), eliminated.end()), eliminated.end());
+    region_eliminated.SetSize(static_cast<int>(eliminated.size()));
+    std::copy(eliminated.begin(), eliminated.end(), region_eliminated.HostWrite());
+  }
   // Validate excitations after wave port setup is complete.
   CheckExcitations(iodata.problem.type);
 }
@@ -392,7 +409,7 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetFrequencyDependentPermittivit
   }
   auto B_op =
       std::make_unique<ComplexParOperator>(nullptr, &B->LocalOperator(), GetNDSpace());
-  B_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  B_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
   return B_op;
 }
 
@@ -1329,14 +1346,14 @@ SpaceOperator::GetStiffnessMatrix(Operator::DiagonalPolicy diag_policy)
   {
     auto K =
         std::make_unique<ComplexParOperator>(std::move(kr), std::move(ki), GetNDSpace());
-    K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    K->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return K;
   }
   else
   {
     MFEM_VERIFY(!ki, "Unexpected imaginary part in GetStiffnessMatrix<Operator>!");
     auto K = std::make_unique<ParOperator>(std::move(kr), GetNDSpace());
-    K->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    K->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return K;
   }
 }
@@ -1385,14 +1402,14 @@ SpaceOperator::GetDampingMatrix(Operator::DiagonalPolicy diag_policy)
   {
     auto C =
         std::make_unique<ComplexParOperator>(std::move(cr), std::move(ci), GetNDSpace());
-    C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    C->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return C;
   }
   else
   {
     MFEM_VERIFY(!ci, "Unexpected imaginary part in GetDampingMatrix<Operator>!");
     auto C = std::make_unique<ParOperator>(std::move(cr), GetNDSpace());
-    C->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    C->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return C;
   }
 }
@@ -1442,13 +1459,13 @@ std::unique_ptr<OperType> SpaceOperator::GetMassMatrix(Operator::DiagonalPolicy 
   {
     auto M =
         std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi), GetNDSpace());
-    M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M;
   }
   else
   {
     auto M = std::make_unique<ParOperator>(std::move(mr), GetNDSpace());
-    M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M;
   }
 }
@@ -1492,14 +1509,14 @@ SpaceOperator::GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_
   {
     auto A =
         std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
-    A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    A->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return A;
   }
   else
   {
     MFEM_VERIFY(!ai, "Unexpected imaginary part in GetExtraSystemMatrix<Operator>!");
     auto A = std::make_unique<ParOperator>(std::move(ar), GetNDSpace());
-    A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    A->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return A;
   }
 }
@@ -1510,7 +1527,7 @@ SpaceOperator::GetExtraSystemMatrix(std::complex<double> omega,
                                     bool include_permittivity_poles, bool include_pml)
 {
   auto ports =
-      wave_port_op.EvaluateComplex(omega, false, GetNDSpace(), nd_dbc_tdof_lists.back());
+      wave_port_op.EvaluateComplex(omega, false, GetNDSpace(), GetEliminatedTrueDofs());
   MFEM_VERIFY(ports.available,
               "Wave port " << ports.port_idx
                            << " eigensolver did not converge at complex ω = " << omega
@@ -1552,7 +1569,7 @@ std::unique_ptr<ComplexOperator> SpaceOperator::BuildExtraSystemMatrix(
     return {};
   }
   auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), GetNDSpace());
-  A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  A->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
   return A;
 }
 
@@ -1568,7 +1585,7 @@ SpaceOperator::GetFrozenPMLMatrices(double omega, Operator::DiagonalPolicy diag_
     std::vector<PMLIntegrator> pml_re, pml_im;
     AppendPMLPencil(pml_re, &pml_im, nullptr, nullptr, mat_op,
                     PMLFilter::FREQUENCY_DEPENDENT, omega, terms[k]);
-    ops[k] = AssemblePMLOperator(GetNDSpace(), nd_dbc_tdof_lists.back(), pml_re, pml_im,
+    ops[k] = AssemblePMLOperator(GetNDSpace(), GetEliminatedTrueDofs(), pml_re, pml_im,
                                  diag_policy);
   }
   return ops;
@@ -1582,7 +1599,7 @@ SpaceOperator::GetExtraSystemPMLMatrix(std::complex<double> omega,
   std::vector<PMLIntegrator> pml_re, pml_im;
   AppendPMLPencil(pml_re, &pml_im, nullptr, nullptr, mat_op, PMLFilter::FREQUENCY_DEPENDENT,
                   omega, ExtraSystemPMLPencil(omega));
-  return AssemblePMLOperator(GetNDSpace(), nd_dbc_tdof_lists.back(), pml_re, pml_im,
+  return AssemblePMLOperator(GetNDSpace(), GetEliminatedTrueDofs(), pml_re, pml_im,
                              diag_policy);
 }
 
@@ -1609,13 +1626,13 @@ SpaceOperator::GetWavePortBoundaryMassMatrix(int port_idx,
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M_op;
   }
   else
   {
     auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M_op;
   }
 }
@@ -1667,7 +1684,7 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
   {
     auto M_op =
         std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi), GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M_op;
   }
   else
@@ -1678,7 +1695,7 @@ SpaceOperator::GetFarfieldBoundaryCurlCurlMatrix(Operator::DiagonalPolicy diag_p
     MFEM_VERIFY(
         !mi, "Unexpected imaginary part in GetFarfieldBoundaryCurlCurlMatrix<Operator>!");
     auto M_op = std::make_unique<ParOperator>(std::move(mr), GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M_op;
   }
 }
@@ -1716,7 +1733,7 @@ SpaceOperator::GetExtraSystemBdrMassTermMatrix(int i, Operator::DiagonalPolicy d
         imag_slot
             ? std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace())
             : std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M_op;
   }
   else
@@ -1725,7 +1742,7 @@ SpaceOperator::GetExtraSystemBdrMassTermMatrix(int i, Operator::DiagonalPolicy d
                 "imag_slot is only meaningful for the ComplexOperator instantiation of "
                 "GetExtraSystemBdrMassTermMatrix!");
     auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M_op;
   }
 }
@@ -1762,7 +1779,7 @@ SpaceOperator::GetFarfieldDispersiveCurlCurlMatrix(std::size_t k,
   }
   auto M_op =
       std::make_unique<ComplexParOperator>(std::move(mr), std::move(mi), GetNDSpace());
-  M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  M_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
   return M_op;
 }
 
@@ -1781,7 +1798,7 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetFarfieldDispersiveDampingFloq
   auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr,
                             nullptr, nullptr, &fr, nullptr, false);
   auto M = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
-  M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  M->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
   return M;
 }
 
@@ -1800,7 +1817,7 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetFarfieldDispersiveStiffnessFl
   auto m = AssembleOperator(assembly_domains, GetNDSpace(), nullptr, nullptr, nullptr,
                             nullptr, nullptr, nullptr, &fp, false);
   auto M = std::make_unique<ComplexParOperator>(std::move(m), nullptr, GetNDSpace());
-  M->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+  M->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
   return M;
 }
 
@@ -1878,13 +1895,13 @@ SpaceOperator::GetFloquetRobinBoundaryMassMatrix(int port_idx,
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
     auto M_op = std::make_unique<ComplexParOperator>(nullptr, std::move(m), GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M_op;
   }
   else
   {
     auto M_op = std::make_unique<ParOperator>(std::move(m), GetNDSpace());
-    M_op->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), diag_policy);
+    M_op->SetEssentialTrueDofs(GetEliminatedTrueDofs(), diag_policy);
     return M_op;
   }
 }
@@ -1921,8 +1938,8 @@ SpaceOperator::GetExtraSystemOperator(double omega, Operator::DiagonalPolicy dia
   // SumComplexOperator.
   auto A2 = GetExtraSystemMatrix<ComplexOperator>(omega, diag_policy,
                                                   /*include_wave_ports=*/true);
-  auto W = wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(),
-                                                   nd_dbc_tdof_lists.back());
+  auto W =
+      wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(), GetEliminatedTrueDofs());
   auto F = floquet_port_op.GetExtraSystemOperator(omega);
   std::unique_ptr<ComplexOperator> op;
   auto add = [&op](std::unique_ptr<ComplexOperator> term)
@@ -1950,7 +1967,7 @@ SpaceOperator::GetExtraSystemOperator(std::complex<double> omega,
                                       Operator::DiagonalPolicy diag_policy)
 {
   auto ports =
-      wave_port_op.EvaluateComplex(omega, true, GetNDSpace(), nd_dbc_tdof_lists.back());
+      wave_port_op.EvaluateComplex(omega, true, GetNDSpace(), GetEliminatedTrueDofs());
   MFEM_VERIFY(ports.available,
               "Wave port " << ports.port_idx
                            << " eigensolver did not converge at complex ω = " << omega
@@ -1964,7 +1981,7 @@ SpaceOperator::TryGetExtraSystemOperator(std::complex<double> omega,
                                          Operator::DiagonalPolicy diag_policy)
 {
   auto ports =
-      wave_port_op.EvaluateComplex(omega, true, GetNDSpace(), nd_dbc_tdof_lists.back());
+      wave_port_op.EvaluateComplex(omega, true, GetNDSpace(), GetEliminatedTrueDofs());
   if (!ports.available)
   {
     return {false, ports.port_idx, ports.num_converged, ports.requested, nullptr};
@@ -1996,20 +2013,20 @@ std::unique_ptr<ComplexVector> SpaceOperator::GetWavePortModeVector(int port_idx
                                                                     double omega)
 {
   return wave_port_op.GetModeExcitationVector(port_idx, omega, GetNDSpace(),
-                                              nd_dbc_tdof_lists.back());
+                                              GetEliminatedTrueDofs());
 }
 
 std::vector<int> SpaceOperator::GetModalCorrectionSynthesisPorts(double omega_ref)
 {
   return wave_port_op.GetModalCorrectionSynthesisPorts(omega_ref, GetNDSpace(),
-                                                       nd_dbc_tdof_lists.back());
+                                                       GetEliminatedTrueDofs());
 }
 
 WavePortOperator::ModalCorrectionSample
 SpaceOperator::SampleModalCorrectionVectors(int port_idx, std::complex<double> omega)
 {
   return wave_port_op.SampleModalCorrectionVectors(port_idx, omega, GetNDSpace(),
-                                                   nd_dbc_tdof_lists.back());
+                                                   GetEliminatedTrueDofs());
 }
 
 std::unique_ptr<Operator> SpaceOperator::GetInnerProductMatrix(double a0, double a2,
@@ -2348,7 +2365,7 @@ void SpaceOperator::AssemblePreconditioner(
                             nullptr, &frbi, &fpbi, skip_zeros, false, &pml_im);
     }
     auto A = std::make_unique<ComplexParOperator>(std::move(ar), std::move(ai), fespace);
-    A->SetEssentialTrueDofs(nd_dbc_tdof_lists.back(), Operator::DiagonalPolicy::DIAG_ONE);
+    A->SetEssentialTrueDofs(GetEliminatedTrueDofs(), Operator::DiagonalPolicy::DIAG_ONE);
     *pml_block = std::move(A);
   }
 }
@@ -2613,7 +2630,9 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
     {
       const auto &fespace_l =
           aux ? GetH1Spaces().GetFESpaceAtLevel(l) : GetNDSpaces().GetFESpaceAtLevel(l);
-      const auto &dbc_tdof_lists_l = aux ? h1_dbc_tdof_lists[l] : nd_dbc_tdof_lists[l];
+      const auto &dbc_tdof_lists_l = aux                   ? h1_dbc_tdof_lists[l]
+                                     : (l + 1 == n_levels) ? GetEliminatedTrueDofs()
+                                                           : nd_dbc_tdof_lists[l];
       auto &br_l = aux ? br_aux_vec[l] : br_vec[l];
       auto &bi_l = aux ? bi_aux_vec[l] : bi_vec[l];
       if (print_prec_hdr)
@@ -2680,22 +2699,6 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   return B;
 }
 
-void SpaceOperator::SetEnvironment(EnvironmentOperator &env)
-{
-  MFEM_VERIFY(!environment && GetNDSpaces().GetNumLevels() == 1,
-              "The region of a driven substructuring is set up once, on one level!");
-  environment = &env;
-  region_restriction.emplace(assembly_domains, env.RegionAttributes());
-  auto &dbc = nd_dbc_tdof_lists.back();
-  const auto &pinned = env.PinnedTrueDofs();
-  std::vector<int> merged(dbc.HostRead(), dbc.HostRead() + dbc.Size());
-  merged.insert(merged.end(), pinned.HostRead(), pinned.HostRead() + pinned.Size());
-  std::ranges::sort(merged);
-  merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
-  dbc.SetSize(static_cast<int>(merged.size()));
-  std::copy(merged.begin(), merged.end(), dbc.HostWrite());
-}
-
 std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
                                                                   const ComplexOperator &P)
 {
@@ -2711,7 +2714,7 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemOperator(double omega,
   // GetExtraSystemOperator(ω). Add the matrix-free terms of GetExtraSystemOperator.
   auto A = std::make_unique<SumComplexOperator>(mg->GetFinestOperator());
   if (auto W = wave_port_op.GetModalCorrectionOperator(omega, GetNDSpace(),
-                                                       nd_dbc_tdof_lists.back()))
+                                                       GetEliminatedTrueDofs()))
   {
     A->AddOperator(std::move(W));
   }
@@ -2991,7 +2994,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, Vector &RHS)
   RHS = 0.0;
   bool nnz =
       AddExcitationVector1Internal(excitation_idx, RHS, nullptr, /*time_harmonic*/ false);
-  linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(RHS, GetEliminatedTrueDofs(), 0.0);
   return nnz;
 }
 
@@ -3006,7 +3009,7 @@ bool SpaceOperator::GetExcitationVector(int excitation_idx, double omega,
                                            /*time_harmonic*/ true);
   RHS *= 1i * omega;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS);
-  linalg::SetSubVector(RHS, nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(RHS, GetEliminatedTrueDofs(), 0.0);
   // The sources of the environment, condensed on Γ (their own entries are eliminated).
   const bool nnz_env =
       environment && environment->AddExcitation(excitation_idx, omega, RHS);
@@ -3036,7 +3039,7 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryEt(int port_idx,
   ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
                                     Et_primary.Real());
 
-  linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+  linalg::SetSubVector(Et_primary.Real(), GetEliminatedTrueDofs(), 0.0);
 }
 
 void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
@@ -3062,7 +3065,7 @@ void SpaceOperator::GetLumpedPortExcitationVectorPrimaryHtcn(int port_idx,
   ProjectBdrCoefficientViaMassSolve(fb, data, mat_op, GetNDSpace(), GetComm(),
                                     Htcn_primary.Real());
 
-  linalg::SetSubVector(Htcn_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
+  linalg::SetSubVector(Htcn_primary.Real(), GetEliminatedTrueDofs(), 0.0);
 }
 
 void SpaceOperator::GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_ref,
@@ -3100,8 +3103,8 @@ void SpaceOperator::GetWavePortFieldVectorPrimaryEt(int port_idx, double omega_r
   GetNDSpace().GetRestrictionMatrix()->Mult(rhs_re.Real(), Et_primary.Real());
   GetNDSpace().GetRestrictionMatrix()->Mult(rhs_im.Real(), Et_primary.Imag());
 
-  linalg::SetSubVector(Et_primary.Real(), GetNDDbcTDofLists().back(), 0.0);
-  linalg::SetSubVector(Et_primary.Imag(), GetNDDbcTDofLists().back(), 0.0);
+  linalg::SetSubVector(Et_primary.Real(), GetEliminatedTrueDofs(), 0.0);
+  linalg::SetSubVector(Et_primary.Imag(), GetEliminatedTrueDofs(), 0.0);
 
   // The phase of the port mode is fixed by its S-parameter normalization (a real
   // unconjugated reaction), which leaves a lossy mode of uniform phase, such as a TEM mode
@@ -3130,7 +3133,7 @@ bool SpaceOperator::GetExcitationVector1(int excitation_idx, ComplexVector &RHS1
   RHS1 = 0.0;
   bool nnz1 = AddExcitationVector1Internal(excitation_idx, RHS1.Real(), &RHS1.Imag(),
                                            /*time_harmonic*/ true);
-  linalg::SetSubVector(RHS1, nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(RHS1, GetEliminatedTrueDofs(), 0.0);
   return nnz1;
 }
 
@@ -3141,7 +3144,7 @@ bool SpaceOperator::GetExcitationVector2(int excitation_idx, double omega,
   RHS2.UseDevice(true);
   RHS2 = 0.0;
   bool nnz2 = AddExcitationVector2Internal(excitation_idx, omega, RHS2);
-  linalg::SetSubVector(RHS2, nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(RHS2, GetEliminatedTrueDofs(), 0.0);
   const bool nnz_env =
       environment && environment->AddExcitation(excitation_idx, omega, RHS2);
   return nnz2 || nnz_env;
@@ -3271,7 +3274,7 @@ void SpaceOperator::GetConstantInitialVector(ComplexVector &v)
   v.SetSize(GetNDSpace().GetTrueVSize());
   v.UseDevice(true);
   v = 1.0;
-  linalg::SetSubVector(v.Real(), nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(v.Real(), GetEliminatedTrueDofs(), 0.0);
 }
 
 void SpaceOperator::GetRandomInitialVector(ComplexVector &v, int seed)
@@ -3279,7 +3282,7 @@ void SpaceOperator::GetRandomInitialVector(ComplexVector &v, int seed)
   v.SetSize(GetNDSpace().GetTrueVSize());
   v.UseDevice(true);
   linalg::SetRandom(GetNDSpace().GetComm(), v, seed);
-  linalg::SetSubVector(v, nd_dbc_tdof_lists.back(), 0.0);
+  linalg::SetSubVector(v, GetEliminatedTrueDofs(), 0.0);
 }
 
 template std::unique_ptr<Operator>

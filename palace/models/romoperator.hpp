@@ -314,8 +314,8 @@ protected:
   Eigen::MatrixXcd Kr, Mr, Cr;  // Extend during UpdatePROM as modes are added
   Eigen::MatrixXcd RHS1r;       // Vᴴ RHS1, one column per excitation
 
-  // For a substructured region (see SpaceOperator::SetEnvironment): per excitation, the
-  // pairings Vᵀ g_k of the basis with the condensed sources of each record of the
+  // For a substructured region (see the SpaceOperator of an environment): per excitation,
+  // the pairings Vᵀ g_k of the basis with the condensed sources of each record of the
   // environment (r x records, empty without sources in the environment), which RHS2ᵣ(ω)
   // combines with the coefficients c_k(ω); the coefficients at the last frequency.
   std::vector<Eigen::MatrixXcd> env_RHSr;

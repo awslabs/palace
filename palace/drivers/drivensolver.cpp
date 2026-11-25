@@ -104,7 +104,8 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
-  SpaceOperator space_op(iodata, mesh);
+  auto full_op = std::make_unique<SpaceOperator>(iodata, mesh);
+  SpaceOperator &space_op = *full_op;
   const auto &port_excitations = space_op.GetPortExcitations();
   SaveMetadata(port_excitations);
 
@@ -135,32 +136,36 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nRestarting from solve {}", iodata.solver.driven.restart);
   }
 
-  // Main frequency sweep loop. Online, the region is solved against the environment of the
-  // saved model.
-  if (const auto &sub = iodata.solver.substructuring; sub && sub->Online())
+  // Main frequency sweep loop. A substructured region is solved against its environment,
+  // with the operators of the region (see SpaceOperator): the environment of the saved
+  // model online, or sampled offline for a rational model by an adaptive sweep (on the
+  // operators of the full problem, which are then released). An offline exact sweep solves
+  // the whole device frequency by frequency.
+  if (const auto &sub = iodata.solver.substructuring)
   {
-    EnvironmentOperator env(iodata, space_op);
-    space_op.SetEnvironment(env);
-    if (adaptive && env.NumRecords() == 0)
+    if (!sub->Online() && !adaptive)
     {
-      Mpi::Warning("An adaptive online sweep needs a model saved by an adaptive sweep: "
-                   "every frequency is solved!\n");
-      adaptive = false;
+      return {SweepSubstructured(iodata, space_op), space_op.GlobalTrueVSize()};
     }
-    return {adaptive ? SweepAdaptive(space_op) : SweepUniform(space_op),
-            space_op.GlobalTrueVSize()};
-  }
-  // Offline, an adaptive sweep samples the environment's rational model, then reduces the
-  // region against it; an exact one solves the whole device frequency by frequency.
-  if (iodata.solver.substructuring)
-  {
-    if (adaptive)
+    std::unique_ptr<EnvironmentOperator> env;
+    if (sub->Online())
     {
-      const auto env = SampleEnvironmentModel(iodata, space_op);
-      space_op.SetEnvironment(*env);
-      return {SweepAdaptive(space_op), space_op.GlobalTrueVSize()};
+      env = std::make_unique<EnvironmentOperator>(iodata, space_op);
+      if (adaptive && env->NumRecords() == 0)
+      {
+        Mpi::Warning("An adaptive online sweep needs a model saved by an adaptive sweep: "
+                     "every frequency is solved!\n");
+        adaptive = false;
+      }
     }
-    return {SweepSubstructured(iodata, space_op), space_op.GlobalTrueVSize()};
+    else
+    {
+      env = SampleEnvironmentModel(iodata, space_op);
+    }
+    full_op.reset();
+    SpaceOperator region_op(iodata, mesh, env.get());
+    return {adaptive ? SweepAdaptive(region_op) : SweepUniform(region_op),
+            region_op.GlobalTrueVSize()};
   }
   return {adaptive ? SweepAdaptive(space_op) : SweepUniform(space_op),
           space_op.GlobalTrueVSize()};

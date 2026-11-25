@@ -737,7 +737,7 @@ void IoData::CheckConfiguration()
 
     // An online driven sweep, and an offline adaptive one once it has sampled the
     // environment, solve the region as a driven problem with the dense S_E of the
-    // environment on Γ (see SpaceOperator::SetEnvironment), preconditioned by the
+    // environment on Γ (see the SpaceOperator of an environment), preconditioned by the
     // RegionSolver: from the region's exact complex matrix on one level, factored for its
     // Schur complement onto Γ by a sparse direct solver (see RegionSolver). An offline
     // exact sweep factors with its own solvers.
