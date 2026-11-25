@@ -75,10 +75,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - `--dry-run` with more than one process no longer hangs when the configuration file
     fails the schema validation. [PR 1260](https://github.com/awslabs/palace/pull/1260).
   - Fixed the quasi-Newton refinement of the `"Hybrid"` nonlinear eigenvalue solver
-    returning modes farther from the target than those its other initial guesses converge
-    to, and returning unconverged eigenpairs when eigenvectors of distinct eigenvalues are
-    linearly dependent. The initial guesses are now refined nearest the target first, until
-    none left is nearer than the `"N"` nearest modes found.
+    returning unconverged eigenpairs when eigenvectors of distinct eigenvalues are linearly
+    dependent, and modes farther from the target than those of its other initial guesses:
+    once `"N"` modes are found, each guess left nearer the target, in frequency and in the
+    complex plane, is refined once, so nearer, possibly more damped, modes can be returned
+    at some extra cost. A stalled attempt now ends. SchemaVer 6-1-2
     [PR 1299](https://github.com/awslabs/palace/pull/1299).
 
 #### Documentation
