@@ -3591,7 +3591,7 @@ TEST_CASE("rcs_empty", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("rcs_coated_sphere", "rcs_empty.json", "rcs_empty", opts);
 }
 
-// A uniform frequency sweep of the coated sphere at second order, from 500 to 700 MHz, and
+// A uniform frequency sweep of the coated sphere at first order, from 500 to 700 MHz, and
 // the same with an adaptive sweep, which is checked against the reference data of the
 // uniform sweep (its reference files link to those of rcs_sweep, so that the two cases run
 // in separate directories): the plane wave excitation of the reduced-order model is exact

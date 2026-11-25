@@ -1,5 +1,5 @@
 {
-    // Frequency sweep of the coated sphere of rcs_coated_sphere.json, at a lower order, with
+    // Frequency sweep of the coated sphere of rcs_coated_sphere.json, at order 1, with
     // an adaptive frequency sweep: the adaptive sweep is checked against the uniform one.
     "Problem":
     {
@@ -70,7 +70,7 @@
     },
     "Solver":
     {
-        "Order": 2,
+        "Order": 1,
         "Device": "CPU",
         "Driven":
         {
@@ -80,7 +80,7 @@
                     "Type": "Linear",
                     "MinFreq": 0.5, // GHz
                     "MaxFreq": 0.7, // GHz
-                    "FreqStep": 0.05, // GHz
+                    "FreqStep": 0.1, // GHz
                     "SaveStep": 0
                 }
             ],
