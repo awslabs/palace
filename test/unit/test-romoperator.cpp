@@ -5678,6 +5678,12 @@ TEST_CASE("RomOperator-Synthesis-AnchorWithPMLRejected", "[romoperator][Serial]"
                     Catch::Matchers::ContainsSubstring("PML regions"));
   setup_json["Domains"].erase("PML");
   CHECK_NOTHROW(IoData{setup_json, false});
+
+  // Without circuit synthesis, the anchor only has no effect.
+  setup_json["Domains"]["PML"] =
+      json::array({json::object({{"Attributes", json::array({2})}})});
+  setup_json["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = false;
+  CHECK_NOTHROW(IoData{setup_json, false});
 }
 
 // "AdaptiveCircuitSynthesisAnchorFreq" is a screening frequency or a list of them, parsed
@@ -5730,6 +5736,21 @@ TEST_CASE("RomOperator-Synthesis-AnchorFreqList", "[romoperator][Serial]")
     IoData iodata(MakeConfig(json::array({0.0, 0.2})), false);
     CHECK(iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq ==
           std::vector<double>{0.2});
+  }
+  {
+    // The resolved configuration records the frequencies which are used, for the default
+    // too, but only with circuit synthesis.
+    auto config = MakeConfig(0.0);
+    config["Solver"]["Driven"].erase("AdaptiveCircuitSynthesisAnchorFreq");
+    IoData iodata(config, false);
+    CHECK(IoData::ConcretizeDefaults(
+              iodata, config)["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"] ==
+          json(0.2));
+    config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = false;
+    config["Boundaries"]["LumpedPort"][0]["SynthesisAnchor"] = false;
+    IoData iodata_no_synthesis(config, false);
+    CHECK_FALSE(IoData::ConcretizeDefaults(iodata_no_synthesis, config)["Solver"]["Driven"]
+                    .contains("AdaptiveCircuitSynthesisAnchorFreq"));
   }
   {
     // At least a thousandth of the lowest sweep frequency, 2 GHz.

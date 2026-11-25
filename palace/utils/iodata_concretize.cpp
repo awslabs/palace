@@ -169,10 +169,13 @@ void ConcretizeDriven(const config::DrivenSolverData &driven, json &j_driven)
                           {"AdaptiveCircuitSynthesisDomainOrthogonalization",
                            ToString(driven.adaptive_circuit_synthesis_domain_orthog)}});
   // The screening frequencies of the anchor solves which are used, also for a configured 0
-  // (one tenth of the lowest sweep frequency).
-  const auto &anchor_freq = driven.adaptive_circuit_synthesis_anchor_freq;
-  j_driven["AdaptiveCircuitSynthesisAnchorFreq"] =
-      (anchor_freq.size() == 1) ? json(anchor_freq.front()) : json(anchor_freq);
+  // (one tenth of the lowest sweep frequency), with circuit synthesis.
+  if (driven.adaptive_circuit_synthesis)
+  {
+    const auto &anchor_freq = driven.adaptive_circuit_synthesis_anchor_freq;
+    j_driven["AdaptiveCircuitSynthesisAnchorFreq"] =
+        (anchor_freq.size() == 1) ? json(anchor_freq.front()) : json(anchor_freq);
+  }
 }
 
 void ConcretizeElectrostatic(const config::ElectrostaticSolverData &electrostatic,

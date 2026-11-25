@@ -530,11 +530,10 @@ void IoData::CheckConfiguration()
       }
     }
   }
-
-  // The quasistatic anchor solves of circuit synthesis need the static limit of the model,
-  // which the stretch of a PML region does not have.
-  if (!domains.pml.empty())
+  else if (!domains.pml.empty())
   {
+    // The quasistatic anchor solves need the static limit of the model, which the stretch
+    // of a PML region does not have.
     for (const auto &[idx, data] : boundaries.lumpedport)
     {
       MFEM_VERIFY(!data.synthesis_anchor,
