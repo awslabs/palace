@@ -154,6 +154,17 @@ this, CTest handles MPI processes correctly, and ensures that only one GPU test
 is being run at a time. If you compiled *Palace*, the total number of
 processes that could end up used in this example is `8 * OMP_NUM_THREADS`.
 
+By default, Open MPI 5 binds the processes of each `mpiexec` to CPU cores,
+always starting from the first ones. CTest starts each MPI test with its own
+`mpiexec`, so with `ctest -j` concurrent tests share the same few cores, run
+very slowly, and can time out. Disable the binding first, as CI does:
+
+```bash
+export OMPI_MCA_hwloc_base_binding_policy=none
+export PRTE_MCA_hwloc_default_binding_policy=none
+ctest -j8 --output-on-failure
+```
+
 To run specific tests categories, you can use regex matching, for example
 
 ```bash
@@ -562,7 +573,8 @@ Each case reserves `PALACE_TESTS_NUMPROC * PALACE_TESTS_OMP_THREADS` CTest
 slots (`PROCESSORS`) and the harness pins `OMP_NUM_THREADS` to the configured
 value, so a runtime `OMP_NUM_THREADS` cannot desync the slot accounting. CI
 passes both values explicitly; `ctest -j N` then only bounds how many cases
-run concurrently.
+run concurrently. With Open MPI, disable its default core binding first, see
+[Running tests with CTest](#Running-tests-with-CTest).
 
 ```bash
 # CI-style: let CTest schedule the regression cases
