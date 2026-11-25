@@ -44,8 +44,9 @@ class SpaceOperator;
 class EnvironmentOperator
 {
 public:
-  // Record j of a model (flat, in the saved basis, on root): called on every process, in
-  // turn. Collective.
+  // Record j of a model (in the saved basis): each process its share of the lower triangle
+  // of S_E (see TriangleShare), then root the parts after it (see
+  // DrivenSubstructureModel::Flatten). Called on every process, in turn. Collective.
   using RecordFunction = std::function<std::vector<std::complex<double>>(std::size_t)>;
 
   // Read the model and check it against the run: the environment (its record and, on the
@@ -178,10 +179,10 @@ private:
   std::optional<BlockCyclicGrid> grid;
   std::vector<int> grid_rows, grid_cols;
 
-  // A record from its flat entries on root (in the saved basis, see
-  // DrivenSubstructureModel::Flatten), or record j of the model file, whose S_E each
-  // process reads a share of, and the record from the parts after S_E on root. Collective.
-  Rows Distribute(const std::vector<std::complex<double>> &flat) const;
+  // A record from the shares of the processes (see RecordFunction), or record j of the
+  // model file, whose S_E each process reads a share of, and the record from the parts
+  // after S_E on root. Collective.
+  Rows Distribute(const std::vector<std::complex<double>> &x) const;
   Rows ReadRecord(int j) const;
   Rows DistributeVectors(const std::complex<double> *tail) const;
 

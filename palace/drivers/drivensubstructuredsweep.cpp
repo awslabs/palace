@@ -4,6 +4,7 @@
 #include "drivensubstructuredsweep.hpp"
 
 #include <algorithm>
+#include <array>
 #include <complex>
 #include <cstddef>
 #include <limits>
@@ -16,6 +17,7 @@
 #include <mfem.hpp>
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
+#include "linalg/blockcyclic.hpp"
 #include "linalg/vector.hpp"
 #include "models/drivensubstructure.hpp"
 #include "models/environmentoperator.hpp"
@@ -162,7 +164,9 @@ private:
   int np = 0, ne = 0;
   // Adaptive: the samples of the rational model, chosen greedily as the adaptive driven
   // solver chooses its own, with the records scaled part by part (by their norms at the
-  // first sample) so that the error measure weighs them alike.
+  // first sample) so that the error measure weighs them alike. A sample is distributed as
+  // its record: each process holds its share of the lower triangle of S_E (see
+  // TriangleShare), and root also the parts after it.
   BarycentricInterpolant fit;
   std::vector<double> part_scale;
 
@@ -195,7 +199,8 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
     adaptive(adaptive_sweep), model_path(substructuring::SaveModelPath(iodata)),
     save(!model_path.empty()), comm(space_op.GetComm()), root(Mpi::Root(comm)),
     unit_GHz(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
-             (2 * std::numbers::pi))
+             (2 * std::numbers::pi)),
+    fit(comm)
 {
   ds = std::make_unique<DrivenSubstructure>(space_op, sub.region_attributes,
                                             sub.environment_attributes, sub.direct_solver,
@@ -386,9 +391,9 @@ DrivenSubstructureModel::Record DrivenSubstructuredSweep::EnvironmentRecord(doub
     }
   }
   Mpi::GlobalSum(static_cast<int>(c.size()), c.data(), comm);
+  rec.S = ds->TakeSchur();
   if (root)
   {
-    rec.S = ds->TakeSchur();
     rec.g = std::move(g);
     rec.c = std::move(c);
   }
@@ -398,30 +403,35 @@ DrivenSubstructureModel::Record DrivenSubstructuredSweep::EnvironmentRecord(doub
 void DrivenSubstructuredSweep::ScaleRecord(std::vector<std::complex<double>> &x,
                                            bool inverse)
 {
+  // The parts of a sample on this process: its share of S_E, then on root g, h and c.
   const auto sz = model.PartSizes();
-  std::size_t off = 0;
+  const std::size_t rest = root ? sz[1] + sz[2] + sz[3] : 0;
+  const std::array<std::size_t, 5> off = {0, x.size() - rest,
+                                          x.size() - rest + (root ? sz[1] : 0),
+                                          x.size() - (root ? sz[3] : 0), x.size()};
   if (part_scale.empty())
   {
-    for (std::size_t p = 0; p < sz.size(); p++)
+    std::array<double, 4> nrm = {};
+    for (std::size_t p = 0; p < nrm.size(); p++)
     {
-      double nrm = 0.0;
-      for (std::size_t q = off; q < off + sz[p]; q++)
+      for (std::size_t q = off[p]; q < off[p + 1]; q++)
       {
-        nrm += std::norm(x[q]);
+        nrm[p] += std::norm(x[q]);
       }
-      part_scale.push_back((nrm > 0.0) ? 1.0 / std::sqrt(nrm) : 1.0);
-      off += sz[p];
     }
-    off = 0;
+    Mpi::GlobalSum(static_cast<int>(nrm.size()), nrm.data(), comm);
+    for (double v : nrm)
+    {
+      part_scale.push_back((v > 0.0) ? 1.0 / std::sqrt(v) : 1.0);
+    }
   }
-  for (std::size_t p = 0; p < sz.size(); p++)
+  for (std::size_t p = 0; p < part_scale.size(); p++)
   {
     const double c = inverse ? 1.0 / part_scale[p] : part_scale[p];
-    for (std::size_t q = off; q < off + sz[p]; q++)
+    for (std::size_t q = off[p]; q < off[p + 1]; q++)
     {
       x[q] *= c;
     }
-    off += sz[p];
   }
 }
 
@@ -439,30 +449,27 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   auto sample = [&](double omega)
   {
     auto rec = EnvironmentRecord(omega);
-    double err = std::numeric_limits<double>::infinity();
-    if (root)
+    if (save)
     {
-      if (save)
-      {
-        model.AppendRecord(model_path, rec);
-      }
-      auto x = model.Flatten(rec);
-      ScaleRecord(x, false);
-      if (fit.Samples().size() >= 2)
-      {
-        const auto y = fit.Evaluate(omega);
-        double d = 0.0, m = 0.0;
-        for (std::size_t q = 0; q < x.size(); q++)
-        {
-          d += std::norm(y[q] - x[q]);
-          m += std::norm(x[q]);
-        }
-        err = std::sqrt(d / m);
-      }
-      fit.AddSample(omega, x);
-      model.weights = fit.Weights();
+      model.AppendRecord(model_path, rec, comm);
     }
-    Mpi::Broadcast(1, &err, 0, comm);
+    auto x = DrivenSubstructureModel::Flatten(std::move(rec));
+    ScaleRecord(x, false);
+    double err = std::numeric_limits<double>::infinity();
+    if (fit.Samples().size() >= 2)
+    {
+      const auto y = fit.Evaluate(omega);
+      std::array<double, 2> dm = {0.0, 0.0};
+      for (std::size_t q = 0; q < x.size(); q++)
+      {
+        dm[0] += std::norm(y[q] - x[q]);
+        dm[1] += std::norm(x[q]);
+      }
+      Mpi::GlobalSum(2, dm.data(), comm);
+      err = std::sqrt(dm[0] / dm[1]);
+    }
+    fit.AddSample(omega, x);
+    model.weights = fit.Weights();
     model.omega.push_back(omega);
     // A saved model is one stopped here, until the sampling ends.
     model.converged = false;
@@ -506,7 +513,8 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   // of Im S_E at a midpoint is to be no lower than at the samples beside it, which is zero
   // for a passive environment and can be negative for one that is not, as with a
   // second-order absorbing boundary. A violation beyond the tolerance adds a sample where
-  // it is largest.
+  // it is largest. The tests run on a grid of the processes, from the shares of S_E.
+  const BlockCyclicGrid grid(comm, nG);
   double passivity = 0.0;               // the least violation, relative (0: none)
   std::map<double, double> at_samples;  // the least eigenvalue at a sample, at most 0
   auto sample_passivity = [&](double omega)
@@ -515,7 +523,7 @@ void DrivenSubstructuredSweep::SampleEnvironment()
     if (added)
     {
       const auto x = fit.Evaluate(omega);
-      it->second = std::min(0.0, DrivenSubstructureModel::Passivity(x.data(), nG));
+      it->second = std::min(0.0, DrivenSubstructureModel::Passivity(x.data(), nG, grid));
     }
     return it->second;
   };
@@ -523,28 +531,23 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   {
     double at = 0.0;
     passivity = 0.0;
-    if (root)
+    auto z = model.omega;
+    std::ranges::sort(z);
+    for (std::size_t j = 0; j + 1 < z.size(); j++)
     {
-      auto z = model.omega;
-      std::ranges::sort(z);
-      for (std::size_t j = 0; j + 1 < z.size(); j++)
+      const double mid = 0.5 * (z[j] + z[j + 1]);
+      const auto x = fit.Evaluate(mid);
+      if (!DrivenSubstructureModel::Passive(x.data(), nG, tol, grid))
       {
-        const double mid = 0.5 * (z[j] + z[j + 1]);
-        const auto x = fit.Evaluate(mid);
-        if (!DrivenSubstructureModel::Passive(x.data(), nG, tol))
+        const double p = DrivenSubstructureModel::Passivity(x.data(), nG, grid) -
+                         std::min(sample_passivity(z[j]), sample_passivity(z[j + 1]));
+        if (p < passivity)
         {
-          const double p = DrivenSubstructureModel::Passivity(x.data(), nG) -
-                           std::min(sample_passivity(z[j]), sample_passivity(z[j + 1]));
-          if (p < passivity)
-          {
-            passivity = p;
-            at = mid;
-          }
+          passivity = p;
+          at = mid;
         }
       }
     }
-    Mpi::Broadcast(1, &passivity, 0, comm);
-    Mpi::Broadcast(1, &at, 0, comm);
     if (passivity >= -tol || model.omega.size() >= max_samples)
     {
       break;
@@ -580,26 +583,16 @@ void DrivenSubstructuredSweep::SampleEnvironment()
 std::unique_ptr<EnvironmentOperator> DrivenSubstructuredSweep::SampleModel()
 {
   SampleEnvironment();
-  // The fit is on root: its weights to all processes, and its samples as recorded, one at
-  // a time.
-  int nw = static_cast<int>(model.weights.size());
-  Mpi::Broadcast(1, &nw, 0, comm);
-  model.weights.resize(nw);
-  Mpi::Broadcast(nw, model.weights.data(), 0, comm);
-  // The region is factored without the environment's factorization.
+  // The region is factored without the environment's factorization, against the samples
+  // as recorded, one at a time, each process with its part.
   ds.reset();
-  return std::make_unique<EnvironmentOperator>(
-      iodata, space_op, model,
-      [this](std::size_t j)
-      {
-        if (!root)
-        {
-          return std::vector<std::complex<double>>();
-        }
-        auto x = fit.Sample(j);
-        ScaleRecord(x, true);
-        return x;
-      });
+  return std::make_unique<EnvironmentOperator>(iodata, space_op, model,
+                                               [this](std::size_t j)
+                                               {
+                                                 auto x = fit.Sample(j);
+                                                 ScaleRecord(x, true);
+                                                 return x;
+                                               });
 }
 
 std::unique_ptr<EnvironmentOperator>
@@ -610,16 +603,12 @@ DrivenSubstructuredSweep::ExactModel(const std::shared_ptr<DrivenSubstructuredSw
       [self](std::size_t j)
       {
         BlockTimer bt(Timer::KSP);
-        const auto rec = self->EnvironmentRecord(self->omega_sample[j]);
-        if (!self->root)
-        {
-          return std::vector<std::complex<double>>();
-        }
+        auto rec = self->EnvironmentRecord(self->omega_sample[j]);
         if (self->save)
         {
-          self->model.AppendRecord(self->model_path, rec);
+          self->model.AppendRecord(self->model_path, rec, self->comm);
         }
-        return self->model.Flatten(rec);
+        return DrivenSubstructureModel::Flatten(std::move(rec));
       });
 }
 

@@ -94,6 +94,23 @@ private:
   int n, mb, nprow = 1, npcol = 1, myrow = -1, mycol = -1, mloc = 0, nloc = 0;
 };
 
+// The BLACS context of the process grid of a BlockCyclicGrid while in scope (with
+// ScaLAPACK; without it, the grid is one process and there is none). Collective.
+class BlacsContext
+{
+public:
+  explicit BlacsContext(const BlockCyclicGrid &grid);
+  ~BlacsContext();
+  BlacsContext(const BlacsContext &) = delete;
+  BlacsContext &operator=(const BlacsContext &) = delete;
+
+  int Context() const { return ctxt; }
+
+private:
+  const BlockCyclicGrid &grid;
+  int system = -1, ctxt = -1;
+};
+
 //
 // The factorization of a dense matrix distributed on a BlockCyclicGrid, in place, and
 // solves with it: Cholesky's for a real matrix, which must be symmetric positive definite
@@ -106,7 +123,6 @@ class BlockCyclicFactorization
 {
 public:
   explicit BlockCyclicFactorization(const BlockCyclicGrid &grid);
-  ~BlockCyclicFactorization();
   BlockCyclicFactorization(const BlockCyclicFactorization &) = delete;
   BlockCyclicFactorization &operator=(const BlockCyclicFactorization &) = delete;
 
@@ -119,11 +135,18 @@ public:
 
 private:
   const BlockCyclicGrid &grid;
-  int system = -1, ctxt = -1;  // BLACS system handle and grid context
-  std::array<int, 9> desc{};   // ScaLAPACK descriptor of the factors
-  std::vector<int> ipiv;       // the pivots of an LU factorization
+  BlacsContext blacs;
+  std::array<int, 9> desc{};  // ScaLAPACK descriptor of the factors
+  std::vector<int> ipiv;      // the pivots of an LU factorization
   const std::vector<T> *factors = nullptr;
 };
+
+// Of a dense real symmetric matrix on a BlockCyclicGrid (the local part A of this process,
+// whose lower triangle is referenced and overwritten): whether it is positive definite, by
+// a Cholesky factorization, and its least eigenvalue, by ScaLAPACK (or by LAPACK without
+// it, the grid being one process). Collective on the communicator of the grid.
+bool PositiveDefinite(const BlockCyclicGrid &grid, std::vector<double> &A);
+double LeastEigenvalue(const BlockCyclicGrid &grid, std::vector<double> &A);
 
 }  // namespace palace
 

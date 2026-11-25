@@ -31,6 +31,7 @@ struct DomainData;
 
 }  // namespace config
 
+class BlockCyclicGrid;
 class PortExcitations;
 class SpaceOperator;
 
@@ -55,10 +56,6 @@ public:
   // The interpolant at ω (the local rows).
   std::vector<std::complex<double>> Evaluate(double omega) const;
 
-  // The interpolant over an orthonormal basis q_i of the samples, x̃(ω) = Σ_i y_i(ω) q_i.
-  const std::vector<std::vector<std::complex<double>>> &Basis() const { return Q; }
-  std::vector<std::complex<double>> BasisCoefficients(double omega) const;
-
   // The frequency between the outermost samples where the denominator Σ_j w_j / (ω - ω_j)
   // is smallest (near a pole, or far from the samples): the next sample.
   double FindMaxError() const;
@@ -80,6 +77,10 @@ private:
   std::vector<std::vector<std::complex<double>>> Q;  // orthonormal basis of the samples
   std::vector<std::complex<double>> R;               // samples = Q R (m x m, column-major)
   std::vector<std::complex<double>> w;
+
+  // The coefficients y_i(ω) of the interpolant over the basis q_i of the samples,
+  // x̃(ω) = Σ_i y_i(ω) q_i.
+  std::vector<std::complex<double>> BasisCoefficients(double omega) const;
 };
 
 //
@@ -122,23 +123,26 @@ struct DrivenSubstructureModel
 
   struct Record
   {
-    // S (nG x nG), g (nG x excitations), h (nG x ports), c (ports x excitations), all
-    // column-major.
+    // S (nG x nG, complex symmetric) by the share of this process of its lower triangle
+    // (see TriangleShare), and on rank 0 g (nG x excitations), h (nG x ports) and c (ports
+    // x excitations), column-major.
     std::vector<std::complex<double>> S, g, h, c;
   };
 
-  // A record as one vector, in the order of the file (S by its lower triangle), and the
-  // sizes of its parts.
-  std::vector<std::complex<double>> Flatten(const Record &r) const;
+  // A record as the vector of this process (see EnvironmentOperator::RecordFunction): its
+  // share of S_E, then the parts after it, handed over. The sizes of the parts of a record
+  // in the order of the file: S by the columns of its lower triangle, then g, h and c.
+  static std::vector<std::complex<double>> Flatten(Record &&r);
   std::array<std::size_t, 4> PartSizes() const;
 
   // The records of the model in its file (see substructuring::ModelFile), written and read
-  // by the calling process (ReadHeader is collective): the interface records of a new file
-  // (substructuring::InterfaceRecords: nG, sig_w, the signatures and length_scale), the
-  // header and the record of the environment, in a new file or appended (superseding the
-  // previous ones), and the records of the frequencies.
+  // by the calling process (AppendRecord and ReadHeader are collective): the interface
+  // records of a new file (substructuring::InterfaceRecords: nG, sig_w, the signatures and
+  // length_scale), the header and the record of the environment, in a new file or appended
+  // (superseding the previous ones), and the records of the frequencies, which rank 0
+  // writes, S from the shares of the processes in chunks.
   void WriteHeader(const std::string &path, bool create = true) const;
-  void AppendRecord(const std::string &path, const Record &r) const;
+  void AppendRecord(const std::string &path, const Record &r, MPI_Comm comm) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);
   std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
   // Number of complete records of frequencies in the file.
@@ -164,15 +168,19 @@ struct DrivenSubstructureModel
   static bool SameEnvironment(const std::vector<double> &a, const std::vector<double> &b);
   static bool SameSource(const double *a, const double *b, double tol = 1.0e-10);
 
-  // The passivity of a condensed environment S_E (n x n, complex symmetric, by its lower
-  // triangle in the order of a record): the least eigenvalue of Im S_E, which is positive
-  // semidefinite for a passive environment (Im u_Γ^H S_E u_Γ is the power it absorbs),
-  // relative to ‖S_E‖_F. A negative value is a violation.
-  static double Passivity(const std::complex<double> *lower, int n);
+  // The passivity of a condensed environment S_E (n x n, complex symmetric), given by the
+  // share of this process of its lower triangle (see TriangleShare, over the communicator
+  // of the grid): the least eigenvalue of Im S_E, which is positive semidefinite for a
+  // passive environment (Im u_Γ^H S_E u_Γ is the power it absorbs), relative to ‖S_E‖_F,
+  // computed on the grid. A negative value is a violation. Collective.
+  static double Passivity(const std::complex<double> *share, int n,
+                          const BlockCyclicGrid &grid);
 
   // Whether S_E is passive to tol: Im S_E + tol ‖S_E‖_F I is positive definite, that is,
-  // Passivity >= -tol (up to rounding), tested by a Cholesky factorization.
-  static bool Passive(const std::complex<double> *lower, int n, double tol);
+  // Passivity >= -tol (up to rounding), tested by a Cholesky factorization on the grid.
+  // Collective.
+  static bool Passive(const std::complex<double> *share, int n, double tol,
+                      const BlockCyclicGrid &grid);
 
 private:
   std::size_t RecordBytes() const;
@@ -221,8 +229,8 @@ public:
   CondenseEnvironment(const std::vector<const ComplexVector *> &b,
                       std::vector<ComplexVector> *x = nullptr);
 
-  // S_E(ω) of the last condensation on rank 0 (|Γ| x |Γ|, column-major, complex
-  // symmetric), in interface order, handed over.
+  // S_E(ω) of the last condensation (complex symmetric, in interface order), by the share
+  // of this process of its lower triangle (see TriangleShare), handed over.
   std::vector<std::complex<double>> TakeSchur() { return std::move(S); }
 
   // The interface Γ, in its order, with the classes of the local true DOFs: the
@@ -319,8 +327,11 @@ private:
     double border = 1.0;
   };
   Side env;
-  // On rank 0: S_E of the last condensation (offline).
+  // The share of this process of the lower triangle of S_E of the last condensation, and
+  // the grid of the interface, of all the processes, on which the environment is condensed
+  // (offline).
   std::vector<std::complex<double>> S;
+  std::unique_ptr<BlockCyclicGrid> gamma_grid;
 
   // The local true DOFs of the wave ports (each in the wave_ports of its side).
   std::map<int, std::vector<char>> wave_port_dofs;
@@ -364,11 +375,6 @@ private:
 std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
                                   std::map<int, std::vector<char>> &port_dofs,
                                   std::vector<int> &port_attributes);
-
-// The full S_E (n x n, row-major) of a record's lower triangle (by columns), mapped to the
-// current interface as M^-T S_E M^-1 with map, if given (SignatureMap::DualMatrix).
-std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, int n,
-                                            const SignatureMap *map);
 
 // The index of x in y (relative tolerance tol), -1 if none.
 int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10);

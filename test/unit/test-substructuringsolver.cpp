@@ -3591,11 +3591,29 @@ TEST_CASE("Barycentric interpolation of a rational vector function",
   CHECK(a[2] == 1.0);
 }
 
-TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
+TEST_CASE("Passivity of a condensed environment", "[substructure][Serial][Parallel]")
 {
   // S = Re + i Im with Im = Q diag(d) Q^T (Q a rotation): the least eigenvalue of Im,
   // relative to ‖S‖_F, for any scaling of S, and the Cholesky test of passivity to a
-  // tolerance, about that eigenvalue.
+  // tolerance, about that eigenvalue, on grids of all the processes, from the share of each
+  // of the lower triangle of S.
+  MPI_Comm comm = Mpi::World();
+  auto share = [comm](const std::vector<std::complex<double>> &lower, int n)
+  {
+    const auto range = TriangleShare(n, comm);
+    return std::vector<std::complex<double>>(lower.begin() + range[0],
+                                             lower.begin() + range[1]);
+  };
+  auto passivity_of = [&](const std::vector<std::complex<double>> &lower, int n)
+  {
+    const BlockCyclicGrid grid(comm, n, Mpi::Size(comm), 1);
+    return DrivenSubstructureModel::Passivity(share(lower, n).data(), n, grid);
+  };
+  auto passive_to = [&](const std::vector<std::complex<double>> &lower, int n, double tol)
+  {
+    const BlockCyclicGrid grid(comm, n, Mpi::Size(comm), 1);
+    return DrivenSubstructureModel::Passive(share(lower, n).data(), n, tol, grid);
+  };
   const double c = std::cos(0.3), s = std::sin(0.3);
   auto lower = [&](double d0, double d1, double scale)
   {
@@ -3611,14 +3629,14 @@ TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
   for (double scale : {1.0, 1.0e-6})
   {
     const auto passive = lower(0.3, 0.1, scale), active = lower(0.3, -0.2, scale);
-    CHECK(DrivenSubstructureModel::Passivity(passive.data(), 2) ==
+    CHECK(passivity_of(passive, 2) ==
           Catch::Approx(0.1 * scale / norm(passive)).epsilon(1.0e-12));
-    CHECK(DrivenSubstructureModel::Passivity(active.data(), 2) ==
+    CHECK(passivity_of(active, 2) ==
           Catch::Approx(-0.2 * scale / norm(active)).epsilon(1.0e-12));
     const double violation = 0.2 * scale / norm(active);
-    CHECK(DrivenSubstructureModel::Passive(passive.data(), 2, 1.0e-12));
-    CHECK_FALSE(DrivenSubstructureModel::Passive(active.data(), 2, 0.5 * violation));
-    CHECK(DrivenSubstructureModel::Passive(active.data(), 2, 2.0 * violation));
+    CHECK(passive_to(passive, 2, 1.0e-12));
+    CHECK_FALSE(passive_to(active, 2, 0.5 * violation));
+    CHECK(passive_to(active, 2, 2.0 * violation));
   }
 
   // A least eigenvalue repeated four times, whose whole cluster the bisection of LAPACK
@@ -3633,8 +3651,7 @@ TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
     }
   }
   const double fro = std::sqrt(4.0 * 1.25 + 2.0 * 2.0);
-  CHECK(DrivenSubstructureModel::Passivity(S.data(), n) ==
-        Catch::Approx(-0.5 / fro).epsilon(1.0e-12));
+  CHECK(passivity_of(S, n) == Catch::Approx(-0.5 / fro).epsilon(1.0e-12));
 }
 
 TEST_CASE("Saved driven excitations match across partitions", "[substructure][Serial]")
@@ -3823,16 +3840,23 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   auto record = [](double s)
   {
     Model::Record r;
-    r.S = {s, 2.0 * s, 2.0 * s, 3.0 * s};
+    r.S = {s, 2.0 * s, 3.0 * s};  // the lower triangle, the share of one process
     r.g = {s, -s};
     r.h = {std::complex<double>(0.0, s), s};
     r.c = {s};
     return r;
   };
+  // A record in the order of the file: S by the columns of its lower triangle, then g, h
+  // and c.
+  auto flat = [](double s)
+  {
+    return std::vector<std::complex<double>>{
+        s, 2.0 * s, 3.0 * s, s, -s, std::complex<double>(0.0, s), s, s};
+  };
   const auto path = (temp_dir / "driven-model-restart.bin").string();
   m.WriteHeader(path);
-  m.AppendRecord(path, record(1.0));
-  m.AppendRecord(path, record(2.0));
+  m.AppendRecord(path, record(1.0), MPI_COMM_SELF);
+  m.AppendRecord(path, record(2.0), MPI_COMM_SELF);
   {
     std::ofstream f(path, std::ios::binary | std::ios::app);
     const double part[3] = {1.0, 2.0, 3.0};
@@ -3868,10 +3892,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   m.TruncateRecords(path, 1);
   CHECK(m.NumRecords(path) == 1);
-  CHECK(m.ReadFlatRecord(path, 0) == m.Flatten(record(1.0)));
-  m.AppendRecord(path, record(4.0));
+  CHECK(m.ReadFlatRecord(path, 0) == flat(1.0));
+  m.AppendRecord(path, record(4.0), MPI_COMM_SELF);
   CHECK(m.NumRecords(path) == 2);
-  CHECK(m.ReadFlatRecord(path, 1) == m.Flatten(record(4.0)));
+  CHECK(m.ReadFlatRecord(path, 1) == flat(4.0));
 
   // The model of another sweep does not continue: other frequencies, interface, boundaries,
   // ports, environment (beyond the rounding of its moments) or sources (beyond their
@@ -5846,25 +5870,29 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     CAPTURE(omega);
     const auto A = dense_operator(omega);
     ds.Condense(omega);
-    const auto S = ds.TakeSchur();
+    // The shares of the processes of the lower triangle of S_E, by columns on rank 0.
+    std::vector<std::complex<double>> lower;
+    ToRoot<std::complex<double>>(comm, ds.TakeSchur(), TriangleShareSizes(nG, comm),
+                                 kTriangleChunk,
+                                 [&lower](const std::complex<double> *x, std::size_t m)
+                                 { lower.insert(lower.end(), x, x + m); });
     if (root)
     {
       const auto S_ref = dense_schur(A);
-      REQUIRE(S.size() == S_ref.size());
-      double d = 0.0, m = 0.0, asym = 0.0;
+      REQUIRE(lower.size() == static_cast<std::size_t>(TriangleSize(nG)));
+      double d = 0.0, m = 0.0;
+      std::size_t q = 0;
       for (int b = 0; b < nG; b++)
       {
-        for (int a = 0; a < nG; a++)
+        for (int a = b; a < nG; a++, q++)
         {
           const std::size_t ab = static_cast<std::size_t>(b) * nG + a;
-          d = std::max(d, std::abs(S[ab] - S_ref[ab]));
+          d = std::max(d, std::abs(lower[q] - S_ref[ab]));
           m = std::max(m, std::abs(S_ref[ab]));
-          asym = std::max(asym, std::abs(S[ab] - S[static_cast<std::size_t>(a) * nG + b]));
         }
       }
-      CAPTURE(nG, nE, d, m, asym);
+      CAPTURE(nG, nE, d, m);
       CHECK(d <= exact_tol * m);
-      CHECK(asym <= exact_tol * m);
     }
 
     // The condensations of the port excitation (an environment source), of a random vector

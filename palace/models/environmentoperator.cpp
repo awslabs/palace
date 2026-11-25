@@ -267,16 +267,20 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
 EnvironmentOperator::~EnvironmentOperator() = default;
 
 EnvironmentOperator::Rows
-EnvironmentOperator::Distribute(const std::vector<std::complex<double>> &flat) const
+EnvironmentOperator::Distribute(const std::vector<std::complex<double>> &x) const
 {
-  // S_E on the current interface (S_cur = M^-T S M^-1) on root, to the grid.
-  std::vector<std::complex<double>> S;
-  if (root)
-  {
-    S = FullSchur(flat.data(), nG, &gamma_map);
-  }
-  Rows rows = DistributeVectors(root ? flat.data() + model.PartSizes()[0] : nullptr);
-  rows.S = grid->ScatterFromRoot(S, true);
+  // S_E on the current interface (S_cur = M^-T S M^-1) on the grid, from the shares.
+  using T = std::complex<double>;
+  const auto range = TriangleShare(nG, comm);
+  const long long e0 = range[0];
+  std::vector<T> S(grid->LocalSize(), 0.0);
+  RedistributeTriangle<T>(
+      comm, nG,
+      [&x, e0](long long e, long long m, T *y) { std::copy_n(x.data() + (e - e0), m, y); },
+      saved_to_current, [this](int g, int h) { return grid->Owner(g, h); },
+      [this](int g, int h) { return grid->LocalIndex(g, h); }, S);
+  Rows rows = DistributeVectors(root ? x.data() + (range[1] - e0) : nullptr);
+  rows.S = std::move(S);
   return rows;
 }
 

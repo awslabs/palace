@@ -300,8 +300,10 @@ voltage of a lumped port, would depend on both sides.
     non-symmetric), frequency-dependent permittivity, PML regions, `"AdaptiveCircuitSynthesis"` and
     the adaptive refinement of the region in online sweeps are not supported yet. The model holds
     one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry of its
-    lower triangle). Online, the processes read it in parallel and hold it distributed; offline, one
-    process holds it whole to write it, and the samples of an adaptive sweep.
+    lower triangle). The processes hold it distributed, each a share of its lower triangle, which
+    they read in parallel online and which one process writes in chunks offline; the samples of an
+    adaptive sweep are distributed alike, and its passivity checks factor ``\mathrm{Im}\,\bm{S}_E``
+    on a grid of the processes.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

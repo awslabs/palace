@@ -18,6 +18,7 @@
 #include "fem/interpolator.hpp"
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
+#include "linalg/blockcyclic.hpp"
 #include "linalg/lowertriangle.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
@@ -476,11 +477,13 @@ void DrivenSubstructure::Factor(Side &side, double omega)
 {
   if (!side.schur)
   {
+    MPI_Comm comm = space_op.GetComm();
+    gamma_grid = std::make_unique<BlockCyclicGrid>(comm, iface.size, Mpi::Size(comm));
     const int n_loc = static_cast<int>(side.rows.size());
     side.schur = MakeSchurFactorization<std::complex<double>>(
-        SchurSolverFor(solver), ordering, space_op.GetComm(), side.n_sys, n_loc,
+        SchurSolverFor(solver), ordering, comm, side.n_sys, n_loc,
         {std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)},
-        side.gamma_sys, side.rows, false, true);
+        side.gamma_sys, side.rows, false, true, gamma_grid.get());
     return;
   }
 
@@ -506,11 +509,12 @@ void DrivenSubstructure::Condense(double omega)
     // factorization.
     Setup(env, omega);
   }
-  // S_E on rank 0 moves out of MUMPS's Schur buffer without a copy (the buffer is allocated
-  // again at the next factorization).
+  // Each process takes its share of S_E from the grid of the Schur complement, which MUMPS
+  // hands over (and allocates again at the next factorization), or which the others
+  // scatter from rank 0.
   Release(S);
   Factor(env, omega);
-  S = env.schur->ReleaseSchur();
+  S = ShareFromGrid(*gamma_grid, env.schur->ReleaseSchurBlocks(*gamma_grid));
 }
 
 namespace
@@ -976,61 +980,66 @@ std::vector<std::complex<double>> BarycentricInterpolant::Evaluate(double omega)
   return x;
 }
 
-double DrivenSubstructureModel::Passivity(const std::complex<double> *lower, int n)
+namespace
 {
-  std::vector<double> A(static_cast<std::size_t>(n) * n, 0.0);
+
+// Im S_E on a grid, from the share of each process of the lower triangle of S_E, and
+// ‖S_E‖_F. Collective.
+std::pair<std::vector<double>, double> ImaginaryPart(const std::complex<double> *share,
+                                                     int n, const BlockCyclicGrid &grid)
+{
+  MPI_Comm comm = grid.GetComm();
+  const auto range = TriangleShare(n, comm);
+  const long long e0 = range[0];
   double f = 0.0;
-  std::size_t q = 0;
-  for (int j = 0; j < n; j++)
+  auto [a, b] = TriangleEntry(n, e0);
+  for (long long e = e0; e < range[1]; e++)
   {
-    for (int i = j; i < n; i++, q++)
+    f += ((a == b) ? 1.0 : 2.0) * std::norm(share[e - e0]);
+    if (++a == n)
     {
-      A[static_cast<std::size_t>(j) * n + i] = lower[q].imag();
-      f += ((i == j) ? 1.0 : 2.0) * std::norm(lower[q]);
+      a = ++b;
     }
   }
-  // The least eigenvalue only (LAPACK dsyevr). W needs n entries even for one eigenvalue
-  // (dstebz stores the whole bracket first).
-  const int one = 1;
-  const double zero = 0.0;
-  int found = 0, info = 0, lwork = -1, liwork = -1, iwq = 0;
-  double wq = 0.0, z = 0.0;
-  std::vector<double> w(n);
-  std::vector<int> isuppz(2);
-  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found,
-          w.data(), &z, &one, isuppz.data(), &wq, &lwork, &iwq, &liwork, &info);
-  lwork = static_cast<int>(wq);
-  liwork = iwq;
-  std::vector<double> work(lwork);
-  std::vector<int> iwork(liwork);
-  dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found,
-          w.data(), &z, &one, isuppz.data(), work.data(), &lwork, iwork.data(), &liwork,
-          &info);
-  MFEM_VERIFY(info == 0 && found == 1,
-              "Eigenvalue of Im S_E failed: info = " << info << "!");
-  return (f > 0.0) ? w[0] / std::sqrt(f) : 0.0;
+  Mpi::GlobalSum(1, &f, comm);
+  std::vector<double> A(grid.LocalSize(), 0.0);
+  RedistributeTriangle<double>(
+      comm, n,
+      [share, e0](long long e, long long m, double *x)
+      {
+        for (long long k = 0; k < m; k++)
+        {
+          x[k] = share[e - e0 + k].imag();
+        }
+      },
+      {}, [&grid](int g, int h) { return grid.Owner(g, h); },
+      [&grid](int g, int h) { return grid.LocalIndex(g, h); }, A);
+  return {std::move(A), std::sqrt(f)};
 }
 
-bool DrivenSubstructureModel::Passive(const std::complex<double> *lower, int n, double tol)
+}  // namespace
+
+double DrivenSubstructureModel::Passivity(const std::complex<double> *share, int n,
+                                          const BlockCyclicGrid &grid)
 {
-  std::vector<double> A(static_cast<std::size_t>(n) * n, 0.0);
-  double f = 0.0;
-  std::size_t q = 0;
-  for (int j = 0; j < n; j++)
+  auto [A, f] = ImaginaryPart(share, n, grid);
+  const double lambda = LeastEigenvalue(grid, A);
+  return (f > 0.0) ? lambda / f : 0.0;
+}
+
+bool DrivenSubstructureModel::Passive(const std::complex<double> *share, int n, double tol,
+                                      const BlockCyclicGrid &grid)
+{
+  auto [A, f] = ImaginaryPart(share, n, grid);
+  const int rank = Mpi::Rank(grid.GetComm());
+  for (int g = 0; grid.InGrid() && g < n; g++)
   {
-    for (int i = j; i < n; i++, q++)
+    if (grid.Owner(g, g) == rank)
     {
-      A[static_cast<std::size_t>(j) * n + i] = lower[q].imag();
-      f += ((i == j) ? 1.0 : 2.0) * std::norm(lower[q]);
+      A[grid.LocalIndex(g, g)] += tol * f;
     }
   }
-  for (int j = 0; j < n; j++)
-  {
-    A[static_cast<std::size_t>(j) * n + j] += tol * std::sqrt(f);
-  }
-  int info = 0;
-  dpotrf_("L", &n, A.data(), &n, &info);
-  return info == 0;
+  return PositiveDefinite(grid, A);
 }
 
 double BarycentricInterpolant::FindMaxError() const
@@ -1044,22 +1053,13 @@ std::array<std::size_t, 4> DrivenSubstructureModel::PartSizes() const
   return {n * (n + 1) / 2, n * ne, n * np, np * ne};
 }
 
-std::vector<std::complex<double>> DrivenSubstructureModel::Flatten(const Record &r) const
+std::vector<std::complex<double>> DrivenSubstructureModel::Flatten(Record &&r)
 {
-  // S_E is symmetric: its lower triangle, by columns.
-  std::vector<std::complex<double>> x;
-  const auto sz = PartSizes();
-  x.reserve(sz[0] + sz[1] + sz[2] + sz[3]);
-  for (int j = 0; j < nG; j++)
-  {
-    for (int i = j; i < nG; i++)
-    {
-      x.push_back(r.S[static_cast<std::size_t>(j) * nG + i]);
-    }
-  }
+  std::vector<std::complex<double>> x = std::move(r.S);
   x.insert(x.end(), r.g.begin(), r.g.end());
   x.insert(x.end(), r.h.begin(), r.h.end());
   x.insert(x.end(), r.c.begin(), r.c.end());
+  r = Record();
   return x;
 }
 
@@ -1101,17 +1101,28 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
       { f.write(record.data(), static_cast<std::streamsize>(record.size())); });
 }
 
-void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r) const
+void DrivenSubstructureModel::AppendRecord(const std::string &path, const Record &r,
+                                           MPI_Comm comm) const
 {
-  const auto x = Flatten(r);
+  // S_E by the columns of its lower triangle, from the shares of the processes, then g, h
+  // and c.
+  using T = std::complex<double>;
+  const auto size = TriangleShareSizes(nG, comm);
   ModelFile::Append(
-      path, MPI_COMM_SELF, kRecordTag,
-      static_cast<long long>(sizeof(std::complex<double>) * x.size()),
+      path, comm, kRecordTag, static_cast<long long>(RecordBytes()),
       [&](std::ostream &f)
       {
-        f.write(reinterpret_cast<const char *>(x.data()),
-                static_cast<std::streamsize>(sizeof(std::complex<double>) * x.size()));
-      });
+        auto write = [&f](const T *x, std::size_t n)
+        {
+          f.write(reinterpret_cast<const char *>(x),
+                  static_cast<std::streamsize>(sizeof(T) * n));
+        };
+        ToRoot<T>(comm, r.S, size, kTriangleChunk, write);
+        write(r.g.data(), r.g.size());
+        write(r.h.data(), r.h.size());
+        write(r.c.data(), r.c.size());
+      },
+      [&]() { ToRoot<T>(comm, r.S, size, kTriangleChunk, {}); });
 }
 
 void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
@@ -1307,37 +1318,6 @@ std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure
     add(iodata.boundaries.waveport.at(idx).attributes);
   }
   return env_ports;
-}
-
-std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, int n,
-                                            const SignatureMap *map)
-{
-  auto at = [&](int a, int b)
-  {
-    if (a < b)
-    {
-      std::swap(a, b);
-    }
-    return lower[static_cast<std::size_t>(b) * n -
-                 static_cast<std::size_t>(b) * (b - 1) / 2 + (a - b)];
-  };
-  auto read_row = [&](int a, std::complex<double> *x)
-  {
-    for (int b = 0; b < n; b++)
-    {
-      x[b] = at(a, b);
-    }
-  };
-  if (map)
-  {
-    return map->DualMatrix<std::complex<double>>(0, n, read_row);
-  }
-  std::vector<std::complex<double>> S(static_cast<std::size_t>(n) * n);
-  for (int a = 0; a < n; a++)
-  {
-    read_row(a, S.data() + static_cast<std::size_t>(a) * n);
-  }
-  return S;
 }
 
 int FindValue(const std::vector<double> &y, double x, double tol)
