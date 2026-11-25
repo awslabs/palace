@@ -35,6 +35,126 @@ using namespace Catch::Matchers;
 namespace
 {
 
+std::unique_ptr<mfem::Mesh> TwoCurvedTets(bool with_interior_boundary)
+{
+  auto mesh = std::make_unique<mfem::Mesh>(3, 5, 2, with_interior_boundary ? 7 : 0, 3);
+  mesh->AddVertex(0.0, 0.0, 0.0);
+  mesh->AddVertex(1.0, 0.0, 0.0);
+  mesh->AddVertex(0.0, 1.0, 0.0);
+  mesh->AddVertex(0.0, 0.0, 1.0);
+  mesh->AddVertex(0.0, 0.0, -1.0);
+  mesh->AddTet(0, 1, 2, 3, 1);
+  mesh->AddTet(0, 2, 1, 4, 2);
+  if (with_interior_boundary)
+  {
+    mesh->AddBdrTriangle(1, 2, 3, 1);
+    mesh->AddBdrTriangle(0, 3, 2, 1);
+    mesh->AddBdrTriangle(0, 1, 3, 1);
+    mesh->AddBdrTriangle(2, 1, 4, 1);
+    mesh->AddBdrTriangle(0, 4, 1, 1);
+    mesh->AddBdrTriangle(0, 2, 4, 1);
+    mesh->AddBdrTriangle(0, 2, 1, 1);
+  }
+  mesh->FinalizeTopology();
+  mesh->SetCurvature(2);
+  mesh->Transform(
+      [](const mfem::Vector &x, mfem::Vector &y)
+      {
+        y = x;
+        y(2) += 0.125 * x(0) * x(1);
+      });
+  mesh->Finalize(/*refine=*/true, /*fix_orientation=*/false);
+  if (with_interior_boundary)
+  {
+    // Simulate the relabeling done during serial boundary-mode preprocessing.
+    mesh->SetBdrAttribute(6, 7);
+    REQUIRE(mesh->bdr_attributes.Find(7) == -1);
+  }
+  return mesh;
+}
+
+std::vector<std::unique_ptr<mfem::ParMesh>>
+PartitionAndRefineCurvedTets(IoData &iodata, MPI_Comm comm, bool try_single_rank_direct)
+{
+  auto serial_mesh = Mpi::Root(comm) ? TwoCurvedTets(Mpi::Size(comm) == 1) : nullptr;
+  std::vector<std::unique_ptr<mfem::ParMesh>> meshes;
+  iodata.problem.verbose = 2;
+  const auto partition_log = test::CaptureStdout(
+      [&]
+      {
+        meshes.push_back(
+            mesh::Partition(iodata, std::move(serial_mesh), comm, try_single_rank_direct));
+      });
+  const bool expected_direct = try_single_rank_direct && Mpi::Size(comm) == 1 &&
+                               iodata.model.partitioning.empty() &&
+                               iodata.model.refinement.max_it == 0;
+  CHECK((partition_log.find("Constructed parallel mesh directly") != std::string::npos) ==
+        expected_direct);
+  mesh::RefineMesh(iodata, meshes);
+  return meshes;
+}
+
+void CheckCurvedPartitions(mfem::ParMesh &actual, mfem::ParMesh &reference)
+{
+  mfem::ND_FECollection nd2(2, 3);
+  mfem::ParFiniteElementSpace actual_nd(&actual, &nd2), reference_nd(&reference, &nd2);
+  CHECK(actual_nd.GlobalTrueVSize() == reference_nd.GlobalTrueVSize());
+  CHECK(actual_nd.GetVSize() == reference_nd.GetVSize());
+  CHECK(actual.GetNV() == reference.GetNV());
+  CHECK(actual.GetNEdges() == reference.GetNEdges());
+  CHECK(actual.GetNumFaces() == reference.GetNumFaces());
+  REQUIRE(actual.GetNE() == reference.GetNE());
+  REQUIRE(actual.GetNBE() == reference.GetNBE());
+  CHECK(actual.attributes == reference.attributes);
+  CHECK(actual.bdr_attributes == reference.bdr_attributes);
+
+  const auto *nodes = actual.GetNodes();
+  const auto *reference_nodes = reference.GetNodes();
+  REQUIRE(nodes);
+  REQUIRE(reference_nodes);
+  CHECK(dynamic_cast<const mfem::ParGridFunction *>(nodes));
+  CHECK(nodes->FESpace()->GetMaxElementOrder() == 2);
+  CHECK(nodes->FESpace()->GetMesh() == &actual);
+  REQUIRE(nodes->Size() == reference_nodes->Size());
+  for (int i = 0; i < nodes->Size(); i++)
+  {
+    CAPTURE(i);
+    CHECK_THAT((*nodes)(i), WithinAbs((*reference_nodes)(i), 1.0e-12));
+  }
+
+  for (int e = 0; e < actual.GetNE(); e++)
+  {
+    CAPTURE(e);
+    CHECK(actual.GetAttribute(e) == reference.GetAttribute(e));
+    mfem::Array<int> dofs, reference_dofs, entities, reference_entities, orientation,
+        reference_orientation;
+    actual.GetElementVertices(e, entities);
+    reference.GetElementVertices(e, reference_entities);
+    CHECK(entities == reference_entities);
+    actual.GetElementEdges(e, entities, orientation);
+    reference.GetElementEdges(e, reference_entities, reference_orientation);
+    CHECK(entities == reference_entities);
+    CHECK(orientation == reference_orientation);
+    actual.GetElementFaces(e, entities, orientation);
+    reference.GetElementFaces(e, reference_entities, reference_orientation);
+    CHECK(entities == reference_entities);
+    CHECK(orientation == reference_orientation);
+    actual_nd.GetElementVDofs(e, dofs);
+    reference_nd.GetElementVDofs(e, reference_dofs);
+    CHECK(dofs == reference_dofs);
+    CHECK(actual.GetElementVolume(e) > 0.0);
+  }
+  for (int e = 0; e < actual.GetNBE(); e++)
+  {
+    CAPTURE(e);
+    mfem::Array<int> vertices, reference_vertices;
+    actual.GetBdrElementVertices(e, vertices);
+    reference.GetBdrElementVertices(e, reference_vertices);
+    CHECK(vertices == reference_vertices);
+    CHECK(actual.GetBdrAttribute(e) == reference.GetBdrAttribute(e));
+  }
+}
+
 std::unique_ptr<mfem::Mesh> TwoEdgeFanTetMesh()
 {
   auto mesh = std::make_unique<mfem::Mesh>(3, 10, 4, 0, 3);
@@ -81,6 +201,126 @@ void CheckVertex(const mfem::Mesh &mesh, int v, const std::array<double, 3> &coo
 }
 
 }  // namespace
+
+TEST_CASE_METHOD(test::PerRankTempDir, "Curved tetrahedra single-rank mesh construction",
+                 "[geodata][Serial][single-rank-mesh]")
+{
+  MPI_Comm comm = MPI_COMM_SELF;
+  IoData iodata(Units(1.0, 1.0));
+  iodata.model.refinement.uniform_ref_levels = GENERATE(0, 1);
+  iodata.solver.linear.mg_max_levels = 2;
+  auto reference = PartitionAndRefineCurvedTets(iodata, comm, false);
+
+  SECTION("Direct")
+  {
+    auto actual = PartitionAndRefineCurvedTets(iodata, comm, true);
+    REQUIRE(actual.size() == (iodata.model.refinement.uniform_ref_levels == 0 ? 1 : 2));
+    REQUIRE(actual.size() == reference.size());
+    CHECK(actual.front()->GetNE() == 2);
+    CHECK(actual.front()->bdr_attributes.Find(7) != -1);
+    CHECK(actual.back()->GetNE() ==
+          (iodata.model.refinement.uniform_ref_levels == 0 ? 2 : 16));
+
+    // The quadratic map moves the tetrahedra's centers while fixing their vertices.
+    mfem::Vector center;
+    for (int e = 0; e < actual.front()->GetNE(); e++)
+    {
+      actual.front()->GetElementCenter(e, center);
+      const double z = actual.front()->GetAttribute(e) == 1 ? 0.25 : -0.25;
+      CHECK_THAT(center(2), WithinAbs(z + 0.125 * 0.25 * 0.25, 1.0e-12));
+    }
+    for (std::size_t l = 0; l < actual.size(); l++)
+    {
+      CAPTURE(l);
+      CheckCurvedPartitions(*actual[l], *reference[l]);
+    }
+  }
+
+  SECTION("Adaptive refinement fallback")
+  {
+    iodata.model.refinement.max_it = 1;
+    reference = PartitionAndRefineCurvedTets(iodata, comm, false);
+    auto actual = PartitionAndRefineCurvedTets(iodata, comm, true);
+    REQUIRE(actual.size() == reference.size());
+    for (std::size_t l = 0; l < actual.size(); l++)
+    {
+      CheckCurvedPartitions(*actual[l], *reference[l]);
+    }
+  }
+
+  SECTION("Explicit partition fallback")
+  {
+    const auto partition_file = temp_dir / "partition.txt";
+    std::ofstream file(partition_file);
+    file << "number_of_elements 2\nnumber_of_processors 1\n0\n0\n";
+    file.close();
+    REQUIRE(file.good());
+    iodata.model.partitioning = partition_file.string();
+    auto actual = PartitionAndRefineCurvedTets(iodata, comm, true);
+    REQUIRE(actual.size() == reference.size());
+    for (std::size_t l = 0; l < actual.size(); l++)
+    {
+      CAPTURE(l);
+      CheckCurvedPartitions(*actual[l], *reference[l]);
+    }
+  }
+}
+
+TEST_CASE("Single-rank hexahedral mesh construction", "[geodata][Serial][single-rank-mesh]")
+{
+  IoData iodata(Units(1.0, 1.0));
+  iodata.problem.verbose = 2;
+  iodata.model.refinement.uniform_ref_levels = GENERATE(0, 1);
+  iodata.solver.linear.mg_max_levels = 2;
+  const auto build = [&](bool direct)
+  {
+    auto serial = std::make_unique<mfem::Mesh>(
+        mfem::Mesh::MakeCartesian3D(2, 1, 1, mfem::Element::HEXAHEDRON));
+    serial->SetCurvature(2);
+    std::vector<std::unique_ptr<mfem::ParMesh>> meshes;
+    const auto log = test::CaptureStdout(
+        [&]
+        {
+          meshes.push_back(
+              mesh::Partition(iodata, std::move(serial), MPI_COMM_SELF, direct));
+        });
+    CHECK((log.find("Constructed parallel mesh directly") != std::string::npos) == direct);
+    mesh::RefineMesh(iodata, meshes);
+    return meshes;
+  };
+  auto ascii = build(false);
+  auto direct = build(true);
+  REQUIRE(direct.size() == ascii.size());
+  for (std::size_t l = 0; l < direct.size(); l++)
+  {
+    CheckCurvedPartitions(*direct[l], *ascii[l]);
+  }
+}
+
+TEST_CASE("Curved tetrahedra two-rank mesh fallback",
+          "[geodata][Parallel][single-rank-mesh]")
+{
+  MPI_Comm comm = Mpi::World();
+  if (Mpi::Size(comm) != 2)
+  {
+    SKIP("Requires two MPI ranks");
+  }
+  IoData iodata(Units(1.0, 1.0));
+  iodata.model.refinement.uniform_ref_levels = GENERATE(0, 1);
+  iodata.solver.linear.mg_max_levels = 2;
+  auto reference = PartitionAndRefineCurvedTets(iodata, comm, false);
+  auto actual = PartitionAndRefineCurvedTets(iodata, comm, true);
+  REQUIRE(actual.size() == reference.size());
+  CHECK(actual.front()->GetNE() == 1);
+  CHECK(actual.front()->GetNSharedFaces() == 1);
+  CHECK(actual.back()->GetNE() ==
+        (iodata.model.refinement.uniform_ref_levels == 0 ? 1 : 8));
+  for (std::size_t l = 0; l < actual.size(); l++)
+  {
+    CAPTURE(l);
+    CheckCurvedPartitions(*actual[l], *reference[l]);
+  }
+}
 
 // TODO: Add this test when we can access MFEM_DATA_PATH from Spack
 // This requires MFEM to move to a CMake-based build system for spack.
