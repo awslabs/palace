@@ -54,6 +54,9 @@ public:
     SOLVE_ESTIMATOR,       // Evaluation of estimator
     ADAPTATION,            // Adaptation
     REBALANCE,             // Rebalancing
+    REBALANCE_GATHER,      // Gather of the element graph on the root
+    REBALANCE_PARTITION,   // Partition of the element graph on the root
+    REBALANCE_MOVE,        // Redistribution of the mesh elements
     POSTPRO,               // Solution postprocessing
     POSTPRO_FARFIELD,      // Computing far-fields
     POSTPRO_PARAVIEW,      // Paraview calculations and I/O
@@ -89,6 +92,9 @@ public:
       "  Solve",
       "Adaptation",
       "  Rebalancing",
+      "    Graph Gather",
+      "    Graph Partition",
+      "    Mesh Redistribution",
       "Postprocessing",
       "  Far Fields",
       "  Paraview",

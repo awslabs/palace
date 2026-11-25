@@ -579,6 +579,15 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://raw.githubusercontent.com/awslabs/palace/74cf0f4d2e2520923cc102091208b9fbf08a640f/extern/patch/mfem/mfem_pr5754.diff"
   8a5cfeaf4fa4d7f9e9fe656413096beb8bad0d6ac46558c3484a368e1695577a
 )
+# https://github.com/mfem/mfem/pull/5755
+# ParMesh::Rebalance with a partition, for conforming meshes of triangles and tetrahedra, and
+# the transfer of grid functions, for MFEM 4.10. Applied after the patches above, PR 5754
+# included.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5755.diff
+  "https://raw.githubusercontent.com/awslabs/palace/abf1714bed72b2a1e95843b0aed46f6ea91fddc3/extern/patch/mfem/mfem_pr5755.diff"
+  5872fa8db822d885297e4ca835d5baab3d6763fe785669f79b8bc73679b1633c
+)
 
 include(ExternalProject)
 ExternalProject_Add(mfem

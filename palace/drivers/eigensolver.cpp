@@ -103,12 +103,8 @@ void EigenSolver::UpdateAfterMeshChange(Mesh &mesh) const
   {
     return;
   }
-  if (prev_eigenvectors->GetParMesh() != &mesh.Get())
-  {
-    // The mesh object was replaced.
-    prev_eigenvectors.reset();
-    return;
-  }
+  MFEM_VERIFY(prev_eigenvectors->GetParMesh() == &mesh.Get(),
+              "Refinement and rebalancing keep the mesh object!");
   prev_eigenvectors->Update();
 }
 

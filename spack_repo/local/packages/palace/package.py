@@ -661,6 +661,16 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="8a5cfeaf4fa4d7f9e9fe656413096beb8bad0d6ac46558c3484a368e1695577a",
                 when="@4.10:",
             ),
+            # https://github.com/mfem/mfem/pull/5755 (narrow to @4.10.0 once merged upstream and
+            # Lookahead flags it): ParMesh::Rebalance with a partition, for conforming meshes of
+            # triangles and tetrahedra, and the transfer of grid functions
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "abf1714bed72b2a1e95843b0aed46f6ea91fddc3/extern/patch/mfem/"
+                "mfem_pr5755.diff",
+                sha256="5872fa8db822d885297e4ca835d5baab3d6763fe785669f79b8bc73679b1633c",
+                when="@4.10:",
+            ),
         ],
     )
 
