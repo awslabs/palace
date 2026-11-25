@@ -219,7 +219,6 @@ int main(int argc, char *argv[])
   }
 
   result = session.run();
-  palace::test::FinalizeRegressionRunDir(result == 0);
   ceed::Finalize();
 
   // Finalize SLEPc/PETSc.

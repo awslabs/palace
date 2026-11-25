@@ -100,13 +100,10 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
 // wipes its stage when it starts. Without it (empty), each run of the tests gets a new run
 // root std::filesystem::temp_directory_path() / "palace-regression-XXXXXX", whose path is
 // printed: the first call of GetRegressionRunDir creates it, so it must be called on all
-// ranks of MPI_COMM_WORLD.
+// ranks of MPI_COMM_WORLD. The stage of a passing case is removed when the case ends, and
+// the run root at the end of the run unless it holds the stage of a failing case.
 void SetRegressionRunDirOverride(std::string value);
 std::filesystem::path GetRegressionRunDir();
-
-// End of the test run: remove the temporary run root if all tests passed, otherwise keep
-// it. A fixed run root is always kept.
-void FinalizeRegressionRunDir(bool passed);
 
 // Solver overrides. Empty = no override; the config JSON value is used.
 void SetSolverOverride(std::string value);

@@ -619,10 +619,20 @@ Regression input fixtures and references are normal test data under
 and outputs in a subdirectory of a run root, such as `cpw/lumped_eigen`. By
 default, each run of `palace-unit-tests` gets a new run root
 `std::filesystem::temp_directory_path() / "palace-regression-XXXXXX"`, so
-concurrent runs never share a stage. Its path is printed when it is created. It
-is removed at the end of the run if all tests pass, and kept otherwise. The only
-directory override is `--regression-run-dir`, which sets a fixed run root, where
-each case wipes its stage when it starts and keeps it afterwards.
+concurrent runs never share a stage. Its path is printed when it is created. The
+stage of a passing case is removed when the case ends, so a run root is kept
+only when a case fails, aborts or times out, and then holds only the stages of
+such cases. The only directory override is `--regression-run-dir`, which sets a
+fixed run root, where each case wipes its stage when it starts and keeps it
+afterwards.
+
+To free the space of kept run roots, and of the fixed `palace-regression`
+directory that earlier versions used, remove them while no tests are running
+(the pattern also matches the run roots of running tests):
+
+```bash
+rm -rf "${TMPDIR:-/tmp}"/palace-regression "${TMPDIR:-/tmp}"/palace-regression-*
+```
 
 Per-case solver knobs:
 
