@@ -39,13 +39,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     V-cycles pre-smooth but do not post-smooth, at twice the default smoothing order of each
     multigrid level (twice `"MGSmoothOrder"` when it is set), apart from the auxiliary space
     correction of distributive relaxation, which follows the coarse-grid correction. They
-    are kept on most production models, where eigenmode simulations take up to 44% less
-    time, and symmetric V-cycles for linear solves that converge in a few iterations and for
-    problems dominated by radiation. The new `config["Solver"]["Linear"]["MGCycleType"]`
-    (`"Symmetric"`, `"OneSided"` or `"Auto"`) defaults to `"Auto"` for eigenmode simulations
-    with GMRES or FGMRES, and to `"Symmetric"` otherwise. `"OneSided"` and `"Auto"` are an
-    error with CG. Results change at the level of the linear solver tolerance. SchemaVer
-    6-2-0
+    are kept on most production models, among them chips in boxes with absorbing walls,
+    where eigenmode simulations take up to 75% less time, and symmetric V-cycles for linear
+    solves that converge in a few iterations and for problems dominated by radiation, such
+    as an antenna. The new `config["Solver"]["Linear"]["MGCycleType"]` (`"Symmetric"`,
+    `"OneSided"` or `"Auto"`) defaults to `"Auto"` for eigenmode simulations with GMRES or
+    FGMRES, and to `"Symmetric"` otherwise. `"OneSided"` and `"Auto"` are an error with CG.
+    Results change at the level of the linear solver tolerance. SchemaVer 6-2-0
     [PR 1233](https://github.com/awslabs/palace/pull/1233).
 
 #### Bug Fixes
