@@ -734,7 +734,7 @@ public:
   // adaptive driven circuit synthesis. Anchor vectors provide the junction-anchored
   // (unit-current) field configuration used by downstream bare-basis netlist extraction,
   // without requiring a pseudo-inverse of the exported inverse-inductance matrix. Default
-  // false (opt-in, preserving existing behavior); requires a port with a nonzero
+  // false (opt-in, preserving existing behavior); requires an active port with a nonzero
   // inductance, which may be negative (the linearized inductance of a Josephson junction
   // biased at a phase beyond π/2, for example), included in synthesis. A port which is the
   // only one with an inductance under its excitation index needs no anchor (the samples of

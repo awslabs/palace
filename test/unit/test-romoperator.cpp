@@ -5619,6 +5619,10 @@ TEST_CASE("RomOperator-Synthesis-AnchorOnCapOnlyPortRejected", "[romoperator][Se
 
 TEST_CASE("RomOperator-Synthesis-AnchorOnExcludedPortRejected", "[romoperator][Serial]")
 {
+  // A port excluded from synthesis, or inactive, which leaves its inductance out of the
+  // model.
+  const std::string excluded = GENERATE("IncludeInSynthesis", "Active");
+  CAPTURE(excluded);
   json setup_json;
   setup_json["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", "."}};
   setup_json["Model"] = {{"Mesh", "placeholder.msh"}};
@@ -5629,7 +5633,7 @@ TEST_CASE("RomOperator-Synthesis-AnchorOnExcludedPortRejected", "[romoperator][S
       {"LumpedPort", json::array({json::object({{"Index", 1},
                                                 {"L", 25.0e-9},
                                                 {"SynthesisAnchor", true},
-                                                {"IncludeInSynthesis", false},
+                                                {excluded, false},
                                                 {"Attributes", json::array({100})},
                                                 {"Direction", "+X"}})})}};
   setup_json["Solver"] = {{"Order", 1UL},
@@ -5641,7 +5645,8 @@ TEST_CASE("RomOperator-Synthesis-AnchorOnExcludedPortRejected", "[romoperator][S
                             {"FreqStep", 1.0}}}};
 
   CHECK_THROWS_WITH((IoData{setup_json, false}),
-                    Catch::Matchers::ContainsSubstring("SynthesisAnchor"));
+                    Catch::Matchers::ContainsSubstring("SynthesisAnchor") &&
+                        Catch::Matchers::ContainsSubstring(excluded));
 }
 
 TEST_CASE("RomOperator-Synthesis-AnchorWithPMLRejected", "[romoperator][Serial]")

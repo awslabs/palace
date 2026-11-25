@@ -924,6 +924,11 @@ LumpedPortData::LumpedPortData(const json &port)
                           "because it has \"IncludeInSynthesis\" false; anchor vectors "
                           "are part of the synthesis basis.",
                           index));
+  MFEM_VERIFY(!(synthesis_anchor && !active),
+              fmt::format("\"SynthesisAnchor\" cannot be true on lumped port index {:d} "
+                          "because it has \"Active\" false, which leaves its inductance "
+                          "out of the model.",
+                          index));
   if (port.contains("Attributes"))
   {
     auto &elem = elements.emplace_back();
