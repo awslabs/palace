@@ -35,7 +35,7 @@ class Units;
 inline constexpr const char *kImpedanceApplyValidatedRange =
     "validated at the designers' 4.5e-14 H/sq in driven and eigenmode runs, cracked and "
     "uncracked (the benchmark: at most 0.10 % added in driven runs on two coupons, "
-    "0.06 % in eigenmode on one window)";
+    "0.06 % on the graded cells in eigenmode on one window)";
 
 // What the candidate does with the metal of one boundary attribute.
 enum class FilmService : char

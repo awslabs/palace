@@ -2771,8 +2771,9 @@ default of `Solver.SurfaceResponseCorrection` (`"Off"` stays allowed; the electr
 block's default stays `"Off"`). Served at or below `9e-14` H/sq; validated at the designers'
 `4.5e-14` H/sq in driven and eigenmode runs, cracked and uncracked: on the benchmark's Ls
 cases serving the sheet by the perfect-conductor models adds at most 0.10 % in driven runs
-on two coupons and 0.06 % in eigenmode on one window. Every run with an `Impedance`
-boundary prints this regime in one line (`Impedance-metal rule (APPLY): regime: ...`); a run
+on two coupons and 0.06 % on the graded cells in eigenmode on one window. Every run with an
+`Impedance` boundary prints this regime in one line
+(`Impedance-metal rule (APPLY): regime: ...`); a run
 without one has nothing to serve and runs exactly as `"Off"` (no line, no record, no file).
 On the same runs as `"Record"`, the operator of record itself treats a perfect
 conductor and a purely inductive `Impedance` sheet (`Rs` = 0, `Cs` = 0, 0 < `Ls` <=
