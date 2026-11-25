@@ -76,11 +76,11 @@ public:
   // The environment's lumped ports (index) and wave ports (-index).
   const std::vector<int> &Ports() const { return env_ports; }
 
-  // The boundary attributes in the region the model records (see
-  // DrivenSubstructureModel::region_bdr_attributes).
-  const std::vector<int> &RegionBoundaryAttributes() const
+  // On the mesh of the region, the boundary attributes of the environment elements it holds
+  // (see EnvironmentRecord::bdr_attributes).
+  const std::vector<int> &EnvironmentBoundaryAttributes() const
   {
-    return model.region_bdr_attributes;
+    return model.environment.bdr_attributes;
   }
 
   // y += R_Γᵀ S_E(ω) R_Γ x.

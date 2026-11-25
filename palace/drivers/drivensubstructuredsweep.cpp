@@ -245,8 +245,6 @@ void DrivenSubstructuredSweep::SetUpModel()
   }
   model.ports = env_ports;
   model.port_attributes = env_port_attributes;
-  model.region_bdr_attributes =
-      BoundaryAttributesInRegion(space_op.GetMesh().Get(), sub.region_attributes);
   model.length_scale = iodata.model.Lc;
   if (adaptive)
   {

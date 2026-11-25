@@ -3698,10 +3698,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "A cut or corrupted driven model header is rejected",
                  "[substructure][Serial]")
 {
-  // The header is read part by part, each only if its record holds it: a header cut short,
-  // one whose sizes exceed its record (also a negative one), one without frequencies, and a
-  // model without the record of its environment, are incomplete; another format version is
-  // rejected, and a file of another kind is not a model.
+  // The header is read record by record, each checked to hold its field: a header cut
+  // short, an interface record whose size exceeds it (also a negative one), a header record
+  // of the wrong size, one without frequencies, and a model without the record of its
+  // environment, are incomplete; another format version is rejected, and a file of another
+  // kind is not a model.
   DrivenSubstructureModel m;
   m.nG = 2;
   m.sig_w = 1;
@@ -3733,18 +3734,32 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                     ContainsSubstring("is incomplete"));
   // The interface size (the first entry of the interface record) beyond the record or
-  // negative, and more frequencies (head entry 4) than the record holds.
-  for (const auto [tag, entry, value] :
-       {std::tuple{signatures, 0, 1000}, {signatures, 0, -5}, {header, 4, 7}})
+  // negative.
+  for (const int value : {1000, -5})
   {
     m.WriteHeader(path);
-    const auto pos = payload(tag);
+    const auto pos = payload(signatures);
     {
       std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
-      f.seekp(pos + entry * static_cast<long long>(sizeof(int)));
+      f.seekp(pos);
       f.write(reinterpret_cast<const char *>(&value), sizeof(int));
     }
-    CAPTURE(entry, value);
+    CAPTURE(value);
+    CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
+                      ContainsSubstring("is incomplete"));
+  }
+  // A header record of the wrong size, which supersedes the one before it: the fingerprint
+  // centers, and the source fingerprints of the excitations.
+  for (const auto tag : {ModelFile::Tag("DFPC"), ModelFile::Tag("DSFP")})
+  {
+    m.WriteHeader(path);
+    const std::vector<double> x(5, 1.0);
+    ModelFile::Append(path, MPI_COMM_SELF, tag, sizeof(double) * x.size(),
+                      [&](std::ostream &f)
+                      {
+                        f.write(reinterpret_cast<const char *>(x.data()),
+                                static_cast<std::streamsize>(sizeof(double) * x.size()));
+                      });
     CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                       ContainsSubstring("is incomplete"));
   }
@@ -3795,7 +3810,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   m.excitations = {1};
   m.exc_fp = {1.0, 0.0, 0.5, 0.0, 0.25, 0.0, -0.125};
   m.ports = {1};
-  m.region_bdr_attributes = {5, 7};
   m.environment.attributes = {2};
   m.environment.bdr_attributes = {3, 4};
   m.environment.moments = {{4.0, 1.0, 0.5, 0.25, 0.75, 0.3}};
@@ -3827,10 +3841,31 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(m.NumRecords(path) == 2);
   Model saved;
   saved.ReadHeader(path, Mpi::World());
-  CHECK(saved.region_bdr_attributes == m.region_bdr_attributes);
+  CHECK(saved.environment.bdr_attributes == m.environment.bdr_attributes);
   CHECK(saved.environment.bdr_moments == m.environment.bdr_moments);
   CHECK(saved.environment.config_hash == m.environment.config_hash);
   CHECK(m.SameHeader(saved, 1.0e-10));
+
+  // A reader skips the records it does not know, so that a field can be added without a
+  // new version: here one after the header. A header appended later supersedes the first.
+  {
+    using substructuring::ModelFile;
+    const auto extra_path = (temp_dir / "driven-model-extra.bin").string();
+    m.WriteHeader(extra_path);
+    const double x = 1.0;
+    ModelFile::Append(extra_path, MPI_COMM_SELF, ModelFile::Tag("DXTR"), sizeof(x),
+                      [&](std::ostream &f)
+                      { f.write(reinterpret_cast<const char *>(&x), sizeof(x)); });
+    Model extra;
+    extra.ReadHeader(extra_path, Mpi::World());
+    CHECK(m.SameHeader(extra, 1.0e-10));
+    auto later = m;
+    later.omega = {1.0, 2.0, 3.0, 4.0};
+    later.WriteHeader(extra_path, false);
+    extra.ReadHeader(extra_path, Mpi::World());
+    CHECK(extra.omega == later.omega);
+    CHECK(later.SameHeader(extra, 1.0e-10));
+  }
   m.TruncateRecords(path, 1);
   CHECK(m.NumRecords(path) == 1);
   CHECK(m.ReadFlatRecord(path, 0) == m.Flatten(record(1.0)));
@@ -3842,7 +3877,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // ports, environment (beyond the rounding of its moments) or sources (beyond their
   // tolerance).
   auto other = m;
-  other.region_bdr_attributes = {5};
+  other.environment.bdr_attributes = {3};
   CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
   other = m;
   other.ports = {2};

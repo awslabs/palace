@@ -46,15 +46,9 @@ using namespace std::complex_literals;
 namespace
 {
 
-// The sweep of a substructured region, for its messages: online, or offline adaptive.
-const char *RegionSweep(const IoData &iodata)
-{
-  return iodata.solver.substructuring->Online() ? "Online" : "Adaptive";
-}
-
 // The postprocessing of a sweep: that of the configuration or, for a substructured region,
 // whose field is known in the region and on Γ only, that of the region (see
-// RegionPostprocessing).
+// RegionPostprocessing), without total energies or participation ratios.
 std::pair<config::DomainData, config::BoundaryData>
 SweepPostprocessing(const IoData &iodata, const SpaceOperator &space_op)
 {
@@ -62,9 +56,23 @@ SweepPostprocessing(const IoData &iodata, const SpaceOperator &space_op)
   config::BoundaryData boundaries = iodata.boundaries;
   if (const auto *env = space_op.GetEnvironment())
   {
-    RegionPostprocessing(env->RegionAttributes(), space_op.GetMesh().Get(),
-                         env->RegionMesh() ? &env->RegionBoundaryAttributes() : nullptr,
-                         !env->Ports().empty(), RegionSweep(iodata), domains, boundaries);
+    domains.postpro.partial = true;
+    const auto left_out = RegionPostprocessing(
+        space_op.GetMesh().Get(), env->RegionAttributes(),
+        env->RegionMesh() ? env->EnvironmentBoundaryAttributes() : std::vector<int>{},
+        domains, boundaries);
+    std::string what;
+    for (const auto &[key, idx] : left_out)
+    {
+      what += fmt::format(", no \"{}\" {}", key, fmt::join(idx, ", "));
+    }
+    Mpi::Warning(
+        "Driven substructuring postprocesses the field of the region only: no total "
+        "energies or participation ratios{}{}!\n",
+        what,
+        env->Ports().empty() ? ""
+                             : ", and no power (or wave port voltage) of the "
+                               "environment's ports");
   }
   return {domains, boundaries};
 }
@@ -86,14 +94,13 @@ void SetEnvironmentPorts(SpaceOperator &space_op,
   }
 }
 
-void WarnRegionFields(const IoData &iodata, const SpaceOperator &space_op,
+void WarnRegionFields(const SpaceOperator &space_op,
                       const PostOperator<ProblemType::DRIVEN> &post_op)
 {
   if (space_op.GetEnvironment() && post_op.WillWriteFields())
   {
-    Mpi::Warning("{} driven substructuring writes the fields in the region and on the "
-                 "interface only (zero in the environment)!\n",
-                 RegionSweep(iodata));
+    Mpi::Warning("Driven substructuring writes the fields in the region and on the "
+                 "interface only (zero in the environment)!\n");
   }
 }
 
@@ -182,7 +189,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   const auto [domains, boundaries] = SweepPostprocessing(iodata, space_op);
   PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
                                             boundaries, iodata.units, space_op);
-  WarnRegionFields(iodata, space_op, post_op);
+  WarnRegionFields(space_op, post_op);
 
   // The fixed system matrices are only needed when the system cannot be applied through
   // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
@@ -403,7 +410,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   const auto [domains, boundaries] = SweepPostprocessing(iodata, space_op);
   PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
                                             boundaries, iodata.units, space_op);
-  WarnRegionFields(iodata, space_op, post_op);
+  WarnRegionFields(space_op, post_op);
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;

@@ -777,14 +777,39 @@ namespace
 {
 
 // The records of a driven model in its file (see substructuring::ModelFile): the interface
-// records, the header and the record of the environment (later ones supersede them, as the
-// frequencies of an adaptive sweep are added) and the condensed environment at each
-// frequency, in the order of the frequencies.
+// records; the header, a record per field or group of fields after DHED [kVersion], and the
+// record of the environment (later ones supersede them, as the frequencies of an adaptive
+// sweep are added; a reader skips the records it does not know); and the condensed
+// environment at each frequency, in the order of the frequencies. The header records:
+// DFPC [the fingerprint centers, 9 doubles], DENF [env_fp], DEXC [excitations], DSFP
+// [exc_fp], DPRT [ports], DPRA [port_attributes], DFRQ [omega], DWGT [weights, empty for an
+// exact model] and DSMP [error, tol, passivity, converged (1 or 0)].
 using ModelFile = substructuring::ModelFile;
 using substructuring::InterfaceRecords;
 constexpr std::uint32_t kHeaderTag = ModelFile::Tag("DHED"),
+                        kCentersTag = ModelFile::Tag("DFPC"),
+                        kEnvFpTag = ModelFile::Tag("DENF"),
+                        kExcitationsTag = ModelFile::Tag("DEXC"),
+                        kSourceFpTag = ModelFile::Tag("DSFP"),
+                        kPortsTag = ModelFile::Tag("DPRT"),
+                        kPortAttributesTag = ModelFile::Tag("DPRA"),
+                        kFrequenciesTag = ModelFile::Tag("DFRQ"),
+                        kWeightsTag = ModelFile::Tag("DWGT"),
+                        kSamplingTag = ModelFile::Tag("DSMP"),
                         kEnvRecordTag = ModelFile::Tag("ENVR"),
                         kRecordTag = ModelFile::Tag("DREC");
+
+// Append the entries of x as the record tag.
+template <typename T>
+void AppendArray(const std::string &path, std::uint32_t tag, const std::vector<T> &x)
+{
+  ModelFile::Append(path, MPI_COMM_SELF, tag, static_cast<long long>(sizeof(T) * x.size()),
+                    [&](std::ostream &f)
+                    {
+                      f.write(reinterpret_cast<const char *>(x.data()),
+                              static_cast<std::streamsize>(sizeof(T) * x.size()));
+                    });
+}
 
 // The records of the frequencies of a model file.
 std::vector<ModelFile::Record> FrequencyRecords(const ModelFile &file)
@@ -1053,45 +1078,22 @@ void DrivenSubstructureModel::WriteHeader(const std::string &path, bool create) 
     ModelFile::Create(path, MPI_COMM_SELF);
     InterfaceRecords{nG, sig_w, signatures, length_scale}.Append(path, MPI_COMM_SELF);
   }
-  const int head[9] = {kVersion,
-                       static_cast<int>(env_fp.size()),
-                       static_cast<int>(excitations.size()),
-                       static_cast<int>(ports.size()),
-                       static_cast<int>(omega.size()),
-                       weights.empty() ? 0 : 1,
-                       static_cast<int>(region_bdr_attributes.size()),
-                       converged ? 1 : 0,
-                       static_cast<int>(port_attributes.size())};
-  const double scalars[3] = {error, tol, passivity};
-  const long long size =
-      sizeof(head) + sizeof(scalars) + sizeof(fp_centers) +
-      sizeof(double) * (env_fp.size() + exc_fp.size() + omega.size()) +
-      sizeof(int) * (excitations.size() + ports.size() + port_attributes.size() +
-                     region_bdr_attributes.size()) +
-      sizeof(std::complex<double>) * weights.size();
-  ModelFile::Append(path, MPI_COMM_SELF, kHeaderTag, size,
-                    [&](std::ostream &f)
-                    {
-                      auto write = [&f](const auto *x, std::size_t n)
-                      {
-                        f.write(reinterpret_cast<const char *>(x),
-                                static_cast<std::streamsize>(sizeof(*x) * n));
-                      };
-                      write(head, 9);
-                      write(scalars, 3);
-                      for (const auto &c : fp_centers)
-                      {
-                        write(c.data(), 3);
-                      }
-                      write(env_fp.data(), env_fp.size());
-                      write(excitations.data(), excitations.size());
-                      write(exc_fp.data(), exc_fp.size());
-                      write(ports.data(), ports.size());
-                      write(port_attributes.data(), port_attributes.size());
-                      write(region_bdr_attributes.data(), region_bdr_attributes.size());
-                      write(omega.data(), omega.size());
-                      write(weights.data(), weights.size());
-                    });
+  std::vector<double> centers;
+  for (const auto &c : fp_centers)
+  {
+    centers.insert(centers.end(), c.begin(), c.end());
+  }
+  AppendArray(path, kHeaderTag, std::vector<int>{kVersion});
+  AppendArray(path, kCentersTag, centers);
+  AppendArray(path, kEnvFpTag, env_fp);
+  AppendArray(path, kExcitationsTag, excitations);
+  AppendArray(path, kSourceFpTag, exc_fp);
+  AppendArray(path, kPortsTag, ports);
+  AppendArray(path, kPortAttributesTag, port_attributes);
+  AppendArray(path, kFrequenciesTag, omega);
+  AppendArray(path, kWeightsTag, weights);
+  AppendArray(path, kSamplingTag,
+              std::vector<double>{error, tol, passivity, converged ? 1.0 : 0.0});
   const std::vector<char> record = environment.Serialize();
   ModelFile::Append(
       path, MPI_COMM_SELF, kEnvRecordTag, static_cast<long long>(record.size()),
@@ -1124,49 +1126,46 @@ void DrivenSubstructureModel::ReadHeader(const std::string &path, MPI_Comm comm)
                         << path
                         << "\" is incomplete: rerun offline (without \"ModelFile\")!");
   };
-  const auto *h = file.Find(kHeaderTag);
-  incomplete(h);
-  const std::vector<char> p = ModelFile::ReadPayload(path, *h, comm);
-  // The next n entries of the payload, if it holds them (n counted in floating point, so
-  // that any size is checked before it is allocated).
-  std::size_t at = 0;
-  auto read = [&](auto &v, double n)
+  // The entries of the last record with the tag (a whole number of them).
+  auto read = [&](std::uint32_t tag, auto &v)
   {
     using T = typename std::decay_t<decltype(v)>::value_type;
-    incomplete(n >= 0.0 && n * sizeof(T) <= static_cast<double>(p.size() - at));
-    v.resize(static_cast<std::size_t>(n));
-    std::memcpy(v.data(), p.data() + at, sizeof(T) * v.size());
-    at += sizeof(T) * v.size();
+    const auto *r = file.Find(tag);
+    incomplete(r && r->size % static_cast<long long>(sizeof(T)) == 0);
+    const std::vector<char> p = ModelFile::ReadPayload(path, *r, comm);
+    incomplete(p.size() == static_cast<std::size_t>(r->size));
+    v.resize(p.size() / sizeof(T));
+    std::memcpy(v.data(), p.data(), p.size());
   };
   std::vector<int> head;
-  read(head, 1);
-  MFEM_VERIFY(head[0] == kVersion, "The saved substructuring model \""
-                                       << path
-                                       << "\" was written by another version of Palace: "
-                                          "rerun offline (without \"ModelFile\")!");
-  at = 0;  // the version, then the whole head
-  read(head, 9);
-  std::vector<double> scalars;
-  read(scalars, 3);
-  error = scalars[0];
-  tol = scalars[1];
-  passivity = scalars[2];
-  converged = head[7] != 0;
-  std::vector<double> centers;
-  read(centers, 9);
+  read(kHeaderTag, head);
+  MFEM_VERIFY(head.size() == 1 && head[0] == kVersion,
+              "The saved substructuring model \""
+                  << path
+                  << "\" was written by another version of Palace: rerun offline (without "
+                     "\"ModelFile\")!");
+  std::vector<double> centers, sampling;
+  read(kCentersTag, centers);
+  incomplete(centers.size() == 9);
   for (int k = 0; k < 3; k++)
   {
     std::copy_n(centers.begin() + 3 * k, 3, fp_centers[k].begin());
   }
-  read(env_fp, head[1]);
-  read(excitations, head[2]);
-  read(exc_fp, static_cast<double>(kSourceFp) * head[2]);
-  read(ports, head[3]);
-  read(port_attributes, head[8]);
-  read(region_bdr_attributes, head[6]);
-  read(omega, head[4]);
-  read(weights, head[5] ? head[4] : 0);
-  incomplete(head[4] > 0 && at == p.size());
+  read(kEnvFpTag, env_fp);
+  read(kExcitationsTag, excitations);
+  read(kSourceFpTag, exc_fp);
+  incomplete(exc_fp.size() == kSourceFp * excitations.size());
+  read(kPortsTag, ports);
+  read(kPortAttributesTag, port_attributes);
+  read(kFrequenciesTag, omega);
+  read(kWeightsTag, weights);
+  incomplete(!omega.empty() && (weights.empty() || weights.size() == omega.size()));
+  read(kSamplingTag, sampling);
+  incomplete(sampling.size() == 4);
+  error = sampling[0];
+  tol = sampling[1];
+  passivity = sampling[2];
+  converged = sampling[3] != 0.0;
   InterfaceRecords iface;
   incomplete(iface.Read(path, file, comm));
   nG = iface.n;
@@ -1212,9 +1211,9 @@ bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
   if (saved.nG != nG || saved.sig_w != sig_w || saved.signatures != signatures ||
       saved.excitations != excitations || saved.exc_fp.size() != exc_fp.size() ||
       saved.ports != ports || saved.port_attributes != port_attributes ||
-      saved.region_bdr_attributes != region_bdr_attributes || saved.omega != omega ||
-      saved.weights != weights || saved.length_scale != length_scale ||
-      !SameEnvironment(saved.env_fp, env_fp) || saved_env.attributes != env.attributes ||
+      saved.omega != omega || saved.weights != weights ||
+      saved.length_scale != length_scale || !SameEnvironment(saved.env_fp, env_fp) ||
+      saved_env.attributes != env.attributes ||
       saved_env.bdr_attributes != env.bdr_attributes ||
       saved_env.config_hash != env.config_hash ||
       saved_env.excitations_hash != env.excitations_hash ||
@@ -1365,86 +1364,6 @@ double SourceTolerance(const IoData &iodata, const PortExcitations &port_excitat
     }
   }
   return tol;
-}
-
-void RegionPostprocessing(const std::vector<int> &region_attributes,
-                          const mfem::ParMesh &mesh,
-                          const std::vector<int> *region_bdr_attributes, bool env_ports,
-                          const char *what, config::DomainData &domains,
-                          config::BoundaryData &boundaries)
-{
-  domains.postpro.partial = true;
-  std::vector<int> skipped;
-  for (auto it = domains.postpro.energy.begin(); it != domains.postpro.energy.end();)
-  {
-    const bool region = std::ranges::all_of(
-        it->second.attributes, [&](int a)
-        { return std::ranges::find(region_attributes, a) != region_attributes.end(); });
-    if (!region)
-    {
-      skipped.push_back(it->first);
-      it = domains.postpro.energy.erase(it);
-    }
-    else
-    {
-      ++it;
-    }
-  }
-  // On the mesh of the region, which lacks the environment's part of a surface, the
-  // boundaries in the region are those of the model too.
-  auto contains = [](const std::vector<int> &v, int a)
-  { return std::ranges::find(v, a) != v.end(); };
-  auto bdr_in_region = BoundaryAttributesInRegion(mesh, region_attributes);
-  if (region_bdr_attributes)
-  {
-    std::erase_if(bdr_in_region,
-                  [&](int a) { return !contains(*region_bdr_attributes, a); });
-  }
-  std::vector<int> skipped_flux, skipped_probe;
-  for (auto it = boundaries.postpro.flux.begin(); it != boundaries.postpro.flux.end();)
-  {
-    const auto &attrs = it->second.attributes;
-    if (attrs.empty() ||
-        !std::ranges::all_of(attrs, [&](int a) { return contains(bdr_in_region, a); }))
-    {
-      skipped_flux.push_back(it->first);
-      it = boundaries.postpro.flux.erase(it);
-    }
-    else
-    {
-      ++it;
-    }
-  }
-  // A probe is interpolated in the element it is found in, which for a probe on Γ can be
-  // one of the environment.
-  const auto probes_in_region =
-      fem::ProbesInDomains(domains.postpro.probe, mesh, region_attributes);
-  for (auto it = domains.postpro.probe.begin(); it != domains.postpro.probe.end();)
-  {
-    if (!contains(probes_in_region, it->first))
-    {
-      skipped_probe.push_back(it->first);
-      it = domains.postpro.probe.erase(it);
-    }
-    else
-    {
-      ++it;
-    }
-  }
-  auto none = [](const std::vector<int> &idx, const char *what)
-  {
-    return idx.empty() ? std::string()
-                       : fmt::format(", no {} ({})", what, fmt::join(idx, ", "));
-  };
-  Mpi::Warning("{} driven substructuring writes no total energies or participation "
-               "ratios{}{}{}{}!\n",
-               what,
-               none(skipped, "energies of the domain postprocessing outside the region"),
-               none(skipped_flux, "surface fluxes outside the region"),
-               none(skipped_probe, "probes outside the region"),
-               !env_ports ? std::string()
-                          : ", and no power (or wave port voltage) of the "
-                            "environment's ports");
 }
 
 }  // namespace palace

@@ -85,8 +85,8 @@ private:
 //
 // A model saved by an offline driven substructuring sweep, written and read on rank 0 (the
 // header broadcast): the header (the interface signatures, the fingerprints of the
-// environment and of its sources, the environment's ports, the boundary attributes of the
-// region, the frequencies, the reference length of the nondimensionalization), the record
+// environment and of its sources, the environment's ports, the frequencies, the reference
+// length of the nondimensionalization), the record
 // of the environment (see EnvironmentRecord) and one record per frequency: S_E(ω), the
 // condensation g of the environment's sources (per excitation with environment sources),
 // and the condensed functionals of the environment's ports, whose values are V_j = c_jk +
@@ -96,7 +96,7 @@ private:
 //
 struct DrivenSubstructureModel
 {
-  static constexpr int kVersion = 13;  // of the header
+  static constexpr int kVersion = 14;  // of the model (a new header record leaves it)
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
   // Relative tolerance of the comparisons of the environment with that of a saved model:
   // its fingerprint and element moments are sums over elements, which the partition changes
@@ -111,9 +111,8 @@ struct DrivenSubstructureModel
   std::vector<int> excitations;  // excitations with environment sources
   std::vector<double> exc_fp;    // their source fingerprints (kSourceFp each)
   std::vector<int> ports;        // environment lumped ports (index) and wave ports (-index)
-  std::vector<int> port_attributes;        // of each port: their number, then them (sorted)
-  std::vector<int> region_bdr_attributes;  // see BoundaryAttributesInRegion
-  std::vector<double> omega;               // frequencies of the records (nondimensional)
+  std::vector<int> port_attributes;  // of each port: their number, then them (sorted)
+  std::vector<double> omega;         // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
   // The adaptive sampling of a rational model: whether it met its tolerance tol (false
   // until it ends), the error estimate of its last sample, and the least eigenvalue of
@@ -380,18 +379,6 @@ int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10);
 // only.
 double SourceTolerance(const IoData &iodata, const PortExcitations &port_excitations,
                        const std::vector<int> &env_ports, int excitation_idx);
-
-// The postprocessing of a region whose field is known in the region and on Γ only (from a
-// model, online or adaptive): the energies of the domain postprocessing in the region,
-// without totals or participation ratios, the surface fluxes on boundaries in the region
-// (on the mesh of the region, region_bdr_attributes, those the model records), and the
-// probes found in its elements, with a warning (what: "Online" or "Adaptive") naming those
-// left out, and the power of the environment's ports if it has some. Collective.
-void RegionPostprocessing(const std::vector<int> &region_attributes,
-                          const mfem::ParMesh &mesh,
-                          const std::vector<int> *region_bdr_attributes, bool env_ports,
-                          const char *what, config::DomainData &domains,
-                          config::BoundaryData &boundaries);
 
 }  // namespace palace
 
