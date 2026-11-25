@@ -1,0 +1,792 @@
+diff --git a/src/StrumpackOptions.cpp b/src/StrumpackOptions.cpp
+index 545f577c..31784114 100644
+--- a/src/StrumpackOptions.cpp
++++ b/src/StrumpackOptions.cpp
+@@ -52,6 +52,7 @@ namespace strumpack {
+     case ReorderingStrategy::AND: return "AND";
+     case ReorderingStrategy::MLF: return "MLF";
+     case ReorderingStrategy::SPECTRAL: return "Spectral";
++    case ReorderingStrategy::METIS_TREE: return "MetisTree";
+     }
+     return "UNKNOWN";
+   }
+@@ -70,6 +71,7 @@ namespace strumpack {
+     case ReorderingStrategy::AND: return false;
+     case ReorderingStrategy::MLF: return false;
+     case ReorderingStrategy::SPECTRAL: return false;
++    case ReorderingStrategy::METIS_TREE: return true;
+     }
+     return false;
+   }
+@@ -257,9 +259,11 @@ namespace strumpack {
+         else if (s == "mlf") set_reordering_method(ReorderingStrategy::MLF);
+         else if (s == "and") set_reordering_method(ReorderingStrategy::AND);
+         else if (s == "spectral") set_reordering_method(ReorderingStrategy::SPECTRAL);
++        else if (s == "metis_tree") set_reordering_method(ReorderingStrategy::METIS_TREE);
+         else std::cerr << "# WARNING: matrix reordering strategy not"
+                " recognized, use 'metis', 'parmetis', 'scotch', 'ptscotch',"
+-               " 'rcm', 'geometric', 'amd', 'mmd', 'mlf', 'and' or 'spectral'"
++               " 'rcm', 'geometric', 'amd', 'mmd', 'mlf', 'and', 'spectral'"
++               " or 'metis_tree'"
+                        << std::endl;
+       } break;
+       case 8: {
+@@ -493,8 +497,11 @@ namespace strumpack {
+               << std::endl;
+     std::cout << "#          Gram-Schmidt type for GMRES" << std::endl;
+     std::cout << "#   --sp_reordering_method [natural|metis|scotch|parmetis|"
+-              << "ptscotch|rcm|geometric|amd|mmd|mlf|and|spectral]" << std::endl;
++              << "ptscotch|rcm|geometric|amd|mmd|mlf|and|spectral|metis_tree]"
++              << std::endl;
+     std::cout << "#          Select a fill-reducing ordering algorithm." << std::endl;
++    std::cout << "#          metis_tree is Metis nested dissection, parallel"
++              << " over the separator tree." << std::endl;
+     std::cout << "#          Geometric only works on regular meshes and you"
+               << " need to provide the sizes." << std::endl;
+     std::cout << "#   --sp_nd_param int (default " << nd_param() << ")"
+diff --git a/src/StrumpackOptions.hpp b/src/StrumpackOptions.hpp
+index 21f8f418..c239fc76 100644
+--- a/src/StrumpackOptions.hpp
++++ b/src/StrumpackOptions.hpp
+@@ -71,7 +71,16 @@ namespace strumpack {
+     MMD,        /*!< Multiple minimum degree                        */
+     AND,        /*!< Nested dissection                              */
+     MLF,        /*!< Minimum local fill                             */
+-    SPECTRAL    /*!< Spectral nested dissection                     */
++    SPECTRAL,   /*!< Spectral nested dissection                     */
++    METIS_TREE  /*!< Metis nested dissection, parallel over the
++                  separator tree: process 0 computes the top
++                  separator and sends one part to another process,
++                  both continue with their part, and every
++                  process orders the subgraph it ends up with. Only
++                  needs Metis. With one process, with a small
++                  matrix or in the sequential solver, this is
++                  METIS, but without support for Schur
++                  variables. (see MetisTreeReordering.hpp)          */
+   };
+ 
+   /**
+@@ -794,10 +803,11 @@ namespace strumpack {
+      * node, in an MPI-3 shared memory window, instead of on every
+      * process. Only used by the distributed solver
+      * (SparseSolverMPIDist), with a sequential reordering (METIS,
+-     * Scotch, AMD, ...) and without compression; the other cases keep
+-     * a copy per process. This saves 2 integers per matrix row on
+-     * every process but one per node. The window needs shared memory
+-     * (usually /dev/shm) of 2 integers per matrix row on every node.
++     * Scotch, AMD, ...) or METIS_TREE, and without compression; the
++     * other cases keep a copy per process. This saves 2 integers per
++     * matrix row on every process but one per node. The window needs
++     * shared memory (usually /dev/shm) of 2 integers per matrix row
++     * on every node.
+      * If MPI cannot allocate it, or /dev/shm does not have this much
+      * free space plus a margin (10% and 1 MB), all processes keep a
+      * copy, and the root prints a warning on stderr. The destructor
+diff --git a/src/StrumpackSparseSolver.h b/src/StrumpackSparseSolver.h
+index 61bd534a..75617341 100644
+--- a/src/StrumpackSparseSolver.h
++++ b/src/StrumpackSparseSolver.h
+@@ -107,6 +107,7 @@ typedef enum
+    STRUMPACK_AND=9,
+    STRUMPACK_MLF=10,
+    STRUMPACK_SPECTRAL=11,
++   STRUMPACK_METIS_TREE=12,
+   } STRUMPACK_REORDERING_STRATEGY;
+ 
+ typedef enum
+diff --git a/src/fortran/strumpack.f90 b/src/fortran/strumpack.f90
+index 7509fd39..08a2af27 100644
+--- a/src/fortran/strumpack.f90
++++ b/src/fortran/strumpack.f90
+@@ -106,10 +106,12 @@ module strumpack
+   enumerator :: STRUMPACK_AND = 9
+   enumerator :: STRUMPACK_MLF = 10
+   enumerator :: STRUMPACK_SPECTRAL = 11
++  enumerator :: STRUMPACK_METIS_TREE = 12
+  end enum
+  integer, parameter, public :: STRUMPACK_REORDERING_STRATEGY = kind(STRUMPACK_NATURAL)
+  public :: STRUMPACK_NATURAL, STRUMPACK_METIS, STRUMPACK_PARMETIS, STRUMPACK_SCOTCH, STRUMPACK_PTSCOTCH, STRUMPACK_RCM, &
+-    STRUMPACK_GEOMETRIC, STRUMPACK_AMD, STRUMPACK_MMD, STRUMPACK_AND, STRUMPACK_MLF, STRUMPACK_SPECTRAL
++    STRUMPACK_GEOMETRIC, STRUMPACK_AMD, STRUMPACK_MMD, STRUMPACK_AND, STRUMPACK_MLF, STRUMPACK_SPECTRAL, &
++    STRUMPACK_METIS_TREE
+  ! typedef enum STRUMPACK_GRAM_SCHMIDT_TYPE
+  enum, bind(c)
+   enumerator :: STRUMPACK_CLASSICAL = 0
+diff --git a/src/sparse/ordering/CMakeLists.txt b/src/sparse/ordering/CMakeLists.txt
+index ad733f7f..52c38c3b 100644
+--- a/src/sparse/ordering/CMakeLists.txt
++++ b/src/sparse/ordering/CMakeLists.txt
+@@ -25,6 +25,7 @@ if(STRUMPACK_USE_MPI)
+     ${CMAKE_CURRENT_LIST_DIR}/GeometricReorderingMPI.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/GeometricReorderingMPI.hpp
+     ${CMAKE_CURRENT_LIST_DIR}/ParMetisReordering.hpp
++    ${CMAKE_CURRENT_LIST_DIR}/MetisTreeReordering.hpp
+     ${CMAKE_CURRENT_LIST_DIR}/PTScotchReordering.hpp
+     ${CMAKE_CURRENT_LIST_DIR}/MatrixReorderingMPI.cpp
+     ${CMAKE_CURRENT_LIST_DIR}/MatrixReorderingMPI.hpp)
+diff --git a/src/sparse/ordering/MatrixReordering.cpp b/src/sparse/ordering/MatrixReordering.cpp
+index 0afb01b5..cf6bc3b4 100644
+--- a/src/sparse/ordering/MatrixReordering.cpp
++++ b/src/sparse/ordering/MatrixReordering.cpp
+@@ -73,6 +73,13 @@ namespace strumpack {
+   MatrixReordering<scalar_t,integer_t>::nested_dissection
+   (const Opts_t& opts, const CSR_t& A,
+    int nx, int ny, int nz, int components, int width) {
++    if (opts.reordering_method() == ReorderingStrategy::METIS_TREE) {
++      // on one process, this is the METIS ordering
++      auto metis_opts = opts;
++      metis_opts.set_reordering_method(ReorderingStrategy::METIS);
++      return nested_dissection
++        (metis_opts, A, nx, ny, nz, components, width);
++    }
+     switch (opts.reordering_method()) {
+     case ReorderingStrategy::NATURAL: {
+       std::iota(perm_.begin(), perm_.end(), 0);
+diff --git a/src/sparse/ordering/MatrixReorderingMPI.cpp b/src/sparse/ordering/MatrixReorderingMPI.cpp
+index c67cddc1..91ef01c4 100644
+--- a/src/sparse/ordering/MatrixReorderingMPI.cpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.cpp
+@@ -46,6 +46,7 @@
+ #include "PTScotchReordering.hpp"
+ #endif
+ #include "MetisReordering.hpp"
++#include "MetisTreeReordering.hpp"
+ #if defined(STRUMPACK_USE_PARMETIS)
+ #include "ParMetisReordering.hpp"
+ #endif
+@@ -105,7 +106,7 @@ namespace strumpack {
+    * all processes of the node read both with perm_data() and
+    * iperm_data(). perm_ and iperm_ are then released. Returns false,
+    * on all processes, if a window could not be allocated; perm_ and
+-   * iperm_ are then unchanged.
++   * iperm_ are then unchanged, and the root prints a warning.
+    *
+    * For testing, STRUMPACK_SHARED_PERM_GROUP=k makes groups of k
+    * consecutive ranks act as nodes (the ranks of a group must still
+@@ -159,6 +160,13 @@ namespace strumpack {
+       shm_win_ = MPI_WIN_NULL;
+       MPI_Comm_free(&shm_comm_);
+       shm_comm_ = MPI_COMM_NULL;
++      if (!rank)
++        std::cerr << "# WARNING: enable_shared_permutation: could not"
++                  << " allocate a shared memory window of "
++                  << shared_perm_bytes() / 1e6 << " MB per node"
++                  << " (MPI_Win_allocate_shared failed, or not enough"
++                  << " free space in /dev/shm), using a copy of the"
++                  << " permutation per process" << std::endl;
+       return false;
+     }
+     MPI_Aint qbytes;
+@@ -167,24 +175,39 @@ namespace strumpack {
+     MPI_Win_lock_all(MPI_MODE_NOCHECK, shm_win_);
+     shm_perm_ = base;
+     shm_iperm_ = base + n_;
++    if (rank == 0) std::copy(perm_.begin(), perm_.end(), shm_perm_);
++    broadcast_to_leaders(shm_perm_);
++    if (lrank == 0)
++      for (integer_t i=0; i<n_; i++) shm_iperm_[shm_perm_[i]] = i;
++    MPI_Win_sync(shm_win_);
++    MPI_Barrier(shm_comm_);
++    MPI_Win_sync(shm_win_);
++    std::vector<integer_t>().swap(perm_);
++    std::vector<integer_t>().swap(iperm_);
++    return true;
++  }
++
++  /**
++   * Collective, with the node-shared permutation. Broadcasts the n
++   * integers in buf from the root to buf on the other node leaders;
++   * buf is not used on the other processes.
++   */
++  template<typename scalar_t,typename integer_t> void
++  MatrixReorderingMPI<scalar_t,integer_t>::broadcast_to_leaders
++  (integer_t* buf) {
++    int lrank;
++    MPI_Comm_rank(shm_comm_, &lrank);
+     MPI_Comm leaders;
+-    MPI_Comm_split(comm, lrank == 0 ? 0 : MPI_UNDEFINED, rank, &leaders);
++    MPI_Comm_split(comm_->comm(), lrank == 0 ? 0 : MPI_UNDEFINED,
++                   comm_->rank(), &leaders);
+     if (lrank == 0) {
+       // the root is the leader of its node, and rank 0 of leaders
+-      if (rank == 0) std::copy(perm_.begin(), perm_.end(), shm_perm_);
+       const std::size_t n = n_, chunk = std::size_t(1) << 28;
+       for (std::size_t i=0; i<n; i+=chunk)
+-        MPI_Bcast(shm_perm_+i, int(std::min(chunk, n-i)),
++        MPI_Bcast(buf+i, int(std::min(chunk, n-i)),
+                   mpi_type<integer_t>(), 0, leaders);
+-      for (integer_t i=0; i<n_; i++) shm_iperm_[shm_perm_[i]] = i;
+       MPI_Comm_free(&leaders);
+     }
+-    MPI_Win_sync(shm_win_);
+-    MPI_Barrier(shm_comm_);
+-    MPI_Win_sync(shm_win_);
+-    std::vector<integer_t>().swap(perm_);
+-    std::vector<integer_t>().swap(iperm_);
+-    return true;
+   }
+ 
+   /**
+@@ -205,6 +228,15 @@ namespace strumpack {
+   (const Opts_t& opts, const CSRMPI_t& A,
+    int nx, int ny, int nz, int components, int width) {
+     free_shared_perm();
++    const int leaves = metis_tree_leaves(A.size(), comm_->size());
++    if (opts.reordering_method() == ReorderingStrategy::METIS_TREE &&
++        leaves == 1) {
++      // one process or a small matrix: this is the METIS ordering
++      auto metis_opts = opts;
++      metis_opts.set_reordering_method(ReorderingStrategy::METIS);
++      return nested_dissection
++        (metis_opts, A, nx, ny, nz, components, width);
++    }
+     if (!is_parallel(opts.reordering_method())) {
+       auto rank = comm_->rank();
+       auto P = comm_->size();
+@@ -271,13 +303,6 @@ namespace strumpack {
+         global_sep_tree.check();
+       }
+       if (shared && !share_perm()) {
+-        if (!rank)
+-          std::cerr << "# WARNING: enable_shared_permutation: could not"
+-                    << " allocate a shared memory window of "
+-                    << shared_perm_bytes() / 1e6 << " MB per node"
+-                    << " (MPI_Win_allocate_shared failed, or not enough"
+-                    << " free space in /dev/shm), using a copy of the"
+-                    << " permutation per process" << std::endl;
+         shared = false;
+         if (rank) alloc_perm();
+       }
+@@ -300,7 +325,10 @@ namespace strumpack {
+           iperm_[perm_[i]] = i;
+       get_local_graphs(A);
+     } else {
+-      alloc_perm();
++      // METIS_TREE returns the permutation on the root only
++      if (opts.reordering_method() != ReorderingStrategy::METIS_TREE)
++        alloc_perm();
++      else if (comm_->is_root()) perm_.resize(n_);
+       switch (opts.reordering_method()) {
+       case ReorderingStrategy::GEOMETRIC: {
+         if (nx*ny*nz*components != A.size()) {
+@@ -354,12 +382,27 @@ namespace strumpack {
+         std::cerr << "# ERROR: Parallel spectral ordering not yet implemented." << std::endl;
+         return 1;
+       }
++      case ReorderingStrategy::METIS_TREE: {
++        int ierr = metis_tree_nested_dissection
++          (A, *comm_, leaves, perm_, tree_);
++        if (ierr) return ierr;
++        // as after a sequential ordering, the other processes read
++        // the permutation from a window of their node or get a copy
++        if (!opts.use_shared_permutation() ||
++            opts.compression() != CompressionType::NONE ||
++            !share_perm()) {
++          alloc_perm();
++          comm_->broadcast(perm_);
++        }
++        break;
++      }
+       default: assert(true);
+       }
+       tree_.check();
+       get_local_graphs(A);
+       if (opts.reordering_method() == ReorderingStrategy::PARMETIS ||
+-          opts.reordering_method() == ReorderingStrategy::PTSCOTCH)
++          opts.reordering_method() == ReorderingStrategy::PTSCOTCH ||
++          opts.reordering_method() == ReorderingStrategy::METIS_TREE)
+         build_local_tree(A);
+       ltree_.check();
+     }
+@@ -482,14 +525,34 @@ namespace strumpack {
+     }
+     my_sub_graph.permute_local
+       (post, iwork, sub_graph_range.first, sub_graph_range.second);
+-    std::vector<integer_t> gpost(n);
+-    std::iota(gpost.begin(), gpost.end(), 0);
+     std::unique_ptr<int[]> rcnts(new int[2*P]);
+     auto displs = rcnts.get() + P;
+     for (int p=0; p<P; p++) {
+       rcnts[p] = sub_graph_ranges[p].second - sub_graph_ranges[p].first;
+       displs[p] = sub_graph_ranges[p].first;
+     }
++    if (shm_win_ != MPI_WIN_NULL) {
++      // The permutation is stored once per node: the root gathers the
++      // local postorders and the node leaders apply them to it.
++      int lrank;
++      MPI_Comm_rank(shm_comm_, &lrank);
++      std::vector<integer_t> gpost(lrank ? 0 : n);
++      if (!rank) std::iota(gpost.begin(), gpost.end(), 0);
++      comm_->gather_v(post.data(), rcnts[rank], gpost.data(),
++                      rcnts.get(), displs, 0);
++      broadcast_to_leaders(gpost.data());
++      if (!lrank)
++        for (integer_t i=0; i<n; i++) {
++          shm_perm_[i] = gpost[shm_perm_[i]];
++          shm_iperm_[shm_perm_[i]] = i;
++        }
++      MPI_Win_sync(shm_win_);
++      MPI_Barrier(shm_comm_);
++      MPI_Win_sync(shm_win_);
++      return;
++    }
++    std::vector<integer_t> gpost(n);
++    std::iota(gpost.begin(), gpost.end(), 0);
+     MPI_Allgatherv
+       (post.data(), rcnts[rank], mpi_type<integer_t>(), gpost.data(),
+        rcnts.get(), displs, mpi_type<integer_t>(), comm_->comm());
+diff --git a/src/sparse/ordering/MatrixReorderingMPI.hpp b/src/sparse/ordering/MatrixReorderingMPI.hpp
+index e9945e70..7796a118 100644
+--- a/src/sparse/ordering/MatrixReorderingMPI.hpp
++++ b/src/sparse/ordering/MatrixReorderingMPI.hpp
+@@ -163,6 +163,7 @@ namespace strumpack {
+     { return MPI_Aint(2) * MPI_Aint(n_) * MPI_Aint(sizeof(integer_t)); }
+     void alloc_perm();
+     bool share_perm();
++    void broadcast_to_leaders(integer_t* buf);
+     void unshare_perm();
+     void free_shared_perm();
+ 
+diff --git a/src/sparse/ordering/MetisTreeReordering.hpp b/src/sparse/ordering/MetisTreeReordering.hpp
+new file mode 100644
+index 00000000..7719fea6
+--- /dev/null
++++ b/src/sparse/ordering/MetisTreeReordering.hpp
+@@ -0,0 +1,437 @@
++/*
++ * STRUMPACK -- STRUctured Matrices PACKage, Copyright (c) 2014, The
++ * Regents of the University of California, through Lawrence Berkeley
++ * National Laboratory (subject to receipt of any required approvals
++ * from the U.S. Dept. of Energy).  All rights reserved.
++ *
++ * If you have questions about your rights to use or distribute this
++ * software, please contact Berkeley Lab's Technology Transfer
++ * Department at TTD@lbl.gov.
++ *
++ * NOTICE. This software is owned by the U.S. Department of Energy. As
++ * such, the U.S. Government has been granted for itself and others
++ * acting on its behalf a paid-up, nonexclusive, irrevocable,
++ * worldwide license in the Software to reproduce, prepare derivative
++ * works, and perform publicly and display publicly.  Beginning five
++ * (5) years after the date permission to assert copyright is obtained
++ * from the U.S. Department of Energy, and subject to any subsequent
++ * five (5) year renewals, the U.S. Government is granted for itself
++ * and others acting on its behalf a paid-up, nonexclusive,
++ * irrevocable, worldwide license in the Software to reproduce,
++ * prepare derivative works, distribute copies to the public, perform
++ * publicly and display publicly, and to permit others to do so.
++ *
++ * Developers: Pieter Ghysels, Francois-Henry Rouet, Xiaoye S. Li.
++ *             (Lawrence Berkeley National Lab, Computational Research
++ *             Division).
++ *
++ */
++#ifndef METIS_TREE_REORDERING_HPP
++#define METIS_TREE_REORDERING_HPP
++
++#include <algorithm>
++#include <cstdint>
++#include <functional>
++#include <iostream>
++#include <numeric>
++#include <utility>
++#include <vector>
++#include "metis.h"
++
++#include "sparse/CSRMatrixMPI.hpp"
++#include "sparse/SeparatorTree.hpp"
++
++/*
++ * Nested dissection with METIS (not ParMETIS) that is parallel over
++ * the separator tree, ReorderingStrategy::METIS_TREE.
++ *
++ * The graph is gathered on process 0, as for the METIS ordering.
++ * Process 0 computes the top vertex separator as METIS_NodeND does
++ * (see metis_tree_separator), keeps one part and sends the other part
++ * to the process in the middle of its range of processes. Both
++ * continue in the same way with their part and their half of the
++ * range. A process whose range is down to itself orders its subgraph
++ * with METIS_NodeND. So only the top separator is computed while all
++ * other processes wait.
++ *
++ * The result is a distributed separator tree with one leaf per
++ * process (leaf k on process k), where the rows of a separator come
++ * after those of its two subtrees: the layout of the ParMETIS and
++ * PT-Scotch orderings. The range of processes is split in the middle
++ * whatever its size, so the number of processes does not need to be a
++ * power of two. The two parts of a separator have about the same
++ * size, so the leaves do not if the number of processes is not a
++ * power of two, as is the case with the METIS ordering.
++ *
++ * Which of the two parts of a separator stays, for the first half
++ * of the range, is chosen as follows. If the range has an odd number
++ * of processes, its first half has one process less, and the smaller
++ * part stays. Otherwise the choice does not change the fill, and it
++ * is made for the solve: the solver later gives the first leaves of
++ * a range to its first processes, and in every solve it sends each
++ * row of the right-hand side from the process that owns it in the
++ * distribution of the matrix to the process that owns it in the
++ * tree. The part that stays is then the one for which more rows are
++ * on their side of the middle of the range in both (see the loop in
++ * metis_tree_nested_dissection), so that fewer rows change process.
++ *
++ * Every message goes from the first process of a range to a process
++ * that waits for exactly this message, and METIS is deterministic, so
++ * the ordering only depends on the gathered graph, with the order of
++ * the neighbours of its rows, on the number of leaves, and on the
++ * distribution of the rows of the matrix over the processes.
++ *
++ * Every process then sends the rows it numbered to process 0, the
++ * only process that gets the permutation: no other process needs an
++ * array of the size of the matrix here.
++ */
++namespace strumpack {
++
++  /**
++   * Number of leaves of the distributed separator tree of the
++   * METIS_TREE ordering of n rows on P processes: one per process,
++   * but fewer for a small matrix, to keep about 2000 rows or more
++   * per leaf (a heuristic). With one leaf, use the METIS ordering.
++   */
++  template<typename integer_t> int metis_tree_leaves(integer_t n, int P) {
++    const integer_t min_rows_per_leaf = 2000;
++    return std::max(integer_t(1),
++                    std::min(integer_t(P), n / min_rows_per_leaf));
++  }
++
++  /**
++   * Vertex separator of the graph (xadj, adj) from METIS: part[i]
++   * becomes 0 or 1 for a vertex of one of the two parts and 2 for a
++   * vertex of the separator. Returns the METIS error code.
++   *
++   * This is what METIS_NodeND does at its top level (libmetis/ometis.c,
++   * with CompressGraph of libmetis/compress.c). Vertices with the same
++   * neighbours, themselves included, are merged into one vertex with
++   * their number as weight, if this removes more than 15% of the
++   * vertices, and METIS computes two separators and keeps the best if
++   * it removes more than a third. Then the bisection of METIS_NodeND,
++   * METIS_ComputeVertexSeparator, is called on the smaller graph, so
++   * merged vertices are on the same side of the separator. For a
++   * matrix with several unknowns per mesh node this makes the
++   * separator cheaper, in time and in memory. METIS_NodeND compresses
++   * once, the whole graph; here every subgraph is tried while the
++   * previous attempt paid off: compress says whether to try, and is
++   * reset when nothing is gained.
++   */
++  inline int metis_tree_separator(std::vector<idx_t>& xadj,
++                                  std::vector<idx_t>& adj, idx_t* options,
++                                  bool& compress, std::vector<idx_t>& part) {
++    idx_t nv = part.size(), sep = 0;
++    if (compress) {
++      // sort by a key that is the same for the same set of neighbours
++      std::vector<std::pair<std::size_t,idx_t>> key(nv);
++      for (idx_t i=0; i<nv; i++) {
++        std::size_t k = i;
++        for (idx_t j=xadj[i]; j<xadj[i+1]; j++) k += adj[j];
++        key[i] = {k, i};
++      }
++      std::sort(key.begin(), key.end());
++      // cmap[i] is the merged vertex of i, vertex[c] one vertex of c
++      std::vector<idx_t> cmap(nv, -1), mark(nv, -1), vertex, cweight;
++      for (idx_t a=0; a<nv; a++) {
++        const idx_t i = key[a].second, degree = xadj[i+1] - xadj[i];
++        if (cmap[i] != -1) continue;
++        cmap[i] = vertex.size();
++        vertex.push_back(i);
++        cweight.push_back(1);
++        // only a vertex with the same key can have the same neighbours
++        if (a+1 == nv || key[a+1].first != key[a].first) continue;
++        mark[i] = a;
++        for (idx_t j=xadj[i]; j<xadj[i+1]; j++) mark[adj[j]] = a;
++        for (idx_t b=a+1; b<nv && key[b].first==key[a].first; b++) {
++          const idx_t t = key[b].second;
++          if (cmap[t] != -1 || mark[t] != a || xadj[t+1]-xadj[t] != degree)
++            continue;
++          idx_t j = xadj[t];
++          while (j < xadj[t+1] && mark[adj[j]] == a) j++;
++          if (j == xadj[t+1]) {
++            cmap[t] = cmap[i];
++            cweight.back()++;
++          }
++        }
++      }
++      idx_t cnv = vertex.size();
++      if (cnv < 0.85 * nv) {
++        std::vector<idx_t> cxadj(1, 0), cadj, cpart(cnv);
++        std::fill(mark.begin(), mark.end(), -1);
++        for (idx_t c=0; c<cnv; c++) {
++          mark[c] = c;
++          for (idx_t j=xadj[vertex[c]]; j<xadj[vertex[c]+1]; j++) {
++            const idx_t d = cmap[adj[j]];
++            if (mark[d] != c) {
++              mark[d] = c;
++              cadj.push_back(d);
++            }
++          }
++          cxadj.push_back(cadj.size());
++        }
++        idx_t coptions[METIS_NOPTIONS];
++        std::copy(options, options+METIS_NOPTIONS, coptions);
++        if (nv > 1.5 * cnv) coptions[METIS_OPTION_NSEPS] = 2;
++        int ierr = METIS_ComputeVertexSeparator
++          (&cnv, cxadj.data(), cadj.data(), cweight.data(), coptions, &sep,
++           cpart.data());
++        for (idx_t i=0; i<nv; i++) part[i] = cpart[cmap[i]];
++        return ierr;
++      }
++      compress = false;
++    }
++    return METIS_ComputeVertexSeparator
++      (&nv, xadj.data(), adj.data(), nullptr, options, &sep, part.data());
++  }
++
++  /**
++   * A subgraph in the recursion: vertex i is row rows[i] of the
++   * matrix, xadj and adj are its adjacency structure without the
++   * diagonal, in the numbering of the subgraph. compress: see
++   * metis_tree_separator. The graph comes from gather_graph, so
++   * every array fits in one MPI message.
++   */
++  template<typename integer_t> struct MetisTreeGraph {
++    std::vector<idx_t> xadj, adj;
++    std::vector<integer_t> rows;
++    bool compress = true;
++
++    void send(int dest, const MPIComm& comm) const {
++      comm.send(std::vector<int>{compress}, dest, 0);
++      comm.send(rows, dest, 0);
++      comm.send(xadj, dest, 0);
++      comm.send(adj, dest, 0);
++    }
++
++    void recv(int src, const MPIComm& comm) {
++      compress = comm.recv<int>(src, 0)[0];
++      rows = comm.recv<integer_t>(src, 0);
++      xadj = comm.recv<idx_t>(src, 0);
++      adj = comm.recv<idx_t>(src, 0);
++    }
++
++    /**
++     * Split this graph with a vertex separator. The rows
++     * of the separator are appended to ordered, in their new order,
++     * part 0 stays in this graph, and part 1 is returned in other.
++     * Any of the three can be empty. Returns the METIS error code; on
++     * an error nothing is split off.
++     */
++    int split(idx_t* options, std::vector<integer_t>& ordered,
++              MetisTreeGraph<integer_t>& other, integer_t& separator_size) {
++      idx_t nv = rows.size();
++      std::vector<idx_t> part(nv);
++      int ierr = METIS_OK;
++      if (nv > 1)
++        ierr = metis_tree_separator(xadj, adj, options, compress, part);
++      if (ierr != METIS_OK) std::fill(part.begin(), part.end(), 0);
++      // number of each vertex in its part (0, 1, or 2: the separator),
++      // and the edges of the vertices of each part
++      idx_t size[3] = {0, 0, 0};
++      std::size_t edges[3] = {0, 0, 0};
++      std::vector<idx_t> local(nv);
++      for (idx_t i=0; i<nv; i++) {
++        local[i] = size[part[i]]++;
++        edges[part[i]] += xadj[i+1] - xadj[i];
++      }
++      // Number the rows of the separator in the order of a fixed mix
++      // of their row number, not in the order of the matrix. The
++      // latter is the numbering of the application, in which
++      // neighbouring unknowns can be nearly dependent: the LU
++      // factorization of the front of the separator eliminates its
++      // columns in this order (partial pivoting only exchanges rows)
++      // and then meets small pivots early. METIS_NodeND numbers the
++      // vertices of a separator in the order of its boundary list
++      // (MlevelNestedDissection in libmetis/ometis.c), which the moves
++      // of the separator refinement have rearranged, but
++      // METIS_ComputeVertexSeparator does not return that list. The
++      // mix (the finalizer of SplitMix64) is a bijection of the 64-bit
++      // integers, so the keys are distinct and the order only depends
++      // on the row numbers, on every platform; the result of
++      // std::shuffle depends on the standard library. The fill does
++      // not depend on this order.
++      std::vector<std::pair<std::uint64_t,idx_t>> key;
++      key.reserve(size[2]);
++      for (idx_t i=0; i<nv; i++)
++        if (part[i] == 2) {
++          std::uint64_t z = std::uint64_t(rows[i]) + 0x9e3779b97f4a7c15;
++          z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9;
++          z = (z ^ (z >> 27)) * 0x94d049bb133111eb;
++          key.emplace_back(z ^ (z >> 31), i);
++        }
++      std::sort(key.begin(), key.end());
++      for (auto& k : key) ordered.push_back(rows[k.second]);
++      MetisTreeGraph<integer_t> half[2];
++      for (int s=0; s<2; s++) {
++        half[s].rows.reserve(size[s]);
++        half[s].xadj.reserve(size[s]+1);
++        half[s].xadj.push_back(0);
++        half[s].adj.reserve(edges[s]); // those to the separator are dropped
++      }
++      for (idx_t i=0; i<nv; i++) {
++        const auto s = part[i];
++        if (s == 2) continue;
++        for (idx_t k=xadj[i]; k<xadj[i+1]; k++)
++          if (part[adj[k]] == s) half[s].adj.push_back(local[adj[k]]);
++        half[s].xadj.push_back(half[s].adj.size());
++        half[s].rows.push_back(rows[i]);
++      }
++      half[0].compress = half[1].compress = compress;
++      separator_size = size[2];
++      *this = std::move(half[0]);
++      other = std::move(half[1]);
++      return ierr;
++    }
++
++    /**
++     * Order this graph with METIS_NodeND and append its rows to
++     * ordered, in their new order. Returns the METIS error code.
++     */
++    int order(idx_t* options, std::vector<integer_t>& ordered) {
++      idx_t nv = rows.size();
++      if (!nv) return METIS_OK;
++      // vertex[k] is the vertex in place k of the ordering of METIS
++      std::vector<idx_t> vertex(nv), position(nv);
++      int ierr = METIS_NodeND
++        (&nv, xadj.data(), adj.data(), nullptr, options,
++         vertex.data(), position.data());
++      if (ierr == METIS_OK)
++        for (idx_t k=0; k<nv; k++) ordered.push_back(rows[vertex[k]]);
++      return ierr;
++    }
++  };
++
++  /**
++   * Nested dissection with METIS, parallel over a separator tree
++   * with the given number of leaves, at most the number of
++   * processes: see the top of this file.
++   *
++   * \param perm of the size of the matrix on process 0, where on
++   * output perm[i] is the position of row i in the new ordering; not
++   * used on the other processes
++   * \param tree on output, on every process, the distributed
++   * separator tree: leaf k is the subgraph of process k
++   * \return 0, or the error code of METIS (on every process)
++   */
++  template<typename scalar_t,typename integer_t> int
++  metis_tree_nested_dissection(const CSRMatrixMPI<scalar_t,integer_t>& A,
++                               const MPIComm& comm, int leaves,
++                               std::vector<integer_t>& perm,
++                               SeparatorTree<integer_t>& tree) {
++    const int rank = comm.rank();
++    const integer_t n = A.size();
++    MetisTreeGraph<integer_t> g;
++    if (auto Aseq = A.gather_graph()) { // only root
++      g.xadj.reserve(n+1);
++      g.adj.reserve(Aseq->edges());
++      g.xadj.push_back(0);
++      for (integer_t i=0; i<n; i++) { // remove diagonal elements
++        for (integer_t k=Aseq->ptr(i); k<Aseq->ptr(i+1); k++)
++          if (Aseq->ind(k) != i) g.adj.push_back(Aseq->ind(k));
++        g.xadj.push_back(g.adj.size());
++      }
++      g.rows.resize(n);
++      std::iota(g.rows.begin(), g.rows.end(), integer_t(0));
++    } // the gathered graph is freed here, before the first separator
++    // The nodes of the separator tree are numbered in postorder, so a
++    // subtree with k leaves is 2k-1 consecutive nodes ending with its
++    // root, and its first k/2 leaves are the first subtree of the root.
++    std::vector<integer_t> sizes(2*leaves-1);
++    // the nodes whose rows this process numbers, and these rows, node
++    // by node in their new order
++    std::vector<int> nodes;
++    std::vector<integer_t> ordered;
++    int ierr = METIS_OK;
++    if (rank < leaves) {
++      idx_t options[METIS_NOPTIONS];
++      METIS_SetDefaultOptions(options);
++      // process p0 holds the subgraph of the processes [p0,p1), whose
++      // subtree starts with node
++      int p0 = 0, p1 = leaves, node = 0;
++      while (p1 - p0 > 1) {
++        const int pm = p0 + (p1 - p0) / 2;
++        if (rank == p0) {
++          MetisTreeGraph<integer_t> other;
++          nodes.push_back(node + 2*(p1-p0) - 2);
++          int e = g.split(options, ordered, other, sizes[nodes.back()]);
++          if (e != METIS_OK) ierr = e;
++          // Which part stays (see the top of this file). The solver
++          // gives the leaves [p0,pm) to the processes below process
++          // pm*P/leaves, which own the rows below middle in the
++          // distribution of the matrix: count the rows on their side
++          // of it with the two parts as they are and exchanged.
++          const integer_t middle =
++            A.dist()[std::size_t(pm) * comm.size() / leaves];
++          auto below = [middle](const std::vector<integer_t>& rows) {
++            return std::count_if
++              (rows.begin(), rows.end(),
++               [middle](integer_t r) { return r < middle; });
++          };
++          const long long n0 = g.rows.size(), n1 = other.rows.size(),
++            b0 = below(g.rows), b1 = below(other.rows);
++          if (pm - p0 < p1 - pm ? n0 > n1 :
++              b1 + (n0 - b0) > b0 + (n1 - b1)) std::swap(g, other);
++          other.send(pm, comm);
++        } else if (rank == pm) g.recv(p0, comm);
++        if (rank < pm) p1 = pm;
++        else {
++          node += 2*(pm-p0) - 1;
++          p0 = pm;
++        }
++      }
++      nodes.push_back(node);
++      int e = g.order(options, ordered);
++      if (e != METIS_OK) ierr = e;
++      sizes[node] = g.rows.size();
++      g = MetisTreeGraph<integer_t>();
++    }
++    // METIS_OK is 1 and the METIS error codes are negative
++    ierr = comm.all_reduce(ierr, MPI_MIN);
++    if (ierr != METIS_OK) {
++      if (comm.is_root())
++        std::cerr << "# ERROR: Metis nested dissection reordering failed"
++                  << " with error code " << ierr << std::endl;
++      return ierr;
++    }
++    comm.all_reduce(sizes, MPI_SUM);
++    tree = SeparatorTree<integer_t>(sizes.size());
++    tree.sizes[0] = 0;
++    for (std::size_t i=0; i<sizes.size(); i++)
++      tree.sizes[i+1] = tree.sizes[i] + sizes[i];
++    // process 0 gets the rows of every node from the process that
++    // numbered them: they take the positions of the node, in order
++    if (rank && rank < leaves) {
++      comm.send(nodes, 0, 0);
++      comm.send(ordered, 0, 0);
++    }
++    for (int p=0; !rank && p<leaves; p++) {
++      if (p) {
++        nodes = comm.recv<int>(p, 0);
++        ordered = comm.recv<integer_t>(p, 0);
++      }
++      auto row = ordered.begin();
++      for (auto node : nodes)
++        for (auto i=tree.sizes[node]; i<tree.sizes[node+1]; i++)
++          perm[*row++] = i;
++    }
++    // set the children of the root of the subtree with k leaves that
++    // starts with node first, and return this root
++    std::function<integer_t(integer_t,integer_t)> subtree =
++      [&](integer_t k, integer_t first) {
++        const integer_t root = first + 2*k - 2;
++        tree.lch[root] = tree.rch[root] = -1;
++        if (k > 1) {
++          tree.lch[root] = subtree(k/2, first);
++          tree.rch[root] = subtree(k-k/2, first+2*(k/2)-1);
++          tree.parent[tree.lch[root]] = tree.parent[tree.rch[root]] = root;
++        }
++        return root;
++      };
++    tree.parent[subtree(leaves, 0)] = -1;
++    return 0;
++  }
++
++} // end namespace strumpack
++
++#endif // METIS_TREE_REORDERING_HPP
