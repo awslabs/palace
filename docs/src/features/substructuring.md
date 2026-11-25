@@ -218,11 +218,12 @@ For a [driven](../guide/problem.md#Driven-problems-in-the-frequency-domain) simu
 environment operator depends on the frequency, and substructuring condenses it exactly at each
 frequency of a sweep (`"Solver"/"Driven"/"Samples"`): one partial factorization of the environment
 gives ``\bm{S}_E(\omega)``, the condensation of the environment's sources onto the interface, and
-the condensed voltages of the environment's lumped ports and wave port overlaps. The region is then
-solved against them, factored once per frequency for all excitations. Lumped ports, impedance,
-absorbing and conductivity boundaries, and lossy materials may lie in the region, in the
-environment, or on both sides, and wave ports inside either side, away from the interface (the
-modal terms of the environment's border its factorization).
+the condensed voltages of the environment's lumped ports and wave port overlaps (see the
+[reference](../reference.md#Driven-substructuring)). The region is then solved against them,
+factored once per frequency for all excitations. Lumped ports, impedance, absorbing and conductivity
+boundaries, and lossy materials may lie in the region, in the environment, or on both sides, and
+wave ports inside either side, away from the interface (the modal terms of the environment's border
+its factorization).
 
 An offline sweep saves these per frequency (unless `"SaveModel": false`). An online sweep at saved
 frequencies (any subset of them, matched by value) then solves only the region, which may be
