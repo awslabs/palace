@@ -662,10 +662,13 @@ SurfacePostOperator::GetInterfaceAmplitudeMaps(const InterfaceDielectricData &da
     std::array<int, 2> side_attr = {0, 0};
     for (int s = 0; s < num_sides; s++)
     {
+      // The maps of averaged sides add to the same amplitudes, and those of summed sides
+      // to their own: the amplitudes of side 0 at all quadrature points, then those of side
+      // 1.
       auto &map = maps.emplace_back();
       const int elem = (side_elem[s] == 1) ? FET.Elem1No : FET.Elem2No;
       map.ghost = (elem >= mesh.GetNE());
-      map.offset = num_amplitudes;
+      map.offset = num_amplitudes + ((sum_sides && s == 1) ? nq * num_amp : 0);
       if (map.ghost)
       {
         nd_fespace.GetFaceNbrElementVDofs(elem - mesh.GetNE(), map.vdofs, side_doftrans[s]);
@@ -677,7 +680,7 @@ SurfacePostOperator::GetInterfaceAmplitudeMaps(const InterfaceDielectricData &da
         side_fe[s] = nd_fespace.GetFE(elem);
       }
       side_attr[s] = (side_elem[s] == 1) ? FET.Elem1->Attribute : FET.Elem2->Attribute;
-      map.A.SetSize(nq * amp_per_point, side_fe[s]->GetDof());
+      map.A.SetSize(nq * num_amp, side_fe[s]->GetDof());
       map.A = 0.0;
     }
     for (int s = 0; s < num_sides; s++)
@@ -746,13 +749,13 @@ SurfacePostOperator::GetInterfaceAmplitudeMaps(const InterfaceDielectricData &da
             break;
         }
 
-        // Rows of this point (and side, when the side energies are summed): P vshapeᵀ.
+        // Rows of this point in the map of this side: P vshapeᵀ.
         auto &T = (side_elem[s] == 1) ? *FET.Elem1 : *FET.Elem2;
         vshape.SetSize(side_fe[s]->GetDof(), sdim);
         side_fe[s]->CalcVShape(T, vshape);
         PV.SetSize(num_amp, side_fe[s]->GetDof());
         mfem::MultABt(P, vshape, PV);
-        const int row0 = q * amp_per_point + ((sum_sides && s == 1) ? num_amp : 0);
+        const int row0 = q * num_amp;
         for (int j = 0; j < PV.Width(); j++)
         {
           for (int r = 0; r < num_amp; r++)
@@ -814,10 +817,10 @@ std::map<int, Eigen::MatrixXd> SurfacePostOperator::GetInterfaceElectricFieldEne
   const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
 
   // Split the boundary elements of the interfaces into passes of at most memory_budget
-  // bytes, but for a single boundary element: a boundary element with r amplitude rows (its
-  // quadrature points times the amplitudes per point, for each side when the energies of
-  // its sides are summed) and d dofs of its evaluated sides stores r (n + d) values for n
-  // fields, in A and in its maps, and d dof indices.
+  // bytes, but for a single boundary element: a boundary element with r rows of amplitudes
+  // per side (its quadrature points times the amplitudes per point), and d dofs of its
+  // evaluated sides, stores r n values of A for n fields, or 2 r n when the energies of its
+  // sides are summed, r d values of its maps, and d dof indices.
   std::vector<std::map<int, std::vector<int>>> passes(1);
   std::size_t pass_bytes = 0;
   mfem::FaceElementTransformations FET;
@@ -855,9 +858,10 @@ std::map<int, Eigen::MatrixXd> SurfacePostOperator::GetInterfaceElectricFieldEne
               mfem::IntRules
                   .Get(bdr_geom, fem::DefaultIntegrationOrder::Get(mesh, bdr_geom))
                   .GetNPoints()) *
-          num_amp * (sides.sum ? 2 : 1);
+          num_amp;
       const std::size_t bytes =
-          sizeof(double) * rows * (static_cast<std::size_t>(num_fields) + num_dofs) +
+          sizeof(double) * rows *
+              ((sides.sum ? 2 : 1) * static_cast<std::size_t>(num_fields) + num_dofs) +
           sizeof(int) * num_dofs;
       if (pass_bytes > 0 && pass_bytes + bytes > memory_budget)
       {
