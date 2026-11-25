@@ -291,6 +291,25 @@ TEST_CASE("StrumpackSolver BLR compression of an indefinite matrix",
   CHECK(res <= 1.0e-6);
 }
 
+// The solver maps the elimination tree to the processes by factor size unless its last
+// constructor argument is false (the mode eigenvalue solver), which keeps the STRUMPACK
+// default, by the operations of the factorization.
+TEST_CASE("StrumpackSolver proportional mapping", "[strumpack][Serial][Parallel]")
+{
+  struct Probe : public StrumpackSolver
+  {
+    using StrumpackSolver::StrumpackSolver;
+    auto Mapping() const { return this->solver_->options().proportional_mapping(); }
+  };
+  MPI_Comm comm = Mpi::World();
+  const Probe by_factor_size(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
+                             0.0, 0, 0, false, 0);
+  const Probe by_operations(comm, SymbolicFactorization::DEFAULT, SparseCompression::NONE,
+                            0.0, 0, 0, false, 0, false);
+  CHECK(by_factor_size.Mapping() == strumpack::ProportionalMapping::FACTOR_MEMORY);
+  CHECK(by_operations.Mapping() == strumpack::ProportionalMapping::FLOPS);
+}
+
 }  // namespace palace
 
 #endif

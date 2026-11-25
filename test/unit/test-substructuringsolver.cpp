@@ -2546,8 +2546,9 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   // Solver.Linear.Type names the sparse direct solver of the factorizations for the Schur
   // complements of the environment and of the region, else Palace prefers MUMPS,
   // STRUMPACK, then SuperLU_DIST (the partial factorization of MUMPS, or of STRUMPACK with
-  // its Schur complement interface, and otherwise one solve per interface DOF). The
-  // capacitance matrix does not depend on it.
+  // its Schur complement interface, and otherwise one solve per interface DOF), but
+  // STRUMPACK with its Schur complement interface for the Schur complement of a region of
+  // at most kRegionStrumpackSchur variables. The capacitance matrix does not depend on it.
   auto config = [](const std::string &type)
   {
     return json{{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -2599,8 +2600,8 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   {
     CAPTURE(type);
     IoData iodata(config(type), false);
-    const LinearSolver schur_type =
-        SchurSolverFor(iodata.solver.substructuring->direct_solver);
+    const LinearSolver requested = iodata.solver.substructuring->direct_solver;
+    const LinearSolver schur_type = SchurSolverFor(requested, SchurKind::ENVIRONMENT);
     std::string schur_ref = (type == "SuperLU") ? "SuperLU_DIST" : type;
     if (type == "Default")
     {
@@ -2613,6 +2614,17 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
 #endif
     }
     CHECK(std::string(DirectSolverName(schur_type)) == schur_ref);
+    std::string region_ref = schur_ref;
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+    if (type == "Default")
+    {
+      region_ref = "STRUMPACK";
+    }
+#endif
+    CHECK(std::string(DirectSolverName(SchurSolverFor(
+              requested, SchurKind::REGION, kRegionStrumpackSchur))) == region_ref);
+    CHECK(std::string(DirectSolverName(SchurSolverFor(
+              requested, SchurKind::REGION, kRegionStrumpackSchur + 1))) == schur_ref);
     {
       SideSystem side({A.get()}, std::vector<char>(A->Height(), 1));
       const auto schur = MakeSchurFactorization<double>(
