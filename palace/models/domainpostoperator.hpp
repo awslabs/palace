@@ -123,13 +123,13 @@ public:
   // domain (time-averaged for complex-valued fields). The STORED electric energy requires
   // HasStoredElectricFieldEnergy() (or HasStoredDomainElectricFieldEnergy(idx) for a
   // portion of the domain). For mode analysis, E and B are the in-plane E and out-of-plane
-  // B, completed by the out-of-plane E (En) and the in-plane B, given as z_hat x Bt (Bt),
+  // B, completed by the out-of-plane E (En) and the in-plane B, given as zxBt = z_hat x Bt,
   // which lies in the ND space.
   double GetElectricFieldEnergy(const GridFunction &E, double omega,
                                 ElectricEnergy type = ElectricEnergy::STORED,
                                 const GridFunction *En = nullptr) const;
   double GetMagneticFieldEnergy(const GridFunction &B,
-                                const GridFunction *Bt = nullptr) const;
+                                const GridFunction *zxBt = nullptr) const;
 
   // The STORED (if HasStoredElectricFieldEnergy()) and MATERIAL electric energies in the
   // entire domain, from one set of field products.
@@ -154,7 +154,7 @@ public:
                                       ElectricEnergy type = ElectricEnergy::STORED,
                                       const GridFunction *En = nullptr) const;
   double GetDomainMagneticFieldEnergy(int idx, const GridFunction &B,
-                                      const GridFunction *Bt = nullptr) const;
+                                      const GridFunction *zxBt = nullptr) const;
 
   // The magnetic field energies from a real L-vector of the space of construction, for
   // spaces without MFEM grid functions (broken spaces). Real-valued fields, so these are

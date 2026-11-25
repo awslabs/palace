@@ -20,8 +20,9 @@ namespace palace
 namespace
 {
 
-// Local part of uᴴ M u for the real and imaginary parts of u.
-double LocalDot(const Operator &M, const GridFunction &u, Vector &Mu)
+// Local part of the quadratic form uᴴ M u for the real and imaginary parts of u, with the
+// workspace Mu.
+double LocalQuadraticForm(const Operator &M, const GridFunction &u, Vector &Mu)
 {
   M.Mult(u.Real(), Mu);
   double dot = linalg::LocalDot(u.Real(), Mu);
@@ -31,6 +32,20 @@ double LocalDot(const Operator &M, const GridFunction &u, Vector &Mu)
     dot += linalg::LocalDot(u.Imag(), Mu);
   }
   return dot;
+}
+
+// The mass integrator of the coefficient q on an H(curl) or a scalar space.
+void AddMassIntegrator(BilinearForm &a, const FiniteElementSpace &fespace,
+                       const MaterialPropertyCoefficient &q)
+{
+  if (fespace.GetFEColl().GetMapType(fespace.Dimension()) == mfem::FiniteElement::H_CURL)
+  {
+    a.AddDomainIntegrator<VectorFEMassIntegrator>(q);
+  }
+  else
+  {
+    a.AddDomainIntegrator<MassIntegrator>(q);
+  }
 }
 
 }  // namespace
@@ -252,6 +267,8 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const FiniteElementSpace &l2_fespace)
   : DomainPostOperator(postpro, mat_op, nd_fespace, l2_fespace)
 {
+  MFEM_VERIFY(mat_op.SpaceDimension() == 2,
+              "Mode analysis domain postprocessing requires a 2D material operator!");
   // Out-of-plane permittivity on the H1 space and in-plane inverse permeability on the ND
   // space, as in the mode eigenproblem.
   auto Assemble = [&](const FiniteElementSpace &fespace, const mfem::DenseTensor &mat,
@@ -266,14 +283,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
       q.RestrictCoefficient(mat_op.GetCeedAttributes(*attributes));
       m.SkipZeroCoefficientElements();
     }
-    if (fespace.GetFEColl().GetMapType(fespace.Dimension()) == mfem::FiniteElement::H_CURL)
-    {
-      m.AddDomainIntegrator<VectorFEMassIntegrator>(q);
-    }
-    else
-    {
-      m.AddDomainIntegrator<MassIntegrator>(q);
-    }
+    AddMassIntegrator(m, fespace, q);
     return m.PartialAssemble();
   };
   M_elec_n = Assemble(h1_fespace, mat_op.GetPermittivityScalar(), nullptr);
@@ -350,15 +360,7 @@ void DomainPostOperator::SetUpFrequencyDependentForms(
       a.SkipZeroCoefficientElements();
       if (!f.empty())
       {
-        if (fespace.GetFEColl().GetMapType(fespace.Dimension()) ==
-            mfem::FiniteElement::H_CURL)
-        {
-          a.AddDomainIntegrator<VectorFEMassIntegrator>(f);
-        }
-        else
-        {
-          a.AddDomainIntegrator<MassIntegrator>(f);
-        }
+        AddMassIntegrator(a, fespace, f);
       }
       forms.emplace_back(m, M_elec_fd_owned.emplace_back(a.PartialAssemble()).get());
     }
@@ -408,13 +410,14 @@ double DomainPostOperator::ElectricFieldEnergy(const Operator &M,
                                                const GridFunction *En, double omega,
                                                ElectricEnergy type) const
 {
-  auto Part = [&](const Operator &M, const FrequencyDependentForms &M_fd,
+  auto Part = [&](const Operator &mass, const FrequencyDependentForms &fd_forms,
                   const GridFunction &u, Vector &Mu)
   {
-    double dot = LocalDot(M, u, Mu);
-    for (const auto &[m, op] : M_fd)
+    double dot = LocalQuadraticForm(mass, u, Mu);
+    for (const auto &[m, op] : fd_forms)
     {
-      dot += GetFrequencyDependentEnergyWeight(m, omega, type) * LocalDot(*op, u, Mu);
+      dot += GetFrequencyDependentEnergyWeight(m, omega, type) *
+             LocalQuadraticForm(*op, u, Mu);
     }
     return dot;
   };
@@ -430,7 +433,7 @@ double DomainPostOperator::GetFieldEnergy(const Operator &M, const GridFunction 
 {
   // Instantaneous energy 1/2 uᵀ M u for a real field, or time-averaged energy
   // 1/4 (u_rᵀ M u_r + u_iᵀ M u_i) for a complex peak phasor.
-  double dot = LocalDot(M, u, Mu);
+  double dot = LocalQuadraticForm(M, u, Mu);
   Mpi::GlobalSum(1, &dot, u.GetComm());
   return EnergyWeight(u.HasImag()) * dot;
 }
@@ -465,15 +468,15 @@ DomainPostOperator::GetElectricFieldEnergies(const GridFunction &E, double omega
                                "out-of-plane electric field energy!");
   const bool stored = HasStoredElectricFieldEnergy();
   double energy[2] = {0.0, 0.0};  // STORED, MATERIAL
-  auto Part = [&](const Operator &M, const FrequencyDependentForms &M_fd,
+  auto Part = [&](const Operator &mass, const FrequencyDependentForms &fd_forms,
                   const GridFunction &u, Vector &Mu)
   {
-    const double dot = LocalDot(M, u, Mu);
+    const double dot = LocalQuadraticForm(mass, u, Mu);
     energy[0] += dot;
     energy[1] += dot;
-    for (const auto &[m, op] : M_fd)
+    for (const auto &[m, op] : fd_forms)
     {
-      const double d = LocalDot(*op, u, Mu);
+      const double d = LocalQuadraticForm(*op, u, Mu);
       if (stored)
       {
         energy[0] +=
@@ -505,15 +508,16 @@ double DomainPostOperator::GetHighFrequencyElectricFieldEnergy(const GridFunctio
 }
 
 double DomainPostOperator::GetMagneticFieldEnergy(const GridFunction &B,
-                                                  const GridFunction *Bt) const
+                                                  const GridFunction *zxBt) const
 {
   if (!M_mag)
   {
     return 0.0;
   }
-  MFEM_VERIFY(!Bt || M_mag_t, "Domain postprocessing is not configured for the in-plane "
-                              "magnetic field energy!");
-  double dot = LocalDot(*M_mag, B, H) + (Bt ? LocalDot(*M_mag_t, *Bt, D) : 0.0);
+  MFEM_VERIFY(!zxBt || M_mag_t, "Domain postprocessing is not configured for the in-plane "
+                                "magnetic field energy!");
+  double dot = LocalQuadraticForm(*M_mag, B, H) +
+               (zxBt ? LocalQuadraticForm(*M_mag_t, *zxBt, D) : 0.0);
   Mpi::GlobalSum(1, &dot, B.GetComm());
   return EnergyWeight(B.HasImag()) * dot;
 }
@@ -543,7 +547,7 @@ double DomainPostOperator::GetDomainElectricFieldEnergy(int idx, const GridFunct
 }
 
 double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx, const GridFunction &B,
-                                                        const GridFunction *Bt) const
+                                                        const GridFunction *zxBt) const
 {
   // Compute the magnetic field energy integral for only a portion of the domain.
   auto it = M_i.find(idx);
@@ -553,13 +557,13 @@ double DomainPostOperator::GetDomainMagneticFieldEnergy(int idx, const GridFunct
   {
     return 0.0;
   }
-  double dot = LocalDot(*it->second.second, B, H);
-  if (Bt)
+  double dot = LocalQuadraticForm(*it->second.second, B, H);
+  if (zxBt)
   {
     const auto n = M_n_i.find(idx);
     MFEM_VERIFY(n != M_n_i.end(), "Domain postprocessing is not configured for the "
                                   "in-plane magnetic field energy!");
-    dot += LocalDot(*n->second.second, *Bt, D);
+    dot += LocalQuadraticForm(*n->second.second, *zxBt, D);
   }
   Mpi::GlobalSum(1, &dot, B.GetComm());
   return EnergyWeight(B.HasImag()) * dot;

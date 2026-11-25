@@ -66,8 +66,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only meant that the form is not used. SchemaVer 6-1-1
     [PR 1293](https://github.com/awslabs/palace/pull/1293).
   - Fixed the domain energies of boundary mode simulations, which omitted the out-of-plane
-    electric field and the in-plane magnetic flux density, so that the magnetic energy of
-    a quasi-TEM mode was nearly zero.
+    electric field and the in-plane magnetic flux density: the magnetic energy of a
+    quasi-TEM mode was nearly zero, and the electric energy of a mode with a longitudinal
+    field was incomplete (a TM mode of a hollow guide lost 36% to 41% of it).
     [PR 1308](https://github.com/awslabs/palace/pull/1308).
 
 #### Documentation

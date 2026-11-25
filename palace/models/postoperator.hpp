@@ -144,7 +144,10 @@ protected:
   std::unique_ptr<GridFunction> En, Bt_inplane;
 
   // Mode analysis: z_hat x Bt = (kn Et - i grad_t(Ez))/omega, which, unlike Bt, lies in the
-  // ND space, for the magnetic energy, with the discrete gradient from the H1 space.
+  // ND space, for the magnetic energy, with the discrete gradient from the H1 space. With
+  // the B = curl(E)/(i omega) of the mode postprocessing (MeasureAndPrintAll), of the
+  // opposite sign to Faraday's law for exp(i omega t), it is -z_hat x Bt of the physical
+  // field, which has the same energy.
   std::unique_ptr<GridFunction> zxBt;
   std::unique_ptr<Operator> Grad;
 

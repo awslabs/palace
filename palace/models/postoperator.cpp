@@ -186,6 +186,9 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     En = std::make_unique<GridFunction>(fem_op->GetH1Space(), true);
     Bt_inplane = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
     zxBt = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
+    // Not the cached interpolator of the ND space (GetDiscreteInterpolator): with
+    // multigrid, it is that of the auxiliary H1 space hierarchy of the Hiptmair smoother
+    // (ModeEigenSolver), and asking for it with another H1 space would reset it.
     DiscreteLinearOperator grad(fem_op->GetH1Space(), fem_op->GetNDSpace());
     grad.AddDomainInterpolator<GradientInterpolator>();
     Grad = std::make_unique<ParOperator>(grad.PartialAssemble(), fem_op->GetH1Space(),
@@ -2930,14 +2933,19 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
     const int nd_sz = nd_fs.GetTrueVSize();
     const int l2_sz = l2_fs.GetTrueVSize();
     ComplexVector b(l2_sz);
+    b.UseDevice(true);
 
     // Get Et true DOFs.
     Vector etr(nd_sz), eti(nd_sz);
+    etr.UseDevice(true);
+    eti.UseDevice(true);
     E->Real().GetTrueDofs(etr);
     E->Imag().GetTrueDofs(eti);
 
     // Apply curl: curl(Et_r) and curl(Et_i).
     Vector curl_etr(l2_sz), curl_eti(l2_sz);
+    curl_etr.UseDevice(true);
+    curl_eti.UseDevice(true);
     Curl.Mult(etr, curl_etr);
     Curl.Mult(eti, curl_eti);
 
@@ -2966,6 +2974,8 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
   // z_hat x Bt from the true dofs of Et and En, exact in the ND space.
   {
     ComplexVector w(et.Size()), grad_en(et.Size());
+    w.UseDevice(true);
+    grad_en.UseDevice(true);
     Grad->Mult(en.Real(), grad_en.Real());
     Grad->Mult(en.Imag(), grad_en.Imag());
     w = et;
