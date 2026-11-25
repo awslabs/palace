@@ -48,8 +48,9 @@ private:
   // from being singular.
   std::vector<mfem::Array<int>> aux_tdof_lists;
 
-  // Linear solver for the projected linear system (Gᵀ M G) y = x.
+  // Linear solver for the projected linear system (Gᵀ M G) y = x, and its preconditioner.
   std::unique_ptr<BaseKspSolver<OperType>> ksp;
+  const Solver<OperType> *pc;
 
   // Workspace objects for solver application.
   mutable VecType psi, rhs;

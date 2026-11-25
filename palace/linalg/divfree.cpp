@@ -118,23 +118,6 @@ public:
   }
 };
 
-// A linear solver as a preconditioner.
-template <OperatorType OperType>
-class KspPreconditioner : public Solver<OperType>
-{
-  using VecType = typename Solver<OperType>::VecType;
-
-private:
-  const BaseKspSolver<OperType> &ksp;
-
-public:
-  KspPreconditioner(const BaseKspSolver<OperType> &ksp) : ksp(ksp) {}
-
-  void SetOperator(const OperType &) override {}
-
-  void Mult(const VecType &x, VecType &y) const override { ksp.Mult(x, y); }
-};
-
 }  // namespace
 
 template <typename VecType>
@@ -241,6 +224,7 @@ DivFreeSolver<VecType>::DivFreeSolver(
   pcg->SetAbsTol(std::numeric_limits<double>::epsilon());
   pcg->SetMaxIter(max_it);
 
+  this->pc = pc.get();
   ksp = std::make_unique<BaseKspSolver<OperType>>(std::move(pcg), std::move(pc));
   ksp->SetOperators(*M, *M);
 
@@ -299,8 +283,8 @@ void DivFreeSolver<VecType>::Mult(const OperType &B, VecType &y) const
 {
   BlockTimer bt(Timer::DIV_FREE);
 
-  // Solve Gᵀ B G ψ = Gᵀ B y with GMRES, preconditioned with the solver for Gᵀ M G, and
-  // subtract the gradient of ψ.
+  // Solve Gᵀ B G ψ = Gᵀ B y with GMRES, preconditioned with the preconditioner of Gᵀ M G,
+  // and subtract the gradient of ψ.
   VecType By(y.Size());
   By.UseDevice(true);
   B.Mult(y, By);
@@ -310,10 +294,9 @@ void DivFreeSolver<VecType>::Mult(const OperType &B, VecType &y) const
     linalg::SetSubVector(rhs, *bdr_tdof_list_M, 0.0);
   }
   GradientOperator<OperType> A(B, *Grad, bdr_tdof_list_M);
-  KspPreconditioner<OperType> pc(*ksp);
   GmresSolver<OperType> gmres(comm, 0);
   gmres.SetOperator(A);
-  gmres.SetPreconditioner(pc);
+  gmres.SetPreconditioner(*pc);
   gmres.SetRelTol(1.0e-12);
   gmres.SetMaxIter(100);
   gmres.SetRestartDim(100);
