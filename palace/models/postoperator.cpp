@@ -4253,6 +4253,16 @@ void PostOperator<solver_t>::AddSurfaceParticipationRows(int point, double frequ
       mode_ports[index] = std::abs(vi.inductive_energy_participation.value_or(0.0));
     }
   }
+  // CUT-PLAN step 3: the impedance-metal rule's words of every row, from the root's feature
+  // rows (a Type's value sums every feature of the run).
+  bool sheet_served = false, sheet_not_served = false;
+  if (surface_response_op->GetImpedanceApplyRule())
+  {
+    const auto counts =
+        CountImpedanceApplyFeatures(surface_response_op->GetImpedanceLawFeatures());
+    sheet_served = counts.corrected > 0;
+    sheet_not_served = counts.not_served > 0;
+  }
   auto NewRow = [&](int interface)
   {
     SurfaceParticipationRow row;
@@ -4264,6 +4274,8 @@ void PostOperator<solver_t>::AddSurfaceParticipationRows(int point, double frequ
     row.type = type != types.end() ? type->second : std::string("Default");
     row.region = regions.count(interface) > 0;
     row.mode_ports = mode_ports;
+    row.sheet_served = sheet_served;
+    row.sheet_not_served = sheet_not_served;
     return row;
   };
   const double nan = std::numeric_limits<double>::quiet_NaN();

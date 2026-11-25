@@ -1039,11 +1039,28 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(pec.response->GetPatchCount() > 0);
   CHECK(pec.response->GetImpedanceApplyRule() == nullptr);
   const auto pec_patches = PatchSignatures(*pec.response);
+  // CUT-PLAN step 3: the perfect-conductor run reads the default "Apply", which has nothing
+  // to serve without an Impedance boundary: "Off" by construction (no rule, the same
+  // patches, the same response bit for bit below).
+  using ImpedanceMetalRule =
+      config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceMetalRule;
+  CHECK(pec.iodata.solver.surface_response_correction->impedance_metal_rule ==
+        ImpedanceMetalRule::APPLY);
+  json pec_off_config = IslandConfig(false);
+  pec_off_config["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalRule"] = "Off";
+  MaxwellIslandResponse pec_off(pec_off_config);
+  CHECK(pec_off.response->GetImpedanceApplyRule() == nullptr);
+  CHECK(PatchSignatures(*pec_off.response) == pec_patches);
   mfem::Vector normal_value(3);
   normal_value = 0.0;
   normal_value[1] = -0.4;
   mfem::VectorConstantCoefficient normal_coefficient(normal_value);
   const auto pec_normal = pec.ConstantFieldResponse(normal_coefficient);
+  {
+    const auto off_normal = pec_off.ConstantFieldResponse(normal_coefficient);
+    CHECK(off_normal.domain_correction == pec_normal.domain_correction);
+    CHECK(off_normal.fabricated_surface_energy == pec_normal.fabricated_surface_energy);
+  }
 
   for (const auto form :
        {MetalCrackForm::LegacyKey, MetalCrackForm::CrackTrue, MetalCrackForm::CrackFalse})
@@ -1060,7 +1077,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
       config["Boundaries"]["Impedance"] = json::array({entry});
       config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {metal_attr};
-      config["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalRule"] = rule;
+      if (!rule.empty())  // empty: the key absent, the Maxwell default
+      {
+        config["Solver"]["SurfaceResponseCorrection"]["ImpedanceMetalRule"] = rule;
+      }
       return config;
     };
     const std::string form_text =
@@ -1137,6 +1157,46 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(off.response->GetImpedanceApplyRule() == nullptr);
     CHECK(off.response->GetPatchCount() == 0);
 
+    // CUT-PLAN step 3: with no key (the Maxwell default "Apply") the sheet at the
+    // designers' Ls is served in this form exactly as under an explicit "Apply" (the same
+    // patches and response bit for bit), with the regime line (the log prints these lines).
+    {
+      MaxwellIslandResponse by_default(SheetConfig("", 4.5e-14));
+      const auto *default_film = by_default.response->GetImpedanceApplyRule();
+      REQUIRE(default_film != nullptr);
+      CHECK(default_film->attributes.at(metal_attr).service == FilmService::FILM_INDUCTIVE);
+      CHECK(default_film->attributes.at(metal_attr).form == form_text);
+      CHECK(default_film->lines == film->lines);
+      CHECK(std::count_if(default_film->lines.begin(), default_film->lines.end(),
+                          [](const std::string &line)
+                          {
+                            return line.find("Impedance-metal rule (APPLY): regime: purely "
+                                             "inductive sheets at configured Ls <= 9e-14 "
+                                             "H/sq are served by the perfect-conductor "
+                                             "models; validated at the designers' "
+                                             "4.5e-14 H/sq") != std::string::npos;
+                          }) == 1);
+      CHECK(PatchSignatures(*by_default.response) == pec_patches);
+      const auto default_normal = by_default.ConstantFieldResponse(normal_coefficient);
+      CHECK(default_normal.domain_correction == normal.domain_correction);
+      CHECK(default_normal.fabricated_surface_energy == normal.fabricated_surface_energy);
+      // Above the bound by default: not served (raw), named with the bound and the
+      // validated range; the run goes on (UnmatchedPolicy "Warn").
+      MaxwellIslandResponse default_above(SheetConfig("", 4.5e-12));
+      REQUIRE(default_above.response->GetImpedanceApplyRule() != nullptr);
+      CHECK(default_above.response->GetImpedanceApplyRule()
+                ->attributes.at(metal_attr)
+                .service == FilmService::INDUCTIVE_ABOVE_RANGE);
+      CHECK_THAT(default_above.response->GetImpedanceApplyRule()->lines.back(),
+                 ContainsSubstring("ABOVE the Ls range <= 9e-14 H/sq): attributes [9]: "
+                                   "not served by the perfect-conductor models: raw "
+                                   "unless the library holds a model of this law (law "
+                                   "status EXACT, corrected by that model); the "
+                                   "perfect-conductor models serve Ls sheets at or below "
+                                   "9e-14 H/sq (validated at the designers' 4.5e-14 H/sq"));
+      CHECK(default_above.response->GetPatchCount() == 0);
+    }
+
     // Apply above the Ls range (100 x the designers' value): not served, named.
     MaxwellIslandResponse above(SheetConfig("Apply", 4.5e-12));
     REQUIRE(above.response->GetImpedanceApplyRule() != nullptr);
@@ -1155,6 +1215,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK(counts.substituted == 0);
       CHECK(counts.corrected == 0);
       CHECK(counts.missing == 0);
+      CHECK(counts.not_served == counts.sheet);  // the not-served flags word
     }
   }
 #endif

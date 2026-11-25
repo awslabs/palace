@@ -19,6 +19,26 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - Purely inductive `Impedance` sheets are served by the perfect-conductor library models
+    by default: `"ImpedanceMetalRule"` of `Solver.SurfaceResponseCorrection` defaults to
+    `"Apply"` (was `"Off"`; the electrostatic block's default stays `"Off"`). A sheet with
+    `Rs` = `Cs` = 0 and a configured `Ls` at or below `"ImpedanceMetalMaxInductance"`
+    (default 9e-14 H/sq, the validated bound; validated at the designers' 4.5e-14 H/sq in
+    driven and eigenmode runs, cracked and uncracked) is corrected; the run prints this
+    regime in one line (it replaces the line "experimental and not validated") and
+    `surface-participation.csv` flags the rows `Ls sheet served as PEC`. A sheet above the
+    bound, with `Rs` or `Cs`, or a metal of another law is not served by the
+    perfect-conductor models: its values stay raw unless the library holds a model of its
+    own law, one line names it with the bound, its rows are flagged
+    `metal law not served: raw there`, and `"UnmatchedPolicy"` decides as before. A run
+    without an `Impedance` boundary runs exactly as `"Off"`, also under an explicit
+    `"Apply"` (which printed its lines and wrote its record there before). `"Record"`,
+    `"ImpedanceMetalFilmOverrides"` and an `"ImpedanceMetalMaxInductance"` above 9e-14
+    H/sq need `"Developer": true`. The
+    bound compares the configured `Ls` (H/sq as written), inclusive: a sheet at exactly the
+    bound was refused for about 6 % of characteristic lengths (the scaled `Ls` times its
+    scale landed one unit in the last place above it), and the recorded served `Ls` values
+    are the configured numbers. SchemaVer 7-0-0
   - Synchronized with *Palace* 0.20.0. The surface-response outputs follow its time-averaged
     energy convention ([PR 937](https://github.com/awslabs/palace/pull/937)): an energy of a
     complex (frequency-domain) field is the time average, one half of the Hermitian form,

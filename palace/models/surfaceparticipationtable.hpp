@@ -27,6 +27,14 @@ struct ResolutionCell;
 // end of every converged level. Output only: no value, solve or marking reads it.
 inline constexpr const char *kSurfaceParticipationFile = "surface-participation.csv";
 
+// The flags words of the impedance-metal rule (CUT-PLAN step 3; SurfaceParticipationRow
+// sheet_served / sheet_not_served): a value with Ls sheets served by the perfect-conductor
+// models, and a value raw at a metal the rule does not serve (an Ls sheet above the bound,
+// a sheet with Rs or Cs, another law).
+inline constexpr const char *kParticipationSheetServedFlag = "Ls sheet served as PEC";
+inline constexpr const char *kParticipationSheetNotServedFlag =
+    "metal law not served: raw there";
+
 // The verdict data (lane meshrule VERDICT-INPUT.md and its check; DATA, not code: the
 // built-in values are the repository file palace/models/surfaceparticipationverdict.json,
 // embedded at build time, and the optional "Verdict" member of a Resolution.BarsFile file
@@ -163,6 +171,11 @@ struct SurfaceParticipationRow
   // value's earlier levels through its join chain, oldest first; an eigenmode row's |p| of
   // the mode's inductive lumped ports (lumped port index -> |EPR|; the join fingerprint).
   bool marked = false;
+  // Not columns (CUT-PLAN step 3): the run's impedance-metal rule "Apply" corrected a
+  // feature on an impedance sheet by a perfect-conductor model, and a feature of the run
+  // lies on a metal the rule does not serve (raw there). A Type's value sums every feature
+  // of the run, so both are set on every row of the run; flags print their words.
+  bool sheet_served = false, sheet_not_served = false;
   std::vector<ParticipationHistoryEntry> history;
   std::map<int, double> mode_ports;
 };

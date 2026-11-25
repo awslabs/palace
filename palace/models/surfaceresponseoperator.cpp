@@ -24303,9 +24303,8 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   {
     // The impedance-metal rule's "Apply" (decision 2206 (a)): the manifest of record is the
     // identification through the film rule's seam (what the run serves), as in the
-    // operator.
-    if (maxwell &&
-        request.impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::APPLY &&
+    // operator; nothing to serve without an Impedance boundary (the manifest of "Off").
+    if (maxwell && ImpedanceApplyActs(iodata.boundaries, request) &&
         request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)
     {
       apply_film.emplace(ResolveImpedanceMetalFilm(iodata.boundaries, request, iodata.units,
@@ -24324,7 +24323,11 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   {
     MFEM_ABORT("Surface-response preflight requires a 2D or 3D solve mesh!");
   }
-  if (request.impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::APPLY &&
+  // An electrostatic preflight prints its line under an explicit "Apply" as before; a
+  // Maxwell one only where the rule acts.
+  if ((maxwell ? ImpedanceApplyActs(iodata.boundaries, request)
+               : request.impedance_metal_rule ==
+                     ResponseCorrectionData::ImpedanceMetalRule::APPLY) &&
       !apply_film)
   {
     Mpi::Print(parallel_mesh.GetComm(),
@@ -36179,10 +36182,11 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
 
   // The impedance-metal rule's APPLY (decision 2206 (a); DESIGN-APPLY s3): THIS operator
   // of record is built with the film rule at its seam (no candidate, no law reading); the
-  // seam exists on the three-dimensional Features path only, other paths run as "Off".
+  // seam exists on the three-dimensional Features path only, other paths run as "Off". A
+  // run without an Impedance boundary has nothing to serve: "Off" by construction, with no
+  // line (CUT-PLAN step 3: "Apply" is the Maxwell default).
   const FilmRuleResolution *film_seam = candidate_film_rule;
-  if (!impedance_rule_candidate &&
-      request->impedance_metal_rule == ResponseCorrectionData::ImpedanceMetalRule::APPLY)
+  if (!impedance_rule_candidate && ImpedanceApplyActs(iodata.boundaries, *request))
   {
     if (dimension == 3 &&
         request->patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES)

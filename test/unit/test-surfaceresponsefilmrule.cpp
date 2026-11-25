@@ -20,6 +20,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "driver.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/ksp.hpp"
@@ -27,13 +28,17 @@
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/surfaceparticipationtable.hpp"
 #include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/metadatafile.hpp"
+#include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
 
@@ -200,16 +205,31 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     CHECK_THAT(line, ContainsSubstring("Ls range served: 0 < configured Ls <= 9e-14 H/sq "
                                        "in every sheet form (ImpedanceMetalMaxInductance, "
                                        "the default)"));
-    // Decision 2208 (1): ONE line holds serving off while it is not validated.
+    // CUT-PLAN step 3: the regime label replaced the line "experimental and not validated":
+    // ONE regime line with the bound and the validated range; no line says "not validated".
+    CHECK(std::none_of(film.lines.begin(), film.lines.end(), [](const std::string &text)
+                       { return text.find("not validated") != std::string::npos; }));
     CHECK(std::count_if(film.lines.begin(), film.lines.end(), [](const std::string &text)
-                        { return text.find("not validated") != std::string::npos; }) == 1);
-    CHECK(HasLine(film,
-                  "Impedance-metal rule (APPLY): corrected values on impedance sheets "
-                  "are experimental and not validated"));
+                        { return text.find("(APPLY): regime: ") != std::string::npos; }) ==
+          1);
+    CHECK(HasLine(film, "Impedance-metal rule (APPLY): regime: purely inductive sheets at "
+                        "configured Ls <= 9e-14 H/sq are served by the perfect-conductor "
+                        "models; validated at the designers' 4.5e-14 H/sq in driven and "
+                        "eigenmode runs, cracked and uncracked"));
+    CHECK(HasLine(film, kImpedanceApplyValidatedRange));
     CHECK_THAT(line, ContainsSubstring("served Ls met: 4.5e-14 H/sq"));
-    CHECK(HasLine(film, "not served (Impedance Rs 0 Ls 2e-12 Cs 0, uncracked (one sheet "
-                        "of total Ls): ABOVE the Ls range <= 9e-14 H/sq): attributes [7]: "
-                        "their corrected values are not served (raw)"));
+    // Not served (as ruled for the default: raw and named, no abort): the line names the
+    // bound and the validated range in H/sq.
+    CHECK(HasLine(film,
+                  "not served (Impedance Rs 0 Ls 2e-12 Cs 0, uncracked (one sheet "
+                  "of total Ls): ABOVE the Ls range <= 9e-14 H/sq): attributes [7]: "
+                  "not served by the perfect-conductor models: raw unless the library "
+                  "holds a model of this law (law status EXACT, corrected by that "
+                  "model); the perfect-conductor models serve Ls sheets at or below "
+                  "9e-14 H/sq (validated at the designers' 4.5e-14 H/sq"));
+    CHECK(HasLine(film, "not served (Impedance Rs 1 Ls 0 Cs 0, uncracked (one sheet of "
+                        "total Ls)): attributes [3]: not served by the perfect-conductor "
+                        "models: raw unless the library holds a model of this law"));
     CHECK(HasLine(film, "not served (Conductivity): attributes [5]"));
     // An above-range sheet serves no segment; a served one does.
     CHECK(film.SegmentService({7}) == FilmService::NOT_DECLARED);
@@ -235,6 +255,44 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     CHECK(film.attributes.at(7).service == FilmService::FILM_INDUCTIVE);
     CHECK(film.served_inductances == std::vector<double>{4.5e-14, 2.0e-12});
     CHECK_THAT(film.lines.front(), ContainsSubstring("served Ls met: 4.5e-14, 2e-12 H/sq"));
+  }
+
+  // Lane v1lsdefault (bench-driven-ls NOTES 21): the bound is inclusive in the H/sq the
+  // designer configures. Main compared the scaled Ls times its scale, fl(fl(Ls / s) s): at
+  // this characteristic length (tools/roundtrip_scan_v1.py of the lane) that lands one unit
+  // in the last place above 9e-14, so a sheet at exactly the bound was refused.
+  SECTION("the bound is inclusive in the configured H/sq: at it, one ulp below, one above")
+  {
+    const Units scaled(1.0e-6, 1.0011520131719906e-6);
+    const double s = scaled.GetScaleFactor<Units::ValueType::INDUCTANCE>();
+    const double bound = ResponseCorrectionData::kDefaultImpedanceMetalMaxInductance;
+    REQUIRE(bound == 9.0e-14);
+    REQUIRE((bound / s) * s > bound);  // the premise: main's round trip refused the bound
+    const double below = std::nextafter(bound, 0.0);
+    const double above = std::nextafter(bound, 1.0);
+    const json sheets = {{"Impedance",
+                          {{{"Attributes", {2}}, {"Ls", bound}},
+                           {{"Attributes", {3}}, {"Ls", below}},
+                           {{"Attributes", {4}}, {"Ls", above}}}}};
+    config::BoundaryData si(sheets), nondimensional(sheets);
+    for (auto &data : nondimensional.impedance)
+    {
+      config::Nondimensionalize(scaled, data);
+    }
+    CHECK(nondimensional.impedance[0].configured_Ls == bound);
+    CHECK(nondimensional.impedance[0].Ls == bound / s);
+    for (const bool scaled_data : {true, false})
+    {
+      INFO("nondimensionalized " << scaled_data);
+      const auto film = ResolveImpedanceMetalFilm(scaled_data ? nondimensional : si,
+                                                  request, scaled, scaled_data);
+      CHECK(film.attributes.at(2).service == FilmService::FILM_INDUCTIVE);
+      CHECK(film.attributes.at(3).service == FilmService::FILM_INDUCTIVE);
+      CHECK(film.attributes.at(4).service == FilmService::INDUCTIVE_ABOVE_RANGE);
+      // The recorded Ls values are the configured numbers.
+      CHECK(film.attributes.at(2).inductance == bound);
+      CHECK(film.served_inductances == std::vector<double>{below, bound});
+    }
   }
 
   SECTION("the sheet form of each attribute: uncracked, cracked, the legacy split")
@@ -343,6 +401,17 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     CHECK(counts.corrected == 2);
     CHECK(counts.missing == 1);
     CHECK(counts.corrected_length == 2.5);
+    // CUT-PLAN step 3: the features on a metal the rule does not serve (the not-served
+    // flags word of surface-participation.csv): NOT-DECLARED here; LAW-JOINT and
+    // NOT-SERVED-BY-OVERRIDE below.
+    CHECK(counts.not_served == 1);
+    auto joint = features;
+    joint[1].status = "LAW-JOINT";
+    joint[3].status = "NOT-SERVED-BY-OVERRIDE";
+    CHECK(CountImpedanceApplyFeatures(joint).not_served == 3);
+    CHECK(CountImpedanceApplyFeatures(
+              std::vector<ResponseCorrectionData::ImpedanceLawFeatureData>(1, features[0]))
+              .not_served == 0);
     CHECK(ImpedanceApplyCountText(counts) ==
           "2 of 4 feature(s) on impedance sheets are corrected by perfect-conductor models "
           "(1 Missing, as for a perfect conductor)");
@@ -368,6 +437,27 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     CHECK(ImpedanceApplyCountText(CountImpedanceApplyFeatures(pec)) ==
           "0 of 0 feature(s) on impedance sheets are corrected by perfect-conductor models "
           "(0 Missing, as for a perfect conductor)");
+  }
+
+  // CUT-PLAN step 3 ("Apply" is the Maxwell default): the rule acts only where there is a
+  // sheet to serve or an override; a perfect-conductor run is "Off" by construction.
+  SECTION("Apply acts only on a run with an Impedance boundary or an override")
+  {
+    CHECK(ImpedanceApplyActs(boundaries, request));
+    const config::BoundaryData no_sheet(
+        json{{"PEC", {{"Attributes", {1}}}},
+             {"Conductivity", {{{"Attributes", {5}}, {"Conductivity", 5.8e7}}}}});
+    CHECK_FALSE(ImpedanceApplyActs(no_sheet, request));
+    auto overridden = request;
+    overridden.impedance_metal_film_overrides = {{{1}, false}};
+    CHECK(ImpedanceApplyActs(no_sheet, overridden));
+    for (const auto rule : {ResponseCorrectionData::ImpedanceMetalRule::OFF,
+                            ResponseCorrectionData::ImpedanceMetalRule::RECORD})
+    {
+      auto other = request;
+      other.impedance_metal_rule = rule;
+      CHECK_FALSE(ImpedanceApplyActs(boundaries, other));
+    }
   }
 }
 
@@ -518,11 +608,18 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   json config = ConvexMaxwellIslandConfig();
   auto &correction = config["Solver"]["SurfaceResponseCorrection"];
   {
+    // CUT-PLAN step 3: "Apply" by default in the Maxwell block, "Off" in the
+    // electrostatic block (ConvexIslandConfig).
     const IoData iodata(config, false);
     CHECK(iodata.solver.surface_response_correction->impedance_metal_rule ==
-          ResponseCorrectionData::ImpedanceMetalRule::OFF);
+          ResponseCorrectionData::ImpedanceMetalRule::APPLY);
     CHECK(
         iodata.solver.surface_response_correction->impedance_metal_film_overrides.empty());
+    const IoData electrostatic(ConvexIslandConfig(), false);
+    CHECK(electrostatic.solver.electrostatic.response_correction->impedance_metal_rule ==
+          ResponseCorrectionData::ImpedanceMetalRule::OFF);
+    CHECK(ResponseCorrectionData().impedance_metal_rule ==
+          ResponseCorrectionData::ImpedanceMetalRule::OFF);  // a request built in code
   }
   correction["ImpedanceMetalRule"] = "Record";
   correction["ImpedanceMetalFilmOverrides"] = {{{"Attributes", {9}}, {"Serve", false}}};
@@ -626,6 +723,91 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     flipped.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::APPLY;
     CHECK_NOTHROW(config::VerifyImpedanceMetalRuleCoveragePolicy(flipped));
   }
+}
+
+// CUT-PLAN step 3 (lane v1lsdefault; the supervisor's rulings): "Record",
+// "ImpedanceMetalFilmOverrides" and a bound above the validated 9e-14 H/sq are developer
+// options; at or below it any positive bound is accepted (a stricter one).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Impedance-metal rule developer options and the validated bound",
+                 "[surfaceresponsefilmrule][impedancemetalrule][Serial]")
+{
+  json config = ConvexMaxwellIslandConfig(test::CrackPolicy::Default);
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction.erase("Developer");
+  {
+    const IoData iodata(config, false);
+    const auto &request = *iodata.solver.surface_response_correction;
+    CHECK(request.impedance_metal_rule ==
+          ResponseCorrectionData::ImpedanceMetalRule::APPLY);
+    CHECK(request.developer_options.empty());
+  }
+  const double bound = ResponseCorrectionData::kDefaultImpedanceMetalMaxInductance;
+  auto WithKeys = [&](const json &keys, bool developer)
+  {
+    json run = config;
+    for (const auto &[key, value] : keys.items())
+    {
+      run["Solver"]["SurfaceResponseCorrection"][key] = value;
+    }
+    if (developer)
+    {
+      run["Solver"]["SurfaceResponseCorrection"]["Developer"] = true;
+    }
+    return run;
+  };
+  const std::string switch_text = "is a parked developer option";
+  const json record = {{"ImpedanceMetalRule", "Record"},
+                       {"Coverage", {{"Policy", "Warn"}}}};
+  const json overrides = {
+      {"ImpedanceMetalFilmOverrides", {{{"Attributes", {9}}, {"Serve", false}}}}};
+  const json larger = {{"ImpedanceMetalMaxInductance", std::nextafter(bound, 1.0)}};
+  CHECK_THROWS_WITH(IoData(WithKeys(record, false), false),
+                    ContainsSubstring("\"ImpedanceMetalRule\": \"Record\" " + switch_text));
+  CHECK_THROWS_WITH(IoData(WithKeys(overrides, false), false),
+                    ContainsSubstring("\"ImpedanceMetalFilmOverrides\" " + switch_text));
+  CHECK_THROWS_WITH(IoData(WithKeys(larger, false), false),
+                    ContainsSubstring("\"ImpedanceMetalMaxInductance\": "
+                                      "9.000000000000001e-14 H/sq (above the validated "
+                                      "bound 9e-14 H/sq) " +
+                                      switch_text));
+  for (const auto &[keys, option] :
+       {std::pair{record, "\"ImpedanceMetalRule\": \"Record\""},
+        std::pair{overrides, "\"ImpedanceMetalFilmOverrides\""},
+        std::pair{larger, "\"ImpedanceMetalMaxInductance\": 9.000000000000001e-14 H/sq"}})
+  {
+    INFO(keys.dump());
+    const IoData iodata(WithKeys(keys, true), false);
+    const auto &options = iodata.solver.surface_response_correction->developer_options;
+    REQUIRE(options.size() == 1);
+    CHECK_THAT(options[0], ContainsSubstring(option));
+  }
+  // At or below the validated bound: accepted without the switch, as a stricter bound.
+  for (const double value : {bound, std::nextafter(bound, 0.0), 4.5e-14})
+  {
+    const IoData iodata(WithKeys({{"ImpedanceMetalMaxInductance", value}}, false), false);
+    const auto &request = *iodata.solver.surface_response_correction;
+    CHECK(request.impedance_metal_max_inductance == value);
+    CHECK(request.impedance_metal_max_inductance_given);
+    CHECK(request.developer_options.empty());
+  }
+  // The bound still needs "Apply": refused under an explicit "Off" and in the
+  // electrostatic block, whose default stays "Off".
+  CHECK_THROWS_WITH(IoData(WithKeys({{"ImpedanceMetalRule", "Off"},
+                                     {"ImpedanceMetalMaxInductance", bound}},
+                                    false),
+                           false),
+                    ContainsSubstring("requires \"ImpedanceMetalRule\": \"Apply\""));
+  json electrostatic = ConvexIslandConfig(test::CrackPolicy::Default);
+  electrostatic["Solver"]["Electrostatic"]["ResponseCorrection"]
+               ["ImpedanceMetalMaxInductance"] = bound;
+  CHECK_THROWS_WITH(IoData(electrostatic, false),
+                    ContainsSubstring("requires \"ImpedanceMetalRule\": \"Apply\""));
+  // "Off" stays allowed in the Maxwell block.
+  const IoData off(WithKeys({{"ImpedanceMetalRule", "Off"}}, false), false);
+  CHECK(off.solver.surface_response_correction->impedance_metal_rule ==
+        ResponseCorrectionData::ImpedanceMetalRule::OFF);
 }
 
 // t2 / t3 / t5 and the negative laws (STAGEA-NOTE s6): the candidate operator on the convex
@@ -1334,4 +1516,278 @@ TEST_CASE("Impedance-metal rule candidate timers book into their own categories"
     BlockTimer after(Timer::POSTPRO_RESPONSE);
   }
   CHECK(timer.Counts(Timer::POSTPRO_RESPONSE) == response + 1);
+}
+
+namespace
+{
+
+// CUT-PLAN step 3 (lane v1lsdefault): the configuration of a designer's eigenmode run of
+// the island whose metal (attribute 9) is an uncracked Impedance sheet of `ls` H/sq, with
+// no ImpedanceMetalRule key (the Maxwell default "Apply"), no developer switch and the
+// library of the convex island on its SA interface (mesh and library written by the root).
+json DefaultSheetEigenmodeConfig(test::SurfaceResponseFiles &files, const std::string &stem,
+                                 double ls, const std::string &unmatched_policy)
+{
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path = files.temp.temp_dir / "impedance-default-island.mesh";
+  const auto library_path = files.temp.temp_dir / "impedance-default-convex-sa-3d.json";
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = test::SurfaceResponseFiles::MakeSerialIslandMesh();
+    std::ofstream mesh_output(mesh_path);
+    serial.Print(mesh_output);
+    json library = json::parse(std::ifstream(files.convex_library_3d_path));
+    library["Name"] = "unit-test-process-impedance-default-convex-sa-3d";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream(library_path) << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = files.ConvexMaxwellIslandConfig(test::CrackPolicy::Default);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+  config["Boundaries"]["Impedance"] = json::array({{{"Attributes", {9}}, {"Ls", ls}}});
+  config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9};
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction.erase("Developer");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = unmatched_policy;
+  correction["GeometryFailurePolicy"] = "RecordRaw";
+  config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
+  config["Problem"]["Output"] =
+      (files.temp.temp_dir / ("impedance-default-" + stem)).string();
+  return config;
+}
+
+// The run of DefaultSheetEigenmodeConfig through the driver; the output directory.
+std::filesystem::path RunDefaultSheetEigenmode(test::SurfaceResponseFiles &files,
+                                               const std::string &stem, double ls,
+                                               const std::string &unmatched_policy)
+{
+  MPI_Comm comm = Mpi::World();
+  IoData iodata(DefaultSheetEigenmodeConfig(files, stem, ls, unmatched_policy), false);
+  REQUIRE(iodata.solver.surface_response_correction->impedance_metal_rule ==
+          ResponseCorrectionData::ImpedanceMetalRule::APPLY);
+  MakeOutputFolder(iodata, comm);
+  BlockTimer::Reset();
+  palace::Run(iodata, comm, utils::ConfigureOmp(), /*git_tag=*/nullptr);
+  Mpi::Barrier(comm);
+  return iodata.problem.output;
+}
+
+// The flags of the rows of surface-participation.csv that carry a value (every row but the
+// NOT-TARGET ones).
+std::vector<std::string> ValuedRowFlags(const std::filesystem::path &dir)
+{
+  const Table rows = test::LoadCsv(dir / kSurfaceParticipationFile);
+  const auto &flags = test::ColumnByHeader(rows, "flags").text;
+  std::vector<std::string> valued;
+  std::copy_if(flags.begin(), flags.end(), std::back_inserter(valued),
+               [](const std::string &text) { return text != "NOT-TARGET"; });
+  return valued;
+}
+
+}  // namespace
+
+// CUT-PLAN step 3 (lane v1lsdefault; the supervisor's rulings (b) and (c)): with no rule
+// key an Ls sheet at the designers' 4.5e-14 H/sq is served: every valued row of the
+// designer table carries the served word and palace.json the regime line (the log prints
+// the same lines). Above the bound (100 x) with UnmatchedPolicy "Warn" the run goes on raw:
+// nothing matches (RawFallback) and every valued row carries the not-served word.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Impedance-metal rule default in an eigenmode run: the designer table's "
+                 "words for a served and a not-served sheet",
+                 "[surfaceresponsefilmrule][impedancemetalrule][surfaceparticipation]"
+                 "[eigensolver][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const auto served = RunDefaultSheetEigenmode(*this, "served", 4.5e-14, "Warn");
+  const auto above = RunDefaultSheetEigenmode(*this, "above", 4.5e-12, "Warn");
+  if (!Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  const auto ReadMetadata = [](const fs::path &dir)
+  { return json::parse(std::ifstream(dir / "palace.json")); };
+  {
+    const auto flags = ValuedRowFlags(served);
+    REQUIRE(!flags.empty());
+    for (const auto &text : flags)
+    {
+      CHECK_THAT(text, ContainsSubstring(kParticipationSheetServedFlag));
+      CHECK_THAT(text, !ContainsSubstring(kParticipationSheetNotServedFlag));
+    }
+    const auto record = ReadMetadata(served).at("SurfaceResponse").at("ImpedanceMetalRule");
+    CHECK(record.at("ServedImpedanceFeatures").get<int>() > 0);
+    const auto lines = record.at("Lines").get<std::vector<std::string>>();
+    CHECK(std::count_if(lines.begin(), lines.end(),
+                        [](const std::string &line)
+                        {
+                          return line.find("Impedance-metal rule (APPLY): regime: purely "
+                                           "inductive sheets at configured Ls <= 9e-14 "
+                                           "H/sq are served by the perfect-conductor "
+                                           "models; validated") != std::string::npos;
+                        }) == 1);
+  }
+  {
+    const auto flags = ValuedRowFlags(above);
+    REQUIRE(!flags.empty());
+    for (const auto &text : flags)
+    {
+      CHECK_THAT(text, ContainsSubstring(kParticipationSheetNotServedFlag));
+      CHECK_THAT(text, !ContainsSubstring(kParticipationSheetServedFlag));
+    }
+    const Table rows = test::LoadCsv(above / kSurfaceParticipationFile);
+    for (const auto &reason : test::ColumnByHeader(rows, "reason").text)
+    {
+      CHECK_THAT(reason, ContainsSubstring("RawFallback"));
+    }
+    const auto record = ReadMetadata(above).at("SurfaceResponse").at("ImpedanceMetalRule");
+    CHECK(record.at("ServedImpedanceFeatures").get<int>() == 0);
+    const auto lines = record.at("Lines").get<std::vector<std::string>>();
+    CHECK(std::count_if(lines.begin(), lines.end(),
+                        [](const std::string &line)
+                        {
+                          return line.find("ABOVE the Ls range <= 9e-14 H/sq): attributes "
+                                           "[9]: not served by the perfect-conductor "
+                                           "models: raw unless the library holds a model "
+                                           "of this law") != std::string::npos;
+                        }) == 1);
+  }
+#endif
+}
+
+// The same sheet above the bound with UnmatchedPolicy "Error": the run stops naming its
+// features (as on main for every Missing feature; the warning before it names the law).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Impedance-metal rule default: a sheet above the bound stops a run under "
+                 "UnmatchedPolicy Error",
+                 "[surfaceresponsefilmrule][impedancemetalrule][eigensolver][3d][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  std::string message;
+  const std::string log = CaptureStdout(
+      temp.temp_dir / "impedance-default-error.log",
+      [&]
+      {
+        IoData iodata(DefaultSheetEigenmodeConfig(*this, "error", 4.5e-12, "Error"), false);
+        std::vector<std::unique_ptr<Mesh>> meshes;
+        meshes.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, Mpi::World())));
+        SpaceOperator space_op(iodata, meshes);
+        try
+        {
+          SurfaceResponseOperator response(iodata, space_op);
+        }
+        catch (const std::exception &error)
+        {
+          message = error.what();
+        }
+      });
+  CHECK_THAT(message, ContainsSubstring("identified feature(s) have no library model"));
+  CHECK_THAT(message, ContainsSubstring("(UnmatchedPolicy = Error)"));
+  CHECK_THAT(log, ContainsSubstring("ABOVE the Ls range <= 9e-14 H/sq): attributes [9]"));
+  CHECK_THAT(log, ContainsSubstring("under another metal boundary law: device metal"));
+#endif
+}
+
+// The supervisor's ruling on lane v1lsdefault's finding: a sheet above the bound is not
+// served by the perfect-conductor models; its values are raw UNLESS the library holds a
+// model of its own law (law status EXACT: corrected by that model). The not-served line
+// names both outcomes (it precedes the matching); the feature statuses and the log's
+// law-status line say which one the run met, and only the raw one gives the designer
+// table's not-served word. Ls 1e-13 H/sq (> 9e-14), no rule key, the Features construction:
+// with the perfect-conductor library (no model of the law) every feature is NOT-DECLARED
+// and nothing is placed; with the library of that law (the finite-impedance convex
+// library, the six value tests' library) every feature is EXACT and corrected by a model.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Impedance-metal rule default: a sheet above the bound is raw unless the "
+                 "library holds a model of its law",
+                 "[surfaceresponsefilmrule][impedancemetalrule][maxwell][3d][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  // Both libraries keyed on the island's one target interface (SA), as the Features
+  // construction reads them.
+  auto SaLibrary = [&](const fs::path &source, const std::string &name)
+  {
+    const auto path = temp.temp_dir / (name + ".json");
+    if (Mpi::Root(comm))
+    {
+      json library = json::parse(std::ifstream(source));
+      library["Name"] = name;
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      }
+      std::ofstream(path) << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(comm);
+    return path;
+  };
+  const auto pec_library =
+      SaLibrary(convex_library_3d_path, "unit-test-process-above-bound-pec-sa-3d");
+  const auto law_library = SaLibrary(finite_impedance_convex_library_3d_path,
+                                     "unit-test-process-above-bound-impedance-sa-3d");
+  const std::string line_text =
+      "not served (Impedance Rs 0 Ls 1e-13 Cs 0, cracked (two faces of Ls each): ABOVE the "
+      "Ls range <= 9e-14 H/sq): attributes [9]: not served by the perfect-conductor "
+      "models: "
+      "raw unless the library holds a model of this law (law status EXACT, corrected by "
+      "that model); the perfect-conductor models serve Ls sheets at or below 9e-14 H/sq";
+  auto Check = [&](const fs::path &library, const std::string &stem, bool exact)
+  {
+    INFO(stem);
+    json config = ConvexMaxwellIslandConfig(test::CrackPolicy::Default);
+    config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+    config["Boundaries"]["Impedance"] =
+        json::array({{{"Attributes", {9}}, {"Ls", 1.0e-13}}});
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9};
+    auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction.erase("Developer");
+    correction["Library"] = library.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["GeometryFailurePolicy"] = "RecordRaw";
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+    SpaceOperator space(iodata, meshes);
+    std::unique_ptr<SurfaceResponseOperator> response;
+    const std::string log = CaptureStdout(
+        temp.temp_dir / (stem + ".log"),
+        [&] { response = std::make_unique<SurfaceResponseOperator>(iodata, space); });
+    const auto *film = response->GetImpedanceApplyRule();
+    REQUIRE(film != nullptr);
+    CHECK(film->attributes.at(9).service == FilmService::INDUCTIVE_ABOVE_RANGE);
+    CHECK(HasLine(*film, line_text));
+    CHECK_THAT(log, ContainsSubstring(line_text));
+    CHECK_THAT(log, ContainsSubstring(exact ? "feature law statuses: EXACT"
+                                            : "feature law statuses: NOT-DECLARED"));
+    const auto &features = response->GetImpedanceLawFeatures();
+    REQUIRE(!features.empty());
+    for (const auto &feature : features)
+    {
+      CHECK(feature.status == (exact ? "EXACT" : "NOT-DECLARED"));
+      CHECK(feature.model.empty() == !exact);
+    }
+    const auto counts = CountImpedanceApplyFeatures(features);
+    CHECK(counts.sheet == static_cast<int>(features.size()));
+    CHECK(counts.not_served == (exact ? 0 : counts.sheet));
+    CHECK((response->GetPatchCount() > 0) == exact);
+  };
+  Check(pec_library, "above-bound-pec-library", false);
+  Check(law_library, "above-bound-law-library", true);
+#endif
 }

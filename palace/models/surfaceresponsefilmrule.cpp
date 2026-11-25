@@ -132,8 +132,6 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
   resolution.max_inductance_is_default = !request.impedance_metal_max_inductance_given;
   const double impedance_scale =
       nondimensionalized ? units.GetScaleFactor<Units::ValueType::IMPEDANCE>() : 1.0;
-  const double inductance_scale =
-      nondimensionalized ? units.GetScaleFactor<Units::ValueType::INDUCTANCE>() : 1.0;
   const double capacitance_scale =
       nondimensionalized ? units.GetScaleFactor<Units::ValueType::CAPACITANCE>() : 1.0;
   auto Add = [&](int attribute, const std::string &law, FilmService service)
@@ -160,7 +158,9 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
   }
   for (const auto &data : boundaries.impedance)
   {
-    const double inductance = data.Ls * inductance_scale;
+    // The configured Ls (as the designer wrote it, H/sq): the scaled Ls times its scale can
+    // land one unit in the last place above it (bench-driven-ls NOTES 21).
+    const double inductance = nondimensionalized ? data.configured_Ls : data.Ls;
     // Apply (decision 2206 (a); 2208 (3); 2215): a purely inductive sheet is served when
     // its CONFIGURED Ls (the number of the Impedance boundary, whatever the sheet form; the
     // per-face meaning is printed with the form) lies in (0, ImpedanceMetalMaxInductance];
@@ -328,11 +328,13 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
         film.empty() ? "none" : film, resolution.max_inductance,
         resolution.max_inductance_is_default ? "the default" : "configured",
         met.empty() ? "none" : fmt::format("{} H/sq", fmt::join(met, ", "))));
-    // Decision 2208 (1): the one line that holds serving off for designers while it is not
-    // validated (removing it is the switch, by its own review).
-    resolution.lines.push_back(
-        "Impedance-metal rule (APPLY): corrected values on impedance sheets are "
-        "experimental and not validated");
+    // CUT-PLAN step 3 (decision 2208 (1) as ruled for the default): the regime label that
+    // replaced the line "experimental and not validated": the bound and the validated
+    // range.
+    resolution.lines.push_back(fmt::format(
+        "Impedance-metal rule (APPLY): regime: purely inductive sheets at configured Ls <= "
+        "{:.6g} H/sq are served by the perfect-conductor models; {}",
+        resolution.max_inductance, kImpedanceApplyValidatedRange));
   }
   else
   {
@@ -345,11 +347,29 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
                           override_lines.end());
   for (const auto &[law, attributes] : not_served_laws)
   {
+    // Not served by the perfect-conductor models; raw unless the library holds a model of
+    // the device law itself (the feature's law status EXACT: corrected by that model). The
+    // line precedes the matching, so it names both outcomes.
     resolution.lines.push_back(fmt::format(
         "  not served ({}): attributes [{}]{}", law, fmt::join(attributes, ", "),
-        apply ? ": their corrected values are not served (raw)" : ""));
+        apply ? fmt::format(": not served by the perfect-conductor models: raw unless the "
+                            "library holds a model of this law (law status EXACT, "
+                            "corrected by that model); the perfect-conductor models serve "
+                            "Ls sheets at or below {:.6g} H/sq ({})",
+                            resolution.max_inductance, kImpedanceApplyValidatedRange)
+              : std::string()));
   }
   return resolution;
+}
+
+bool ImpedanceApplyActs(
+    const config::BoundaryData &boundaries,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request)
+{
+  using ImpedanceMetalRule =
+      config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceMetalRule;
+  return request.impedance_metal_rule == ImpedanceMetalRule::APPLY &&
+         (!boundaries.impedance.empty() || !request.impedance_metal_film_overrides.empty());
 }
 
 bool ImpedanceLawStatusServesSheet(const std::string &status)
@@ -368,6 +388,13 @@ ImpedanceApplyCounts CountImpedanceApplyFeatures(
   for (const auto &feature : features)
   {
     counts.sheet += feature.impedance_sheet ? 1 : 0;
+    if (feature.status == ImpedanceLawStatusName(ImpedanceLawStatus::NOT_DECLARED) ||
+        feature.status ==
+            ImpedanceLawStatusName(ImpedanceLawStatus::NOT_SERVED_BY_OVERRIDE) ||
+        feature.status == ImpedanceLawStatusName(ImpedanceLawStatus::LAW_JOINT))
+    {
+      counts.not_served++;
+    }
     if (!ImpedanceLawStatusServesSheet(feature.status))
     {
       continue;
