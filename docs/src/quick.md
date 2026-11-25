@@ -426,7 +426,8 @@ palace -np 1 spheres.json
 
 You'll see output including mesh details, solver progress, and timing
 information. The amount of information can be controlled with the `Verbose`
-configuration option in the JSON file.
+configuration option in the JSON file. Set `Problem.Verbose` to zero to report only the
+element count after uniform or adaptive refinement.
 
 ```@raw html
 <div style="max-height: 300px; overflow-y: auto;">

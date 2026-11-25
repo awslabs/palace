@@ -42,6 +42,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - At `Problem.Verbose: 0`, mesh reports after refinement show the global element
+    count and omit detailed quality statistics.
+
   - The STRUMPACK coarse solvers map the elimination tree to the processes by factor size,
     the cost of a triangular solve, instead of by the operations of the factorization. On a
     model with 115M unknowns on 3072 processes a coarse solve takes 43 ms instead of 72 ms.

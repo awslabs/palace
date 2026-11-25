@@ -418,8 +418,8 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       }
     }
 
-    // Print statistics (element counts, size h, and shape regularity kappa) for the
-    // newly-refined mesh so the evolution of mesh quality under AMR is visible.
+    // Report the newly refined mesh. At normal verbosity the quality statistics
+    // show how the mesh evolves across adaptive refinement iterations.
     mesh::PrintMeshInfo(*mesh.back(), iodata, /*full=*/false);
 
     // Solve + estimate.

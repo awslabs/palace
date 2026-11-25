@@ -92,8 +92,8 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
 // Print parallel mesh statistics (element/vertex/edge/face counts, element size h, and
 // shape regularity kappa). When `full` is true, also prints the (refinement-invariant)
 // mesh curvature order and bounding box; pass false to print only the statistics that
-// change under refinement (used after each adaptive mesh refinement iteration). `prefix`
-// is prepended to the stats block (e.g. "Coarse "/"Refined ").
+// change under refinement. With `full=false` and quiet verbosity, only the global
+// element count is printed. `prefix` is prepended to the report (e.g. "Refined ").
 void PrintMeshInfo(mfem::ParMesh &mesh, const IoData &iodata, bool full = true,
                    const std::string &prefix = "");
 
