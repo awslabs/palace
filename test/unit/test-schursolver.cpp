@@ -82,7 +82,7 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   const HYPRE_BigInt row0 = A->GetRowStarts()[0];
 
   // Scattered Schur variables, in an order other than that of their rows, and rows of
-  // neither kind (as Dirichlet rows), eliminated for the partial factorizations.
+  // neither kind (as Dirichlet rows), outside the system.
   std::vector<HYPRE_BigInt> schur_vars;
   std::vector<int> internal;
   std::vector<int> pos(n, -1);
@@ -105,17 +105,6 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   }
   const int ns = static_cast<int>(schur_vars.size()),
             ni = static_cast<int>(internal.size());
-  mfem::Array<int> other_rows;
-  for (int i = 0; i < n_loc; i++)
-  {
-    if (other[row0 + i])
-    {
-      other_rows.Append(i);
-    }
-  }
-  mfem::HypreParMatrix A_elim(*A);
-  A_elim.EliminateBC(other_rows, mfem::Operator::DiagonalPolicy::DIAG_ONE);
-
   // The dense references: A_II^-1 and S = A_SS - A_SI A_II^-1 A_IS.
   const mfem::DenseMatrix D = Dense(*A);
   mfem::DenseMatrix A_II(ni), A_IS(ni, ns), S_ref(ns);
@@ -143,9 +132,9 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   mfem::MultAtB(A_IS, Y, AtY);
   S_ref.Add(-1.0, AtY);
 
-  // MUMPS factors A_elim, and DirectSchurSolver the system of A without the other rows: by
-  // STRUMPACK's partial factorization (or with one solve per Schur variable without its
-  // Schur complement interface), and with the solves of SuperLU_DIST.
+  // The system of A without the other rows, factored by MUMPS, by STRUMPACK's partial
+  // factorization (or with one solve per Schur variable without its Schur complement
+  // interface), and with the solves of SuperLU_DIST.
   std::vector<std::string> backends;
 #if defined(MFEM_USE_MUMPS)
   backends.push_back("MUMPS");
@@ -165,29 +154,27 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   CAPTURE(backend, ns);
   auto make = [&]() -> std::unique_ptr<SchurFactorization<double>>
   {
-#if defined(MFEM_USE_MUMPS)
-    if (backend == "MUMPS")
-    {
-      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars);
-    }
-    if (backend == "MUMPS, blocks of 4")
-    {
-      // Several blocks of S on each process of the grid.
-      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars, 0.0, false, true,
-                                                SymbolicFactorization::DEFAULT, 4);
-    }
-#endif
     std::vector<char> keep(n_loc);
     for (int i = 0; i < n_loc; i++)
     {
       keep[i] = !other[row0 + i];
     }
     SideSystem side({A.get()}, keep);
+    const int n_sys = static_cast<int>(side.rows.size());
+    SchurFactorization<double>::Coo coo{std::move(side.irn), std::move(side.jcn),
+                                        std::move(side.parts[0])};
+    const auto vars = side.Indices(schur_vars);
+#if defined(MFEM_USE_MUMPS)
+    if (backend == "MUMPS" || backend == "MUMPS, blocks of 4")
+    {
+      // In blocks of 4, several blocks of S on each process of the grid.
+      return std::make_unique<MumpsSchurSolver>(
+          comm, side.n_glob, n_sys, std::move(coo), vars, 0.0, false, true, side.rows,
+          SymbolicFactorization::DEFAULT, (backend == "MUMPS") ? 64 : 4);
+    }
+#endif
     return std::make_unique<DirectSchurSolver>(
-        comm, side.n_glob, static_cast<int>(side.rows.size()),
-        DirectSchurSolver::Coo{std::move(side.irn), std::move(side.jcn),
-                               std::move(side.parts[0])},
-        side.Indices(schur_vars), side.rows,
+        comm, side.n_glob, n_sys, std::move(coo), vars, side.rows,
         (backend == "STRUMPACK") ? LinearSolver::STRUMPACK : LinearSolver::SUPERLU);
   };
 
@@ -210,7 +197,7 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   }
 
   // Two internal solves in place: A_II^-1 b on the internal variables, 0 on the Schur ones
-  // (on the other rows, b for MUMPS's factorization of A_elim, 0 for DirectSchurSolver's).
+  // and on the other rows.
   std::vector<mfem::Vector> x(2, mfem::Vector(n_loc));
   for (int i = 0; i < n_loc; i++)
   {
@@ -240,10 +227,7 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
     double err = 0.0;
     for (int i = 0; i < n_loc; i++)
     {
-      if (!other[row0 + i])
-      {
-        err = std::max(err, std::abs(x[k](i) - ref[k](static_cast<int>(row0) + i)));
-      }
+      err = std::max(err, std::abs(x[k](i) - ref[k](static_cast<int>(row0) + i)));
     }
     MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, comm);
     CHECK(err <= 1.0e-12 * ref[k].Normlinf());

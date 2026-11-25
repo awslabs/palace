@@ -13,7 +13,6 @@
 #include <vector>
 #include <dmumps_c.h>
 #include <zmumps_c.h>
-#include "linalg/lowertriangle.hpp"
 #include "linalg/schursolver.hpp"
 #include "linalg/vector.hpp"
 #include "utils/labels.hpp"
@@ -21,14 +20,11 @@
 namespace palace
 {
 
-// MUMPS partial factorization with a Schur complement: factors the symmetric parent-space
-// operator A (rows/cols outside the eliminated subsystem set to identity), or the
-// subsystem alone, with the given Schur variables left unfactored, giving the dense Schur
-// complement 2D block cyclic over the ranks factoring, whose rows then go to the ranks
-// holding them -- for the environment, S_E = A_GG - A_GE A_EE^-1 A_EG from one partial
-// factorization instead of |Gamma| back-solves. The same factorization then
-// solves the internal problem (A_EE, the Schur variables fixed at 0), which serves every
-// other environment solve. T = double (DMUMPS) for a real symmetric A, std::complex<double>
+// MUMPS's partial factorization of a symmetric matrix A with a Schur complement: the given
+// Schur variables are left unfactored, which gives the dense Schur complement 2D block
+// cyclic on a grid of the first ranks (for the environment, S_E = A_GG - A_GE A_EE^-1
+// A_EG). The same factorization then solves the internal problem (A_EE, the Schur
+// variables fixed at 0). T = double (DMUMPS) for a real symmetric A, std::complex<double>
 // (ZMUMPS) for a complex symmetric A = Ar + i Ai. The right-hand sides and solutions of the
 // solves stay distributed by rows; only the condensed (Schur) parts are on rank 0.
 template <typename T>
@@ -41,27 +37,19 @@ public:
   using typename SchurFactorization<T>::VecType;
   using Coo = typename SchurFactorization<T>::Coo;
 
-  // schur_vars: global (0-based) true-DOF indices of the Schur variables, in the order the
-  // Schur rows/columns should appear (replicated on all ranks); empty for a plain
-  // factorization of A. blr_tol > 0 enables a block low-rank (BLR) factorization with that
-  // relative accuracy (0: exact). With refactor, the entries are kept so that Refactor can
-  // factor new values with the same pattern, reusing the analysis. spd: A is positive
-  // definite, so it is factored without numerical pivoting. ordering is the fill-reducing
-  // ordering ("Default": METIS); MUMPS computes a Schur complement only after a sequential
-  // analysis, so with Schur variables a parallel ordering is replaced by its sequential
-  // counterpart. block: the block size of the distribution of the Schur complement, on a
-  // grid of grid_rows x grid_cols processes (by default, as square as the number of ranks
-  // allows).
-  MumpsSchurSolverT(const mfem::HypreParMatrix &A,
-                    const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
-                    bool refactor = false, bool spd = true,
-                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT,
-                    int block = 64);
-
-  // From the local lower-triangle entries of A (n_loc local rows, in rank order). With
-  // rows, the vectors of the solves are of a larger (parent) space: rows[i] is the local
-  // index of local row i in them, or -1 for a row of none (the other entries of a solution
-  // are 0).
+  // From the local lower-triangle entries of A (n_loc local rows, in rank order), and
+  // schur_vars, the global (0-based) rows of the Schur variables, in the order of their
+  // rows and columns in S (replicated; empty for a plain factorization). blr_tol > 0
+  // enables a block low-rank (BLR) factorization with that relative accuracy (0: exact).
+  // With refactor, the entries are kept so that Refactor can factor new values with the
+  // same pattern, reusing the analysis. spd: A is positive definite, so it is factored
+  // without numerical pivoting. With rows, the vectors of the solves are of a larger
+  // (parent) space: rows[i] is the local index of local row i in them, or -1 for a row of
+  // none (the other entries of a solution are 0). ordering is the fill-reducing ordering
+  // ("Default": METIS); MUMPS computes a Schur complement only after a sequential analysis,
+  // so with Schur variables a parallel ordering is replaced by its sequential counterpart.
+  // block: the block size of the distribution of the Schur complement, on a grid of
+  // grid_rows x grid_cols processes (by default, as square as the number of ranks allows).
   MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
                     const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
                     bool refactor = false, bool spd = true, std::vector<int> rows = {},

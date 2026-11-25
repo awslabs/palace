@@ -11,6 +11,27 @@
 namespace palace
 {
 
+namespace
+{
+
+// A row of w doubles, so that the counts of a row exchange are rows (n w entries can
+// overflow an int).
+class RowType
+{
+public:
+  explicit RowType(int w)
+  {
+    MPI_Type_contiguous(w, MPI_DOUBLE, &type);
+    MPI_Type_commit(&type);
+  }
+  ~RowType() { MPI_Type_free(&type); }
+  RowType(const RowType &) = delete;
+  RowType &operator=(const RowType &) = delete;
+  MPI_Datatype type;
+};
+
+}  // namespace
+
 void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
                                                     const std::vector<Source> &src)
 {
@@ -520,9 +541,8 @@ void SubstructuringSolver::Impl::ApplyAeeInvMulti(
   MFEM_ASSERT(X.size() == Y.size(), "ApplyAeeInvMulti size mismatch!");
   BlockTimer bt(Timer::KSP);
   MFEM_VERIFY(env_built, "Environment solver used before EnsureEnv()!");
-  // The internal solve (Gamma held at 0), masked to E.
+  // The internal solve: Gamma held at 0, and 0 off the environment's side.
   env_schur->SolveInternal(X, Y);
-  MaskToEnvInterior(Y);
 }
 
 void SubstructuringSolver::Impl::CondenseRows(const std::vector<const mfem::Vector *> &V,
@@ -545,22 +565,6 @@ void SubstructuringSolver::Impl::CondenseRows(const std::vector<const mfem::Vect
     }
   }
   ScatterRows(full, nv, rows);
-}
-
-void SubstructuringSolver::Impl::MaskToEnvInterior(
-    const std::vector<mfem::Vector *> &Y) const
-{
-  for (auto *y : Y)
-  {
-    double *yy = y->HostReadWrite();
-    for (int i = 0; i < nt; i++)
-    {
-      if (!iface.env_int[i])
-      {
-        yy[i] = 0.0;
-      }
-    }
-  }
 }
 
 void SubstructuringSolver::Impl::MaterializeWithEnergy()

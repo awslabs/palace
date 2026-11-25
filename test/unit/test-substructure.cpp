@@ -60,6 +60,54 @@ TEST_CASE("Interface true DOFs are identified consistently in parallel",
   CHECK(count(2) == 169);
 }
 
+TEST_CASE("The interface of a substructured space is numbered by rank",
+          "[substructure][Serial][Parallel]")
+{
+  // The cube split at x = 0.5 at order 2, without Dirichlet DOFs: the 169 interface DOFs
+  // are numbered in blocks of the ranks in rank order, each in local order, and each index
+  // gives back its true DOF.
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::HEXAHEDRON);
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    mfem::Vector c;
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+  }
+  serial.SetAttributes();
+  mfem::ParMesh mesh(comm, serial);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace pfes(&mesh, &fec);
+  mfem::Array<int> ra({1}), ea({2}), rm, em;
+  MarkInterfaceTrueDofs(pfes, ra, ea, rm, em);
+  const int nt = pfes.GetTrueVSize();
+  const HYPRE_BigInt tstart = pfes.GetMyTDofOffset();
+  const SubstructureInterface iface(
+      ClassifyInterfaceTrueDofs(rm, em, std::vector<char>(nt, 0), {}), tstart, comm);
+  const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
+  CHECK(iface.size == 169);
+  REQUIRE(static_cast<int>(iface.counts.size()) == nranks);
+  CHECK(iface.count == iface.counts[rank]);
+  CHECK(iface.offset == iface.offsets[rank]);
+  CHECK(iface.offsets.back() + iface.counts.back() == iface.size);
+  REQUIRE(iface.tdofs.size() == static_cast<std::size_t>(iface.size));
+  int wrong = 0, next = iface.offset;
+  for (int i = 0; i < nt; i++)
+  {
+    if (iface.gamma[i])
+    {
+      wrong += (iface.index[i] != next++ || iface.tdofs[iface.index[i]] != tstart + i);
+    }
+    else
+    {
+      wrong += (iface.index[i] != -1);
+    }
+  }
+  wrong += (next != iface.offset + iface.count);
+  Mpi::GlobalSum(1, &wrong, comm);
+  CHECK(wrong == 0);
+}
+
 TEST_CASE("Element moments tell sets of elements apart", "[substructure][Serial][Parallel]")
 {
   // A box [0, 2] x [-0.3, 0.3]^2, and the same rotated by 90 degrees about the z axis: the

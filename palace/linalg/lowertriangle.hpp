@@ -5,7 +5,6 @@
 #define PALACE_LINALG_LOWER_TRIANGLE_HPP
 
 #include <array>
-#include <complex>
 #include <cstddef>
 #include <functional>
 #include <utility>
@@ -49,9 +48,8 @@ public:
   // The local true DOF of each local row of the system, and the global size of the system.
   std::vector<int> rows;
   HYPRE_BigInt n_glob = 0;
-  // The pattern: its entries in system indices, and on the local true DOFs (as
-  // LowerTrianglePattern, with global true-DOF columns), for AddToPattern.
-  std::vector<int> irn, jcn, row_ptr, tdof_jcn;
+  // The pattern, its entries in system indices, and the entries of each part on it.
+  std::vector<int> irn, jcn;
   std::vector<std::vector<double>> parts;
 
 private:
@@ -59,14 +57,6 @@ private:
   HYPRE_BigInt tstart = 0;
   std::vector<HYPRE_BigInt> index;  // the system index of each local true DOF (-1: pinned)
 };
-
-// val += a X on a pattern from LowerTrianglePattern, for a matrix X with entries inside the
-// pattern (or zero).
-void AddToPattern(const mfem::HypreParMatrix &X, double a, const std::vector<int> &row_ptr,
-                  const std::vector<int> &jcn, std::vector<double> &val);
-void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
-                  const std::vector<int> &row_ptr, const std::vector<int> &jcn,
-                  std::vector<std::complex<double>> &val);
 
 // The lower triangle of a symmetric n x n matrix by columns, as the records of a
 // substructuring model hold it (column b holds the rows a >= b): its number of entries, and

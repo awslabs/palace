@@ -9,31 +9,9 @@
 #include <mfem.hpp>
 #include "linalg/blockcyclic.hpp"
 #include "linalg/vector.hpp"
-#include "utils/communication.hpp"
 
 namespace palace
 {
-
-//
-// A row of w entries (double or std::complex<double>), so that the counts of a row exchange
-// are rows (n w entries can overflow an int).
-//
-template <typename T>
-class RowTypeT
-{
-public:
-  explicit RowTypeT(int w)
-  {
-    MPI_Type_contiguous(w, mpi::DataType<T>(), &type);
-    MPI_Type_commit(&type);
-  }
-  ~RowTypeT() { MPI_Type_free(&type); }
-  RowTypeT(const RowTypeT &) = delete;
-  RowTypeT &operator=(const RowTypeT &) = delete;
-  MPI_Datatype type;
-};
-
-using RowType = RowTypeT<double>;
 
 //
 // A sparse symmetric matrix A = [A_II, A_IS; A_SI, A_SS] factored for its Schur complement

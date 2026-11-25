@@ -198,15 +198,15 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   const auto environment =
       env ? EnvironmentRecord::Deserialize(ModelFile::ReadPayload(path, *env, comm))
           : std::nullopt;
-  substructuring::InterfaceRecords iface;
+  substructuring::InterfaceRecords records;
   if (h.file.incomplete || w == 0 || nG < 0 || !S ||
       S->size != static_cast<long long>(sizeof(double)) * TriangleSize(nG) || !fp ||
       fp->size != static_cast<long long>(sizeof(double)) * kEnvFpSize || !environment ||
-      !iface.Read(path, h.file, comm) || iface.n != nG || iface.width != w)
+      !records.Read(path, h.file, comm) || records.n != nG || records.width != w)
   {
     return h;
   }
-  h.sig = std::move(iface.signatures);
+  h.sig = std::move(records.signatures);
   h.width = w;
   h.S_pos = S->pos;
   h.environment = *environment;

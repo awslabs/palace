@@ -41,16 +41,17 @@ namespace substructuring
 {
 
 // A materialized interface operator (S_E, S^K or S^Kin), on a grid, applied to the
-// interface entries of true-DOF vectors (gamma_global): the interface vector is summed onto
+// interface entries of true-DOF vectors (index: the index in Gamma of each true DOF, -1 off
+// it): the interface vector is summed onto
 // every process, each process of the grid multiplies its local part, and the products are
 // summed. The operator is 0 off the interface.
 class MaterializedDtN : public mfem::Operator
 {
 public:
   MaterializedDtN(const BlockCyclicGrid &grid, const std::vector<double> &local,
-                  const std::vector<int> &gamma_global)
-    : mfem::Operator(static_cast<int>(gamma_global.size())), grid(grid), local(local),
-      gamma_global(gamma_global), xg(grid.Size()), yg(grid.Size())
+                  const std::vector<int> &index)
+    : mfem::Operator(static_cast<int>(index.size())), grid(grid), local(local),
+      index(index), xg(grid.Size()), yg(grid.Size())
   {
   }
 
@@ -61,9 +62,9 @@ public:
     std::fill(xg.begin(), xg.end(), 0.0);
     for (int i = 0; i < height; i++)
     {
-      if (gamma_global[i] >= 0)
+      if (index[i] >= 0)
       {
-        xg[gamma_global[i]] = xx[i];
+        xg[index[i]] = xx[i];
       }
     }
     MPI_Allreduce(MPI_IN_PLACE, xg.data(), grid.Size(), MPI_DOUBLE, MPI_SUM, comm);
@@ -81,14 +82,14 @@ public:
     double *yy = y.HostWrite();
     for (int i = 0; i < height; i++)
     {
-      yy[i] = (gamma_global[i] >= 0) ? yg[gamma_global[i]] : 0.0;
+      yy[i] = (index[i] >= 0) ? yg[index[i]] : 0.0;
     }
   }
 
 private:
   const BlockCyclicGrid &grid;
   const std::vector<double> &local;
-  const std::vector<int> &gamma_global;
+  const std::vector<int> &index;
   mutable std::vector<double> xg, yg;
 };
 
@@ -595,18 +596,14 @@ struct SubstructuringSolver::Impl
   void CondenseRows(const std::vector<const mfem::Vector *> &V,
                     std::vector<double> &rows) const;
 
-  // Zero the entries outside the environment interior.
-  void MaskToEnvInterior(const std::vector<mfem::Vector *> &Y) const;
-
   // Load S_E and the sections of the saved model onto this interface (the head was read
   // and checked by the constructor). Collective.
   void LoadModel(const std::string &model_path, int sig_w);
 
-  // Materialize S_E (from the partial factorization, or S_E e_c = (A_env e_c)|_Gamma -
-  // (A_env A_EE^-1 (A_env e_c)|_E)|_Gamma), S^K = S_E - P^T D P and, with London sheets or
-  // domains in the environment, S^Kin = P^T M_kin^E P, for a magnetostatic model to save:
-  // by batched multi-RHS environment solves for the lifts P e_c, and the condensations P^T
-  // D P e_c and P^T M_kin^E P e_c. Collective.
+  // Materialize S_E (from the environment's factorization), S^K = S_E - P^T D P and, with
+  // London sheets or domains in the environment, S^Kin = P^T M_kin^E P on gamma_grid, for
+  // a magnetostatic model to save: by batched multi-RHS environment solves for the lifts P
+  // e_c, and the condensations P^T D P e_c and P^T M_kin^E P e_c. Collective.
   void MaterializeWithEnergy();
 
   // Save S_E, the region mesh and the sections to the model file. Collective.

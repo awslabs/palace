@@ -216,50 +216,6 @@ void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
   }
 }
 
-namespace
-{
-
-template <typename T>
-void AddToPatternT(const mfem::HypreParMatrix &X, T a, const std::vector<int> &row_ptr,
-                   const std::vector<int> &jcn, std::vector<T> &val)
-{
-  X.HostRead();
-  for (int i = 0; i < X.Height(); i++)
-  {
-    const auto first = jcn.begin() + row_ptr[i], last = jcn.begin() + row_ptr[i + 1];
-    ForEachLowerEntry(X, i,
-                      [&](HYPRE_BigInt, HYPRE_BigInt j, double x)
-                      {
-                        const auto it =
-                            std::lower_bound(first, last, static_cast<int>(j + 1));
-                        if (it != last && *it == j + 1)
-                        {
-                          val[it - jcn.begin()] += a * x;
-                        }
-                        else
-                        {
-                          MFEM_VERIFY(x == 0.0, "Entry outside of the sparsity pattern!");
-                        }
-                      });
-  }
-  X.HypreRead();
-}
-
-}  // namespace
-
-void AddToPattern(const mfem::HypreParMatrix &X, double a, const std::vector<int> &row_ptr,
-                  const std::vector<int> &jcn, std::vector<double> &val)
-{
-  AddToPatternT(X, a, row_ptr, jcn, val);
-}
-
-void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
-                  const std::vector<int> &row_ptr, const std::vector<int> &jcn,
-                  std::vector<std::complex<double>> &val)
-{
-  AddToPatternT(X, a, row_ptr, jcn, val);
-}
-
 SideSystem::SideSystem(const std::vector<const mfem::HypreParMatrix *> &parts_in,
                        const std::vector<char> &keep)
 {
@@ -297,14 +253,12 @@ SideSystem::SideSystem(const std::vector<const mfem::HypreParMatrix *> &parts_in
   LowerTrianglePattern(parts_in, t_irn, t_jcn, vals, t_ptr);
   const auto col_index = OwnerValues(comm, tstart, index, t_jcn);
   parts.assign(parts_in.size(), {});
-  row_ptr.assign(nt + 1, 0);
   for (int i = 0; i < nt; i++)
   {
     for (int q = t_ptr[i]; index[i] >= 0 && q < t_ptr[i + 1]; q++)
     {
       if (col_index[q] >= 0)
       {
-        tdof_jcn.push_back(t_jcn[q]);
         irn.push_back(static_cast<int>(index[i] + 1));
         jcn.push_back(static_cast<int>(col_index[q] + 1));
         for (std::size_t p = 0; p < parts.size(); p++)
@@ -316,7 +270,6 @@ SideSystem::SideSystem(const std::vector<const mfem::HypreParMatrix *> &parts_in
         }
       }
     }
-    row_ptr[i + 1] = static_cast<int>(tdof_jcn.size());
   }
 }
 

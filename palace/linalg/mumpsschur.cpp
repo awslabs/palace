@@ -24,54 +24,7 @@ void Release(V &v)
   V().swap(v);
 }
 
-// The number of the n indices of a block-cyclic dimension (blocks of b over np processes,
-// from process 0) held by process me (ScaLAPACK's NUMROC).
-int LocalCount(int n, int b, int me, int np)
-{
-  const int blocks = n / b, extra = blocks % np;
-  return (blocks / np) * b + ((me < extra) ? b : (me == extra) ? n % b : 0);
-}
-
-// The global index of the local index l of process me in that dimension.
-int GlobalIndex(int l, int b, int me, int np)
-{
-  return ((l / b) * np + me) * b + l % b;
-}
-
 }  // namespace
-
-namespace
-{
-
-template <typename T>
-typename MumpsSchurSolverT<T>::Coo LowerTriangle(const mfem::HypreParMatrix &A)
-{
-  typename MumpsSchurSolverT<T>::Coo coo;
-  std::vector<std::vector<double>> vals;
-  std::vector<int> row_ptr;
-  LowerTrianglePattern({&A}, coo.irn, coo.jcn, vals, row_ptr);
-  if constexpr (std::is_same_v<T, double>)
-  {
-    coo.val = std::move(vals[0]);
-  }
-  else
-  {
-    coo.val.assign(vals[0].begin(), vals[0].end());
-  }
-  return coo;
-}
-
-}  // namespace
-
-template <typename T>
-MumpsSchurSolverT<T>::MumpsSchurSolverT(const mfem::HypreParMatrix &A,
-                                        const std::vector<HYPRE_BigInt> &schur_vars,
-                                        double blr_tol, bool refactor, bool spd,
-                                        SymbolicFactorization ordering, int block)
-  : MumpsSchurSolverT(A.GetComm(), A.GetGlobalNumRows(), A.Height(), LowerTriangle<T>(A),
-                      schur_vars, blr_tol, refactor, spd, {}, ordering, block)
-{
-}
 
 template <typename T>
 MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc,
