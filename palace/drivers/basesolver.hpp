@@ -97,6 +97,15 @@ protected:
   // reads the same mesh.
   bool PrepareFirstLevelMesh(std::vector<std::unique_ptr<Mesh>> &mesh) const;
 
+  // CUT-PLAN step 4b (ruling R4): PrepareFirstLevelMesh for PreflightOnly's census, then
+  // `response_geometry` = `identified` (the preflight manifest's identification of
+  // mesh.back()) when the first-level mesh is that mesh unchanged (no edge-tube or AMR
+  // step refined it); else the census operator identifies the first-level mesh itself.
+  void PrepareCensusFirstLevelMesh(
+      std::vector<std::unique_ptr<Mesh>> &mesh,
+      const std::shared_ptr<const SurfaceResponseGeometry> &identified,
+      std::shared_ptr<const SurfaceResponseGeometry> &response_geometry) const;
+
   // CUT-PLAN step 4b (lane v1step4b): the tail of PreflightResolutionCensus after the
   // response operator's construction on the first mesh (`unknowns` the first solve's true
   // dofs): the census Types and the PREFLIGHT line, surface-response-resolution-patches.csv
@@ -148,12 +157,12 @@ public:
   // does before its first solve (no system matrix is assembled and nothing is solved; a
   // wave port's boundary-mode matrices are built with the space operator) and writes what
   // that solve form computes there (WritePreflightResolutionCensus; `fail_closed` as in
-  // PreflightCensusStopsFailClosed).
+  // PreflightCensusStopsFailClosed; `identified` as in PrepareCensusFirstLevelMesh).
   // Electrostatic, eigenmode and driven; any other problem type prints one line.
   // Collective.
-  virtual PreflightCensusOutcome
-  PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh,
-                            bool fail_closed) const;
+  virtual PreflightCensusOutcome PreflightResolutionCensus(
+      std::vector<std::unique_ptr<Mesh>> &mesh, bool fail_closed,
+      const std::shared_ptr<const SurfaceResponseGeometry> &identified) const;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.

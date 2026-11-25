@@ -218,7 +218,8 @@ int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
     }
     else
     {
-      const auto census = solver.PreflightResolutionCensus(mesh, false);
+      const auto census =
+          solver.PreflightResolutionCensus(mesh, false, outcome.response_geometry);
       if (census.evaluated)
       {
         Mpi::Print(
@@ -250,7 +251,7 @@ int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
       request->geometry_failure_policy = config::ElectrostaticSolverData::
           ResponseCorrectionData::GeometryFailurePolicy::RECORD_RAW;
     }
-    solver.PreflightResolutionCensus(mesh, fail_closed);
+    solver.PreflightResolutionCensus(mesh, fail_closed, outcome.response_geometry);
     request->geometry_failure_policy = policy;
   }
 
