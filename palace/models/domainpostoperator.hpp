@@ -123,7 +123,8 @@ public:
   // domain (time-averaged for complex-valued fields). The STORED electric energy requires
   // HasStoredElectricFieldEnergy() (or HasStoredDomainElectricFieldEnergy(idx) for a
   // portion of the domain). For mode analysis, E and B are the in-plane E and out-of-plane
-  // B, completed by the out-of-plane E (En) and in-plane B (Bt).
+  // B, completed by the out-of-plane E (En) and the in-plane B, given as z_hat x Bt (Bt),
+  // which lies in the ND space.
   double GetElectricFieldEnergy(const GridFunction &E, double omega,
                                 ElectricEnergy type = ElectricEnergy::STORED,
                                 const GridFunction *En = nullptr) const;

@@ -143,6 +143,11 @@ protected:
   //   Bt = -(kn/omega)(z_hat x Et) + (1/(i*omega))(grad_t(Ez) x z_hat)
   std::unique_ptr<GridFunction> En, Bt_inplane;
 
+  // Mode analysis: z_hat x Bt = (kn Et - i grad_t(Ez))/omega, which, unlike Bt, lies in the
+  // ND space, for the magnetic energy, with the discrete gradient from the H1 space.
+  std::unique_ptr<GridFunction> zxBt;
+  std::unique_ptr<Operator> Grad;
+
   // Field output format control flags.
   bool enable_paraview_output = false;
   bool enable_gridfunction_output = false;

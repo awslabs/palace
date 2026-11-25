@@ -18,9 +18,11 @@
 #include <tuple>
 #include <vector>
 #include "drivers/boundarymodesolver.hpp"
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/face_sampling_plan.hpp"
+#include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
@@ -183,6 +185,11 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   {
     En = std::make_unique<GridFunction>(fem_op->GetH1Space(), true);
     Bt_inplane = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
+    zxBt = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
+    DiscreteLinearOperator grad(fem_op->GetH1Space(), fem_op->GetNDSpace());
+    grad.AddDomainInterpolator<GradientInterpolator>();
+    Grad = std::make_unique<ParOperator>(grad.PartialAssemble(), fem_op->GetH1Space(),
+                                         fem_op->GetNDSpace(), true);
   }
 
   // Add wave port boundary mode postprocessing, if available.
@@ -1775,14 +1782,14 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     const bool use_l = (a_l.Size() > 0);
     // Mode analysis adds the in-plane B.
     auto energy = use_l ? dom_post_op.GetMagneticFieldEnergy(a_l, field.GetComm())
-                        : dom_post_op.GetMagneticFieldEnergy(field, Bt_inplane.get());
+                        : dom_post_op.GetMagneticFieldEnergy(field, zxBt.get());
     measurement_cache.domain_H_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
       auto energy_i =
           use_l ? dom_post_op.GetDomainMagneticFieldEnergy(idx, a_l, field.GetComm())
-                : dom_post_op.GetDomainMagneticFieldEnergy(idx, field, Bt_inplane.get());
+                : dom_post_op.GetDomainMagneticFieldEnergy(idx, field, zxBt.get());
       measurement_cache.domain_H_field_energy_i.emplace_back(
           Measurement::DomainData{idx, energy_i, ParticipationRatio(energy_i, energy)});
     }
@@ -2955,6 +2962,17 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
     Bt_inplane->Imag().ProjectCoefficient(bt_imag_coeff);
     Bt_inplane->Real().ExchangeFaceNbrData();
     Bt_inplane->Imag().ExchangeFaceNbrData();
+  }
+  // z_hat x Bt from the true dofs of Et and En, exact in the ND space.
+  {
+    ComplexVector w(et.Size()), grad_en(et.Size());
+    Grad->Mult(en.Real(), grad_en.Real());
+    Grad->Mult(en.Imag(), grad_en.Imag());
+    w = et;
+    w *= kn / omega;
+    w.AXPY(std::complex<double>(0.0, -1.0 / omega), grad_en);
+    zxBt->Real().SetFromTrueDofs(w.Real());
+    zxBt->Imag().SetFromTrueDofs(w.Imag());
   }
 
   measurement_cache = {};
