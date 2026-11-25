@@ -449,12 +449,14 @@ the resonators of each row are coupled to a shared feedline with a lumped port a
 script
 [`examples/substructuring/cpw_resonator_grid_substructuring.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/cpw_resonator_grid_substructuring.py)
 assigns the elements in a box around resonator 6, in the middle row, about 8% of the mesh, to the
-region. The middle feedline crosses the interface, and all ports are in the environment:
+region, and writes the configurations of the substructured runs from that of the regular one,
+`cpw_resonator_grid.json`. The middle feedline crosses the interface, and all ports are in the
+environment:
 
 ```bash
 cd examples/substructuring
 julia --project -e 'include("cpw_resonator_grid.jl"); generate_cpw_resonator_grid()'
-python3 cpw_resonator_grid_substructuring.py
+python3 cpw_resonator_grid_substructuring.py  # the mesh, and cpw_resonator_grid_<run>.json
 palace cpw_resonator_grid.json                # regular sweep, for comparison
 palace cpw_resonator_grid_offline.json        # condense the environment, save the model
 palace cpw_resonator_grid_online.json         # reuse the model: only the region is solved
@@ -472,6 +474,7 @@ the region. The mesh has about 1.3 million unknowns, so the runs are best on a c
 mesh, and so these frequencies, depend on the versions of DeviceLayout.jl and Gmsh, which
 `examples/Manifest.toml` pins.
 
-`cpw_resonator_grid_offline_adaptive.json` and `cpw_resonator_grid_online_adaptive.json` sample a
-rational model of the environment over 15–21.5 GHz, and sweep 1301 frequencies from it online,
-with the region reduced as in the adaptive fast frequency sweep.
+The script also writes `cpw_resonator_grid_offline_adaptive.json` and
+`cpw_resonator_grid_online_adaptive.json`, which sample a rational model of the environment over
+15–21.5 GHz, and sweep 1301 frequencies from it online, with the region reduced as in the adaptive
+fast frequency sweep.
