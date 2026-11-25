@@ -95,10 +95,13 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
                        std::string_view postpro_subdir, const RegressionOptions &opts = {});
 
 // Regression input fixtures and reference CSVs live under
-// PALACE_TEST_DATA_DIR/regression. The run-dir override controls only where the
-// live solve writes staged outputs; empty falls back to
-// std::filesystem::temp_directory_path() / "palace-regression" so the source
-// and installed test data trees stay read-only.
+// PALACE_TEST_DATA_DIR/regression, which stays read-only: each case stages its inputs and
+// outputs under the run root. The run-dir override sets a fixed run root, where each case
+// wipes its stage when it starts. Without it (empty), each run of the tests gets a new run
+// root std::filesystem::temp_directory_path() / "palace-regression-XXXXXX", whose path is
+// printed: the first call of GetRegressionRunDir creates it, so it must be called on all
+// ranks of MPI_COMM_WORLD. The stage of a passing case is removed when the case ends, and
+// the run root at the end of the run unless it holds the stage of a failing case.
 void SetRegressionRunDirOverride(std::string value);
 std::filesystem::path GetRegressionRunDir();
 

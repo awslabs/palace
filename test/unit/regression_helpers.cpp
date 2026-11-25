@@ -12,6 +12,7 @@
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 #include <mpi.h>
 #include <fmt/format.h>
@@ -19,8 +20,11 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/reporters/catch_reporter_event_listener.hpp>
+#include <catch2/reporters/catch_reporter_registrars.hpp>
 
 #include "driver.hpp"
+#include "fixtures.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
@@ -39,6 +43,51 @@ namespace
 std::string g_regression_run_dir_override;
 std::string g_solver_override;
 std::string g_eigensolver_override;
+
+// Run root of this run without an override, created by the first case. Being unique,
+// concurrent runs of a case (ctest -j over several builds, several users) never wipe each
+// other's stages.
+std::filesystem::path g_regression_temp_run_dir;
+
+// Stages of the current test case under the temporary run root, and whether the run root
+// holds the stage of a failing case.
+std::vector<std::filesystem::path> g_case_stages;
+bool g_kept_stage = false;
+
+// Removes the stages of a passing case when it ends, so that a kept run root holds only
+// the stages of failing cases, and the temporary run root at the end of the run unless it
+// holds one. A fixed run root is always kept.
+class RegressionStageCleanup : public Catch::EventListenerBase
+{
+public:
+  using Catch::EventListenerBase::EventListenerBase;
+
+  void testCaseEnded(const Catch::TestCaseStats &stats) override
+  {
+    const bool passed = stats.totals.assertions.failed == 0;
+    if (passed && Mpi::Root(Mpi::World()))
+    {
+      for (const auto &stage : g_case_stages)
+      {
+        std::error_code ec;
+        std::filesystem::remove_all(stage, ec);
+      }
+    }
+    g_kept_stage = g_kept_stage || (!passed && !g_case_stages.empty());
+    g_case_stages.clear();
+  }
+
+  void testRunEnded(const Catch::TestRunStats &) override
+  {
+    if (!g_regression_temp_run_dir.empty() && !g_kept_stage && Mpi::Root(Mpi::World()))
+    {
+      std::error_code ec;
+      std::filesystem::remove_all(g_regression_temp_run_dir, ec);
+    }
+  }
+};
+
+CATCH_REGISTER_LISTENER(RegressionStageCleanup)
 
 // Recursively collect CSV and non-CSV metadata filenames relative to
 // `root`. Folders named in `skip_dirs` are recorded at their top level
@@ -367,8 +416,8 @@ public:
   {
     std::error_code ec;
     std::filesystem::current_path(prev_, ec);  // never throw from dtor
-    // The stage is left on disk for post-mortem inspection; the next
-    // invocation of this case wipes and recreates it.
+    // The stage is left on disk for post-mortem inspection: see
+    // RegressionStageCleanup.
   }
   const std::filesystem::path &path() const { return stage_; }
   ScopedExampleStage(const ScopedExampleStage &) = delete;
@@ -427,11 +476,18 @@ void SetEigenSolverOverride(std::string value)
 
 std::filesystem::path GetRegressionRunDir()
 {
+  // Absolute, since each case changes into its stage.
   if (!g_regression_run_dir_override.empty())
   {
-    return g_regression_run_dir_override;
+    return std::filesystem::absolute(g_regression_run_dir_override);
   }
-  return std::filesystem::temp_directory_path() / "palace-regression";
+  if (g_regression_temp_run_dir.empty())
+  {
+    g_regression_temp_run_dir =
+        std::filesystem::absolute(MakeSharedTempDir("palace-regression-"));
+    Mpi::Print("Staging the regression cases in {}\n", g_regression_temp_run_dir.string());
+  }
+  return g_regression_temp_run_dir;
 }
 
 namespace
@@ -487,6 +543,10 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   }
 
   ScopedExampleStage stage(input_path, run_root, postpro_subdir, comm);
+  if (g_regression_run_dir_override.empty())
+  {
+    g_case_stages.push_back(stage.path());
+  }
   const std::filesystem::path postpro_path = stage.path() / "postpro" / postpro_subdir;
 
   const int max_refinement_iterations = GetMaxRefinementIterations(config);

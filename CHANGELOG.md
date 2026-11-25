@@ -69,6 +69,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     example, and described the PML in the boundary conditions guide.
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
+#### Build system
+
+  - Concurrent runs of the tests no longer overwrite or delete each other's temporary
+    files, which made them fail or hang, or register fewer installed tests. Without
+    `--regression-run-dir`, each run of `palace-unit-tests` stages its regression cases in
+    a new temporary directory, which keeps only the stages of failing cases.
+    [PR 1307](https://github.com/awslabs/palace/pull/1307).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features

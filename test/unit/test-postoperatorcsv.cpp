@@ -5,6 +5,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/mesh.hpp"
+#include "fixtures.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/spaceoperator.hpp"
@@ -513,10 +514,10 @@ public:
     // The restart writes rows of the reloaded tables, whose frequencies are the printed
     // ones: a recomputed frequency matches to the printed precision, another does not. The
     // writes go to a copy of the tables.
-    const auto dir = fs::temp_directory_path() / "palace-postoperatorcsv-restart";
+    palace::test::SharedTempDir tmp;
+    const auto dir = tmp.temp_dir / "restart";
     if (Mpi::Root(Mpi::World()))
     {
-      fs::remove_all(dir);
       fs::copy(fs::path(PALACE_TEST_DATA_DIR) / "postoperatorcsv_restart/restart2_c14",
                dir);
     }
@@ -534,7 +535,6 @@ public:
       CHECK_THROWS_WITH(
           post_op_csv.PrintPortVI(space_op.GetLumpedPortOp(), iodata.units),
           Catch::Matchers::ContainsSubstring("Writing data table at incorrect index"));
-      fs::remove_all(dir);
     }
   }
 

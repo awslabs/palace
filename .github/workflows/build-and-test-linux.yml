@@ -487,15 +487,11 @@ jobs:
         # The Julia plot script that ships with the antenna example is
         # exercised here so it doesn't bit-rot. Gated to one matrix entry
         # to avoid paying the ~7 min Julia precompile per job. Reads the
-        # farfield CSV the regression step left in the staging tree.
+        # farfield CSV of the regression reference, which the regression
+        # case checks against the live output.
         if: needs.filter.outputs.test == 'true' && matrix.arch == 'x86' && matrix.compiler == 'gcc' && matrix.math-libs == 'openblas' && !matrix.with-coverage
         run: |
-          STAGE_ROOT="${TMPDIR:-/tmp}/palace-regression"
-          FARFIELD="$STAGE_ROOT/antenna/antenna_short_dipole/postpro/antenna_short_dipole/farfield-rE.csv"
-          if [[ ! -f "$FARFIELD" ]]; then
-            echo "Expected regression output missing: $FARFIELD" >&2
-            exit 1
-          fi
+          FARFIELD=test/data/regression/ref/antenna/antenna_short_dipole/farfield-rE.csv
           julia --project=examples -e 'using Pkg; Pkg.instantiate()'
           julia --project=examples examples/antenna/plot_farfield.jl --model short_dipole --file "$FARFIELD"
 

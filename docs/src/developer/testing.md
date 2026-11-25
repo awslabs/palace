@@ -154,6 +154,17 @@ this, CTest handles MPI processes correctly, and ensures that only one GPU test
 is being run at a time. If you compiled *Palace*, the total number of
 processes that could end up used in this example is `8 * OMP_NUM_THREADS`.
 
+By default, Open MPI 5 binds the processes of each `mpiexec` to CPU cores,
+always starting from the first ones. CTest starts each MPI test with its own
+`mpiexec`, so with `ctest -j` concurrent tests share the same few cores, run
+very slowly, and can time out. Disable the binding first, as CI does:
+
+```bash
+export OMPI_MCA_hwloc_base_binding_policy=none
+export PRTE_MCA_hwloc_default_binding_policy=none
+ctest -j8 --output-on-failure
+```
+
 To run specific tests categories, you can use regex matching, for example
 
 ```bash
@@ -562,7 +573,8 @@ Each case reserves `PALACE_TESTS_NUMPROC * PALACE_TESTS_OMP_THREADS` CTest
 slots (`PROCESSORS`) and the harness pins `OMP_NUM_THREADS` to the configured
 value, so a runtime `OMP_NUM_THREADS` cannot desync the slot accounting. CI
 passes both values explicitly; `ctest -j N` then only bounds how many cases
-run concurrently.
+run concurrently. With Open MPI, disable its default core binding first, see
+[Running tests with CTest](#Running-tests-with-CTest).
 
 ```bash
 # CI-style: let CTest schedule the regression cases
@@ -603,9 +615,24 @@ to match, so the accounting comes from a single source.
 #### Overrides
 
 Regression input fixtures and references are normal test data under
-`PALACE_TEST_DATA_DIR/regression` and are read-only. The only directory override
-is `--regression-run-dir`, which changes where live outputs are staged; by
-default this is `std::filesystem::temp_directory_path() / "palace-regression"`.
+`PALACE_TEST_DATA_DIR/regression` and are read-only. Each case stages its inputs
+and outputs in a subdirectory of a run root, such as `cpw/lumped_eigen`. By
+default, each run of `palace-unit-tests` gets a new run root
+`std::filesystem::temp_directory_path() / "palace-regression-XXXXXX"`, so
+concurrent runs never share a stage. Its path is printed when it is created. The
+stage of a passing case is removed when the case ends, so a run root is kept
+only when a case fails, aborts or times out, and then holds only the stages of
+such cases. The only directory override is `--regression-run-dir`, which sets a
+fixed run root, where each case wipes its stage when it starts and keeps it
+afterwards.
+
+To free the space of kept run roots, and of the fixed `palace-regression`
+directory that earlier versions used, remove them while no tests are running
+(the pattern also matches the run roots of running tests):
+
+```bash
+rm -rf "${TMPDIR:-/tmp}"/palace-regression "${TMPDIR:-/tmp}"/palace-regression-*
+```
 
 Per-case solver knobs:
 
