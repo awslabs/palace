@@ -11,6 +11,7 @@
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <numbers>
 #include <numeric>
 #include <optional>
 #include <random>
@@ -5293,6 +5294,68 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 #endif
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "Driven substructuring solves the region at a resonance of the environment",
+    "[substructure][Serial][Parallel]")
+{
+  // The box of substructuring_driven_box with a lossless environment (PEC outside, without
+  // its port), 1e-8 above its lowest resonance with Γ held fixed (12.82739137795 GHz, of an
+  // eigenmode run of the environment with PEC on Γ), where S_E has a pole: offline and on
+  // the mesh of the region, the sweep gives the S of a regular sweep, factored, to 1e-8.
+  // The condensation loses digits as the frequency nears the pole, more with STRUMPACK
+  // than with MUMPS: S is within about 1e-10 here, and 1e-13 at 1e-6 from it.
+  const auto dir = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
+                   "substructuring_driven_box";
+  const auto model = temp_dir / "postpro_Offline" / "environment.model";
+  auto run = [&](const std::string &mode, const std::function<void(json &)> &edit)
+  {
+    std::ifstream fi(dir / "driven_offline.json");
+    json config = json::parse(fi, nullptr, true, true);
+    config["Model"]["Mesh"] = (dir / "mesh" / "box.mesh").string();
+    config["Problem"]["Output"] = (temp_dir / ("postpro_" + mode)).string();
+    config["Boundaries"].erase("Absorbing");
+    config["Boundaries"]["PEC"]["Attributes"] = {1, 2};
+    config["Boundaries"]["LumpedPort"].erase(0);
+    const double f = 12.82739137795 * (1.0 + 1.0e-8);
+    config["Solver"]["Driven"] = {{"MinFreq", f}, {"MaxFreq", f}, {"FreqStep", 1.0}};
+    edit(config);
+    IoData iodata(config, false);
+    MPI_Comm comm = Mpi::World();
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    palace::Run(iodata, comm, 1);
+  };
+  run("Offline", [](json &) {});
+  run("Online",
+      [&](json &config)
+      {
+        config["Model"]["Mesh"] = RegionMeshPath(model.string());
+        config["Solver"]["Substructuring"]["ModelFile"] = model.string();
+      });
+  run("Regular",
+      [](json &config)
+      {
+        config["Solver"].erase("Substructuring");
+        config["Solver"]["Linear"]["MGMaxLevels"] = 1;
+        config["Solver"]["Linear"]["ComplexCoarseSolve"] = true;
+      });
+  // S from its magnitude (dB) and phase (degrees).
+  auto S = [&](const std::string &mode)
+  {
+    const auto csv = ReadCsv(temp_dir / ("postpro_" + mode) / "port-S.csv");
+    REQUIRE(csv.second.size() == 1);
+    const auto &row = csv.second[0];
+    return std::polar(std::pow(10.0, row[1] / 20.0), row[2] * std::numbers::pi / 180.0);
+  };
+  const auto regular = S("Regular");
+  for (const std::string mode : {"Offline", "Online"})
+  {
+    CAPTURE(mode);
+    CHECK(std::abs(S(mode) - regular) <= 1.0e-8 * std::abs(regular));
+  }
+}
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring checks the environment against the model",

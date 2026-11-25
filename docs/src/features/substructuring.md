@@ -298,15 +298,18 @@ voltage of a lumped port, would depend on both sides.
     [`config["Solver"]["Linear"]["KSPType"]`](../config/reference.md#config-solver-linear-ksptype)
     names, as GMRES loses digits there). A sparse direct solver that
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names
-    is used for all of them instead. Floquet ports (which make the system non-symmetric) and
-    periodic boundaries (on whose seam the interface degrees of freedom, matched by their
-    coordinates, depend on the partition), frequency-dependent permittivity, PML regions,
-    `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the region in online sweeps are not
-    supported yet. The model holds one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or
-    sample (16 bytes per entry of its lower triangle). The processes hold it distributed, each a
-    share of its lower triangle, which they read in parallel online and which one process writes in
-    chunks offline; the samples of an adaptive sweep are distributed alike, and its passivity checks
-    factor ``\mathrm{Im}\,\bm{S}_E`` on a grid of the processes.
+    is used for all of them instead. At a resonance of the environment with the interface held
+    fixed, where the environment's Schur complement has a pole, its exact condensation loses digits
+    as the frequency nears it, and an adaptive sweep places samples there. Floquet ports (which make
+    the system non-symmetric) and periodic boundaries (on whose seam the interface degrees of
+    freedom, matched by their coordinates, depend on the partition), frequency-dependent
+    permittivity, PML regions, `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the
+    region in online sweeps are not supported yet. The model holds one dense
+    ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry of its lower
+    triangle). The processes hold it distributed, each a share of its lower triangle, which they
+    read in parallel online and which one process writes in chunks offline; the samples of an
+    adaptive sweep are distributed alike, and its passivity checks factor ``\mathrm{Im}\,\bm{S}_E``
+    on a grid of the processes.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 
