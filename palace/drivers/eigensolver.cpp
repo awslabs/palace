@@ -587,7 +587,8 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   eigen->SetNumModes(iodata.solver.eigenmode.n, max_size);
   const double tol =
       hybrid_seed ? iodata.solver.eigenmode.linear_tol : iodata.solver.eigenmode.tol;
-  eigen->SetTol(tol);
+  // [Experiment] The solves with the grown subspace converge to a tenth of the tolerance.
+  eigen->SetTol((max_size != iodata.solver.eigenmode.max_size) ? 0.1 * tol : tol);
   eigen->SetMaxIter(iodata.solver.eigenmode.max_it);
   Mpi::Print(" Scaling γ = {:.3e}, δ = {:.3e}\n", eigen->GetScalingGamma(),
              eigen->GetScalingDelta());
