@@ -36,11 +36,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - The STRUMPACK coarse solvers, in real and complex arithmetic, map the elimination tree
-    to the processes by factor size, which is what a triangular solve costs, instead of by
-    the operations of the factorization. On a model with 115M unknowns on 3072 processes
-    a coarse solve takes 43 ms instead of 72 ms; on the other models measured it is
-    between 14% faster and 5% slower.
+  - The STRUMPACK coarse solvers map the elimination tree to the processes by factor size,
+    the cost of a triangular solve, instead of by the operations of the factorization. On a
+    model with 115M unknowns on 3072 processes a coarse solve takes 43 ms instead of 72 ms.
     [PR 1306](https://github.com/awslabs/palace/pull/1306).
 
 #### Bug Fixes
