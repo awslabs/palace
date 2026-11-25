@@ -1313,12 +1313,13 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
   // of the port node (see below), where K₀ = K + A2(0) is the static system stiffness: the
   // ω → 0 limit of the system matrix A(ω) = K + iωC − ω²M + A2(ω) without its mass term.
   // Damping (iωC) vanishes in this limit, and so do the frequency-dependent terms A2(ω) of
-  // wave ports, surface conductivity, and frequency-dependent permittivity (whose ε∞ is
-  // part of M); an inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a finite
-  // DC Robin term, and the second-order farfield pole at ω = 0 is omitted (see
-  // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). When no port
-  // inductance is negative, the positive mass coefficient makes the (real part of the)
-  // system positive definite — unlike the driven system at real frequency ω, which is
+  // surface conductivity and frequency-dependent permittivity (whose ε∞ is part of M); an
+  // inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a finite DC Robin term,
+  // and the wave ports (whose DC limit this is for TEM modes only) and the second-order
+  // farfield pole at ω = 0 are omitted (see
+  // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). When no port or
+  // boundary inductance is negative, the positive mass coefficient makes the (real part of
+  // the) system positive definite — unlike the driven system at real frequency ω, which is
   // indefinite (K − ω²M) and can resonate with band or near-degenerate modes — and gives a
   // positive-definite preconditioner without the sign-shift heuristic used for the driven
   // case. A negative port inductance (the linearized inductance of a Josephson junction

@@ -736,11 +736,11 @@ public:
   // without requiring a pseudo-inverse of the exported inverse-inductance matrix. Default
   // false (opt-in, preserving existing behavior); requires a port with a nonzero
   // inductance, which may be negative (the linearized inductance of a Josephson junction
-  // biased at a phase beyond π/2, for example), included in synthesis. A port alone under
-  // its excitation index needs no anchor (the samples of its excitation span its
-  // quasistatic response), unlike a port which shares its index with other ports
-  // or is not excited. The responses of the two arms of a SQUID differ by its loop mode,
-  // which anchoring both arms brings into the basis.
+  // biased at a phase beyond π/2, for example), included in synthesis. A port which is the
+  // only one with an inductance under its excitation index needs no anchor (the samples of
+  // its excitation span its quasistatic response), unlike a port which shares its index
+  // with another port with an inductance or is not excited. The responses of the two arms
+  // of a SQUID differ by its loop mode, which anchoring both arms brings into the basis.
   bool synthesis_anchor = false;
 
   // For each lumped port index, each element contains a list of attributes making up a

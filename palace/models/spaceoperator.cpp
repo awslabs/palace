@@ -2903,9 +2903,10 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(
   //    states, not in L⁻¹), is left out, so the farfield boundary takes the same natural
   //    condition at DC as the first-order absorbing boundary (see
   //    SurfaceTerms::AddStaticExtraSystemBdrMassCoefficients).
-  //  - Wave ports: the stamped i·Re(k_n(ω))·M_p vanishes (k_n ∝ ω for a TEM or quasi-TEM
-  //    mode, Re(k_n) = 0 below cutoff), as does the modal correction W ∝ ω. No
-  //    contribution, and no port mode is solved at ω = 0.
+  //  - Wave ports: no port mode is solved at ω = 0, and their terms are left out. This is
+  //    their DC limit for a TEM or quasi-TEM mode, whose terms vanish (k_n ∝ ω, and the
+  //    modal correction W ∝ ω), but not for other modes, whose stamped −Im(k_n)·M_p tends
+  //    to k_c·M_p below cutoff.
   //  - Floquet ports and Floquet wave vectors are not supported with circuit synthesis, and
   //    the Floquet terms of second-order farfield boundaries (frb, fpb) are omitted with
   //    the farfield term.
