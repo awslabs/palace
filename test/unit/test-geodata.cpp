@@ -853,8 +853,7 @@ TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
 TEST_CASE("Mesh with fewer elements than processes", "[geodata][Serial][Parallel]")
 {
   // A mesh of a single hexahedron: on more processes, the others have no elements. The
-  // conformal mesh is distributed by parts, the nonconformal one for adaptation whole. A
-  // process without elements makes the rebalancing of either due.
+  // conformal mesh is distributed by parts, the nonconformal one for adaptation whole.
   const bool nonconformal = GENERATE(false, true);
   CAPTURE(nonconformal);
   const auto mesh_path =
@@ -879,13 +878,19 @@ TEST_CASE("Mesh with fewer elements than processes", "[geodata][Serial][Parallel
   REQUIRE(mesh->GetNodes());
   CHECK(mesh->SpaceDimension() == 3);
 
+  // At most one element on a process is as balanced as the mesh can be.
+  CHECK(mesh::GetImbalanceRatio(*mesh) == 1.0);
+
+  // Refined, its eight elements are on the first process: a process without elements makes
+  // the rebalancing of either mesh due.
+  mesh->UniformRefinement();
   const double ratio = mesh::RebalanceMesh(iodata, mesh);
   CHECK((ratio > iodata.model.refinement.maximum_imbalance) == (Mpi::Size(comm) > 1));
   CHECK(mesh->Nonconforming() == nonconformal);
-  CHECK(mesh->GetGlobalNE() == 1);
+  CHECK(mesh->GetGlobalNE() == 8);
   int ne = mesh->GetNE();
   Mpi::GlobalSum(1, &ne, comm);
-  CHECK(ne == 1);
+  CHECK(ne == 8);
   REQUIRE(mesh->GetNodes());
   CHECK_THAT(mesh::GetVolume(*mesh, mesh::AttrToMarker(1, std::vector<int>{1})),
              WithinRel(1.0, 1.0e-12));

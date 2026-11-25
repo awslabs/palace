@@ -389,6 +389,10 @@ struct MeshEntityCounts
   bool valid = false;  // set true only when populated (root, save happened)
 };
 
+// Return the largest number of elements on a process over the smallest, or 1 when no
+// process has more than one: with fewer elements than processes, no partition does better.
+double GetImbalanceRatio(const mfem::ParMesh &mesh);
+
 // Helper function responsible for rebalancing the mesh, and optionally writing meshes from
 // the intermediate stages to disk. Returns the imbalance ratio before rebalancing. When
 // `out_counts` is non-null and the adapted mesh is written, geometry-resolved counts are

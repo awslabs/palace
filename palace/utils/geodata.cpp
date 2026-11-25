@@ -2948,6 +2948,15 @@ void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
   }
 }
 
+double GetImbalanceRatio(const mfem::ParMesh &mesh)
+{
+  int min_elem, max_elem;
+  min_elem = max_elem = mesh.GetNE();
+  Mpi::GlobalMin(1, &min_elem, mesh.GetComm());
+  Mpi::GlobalMax(1, &max_elem, mesh.GetComm());
+  return (max_elem > 1) ? double(max_elem) / min_elem : 1.0;
+}
+
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                      MeshEntityCounts *out_counts)
 {
@@ -2957,22 +2966,8 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   // If there is more than one processor, may perform rebalancing: a nonconforming mesh
   // before it is saved, with whole refinement-tree roots, so that the save need not move
   // them.
-  double ratio = 1.0;
+  const double ratio = GetImbalanceRatio(*mesh);
   const double tol = iodata.model.refinement.maximum_imbalance;
-  if (Mpi::Size(comm) > 1)
-  {
-    int min_elem, max_elem;
-    min_elem = max_elem = mesh->GetNE();
-    Mpi::GlobalMin(1, &min_elem, comm);
-    Mpi::GlobalMax(1, &max_elem, comm);
-    ratio = double(max_elem) / min_elem;
-    if constexpr (false)
-    {
-      Mpi::Print("Rebalancing: max/min elements per processor = {:d}/{:d} (ratio = {:.3e}, "
-                 "tol = {:.3e})\n",
-                 max_elem, min_elem, ratio, tol);
-    }
-  }
   if (ratio > tol && mesh->Nonconforming())
   {
     RebalanceRootAligned(*mesh, tol);
