@@ -4,9 +4,11 @@
 #ifndef PALACE_MODELS_SURFACE_POST_OPERATOR_HPP
 #define PALACE_MODELS_SURFACE_POST_OPERATOR_HPP
 
+#include <functional>
 #include <map>
 #include <memory>
 #include <vector>
+#include <Eigen/Dense>
 #include <mfem.hpp>
 #include "fem/coefficient.hpp"
 #include "fem/output_functionals.hpp"
@@ -102,6 +104,28 @@ private:
   double GetLocalSurfaceIntegral(mfem::Coefficient &f,
                                  const mfem::Array<int> &attr_marker) const;
 
+  // Linear map from the dofs of one element attached to a boundary element of an
+  // interface to the interface energy amplitudes at the quadrature points of that boundary
+  // element: a[offset, offset + A.Height()) += A x_e, with x_e the element dofs of the
+  // field (on a face neighbor element when ghost) and the element dof transformation folded
+  // into A. See GetInterfaceElectricFieldEnergyMatrices.
+  struct InterfaceAmplitudeMap
+  {
+    bool ghost;
+    int offset;
+    mfem::Array<int> vdofs;
+    mfem::DenseMatrix A;
+  };
+  std::vector<InterfaceAmplitudeMap>
+  GetInterfaceAmplitudeMaps(const InterfaceDielectricData &data,
+                            const std::vector<int> &bdr_elems, int &num_amplitudes) const;
+
+  // Evaluation sides of the interface energy on boundary element i (see
+  // GetInterfaceDielectricSides), with FET set to its neighbor element transformations.
+  InterfaceDielectricSides GetInterfaceBdrElementSides(
+      const InterfaceDielectricData &data, int i, mfem::FaceElementTransformations &FET,
+      mfem::IsoparametricTransformation &T1, mfem::IsoparametricTransformation &T2) const;
+
   // libCEED surface functionals for flux and interface dielectric postprocessing,
   // constructed lazily per surface index to replace per-call coefficient evaluation and
   // boundary LinearForm assembly in the legacy paths when supported.
@@ -155,6 +179,26 @@ public:
   // GetSurfaceFlux: a frequency-dependent MS substrate uses |D_n| = |ε(iω)| |E_n|.
   double GetInterfaceElectricFieldEnergy(int idx, const GridFunction &E,
                                          double omega) const;
+
+  // Interface dielectric energy forms over real fields e_0, ..., e_{n-1}: for each
+  // interface index, the n × n symmetric positive semidefinite matrix B with B_kl = U(e_k,
+  // e_l), where U is the symmetric bilinear form of the interface energy, U(e, e) =
+  // GetInterfaceElectricFieldEnergy(idx, e, ω) with the same quadrature points, evaluation
+  // sides, and coefficients (for an MS interface next to a frequency-dependent substrate,
+  // with its high-frequency permittivity ε∞ in place of |ε(iω)|). For complex coefficients
+  // z, zᴴ B z is the sum of the interface energies of the real and imaginary parts of the
+  // complex field Σ_k z_k e_k, and its time-averaged interface energy, as reported by
+  // GetInterfaceElectricFieldEnergy for the peak phasor, is ½ zᴴ B z. The callback
+  // field(k) returns the k-th field as a grid function on the H(curl) space of this
+  // operator, whose face neighbor data is exchanged here. Each field is evaluated into its
+  // amplitudes a(e) at the quadrature points of the interfaces, with U(e, e) = |a(e)|², so
+  // that B = Aᵀ A with A = [a(e_0), ...]. The amplitudes of all fields, and the maps to
+  // them from the element dofs, are stored at once, within memory_budget bytes per process
+  // (or for a single boundary element): larger interfaces are evaluated in several passes,
+  // each of which calls field(k) for k = 0, ..., n - 1 in order. Collective.
+  std::map<int, Eigen::MatrixXd> GetInterfaceElectricFieldEnergyMatrices(
+      int num_fields, const std::function<mfem::ParGridFunction &(int)> &field,
+      std::size_t memory_budget = std::size_t(1) << 27) const;
 
   int GetVDim() const { return mat_op.SpaceDimension(); };
 };
