@@ -422,7 +422,7 @@ std::vector<int> GetDefaultConductivitySheetAttributes(
 }
 
 std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
-                                         MPI_Comm comm)
+                                         MPI_Comm comm, bool try_single_rank_direct)
 {
   BlockTimer bt0(Timer::MESH_PREPROCESS);
   const auto &refinement = iodata.model.refinement;
@@ -476,6 +476,7 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   // A mesh read in parallel, from its coarse mesh on every process, with nodes as for a
   // mesh read whole (see LoadMesh); or, if the file does not match, the whole mesh, read as
   // without the parallel read and nondimensionalized as the coarse mesh was.
+  const bool read_parallel_nc = static_cast<bool>(iodata.nc_mesh_file);
   std::unique_ptr<mfem::ParMesh> pmesh;
   if (auto nc_file = std::move(iodata.nc_mesh_file))
   {
@@ -501,13 +502,28 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
   }
 
   // Generate partitioning from the serial mesh on loading ranks.
+  const int size = Mpi::Size(comm);
   std::unique_ptr<int[]> partitioning;
   if (smesh)
   {
-    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
+    partitioning = GetMeshPartitioning(*smesh, size, iodata.model.partitioning);
   }
 
-  if (!pmesh && use_mesh_partitioner)
+  if (!pmesh && use_mesh_partitioner && try_single_rank_direct && size == 1 &&
+      !read_parallel_nc && !use_amr && iodata.model.partitioning.empty() && smesh &&
+      smesh->Conforming() && !smesh->NURBSext)
+  {
+    pmesh = std::make_unique<mfem::ParMesh>(comm, *smesh, partitioning.get());
+    smesh.reset();
+    // Match the stream constructor's refinement marking and attribute lists.
+    pmesh->Finalize(/*refine=*/true, /*fix_orientation=*/false);
+    pmesh->SetAttributes();
+    if (iodata.problem.verbose > 1)
+    {
+      Mpi::Print(comm, "Constructed parallel mesh directly on one rank\n");
+    }
+  }
+  else if (!pmesh && use_mesh_partitioner)
   {
     pmesh = DistributeMesh(comm, smesh, partitioning.get(), iodata.problem.output);
   }

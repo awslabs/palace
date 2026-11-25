@@ -52,8 +52,10 @@ std::vector<int> GetDefaultConductivitySheetAttributes(
 
 // Partition and distribute a serial mesh prepared by Load, producing a parallel mesh.
 // `smesh` is non-null only on loading ranks (see Load's contract).
+// Opt in to direct construction for eligible single-rank meshes.
 std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::Mesh> smesh,
-                                         MPI_Comm comm);
+                                         MPI_Comm comm,
+                                         bool try_single_rank_direct = false);
 
 // Convenience wrapper: Load followed by Partition with no Preprocess hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
