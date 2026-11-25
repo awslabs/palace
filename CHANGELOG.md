@@ -30,7 +30,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`config["Solver"]["Substructuring"]`): the environment of a region is condensed onto
     their interface once and saved, and later runs solve only the region, also after a
     redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
-    6-1-0. [PR 995](https://github.com/awslabs/palace/pull/995).
+    6-2-0. [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Interface Changes
 
