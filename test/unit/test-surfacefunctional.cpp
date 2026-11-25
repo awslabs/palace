@@ -290,13 +290,15 @@ std::unique_ptr<Mesh> MakeInterfaceMesh(MPI_Comm comm, mfem::Element::Type elem_
 }
 
 // Build a 2D or 3D mesh with two material regions (attribute 1 below the midplane of the
-// last coordinate, vacuum; attribute 2 above, dielectric), interior boundary elements on
-// the material interface (attribute 7), and interior boundary elements on the x = 0.5 plane
-// (attribute 8), which separate elements of the same material on both of their sides.
-// Optionally refine the x < 0.5 half nonconformally, so that the interior boundaries have
-// faces with a coarse neighbor.
+// last coordinate, vacuum; attribute 2 above, dielectric), or with three when
+// two_dielectrics (attribute 3 above the midplane for x > 0.5, a second dielectric),
+// interior boundary elements on the material interfaces (attribute 7), and interior
+// boundary elements on the rest of the x = 0.5 plane (attribute 8), which separate elements
+// of the same material on both of their sides. Optionally refine the x < 0.5 half
+// nonconformally, so that the interior boundaries have faces with a coarse neighbor.
 std::unique_ptr<Mesh> MakeInterfaceSheetMesh(MPI_Comm comm, int dim,
-                                             mfem::Element::Type elem_type, bool nc)
+                                             mfem::Element::Type elem_type, bool nc,
+                                             bool two_dielectrics = false)
 {
   mfem::Mesh smesh = (dim == 3) ? mfem::Mesh::MakeCartesian3D(2, 2, 2, elem_type)
                                 : mfem::Mesh::MakeCartesian2D(2, 2, elem_type, false);
@@ -304,7 +306,9 @@ std::unique_ptr<Mesh> MakeInterfaceSheetMesh(MPI_Comm comm, int dim,
   {
     mfem::Vector center(dim);
     smesh.GetElementCenter(e, center);
-    smesh.SetAttribute(e, (center(dim - 1) < 0.5) ? 1 : 2);
+    smesh.SetAttribute(e, (center(dim - 1) < 0.5)                ? 1
+                          : (two_dielectrics && center(0) > 0.5) ? 3
+                                                                 : 2);
   }
   for (int f = 0; f < smesh.GetNumFaces(); f++)
   {
@@ -1255,16 +1259,21 @@ TEST_CASE("SurfacePostOperator Interface Dielectric Energy Matrices",
   // (GetInterfaceElectricFieldEnergy, libCEED) to roundoff: on the diagonal, for complex
   // combinations of the fields, for all interface types and evaluation sides (single
   // side, averaged, summed on boundaries separating the fields on their two sides), with
-  // face neighbor (ghost) sides in parallel, and on nonconformal interfaces.
+  // face neighbor (ghost) sides in parallel, and on nonconformal interfaces. Two different
+  // dielectrics on the sides of an interface, one of them with a rotated tensor, pin the
+  // substrate permittivity of each side of an MS interface, and order 3 the element dof
+  // transformations of the face neighbor sides, without which the test passes at lower
+  // orders.
   MPI_Comm comm = MPI_COMM_WORLD;
   auto dim = GENERATE(2, 3);
   auto simplex = GENERATE(true, false);
-  auto order = GENERATE(1, 2);
+  auto order = GENERATE(1, 2, 3);
   auto nc = GENERATE(false, true);
   auto sum_sides = GENERATE(false, true);
+  auto two_dielectrics = GENERATE(false, true);
   // Default memory budget (one pass), or one boundary element per pass.
   auto memory_budget = GENERATE(std::size_t(1) << 27, std::size_t(1));
-  CAPTURE(dim, simplex, order, nc, sum_sides, memory_budget);
+  CAPTURE(dim, simplex, order, nc, sum_sides, two_dielectrics, memory_budget);
   fem::DefaultIntegrationOrder::p_trial = order;
   fem::DefaultIntegrationOrder::q_order_jac = true;
   fem::DefaultIntegrationOrder::q_order_extra_pk = 0;
@@ -1272,25 +1281,36 @@ TEST_CASE("SurfacePostOperator Interface Dielectric Energy Matrices",
   const auto elem_type =
       (dim == 3) ? (simplex ? mfem::Element::TETRAHEDRON : mfem::Element::HEXAHEDRON)
                  : (simplex ? mfem::Element::TRIANGLE : mfem::Element::QUADRILATERAL);
-  auto mesh = MakeInterfaceSheetMesh(comm, dim, elem_type, nc);
+  auto mesh = MakeInterfaceSheetMesh(comm, dim, elem_type, nc, two_dielectrics);
 
   // Vacuum below, an anisotropic dielectric above (exercises the substrate permittivity of
-  // the MS integrand).
-  config::MaterialData vacuum, dielectric;
+  // the MS integrand), and a second one with a rotated tensor, with off-diagonal entries
+  // in 2D and 3D.
+  config::MaterialData vacuum, dielectric, dielectric2;
   vacuum.attributes = {1};
   dielectric.attributes = {2};
   dielectric.epsilon_r.s[0] = 11.7;
   dielectric.epsilon_r.s[1] = 3.2;
   dielectric.epsilon_r.s[2] = 5.1;
+  dielectric2.attributes = {3};
+  dielectric2.epsilon_r.s = {4.4, 7.9, 2.6};
+  dielectric2.epsilon_r.v = {{{2.0 / 3.0, 1.0 / 3.0, 2.0 / 3.0},
+                              {1.0 / 3.0, 2.0 / 3.0, -2.0 / 3.0},
+                              {-2.0 / 3.0, 2.0 / 3.0, 1.0 / 3.0}}};
+  std::vector<config::MaterialData> materials = {vacuum, dielectric};
+  if (two_dielectrics)
+  {
+    materials.push_back(dielectric2);
+  }
   config::PeriodicBoundaryData periodic;
-  MaterialOperator mat_op({vacuum, dielectric}, periodic, ProblemType::DRIVEN, *mesh);
+  MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, *mesh);
   mfem::ND_FECollection nd_fec(order, dim);
   mfem::H1_FECollection h1_fec(order, dim);
   FiniteElementSpace nd_fespace(*mesh, &nd_fec), h1_fespace(*mesh, &h1_fec);
 
-  // Every interface type on the material interface (7), on the sheet with the same material
-  // on both sides (8), and on exterior boundaries on the vacuum (1) and dielectric (top)
-  // sides.
+  // Every interface type on the material interfaces (7), on the sheet with the same
+  // material on both sides (8), and on exterior boundaries on the vacuum (1) and dielectric
+  // (top) sides.
   const int top = (dim == 3) ? 6 : 3;
   config::BoundaryPostData postpro;
   int num_interfaces = 0;
