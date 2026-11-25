@@ -68,6 +68,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1293](https://github.com/awslabs/palace/pull/1293).
   - `--dry-run` with more than one process no longer hangs when the configuration file
     fails the schema validation. [PR 1260](https://github.com/awslabs/palace/pull/1260).
+  - Fixed the domain energies of boundary mode simulations, which omitted the out-of-plane
+    electric field and the in-plane magnetic flux density: the magnetic energy of a
+    quasi-TEM mode was nearly zero, and the electric energy of a mode with a longitudinal
+    field was incomplete (a TM mode of a hollow guide lost 36% to 41% of it).
+    [PR 1308](https://github.com/awslabs/palace/pull/1308).
 
 #### Documentation
 

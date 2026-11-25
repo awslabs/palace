@@ -18,9 +18,11 @@
 #include <tuple>
 #include <vector>
 #include "drivers/boundarymodesolver.hpp"
+#include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/errorindicator.hpp"
 #include "fem/face_sampling_plan.hpp"
+#include "fem/integrator.hpp"
 #include "fem/interpolator.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/orthog.hpp"
@@ -133,9 +135,11 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
           }
           else if constexpr (solver_t == ProblemType::BOUNDARYMODE)
           {
-            // Mode analysis: E on ND space, B (Hz) on L2 curl space.
+            // Mode analysis: in-plane fields on the ND space, out-of-plane E on the H1
+            // space and B on the L2 curl space.
             return DomainPostOperator(domains.postpro, fem_op_.GetMaterialOp(),
-                                      fem_op_.GetNDSpace(), fem_op_.GetCurlSpace());
+                                      fem_op_.GetNDSpace(), fem_op_.GetH1Space(),
+                                      fem_op_.GetCurlSpace());
           }
           else
           {
@@ -181,6 +185,14 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
   {
     En = std::make_unique<GridFunction>(fem_op->GetH1Space(), true);
     Bt_inplane = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
+    zxBt = std::make_unique<GridFunction>(fem_op->GetNDSpace(), true);
+    // Not the cached interpolator of the ND space (GetDiscreteInterpolator): with
+    // multigrid, it is that of the auxiliary H1 space hierarchy of the Hiptmair smoother
+    // (ModeEigenSolver), and asking for it with another H1 space would reset it.
+    DiscreteLinearOperator grad(fem_op->GetH1Space(), fem_op->GetNDSpace());
+    grad.AddDomainInterpolator<GradientInterpolator>();
+    Grad = std::make_unique<ParOperator>(grad.PartialAssemble(), fem_op->GetH1Space(),
+                                         fem_op->GetNDSpace(), true);
   }
 
   // Add wave port boundary mode postprocessing, if available.
@@ -1734,7 +1746,9 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // every process), the energies with it, and the participations in the total, are
     // left empty.
     const double omega = measurement_cache.freq.real();
-    const auto [energy, material] = dom_post_op.GetElectricFieldEnergies(field, omega);
+    // Mode analysis adds the out-of-plane E.
+    const auto [energy, material] =
+        dom_post_op.GetElectricFieldEnergies(field, omega, En.get());
     measurement_cache.domain_E_field_energy_all = energy;
     measurement_cache.domain_E_field_energy_material = material;
 
@@ -1744,7 +1758,8 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
           Measurement::DomainData{idx, std::nullopt, std::nullopt});
       if (dom_post_op.HasStoredDomainElectricFieldEnergy(idx))
       {
-        d.energy = dom_post_op.GetDomainElectricFieldEnergy(idx, field, omega);
+        d.energy = dom_post_op.GetDomainElectricFieldEnergy(
+            idx, field, omega, DomainPostOperator::ElectricEnergy::STORED, En.get());
         if (energy)
         {
           d.participation_ratio = ParticipationRatio(*d.energy, *energy);
@@ -1768,15 +1783,16 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // A broken magnetostatic solution has no grid function, but its L-vector.
     auto &field = A ? *A : *B;
     const bool use_l = (a_l.Size() > 0);
+    // Mode analysis adds the in-plane B.
     auto energy = use_l ? dom_post_op.GetMagneticFieldEnergy(a_l, field.GetComm())
-                        : dom_post_op.GetMagneticFieldEnergy(field);
+                        : dom_post_op.GetMagneticFieldEnergy(field, zxBt.get());
     measurement_cache.domain_H_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
       auto energy_i =
           use_l ? dom_post_op.GetDomainMagneticFieldEnergy(idx, a_l, field.GetComm())
-                : dom_post_op.GetDomainMagneticFieldEnergy(idx, field);
+                : dom_post_op.GetDomainMagneticFieldEnergy(idx, field, zxBt.get());
       measurement_cache.domain_H_field_energy_i.emplace_back(
           Measurement::DomainData{idx, energy_i, ParticipationRatio(energy_i, energy)});
     }
@@ -2917,14 +2933,19 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
     const int nd_sz = nd_fs.GetTrueVSize();
     const int l2_sz = l2_fs.GetTrueVSize();
     ComplexVector b(l2_sz);
+    b.UseDevice(true);
 
     // Get Et true DOFs.
     Vector etr(nd_sz), eti(nd_sz);
+    etr.UseDevice(true);
+    eti.UseDevice(true);
     E->Real().GetTrueDofs(etr);
     E->Imag().GetTrueDofs(eti);
 
     // Apply curl: curl(Et_r) and curl(Et_i).
     Vector curl_etr(l2_sz), curl_eti(l2_sz);
+    curl_etr.UseDevice(true);
+    curl_eti.UseDevice(true);
     Curl.Mult(etr, curl_etr);
     Curl.Mult(eti, curl_eti);
 
@@ -2949,6 +2970,19 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
     Bt_inplane->Imag().ProjectCoefficient(bt_imag_coeff);
     Bt_inplane->Real().ExchangeFaceNbrData();
     Bt_inplane->Imag().ExchangeFaceNbrData();
+  }
+  // z_hat x Bt from the true dofs of Et and En, exact in the ND space.
+  {
+    ComplexVector w(et.Size()), grad_en(et.Size());
+    w.UseDevice(true);
+    grad_en.UseDevice(true);
+    Grad->Mult(en.Real(), grad_en.Real());
+    Grad->Mult(en.Imag(), grad_en.Imag());
+    w = et;
+    w *= kn / omega;
+    w.AXPY(std::complex<double>(0.0, -1.0 / omega), grad_en);
+    zxBt->Real().SetFromTrueDofs(w.Real());
+    zxBt->Imag().SetFromTrueDofs(w.Imag());
   }
 
   measurement_cache = {};

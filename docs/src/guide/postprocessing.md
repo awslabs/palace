@@ -99,10 +99,10 @@ These include:
 
 ### Limits of stored-energy accounting
 
-Boundary-mode energies contain only the transverse electric and longitudinal magnetic
-components, not the full modal energy. The electric energy includes the polarization
-energy of a frequency-dependent material that has a stored energy; for a material without
-one, it is not reported (see [Energy and postprocessing](model.md#Energy-and-postprocessing)).
+Boundary-mode energies, per unit length of the guide, include all the components of the
+fields. The electric energy includes the polarization energy of a frequency-dependent
+material that has a stored energy; for a material without one, it is not reported (see
+[Energy and postprocessing](model.md#Energy-and-postprocessing)).
 Lumped L/C energies use the circuit voltage and branch current, which can differ from the
 energy stored in the boundary sheet when the port field is not uniform. The energy stored
 in `"Impedance"`, `"RationalImpedance"` and `"Conductivity"` boundaries and, in the
