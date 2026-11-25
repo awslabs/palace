@@ -161,13 +161,9 @@ TEST_CASE("Driven MMS Enzyme quantities match the analytic cases",
   CheckPointwiseAgreement(enzyme::PolynomialCase(), analytic::PolynomialCase(), points);
   CheckPointwiseAgreement(enzyme::TrigCase(), analytic::TrigCase(), points);
 
-  // The Neumann-face fields, including a point on the natural face x = 1, where the curl
-  // supplies the Neumann data n×(μ⁻¹∇×E). This pointwise check is the only Enzyme
-  // coverage of the Neumann-face problem: CheckBackendAgreement below runs only the PEC
-  // problem, so the surface term never sees Enzyme data in a full solve. A second
-  // end-to-end Enzyme solve is deliberately omitted (one end-to-end backend check per
-  // operator, as for the electrostatic MMS); the analytic Neumann-face solve covers the
-  // surface term itself.
+  // The Neumann-face fields (also used by the impedance problem), including a point on
+  // the face x = 1, where the curl supplies the surface data n×(μ⁻¹∇×E). The end-to-end
+  // solves of both problems follow below.
   auto neumann_points = points;
   neumann_points.push_back({1.0, 0.27, 0.58});
   CheckPointwiseAgreement(enzyme::NeumannPolynomialCase(),
@@ -183,4 +179,22 @@ TEST_CASE("Driven MMS Enzyme reproduces the analytic errors",
   // smooth field keeps the Enzyme derivatives from being exact, unlike a low-degree
   // polynomial.
   CheckBackendAgreement(enzyme::TrigCase(), analytic::TrigCase());
+}
+
+TEST_CASE("Driven MMS Enzyme with a Neumann face reproduces the analytic errors",
+          "[driven][mms][enzyme][Serial][Parallel]")
+{
+  // As above for the Neumann-face problem, which also takes the Enzyme curl into the
+  // surface data on the natural face.
+  CheckNeumannBackendAgreement(enzyme::NeumannTrigCase(), analytic::NeumannTrigCase());
+}
+
+TEST_CASE("Driven MMS Enzyme with an impedance face reproduces the analytic errors",
+          "[driven][mms][enzyme][Serial][Parallel]")
+{
+  // As above for the impedance problem, one end-to-end solve per problem. It adds no
+  // derivative coverage beyond the Neumann-face solve: the Enzyme curl enters only the
+  // n×H part of the surface data, as there, and the γ terms use field values, which need
+  // no derivative.
+  CheckImpedanceBackendAgreement(enzyme::NeumannTrigCase(), analytic::NeumannTrigCase());
 }

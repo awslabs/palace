@@ -43,12 +43,16 @@ inline constexpr std::array<double, 3> kAnisotropicEpsilonR = {4.0, 2.0, 3.0};
 // x = 1) is gone. The lowest eigenvalue is then the (½, 1, 1) mode at ≈ 1.58, followed by
 // (½, 1, 0) at ≈ 1.92 and (½, 0, 1) at ≈ 2.71, so ω² = 1 is again below the first
 // resonance, at ω²/ω₁² ≈ 0.63.
+//
+// The impedance problem needs no such margin: its face always has a resistive branch
+// R_s > 0, which dissipates energy, so the operator has no real eigenvalues and is
+// nonsingular at any real ω (it is also checked at ω = 0.8).
 inline constexpr double kOmega = 1.0;
 
 // A manufactured electric field with n×E = 0 on the PEC boundary (every face, except
-// x = 1 for the Neumann-face cases), its curl ∇×E, the curl-curl term ∇×(μ⁻¹∇×E) of the
-// strong-form source (for this case's μ_r), and the constant diagonal material properties
-// and frequency of the driven solve.
+// x = 1 for the Neumann-face cases, which the impedance problem also uses), its curl ∇×E,
+// the curl-curl term ∇×(μ⁻¹∇×E) of the strong-form source (for this case's μ_r), and the
+// constant diagonal material properties and frequency of the driven solve.
 struct MmsCase
 {
   VectorFunction electric_field;
@@ -81,10 +85,21 @@ void CheckMassProjectionConvergence(const MmsCase &smooth);
 void CheckNeumannExactness(const MmsCase &polynomial);
 void CheckNeumannConvergence(const MmsCase &smooth);
 
+// Impedance problem (curl-curl + mass, x = 1 face an impedance boundary with resistive,
+// inductive, and capacitive branches): takes the Neumann-face cases. Exactness is checked
+// per branch (R, RL, RC) and combined (RLC); convergence for the combined face.
+void CheckImpedanceExactness(const MmsCase &polynomial);
+void CheckImpedanceConvergence(const MmsCase &smooth);
+
 // PEC problem (curl-curl + mass, every face PEC).
 void CheckPolynomialExactness(const MmsCase &polynomial);
 void CheckOptimalConvergence(const MmsCase &smooth);
 void CheckBackendAgreement(const MmsCase &candidate, const MmsCase &reference);
+
+// End-to-end backend comparisons for the Neumann-face and impedance problems (combined
+// R_s, L_s, C_s face), with the Neumann-face cases.
+void CheckNeumannBackendAgreement(const MmsCase &candidate, const MmsCase &reference);
+void CheckImpedanceBackendAgreement(const MmsCase &candidate, const MmsCase &reference);
 
 }  // namespace palace::testing::mms::driven
 

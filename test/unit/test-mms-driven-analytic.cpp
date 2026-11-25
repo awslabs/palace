@@ -246,3 +246,18 @@ TEST_CASE("Driven MMS analytic with a Neumann face converges at the optimal rate
 {
   CheckNeumannConvergence(analytic::NeumannTrigCase());
 }
+
+TEST_CASE("Driven MMS analytic with an impedance face is exact for a polynomial in the FE "
+          "space",
+          "[driven][mms][analytic][Serial][Parallel]")
+{
+  // The Neumann-face fields: their tangential trace on x = 1 is nonzero, so the impedance
+  // term γ n×(n×E) acts on the manufactured field itself.
+  CheckImpedanceExactness(analytic::NeumannPolynomialCase());
+}
+
+TEST_CASE("Driven MMS analytic with an impedance face converges at the optimal rate",
+          "[driven][mms][analytic][Serial][Parallel]")
+{
+  CheckImpedanceConvergence(analytic::NeumannTrigCase());
+}

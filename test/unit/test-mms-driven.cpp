@@ -5,11 +5,12 @@
 // operator, following Garcia-Doñoro et al., "Verification Process of Finite-Element Method
 // Code for Electromagnetics: Using the Method of Manufactured Solutions," IEEE Antennas
 // Propag. Mag. 58(2), 2016. The paper verifies the formulation one term at a time; this
-// file covers three of its steps on a common setup, named here (and in the Problem
+// file covers four of its steps on a common setup, named here (and in the Problem
 // enumerators) by what they solve:
 //   - the mass projection (the paper's Test 1, eqs. 15–17): the mass term alone;
 //   - the PEC problem (Test 3, eqs. 20–22): curl-curl + mass, PEC on every face;
-//   - the Neumann-face problem (Test 4, eqs. 23–24): the PEC problem with one natural face.
+//   - the Neumann-face problem (Test 4, eqs. 23–24): the PEC problem with one natural face;
+//   - the impedance problem (Test 5, eqs. 25–26): the PEC problem with one impedance face.
 // The curl-curl term alone (Test 2) is the magnetostatic test (test-mms-magnetostatic.cpp).
 // Throughout, the material is lossless with anisotropic μ_r and ε_r, and the angular
 // frequency ω is real.
@@ -44,6 +45,17 @@
 // Neumann data that the homogeneous natural condition in Palace's weak form must balance.
 // Its fields vanish tangentially only on the five PEC faces, so the trace of E_h on Γ_N is
 // a genuine unknown. Both errors are asserted, as for the PEC problem.
+//
+// Impedance problem. The x = 1 face is instead a Palace impedance boundary, the Robin
+// condition n×(μ⁻¹∇×E) + γ n×(n×E) = U with γ = 1/L_s + iω/R_s − ω²C_s. Palace adds the
+// left-hand term γ ∮ (n×E)·(n×φ) dS itself, branch by branch to K, C, and M, so the
+// right-hand side supplies only −∮ U_mms·φ dS, U_mms = n×H_mms + γ n×(n×E_mms). It is the
+// first problem with a damping matrix, and γ makes the right-hand side complex, so the
+// imaginary part of E_h must converge to zero while its real part converges to E_mms. It
+// reuses the Neumann-face fields, whose nonzero tangential trace on x = 1 lets the γ term
+// act on E_mms. Exactness is checked per branch (R_s alone, with L_s, with C_s, and all
+// three), so a wrong coefficient in one branch fails that branch's section; every pairing
+// keeps R_s > 0, which dissipates energy and keeps the operator nonsingular at any real ω.
 //
 // Backend-specific tests supply E_mms, ∇×E_mms, and ∇×(μ⁻¹∇×E_mms) through MmsCase; this
 // file owns the common Palace solve and error checks.
@@ -81,23 +93,44 @@ namespace
 // Which of the paper's tests to run on the common setup.
 enum class Problem
 {
-  MASS_PROJECTION,        // M E = b, the ε-weighted L2 projection.
-  CURL_CURL_MASS,         // (K − ω²M) E = b, the driven operator, all faces PEC.
-  CURL_CURL_MASS_NEUMANN  // As CURL_CURL_MASS, but the x = 1 face is natural (PMC).
+  MASS_PROJECTION,           // M E = b, the ε-weighted L2 projection.
+  CURL_CURL_MASS,            // (K − ω²M) E = b, the driven operator, all faces PEC.
+  CURL_CURL_MASS_NEUMANN,    // As CURL_CURL_MASS, but the x = 1 face is natural (PMC).
+  CURL_CURL_MASS_IMPEDANCE,  // As CURL_CURL_MASS, but the x = 1 face is an impedance face.
 };
 
-// The natural face of the Neumann-face problem. MakeCartesian3D numbers the unit-cube
-// faces z = 0: 1, y = 0: 2, x = 1: 3, y = 1: 4, x = 0: 5, z = 1: 6, for hexahedra and
-// tetrahedra alike, so attribute 3 is x = 1, with outward normal n = +x̂.
-constexpr int kNeumannAttribute = 3;
+// The non-PEC face of the Neumann-face and impedance problems. MakeCartesian3D numbers the
+// unit-cube faces z = 0: 1, y = 0: 2, x = 1: 3, y = 1: 4, x = 0: 5, z = 1: 6, for
+// hexahedra and tetrahedra alike, so attribute 3 is x = 1, with outward normal n = +x̂.
+constexpr int kNaturalFaceAttribute = 3;
+
+// Nondimensional surface resistance, inductance, and capacitance (per square) of the
+// impedance face; zero means the branch is absent, as in Palace's ImpedanceData. Palace's
+// SurfaceImpedanceOperator puts each branch on the tangential boundary mass
+// ∮ (n×E)·(n×φ) dS of a different matrix: 1/L_s in K, 1/R_s in the damping matrix C (with
+// iω), and C_s in M (with −ω²). The Robin coefficient of n×(μ⁻¹∇×E) + γ n×(n×E) = U is
+// therefore γ = 1/L_s + iω/R_s − ω²C_s (for R_s alone, the documented γ = iω/Z_s).
+struct SurfaceImpedance
+{
+  double Rs = 0.0, Ls = 0.0, Cs = 0.0;
+
+  std::complex<double> Gamma(double omega) const
+  {
+    const double re = (Ls != 0.0 ? 1.0 / Ls : 0.0) - omega * omega * Cs;
+    const double im = (Rs != 0.0 ? omega / Rs : 0.0);
+    return {re, im};
+  }
+};
 
 // Optional surface term of the right-hand side: a coefficient integrated against φ over
-// the marked boundary faces with the given quadrature rule (see SolveMmsError).
+// the marked boundary faces with the given quadrature rule (see SolveMmsError), with an
+// optional imaginary part.
 struct BoundarySource
 {
   mfem::VectorCoefficient &data;
   mfem::Array<int> &marker;
   const mfem::IntegrationRule &ir;
+  mfem::VectorCoefficient *data_imag = nullptr;
 };
 
 struct MmsError
@@ -113,23 +146,25 @@ struct MmsError
 // with K assembled using DIAG_ONE and C, M using DIAG_ZERO, so the PEC rows of A are the
 // identity. The Dirichlet data is zero, so zeroing the PEC entries of the right-hand side
 // (as SpaceOperator::GetExcitationVector does) imposes n×E = 0. The material is lossless
-// and there are no ports, so C and the extra matrix A2(ω) are absent (both asserted
-// below, so the solved system cannot silently drift from DrivenSolver's), and the
-// right-hand side is real:
+// and there are no ports, so the extra matrix A2(ω) is absent, and C is present exactly
+// when the impedance face has a resistive branch (both asserted below, so the solved
+// system cannot silently drift from DrivenSolver's). The right-hand side is
 //   RHS = R_ndᵀ [ ∫ J·φ dΩ + ∮_Γ g·φ dS ],   R_nd = the ND prolongation (local to true
-// dofs), where the surface term with data g is present only for the Neumann-face problem.
-// The integrals use the caller's quadrature rules, see SolveMmsError. On a boundary face,
+// dofs), where the surface term with data g is present only for the Neumann-face and
+// impedance problems, and g has an imaginary part only for the impedance problem. The
+// integrals use the caller's quadrature rules, see SolveMmsError. On a boundary face,
 // MFEM's VectorFEDomainLFIntegrator evaluates the physical (tangential) trace of the
 // Nédélec basis, so g·φ only sees the tangential part of g.
 ComplexVector SolveManufactured(const IoData &iodata, SpaceOperator &space_op, double omega,
                                 mfem::VectorCoefficient &source,
                                 const mfem::IntegrationRule &ir,
-                                const BoundarySource *boundary = nullptr)
+                                const BoundarySource *boundary = nullptr,
+                                bool expect_damping = false)
 {
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-  REQUIRE(!C);
+  REQUIRE(static_cast<bool>(C) == expect_damping);
   REQUIRE(!space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO));
   auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, K.get(),
                                     C.get(), M.get());
@@ -155,6 +190,16 @@ ComplexVector SolveManufactured(const IoData &iodata, SpaceOperator &space_op, d
   E = 0.0;
   RHS = 0.0;
   nd.GetProlongationMatrix()->MultTranspose(b, RHS.Real());
+  if (boundary && boundary->data_imag)
+  {
+    // Only the impedance problem has an imaginary part, and only on the boundary.
+    mfem::ParLinearForm b_imag(&nd.Get());
+    b_imag.AddBoundaryIntegrator(
+        new mfem::VectorFEDomainLFIntegrator(*boundary->data_imag, &boundary->ir),
+        boundary->marker);
+    b_imag.Assemble();
+    nd.GetProlongationMatrix()->MultTranspose(b_imag, RHS.Imag());
+  }
   linalg::SetSubVector(RHS, space_op.GetNDDbcTDofLists().back(), 0.0);
 
   ksp.Mult(RHS, E);
@@ -245,26 +290,33 @@ MmsError ComputeMmsErrors(SpaceOperator &space_op, const ComplexVector &E,
 
 MmsError SolveMmsError(const MmsCase &mms, Problem problem,
                        std::unique_ptr<mfem::Mesh> serial_mesh, int order,
-                       double linear_tol = 1.0e-9)
+                       double linear_tol = 1.0e-9, const SurfaceImpedance &impedance = {})
 {
   MPI_Comm comm = Mpi::World();
 
   // Every face is PEC, so n×E = 0 is imposed on all of ∂Ω, except for the Neumann-face
-  // problem, where the x = 1 face is listed as PMC instead. PMC adds no term to Palace's
-  // operator (it is the natural condition, the same as leaving the face unassigned), but
-  // listing it mirrors a real configuration.
+  // and impedance problems, where the x = 1 face is listed as PMC or as an impedance
+  // boundary instead. PMC adds no term to Palace's operator (it is the natural condition,
+  // the same as leaving the face unassigned), but listing it mirrors a real configuration.
+  // The impedance values are given in dimensional units, so that they pass through
+  // Palace's nondimensionalization of ImpedanceData (R_s, L_s, C_s divided by the
+  // impedance, inductance, and capacitance scales) as in a real configuration. The round
+  // trip uses the same scale factors in both directions, so it cancels by construction: it
+  // checks that the test's units match Palace's (the characteristic length below), not
+  // that Palace's scale factors themselves are right.
   //
   // The default frequency-domain linear solver is a sparse direct solver when one is built
   // in, so pin an iterative solver to solve the same way on every build and keep the
-  // finest meshes affordable. The two curl-curl problems use AMS, GMRES with the shifted
-  // AMS preconditioner; at most 29 iterations were measured for either, even for the
-  // order-5 exactness solves at 1e-13, serially and on 2 ranks, so the default max_it of
-  // 100 leaves margin. The mass projection uses CG with Jacobi on a single level, needing
-  // neither the auxiliary-space correction (there is no curl-curl null space to handle)
-  // nor multigrid (the condition number of M does not grow with refinement). There the
-  // default max_it of 100 is too few for high-order tetrahedra (see SolveMassProjection):
-  // order 5 at 1e-13 takes about 800, so 2000 leaves margin, and each CG iteration on M is
-  // cheap.
+  // finest meshes affordable. The curl-curl problems use AMS, GMRES with the shifted AMS
+  // preconditioner. At most 29 iterations were measured for the PEC and Neumann-face
+  // problems and 59 for the impedance problem, including the order-5 exactness solves at
+  // 1e-13, serially and on 2 ranks; the default max_it of 100 leaves margin for the former,
+  // and the impedance problem raises it to 200 (below). The mass
+  // projection uses CG with Jacobi on a single level, needing neither the auxiliary-space
+  // correction (there is no curl-curl null space to handle) nor multigrid (the condition
+  // number of M does not grow with refinement). There the default max_it of 100 is too
+  // few for high-order tetrahedra (see SolveMassProjection): order 5 at 1e-13 takes about
+  // 800, so 2000 leaves margin, and each CG iteration on M is cheap.
   Units units(1.0, 1.0);
   IoData iodata(units);
   iodata.model.Lc = 1.0;
@@ -274,10 +326,32 @@ MmsError SolveMmsError(const MmsCase &mms, Problem problem,
   material.mu_r.s = mms.mu_r;
   material.epsilon_r.s = mms.epsilon_r;
   const bool neumann = (problem == Problem::CURL_CURL_MASS_NEUMANN);
+  const bool robin = (problem == Problem::CURL_CURL_MASS_IMPEDANCE);
+  if (robin)
+  {
+    // Every pairing keeps the resistive branch, so γ has a dissipative imaginary part and
+    // the operator is nonsingular at any real ω.
+    REQUIRE(impedance.Rs > 0.0);
+    // Dimensionalize with the units NondimensionalizeInputs will build, Units(L0, Lc L0)
+    // with model.L0 = 1e-6 m by default, not with the Units(1, 1) passed to IoData above:
+    // the inductance and capacitance scales μ₀L_c and ε₀L_c depend on the characteristic
+    // length (the impedance scale Z₀ does not), so the wrong units leave R_s correct but
+    // scale L_s and C_s by 10⁶.
+    const Units palace_units(iodata.model.L0, iodata.model.Lc * iodata.model.L0);
+    auto &imp = iodata.boundaries.impedance.emplace_back();
+    imp.Rs = palace_units.Dimensionalize<Units::ValueType::IMPEDANCE>(impedance.Rs);
+    imp.Ls = palace_units.Dimensionalize<Units::ValueType::INDUCTANCE>(impedance.Ls);
+    imp.Cs = palace_units.Dimensionalize<Units::ValueType::CAPACITANCE>(impedance.Cs);
+    imp.attributes = {kNaturalFaceAttribute};
+  }
   for (int i = 0; i < serial_mesh->bdr_attributes.Size(); i++)
   {
     const int attr = serial_mesh->bdr_attributes[i];
-    auto &attributes = (neumann && attr == kNeumannAttribute)
+    if (attr == kNaturalFaceAttribute && robin)
+    {
+      continue;  // Listed as an impedance boundary above.
+    }
+    auto &attributes = (neumann && attr == kNaturalFaceAttribute)
                            ? iodata.boundaries.pmc.attributes
                            : iodata.boundaries.pec.attributes;
     attributes.push_back(attr);
@@ -296,10 +370,18 @@ MmsError SolveMmsError(const MmsCase &mms, Problem problem,
     case Problem::CURL_CURL_MASS_NEUMANN:
       iodata.solver.linear.type = LinearSolver::AMS;
       break;
+    case Problem::CURL_CURL_MASS_IMPEDANCE:
+      // Twice the iterations of the other curl-curl problems (see above), so more headroom
+      // than the default max_it of 100. The restart length stays at 100: CheckConfiguration
+      // would otherwise set max_size = max_it, and the first 100 iterations are unchanged.
+      iodata.solver.linear.type = LinearSolver::AMS;
+      iodata.solver.linear.max_it = 200;
+      iodata.solver.linear.max_size = 100;
+      break;
   }
   // Quadrature for the source integral ∫ J·φ dΩ. Polynomial exactness requires this
   // integral to be exact, or Galerkin orthogonality no longer pins E_h = E_mms. For the
-  // polynomial fields of all three tests, J has degree ≤ 2 per variable (total degree
+  // polynomial fields of all four problems, J has degree ≤ 2 per variable (total degree
   // ≤ 4), and φ ∈ ND_p has degree ≤ p per variable on hexahedra and ≤ p in total on
   // tetrahedra, so J·φ needs degree p + 2 per variable (Gauss tensor rule) or p + 4 in
   // total (simplex rule). MFEM's default 2p is exact with no slack for order-5 tetrahedra;
@@ -308,10 +390,12 @@ MmsError SolveMmsError(const MmsCase &mms, Problem problem,
   // so ranks that own no elements still get a valid rule.)
   const mfem::IntegrationRule &source_ir =
       mfem::IntRules.Get(serial_mesh->GetElementGeometry(0), 2 * order + 4);
-  // The same order for the Neumann-face surface integral ∮ (n×H_mms)·φ dS on the faces
-  // (squares or triangles). For that problem's polynomial, n×H_mms has degree ≤ 2 per
-  // variable (total degree ≤ 3) on x = 1, and the tangential trace of φ has degree ≤ p, so
-  // the integrand needs p + 2 per variable or p + 3 in total, well within 2p + 4.
+  // The same order for the surface integral ∮ U_mms·φ dS of the Neumann-face and impedance
+  // problems on the faces (squares or triangles), U_mms = n×H_mms + γ n×(n×E_mms). For
+  // their polynomial, on x = 1, n×H_mms has degree ≤ 2 per variable (total degree ≤ 3) and
+  // the tangential trace (E_y, E_z) = (a(z), a(y)) of E_mms has degree 2; the tangential
+  // trace of φ has degree ≤ p. So the n×H term needs p + 2 per variable or p + 3 in total,
+  // and the γ term p + 2 either way, all well within 2p + 4.
   const mfem::IntegrationRule &boundary_ir =
       mfem::IntRules.Get(serial_mesh->GetBdrElementGeometry(0), 2 * order + 4);
 
@@ -329,13 +413,13 @@ MmsError SolveMmsError(const MmsCase &mms, Problem problem,
                          iodata.problem.type, iodata.units, mesh);
   mfem::VectorFunctionCoefficient e_exact(/*vdim=*/3, mms.electric_field);
   mfem::VectorFunctionCoefficient curl_exact(/*vdim=*/3, mms.curl);
-  // The volume source: J = ∇×(μ⁻¹∇×E_mms) − ω²εE_mms for both curl-curl problems (the
-  // Neumann-face problem adds only the surface term below), and only the mass part εE_mms
-  // (with coefficient 1 instead of −ω²) for the mass projection. The backend supplies the
-  // curl-curl term, which carries the μ dependence and the second derivatives. Scaling the
-  // mass term component-wise equals εE only because the default (identity) material axes
-  // make diag(ε_r) diagonal in the global frame (and likewise for μ in the backends); a
-  // rotated tensor would need R diag(ε_r) Rᵀ here.
+  // The volume source: J = ∇×(μ⁻¹∇×E_mms) − ω²εE_mms for all three curl-curl problems
+  // (the Neumann-face and impedance problems add only the surface term below), and only
+  // the mass part εE_mms (with coefficient 1 instead of −ω²) for the mass projection. The
+  // backend supplies the curl-curl term, which carries the μ dependence and the second
+  // derivatives. Scaling the mass term component-wise equals εE only because the default
+  // (identity) material axes make diag(ε_r) diagonal in the global frame (and likewise
+  // for μ in the backends); a rotated tensor would need R diag(ε_r) Rᵀ here.
   const bool mass_only = (problem == Problem::MASS_PROJECTION);
   const double mass_coef = mass_only ? 1.0 : -mms.omega * mms.omega;
   mfem::VectorFunctionCoefficient source(
@@ -357,52 +441,82 @@ MmsError SolveMmsError(const MmsCase &mms, Problem problem,
           f(d) += mass_coef * mms.epsilon_r[d] * e(d);
         }
       });
-  // Neumann-face surface data. Integrating the curl term by parts with
+  // Surface data of the Neumann-face and impedance problems. Integrating the curl term by
+  // parts with
   //   ∫ (∇×H)·φ dΩ = ∫ H·(∇×φ) dΩ + ∮ (n×H)·φ dS
-  // (from ∇·(H×φ) = φ·(∇×H) − H·(∇×φ)) leaves −∮_ΓN (n×H_mms)·φ dS on the right-hand side
-  // with H_mms = μ⁻¹∇×E_mms; the PEC faces drop out because n×φ = 0 there. This is the
-  // paper's eq. 23 with Ψ_N = n×(∇×V_mms) (eq. 24). The outward normal of the x = 1 face is
-  // +x̂, so −n×H = −(0, −H_z, H_y) = (0, H_z, −H_y). Writing the normal out here, rather
-  // than taking it from the boundary element, keeps the sign independent of how the mesh
-  // orients its boundary elements. H = μ⁻¹∇×E is diagonal for the same identity-axes reason
-  // as the source.
-  mfem::VectorFunctionCoefficient neumann_data(
+  // (from ∇·(H×φ) = φ·(∇×H) − H·(∇×φ)) leaves ∮_Γ (n×H)·φ dS on the left, with
+  // H = μ⁻¹∇×E; the PEC faces drop out because n×φ = 0 there. On the x = 1 face the
+  // boundary condition is n×H + γ n×(n×E) = U, with γ = 0 for the Neumann face. Because
+  // (n×(n×E))·φ = −(n×E)·(n×φ), substituting it moves γ ∮ (n×E)·(n×φ) dS to the left, which
+  // is the production impedance term, and leaves −∮ U_mms·φ dS on the right with the data
+  //   U_mms = n×H_mms + γ n×(n×E_mms),   H_mms = μ⁻¹∇×E_mms.
+  // This is the paper's eq. 23 with Ψ_N = n×(∇×V_mms) (eq. 24) for the Neumann face, and
+  // eq. 25 with Ψ_C = n×(∇×V_mms) + γ n×n×V_mms (eq. 26) for the impedance face. The
+  // outward normal of the x = 1 face is +x̂, so n×H = (0, −H_z, H_y) and
+  // n×(n×E) = n(n·E) − E = (0, −E_y, −E_z), and
+  //   −U_mms = (0, H_z, −H_y) + γ (0, E_y, E_z).
+  // Writing the normal out here, rather than taking it from the boundary element, keeps the
+  // sign independent of how the mesh orients its boundary elements. H = μ⁻¹∇×E is diagonal
+  // for the same identity-axes reason as the source. γ is complex for the impedance face,
+  // so the data has an imaginary part, Im γ (0, E_y, E_z).
+  const std::complex<double> gamma = robin ? impedance.Gamma(mms.omega) : 0.0;
+  mfem::VectorFunctionCoefficient surface_data(
       /*vdim=*/3,
-      [&mms](const mfem::Vector &x, mfem::Vector &g)
+      [&mms, gamma](const mfem::Vector &x, mfem::Vector &g)
       {
         mfem::Vector curl(3);
         mms.curl(x, curl);
         g(0) = 0.0;
         g(1) = curl(2) / mms.mu_r[2];
         g(2) = -curl(1) / mms.mu_r[1];
+        if (gamma.real() != 0.0)  // Zero for the Neumann face: skip evaluating E there.
+        {
+          mfem::Vector e(3);
+          mms.electric_field(x, e);
+          g(1) += gamma.real() * e(1);
+          g(2) += gamma.real() * e(2);
+        }
       });
-  // The marker selects the natural face; it is only built (and its attribute checked) for
-  // the Neumann-face problem, so the others accept any boundary numbering.
-  mfem::Array<int> neumann_marker;
-  if (neumann)
+  mfem::VectorFunctionCoefficient surface_data_imag(
+      /*vdim=*/3,
+      [&mms, gamma](const mfem::Vector &x, mfem::Vector &g)
+      {
+        mfem::Vector e(3);
+        mms.electric_field(x, e);
+        g(0) = 0.0;
+        g(1) = gamma.imag() * e(1);
+        g(2) = gamma.imag() * e(2);
+      });
+  // The marker selects the x = 1 face; it is only built (and its attribute checked) for
+  // the Neumann-face and impedance problems, so the others accept any boundary numbering.
+  mfem::Array<int> surface_marker;
+  if (neumann || robin)
   {
-    REQUIRE(serial_mesh->bdr_attributes.Find(kNeumannAttribute) >= 0);
-    neumann_marker.SetSize(serial_mesh->bdr_attributes.Max());
-    neumann_marker = 0;
-    neumann_marker[kNeumannAttribute - 1] = 1;
+    REQUIRE(serial_mesh->bdr_attributes.Find(kNaturalFaceAttribute) >= 0);
+    surface_marker.SetSize(serial_mesh->bdr_attributes.Max());
+    surface_marker = 0;
+    surface_marker[kNaturalFaceAttribute - 1] = 1;
   }
-  const BoundarySource neumann_source{neumann_data, neumann_marker, boundary_ir};
+  const BoundarySource surface_source{surface_data, surface_marker, boundary_ir,
+                                      robin ? &surface_data_imag : nullptr};
 
   const ComplexVector E =
       mass_only ? SolveMassProjection(iodata, space_op, source, source_ir)
                 : SolveManufactured(iodata, space_op, mms.omega, source, source_ir,
-                                    neumann ? &neumann_source : nullptr);
+                                    (neumann || robin) ? &surface_source : nullptr,
+                                    /*expect_damping=*/robin);
   return ComputeMmsErrors(space_op, E, e_exact, curl_exact);
 }
 
 MmsError
 SolveCartesianMmsError(const MmsCase &mms, Problem problem, int n, int order,
                        double linear_tol = 1.0e-9,
-                       mfem::Element::Type element_type = mfem::Element::HEXAHEDRON)
+                       mfem::Element::Type element_type = mfem::Element::HEXAHEDRON,
+                       const SurfaceImpedance &impedance = {})
 {
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(n, n, n, element_type, 1.0, 1.0, 1.0));
-  return SolveMmsError(mms, problem, std::move(serial_mesh), order, linear_tol);
+  return SolveMmsError(mms, problem, std::move(serial_mesh), order, linear_tol, impedance);
 }
 
 const std::vector<int> kOrders = {1, 2, 3};
@@ -433,9 +547,10 @@ constexpr double kRateTol = 0.3;
 constexpr double kBackendAgreementTol = 1.0e-10;
 
 // Polynomial exactness for any of the problems; the dataset name keeps their rows apart.
-void CheckExactness(const MmsCase &polynomial, Problem problem, const std::string &dataset)
+void CheckExactness(const MmsCase &polynomial, Problem problem, const std::string &dataset,
+                    const SurfaceImpedance &impedance = {})
 {
-  // All three operators are nonsingular, so when E_mms lies in the Nédélec space,
+  // All four operators are nonsingular, so when E_mms lies in the Nédélec space,
   // E_h = E_mms up to the iterative solver tolerance (Galerkin orthogonality with a unique
   // solution; for the mass projection, a projection reproduces anything already in the
   // space), and both the field and curl errors vanish. Unlike the magnetostatic check,
@@ -458,7 +573,7 @@ void CheckExactness(const MmsCase &polynomial, Problem problem, const std::strin
     DYNAMIC_SECTION(name)
     {
       const auto error = SolveCartesianMmsError(polynomial, problem, n, order,
-                                                /*linear_tol=*/1.0e-13, type);
+                                                /*linear_tol=*/1.0e-13, type, impedance);
       ReportMmsData(dataset, "polynomial", name, order, "N", n, 1.0 / n, error);
       CAPTURE(error.electric, error.curl);
       CHECK(error.electric < 1.0e-10);
@@ -471,7 +586,7 @@ void CheckExactness(const MmsCase &polynomial, Problem problem, const std::strin
 // O(h^p); the curl error only when assert_curl is set (the curl-curl problems), and
 // otherwise it is reported only (the mass projection).
 void CheckConvergence(const MmsCase &smooth, Problem problem, const std::string &dataset,
-                      bool assert_curl)
+                      bool assert_curl, const SurfaceImpedance &impedance = {})
 {
   // For order-p (first-kind) Nédélec elements, both the L2 field error and the L2 curl
   // error of the curl-curl solution converge as O(h^p) for a smooth solution (Monk,
@@ -496,7 +611,7 @@ void CheckConvergence(const MmsCase &smooth, Problem problem, const std::string 
         {
           h[i] = 1.0 / kResolutions[i];
           error[i] = SolveCartesianMmsError(smooth, problem, kResolutions[i], order,
-                                            /*linear_tol=*/1.0e-9, type);
+                                            /*linear_tol=*/1.0e-9, type, impedance);
           ReportMmsData(dataset, "trig", name, order, "N", kResolutions[i], h[i], error[i]);
         }
 
@@ -560,22 +675,90 @@ void CheckNeumannConvergence(const MmsCase &smooth)
                    /*assert_curl=*/true);
 }
 
-void CheckBackendAgreement(const MmsCase &candidate, const MmsCase &reference)
+namespace
 {
-  // Compare a backend's field and curl errors against a reference's on the same problem.
-  // This exercises the callbacks, including the strong-form curl-curl term, at every
-  // quadrature point of the right-hand side and error integrals. The smooth case keeps the
-  // errors far above round-off (and its derivatives are not exact under Enzyme, unlike a
-  // low-degree polynomial's), so the relative difference is meaningful.
+
+// Branch values of the impedance face: distinct, O(1), and nondimensional, so that
+// dropping a branch or swapping two changes γ = 1/L_s + iω/R_s − ω²C_s visibly. At ω = 1
+// the combined γ = 2/3 − 1/4 + i/2: the reactive branches do not nearly cancel
+// (Re γ = 5/12), so the combined convergence sweep is sensitive to them too, not only to
+// R_s. Re γ is not pushed higher because a stiffer real Robin term keeps the order-1
+// hexahedral field error pre-asymptotic on the {4, 8, 16} grids: at Re γ = 7/4 its rate
+// was 1.51, 1.47, 1.23, 1.07 for n = 4 → 64, outside the ±0.3 window until n ≈ 32, while
+// at 5/12 it is 1.26 and 1.09, the same margin as the Neumann-face sweep.
+constexpr double kRs = 2.0, kLs = 1.5, kCs = 0.25;
+
+}  // namespace
+
+void CheckImpedanceExactness(const MmsCase &polynomial)
+{
+  // Following the paper's one-term-at-a-time approach, each branch is checked on its own as
+  // well as combined, so a wrong coefficient in one branch (in K, C, or M) shows up as a
+  // failure of that branch's section. Every pairing keeps R_s: L_s or C_s alone would give
+  // a real γ and bring back the question of a cavity resonance near ω².
+  // The branches are part of the report dataset name, so the rows of each pairing stay
+  // apart while the solution column keeps the usual polynomial/trig labels.
+  struct Branches
+  {
+    const char *name, *dataset;
+    SurfaceImpedance impedance;
+  };
+  const std::array<Branches, 4> pairings = {
+      Branches{"R", "impedance-r-affine-polynomial", {kRs, 0.0, 0.0}},
+      Branches{"RL", "impedance-rl-affine-polynomial", {kRs, kLs, 0.0}},
+      Branches{"RC", "impedance-rc-affine-polynomial", {kRs, 0.0, kCs}},
+      Branches{"RLC", "impedance-rlc-affine-polynomial", {kRs, kLs, kCs}}};
+  for (const auto &[name, dataset, impedance] : pairings)
+  {
+    DYNAMIC_SECTION("impedance " << name)
+    {
+      CheckExactness(polynomial, Problem::CURL_CURL_MASS_IMPEDANCE, dataset, impedance);
+    }
+  }
+
+  // The same combined face at a second frequency. Palace's K, C, and M do not depend on ω;
+  // the solve weights them by 1, iω, and −ω². At ω = 1 these powers coincide in magnitude,
+  // so a branch assembled into the wrong matrix with a compensating sign (for example C_s
+  // in K with a minus sign: −C_s against −ω²C_s) would still pass. At ω = 0.8 it does not.
+  // R_s > 0 keeps the operator nonsingular at this ω as well.
+  DYNAMIC_SECTION("impedance RLC, omega 0.8")
+  {
+    MmsCase shifted = polynomial;
+    shifted.omega = 0.8;
+    CheckExactness(shifted, Problem::CURL_CURL_MASS_IMPEDANCE,
+                   "impedance-rlc-omega0.8-affine-polynomial",
+                   SurfaceImpedance{kRs, kLs, kCs});
+  }
+}
+
+void CheckImpedanceConvergence(const MmsCase &smooth)
+{
+  CheckConvergence(smooth, Problem::CURL_CURL_MASS_IMPEDANCE,
+                   "impedance-rlc-cartesian-smooth", /*assert_curl=*/true,
+                   SurfaceImpedance{kRs, kLs, kCs});
+}
+
+namespace
+{
+
+// Compare a backend's field and curl errors against a reference's on the same problem.
+// This exercises the callbacks, including the strong-form curl-curl term and, for the
+// Neumann-face and impedance problems, the curl in the surface data, at every quadrature
+// point of the right-hand side and error integrals. The smooth case keeps the errors far
+// above round-off (and its derivatives are not exact under Enzyme, unlike a low-degree
+// polynomial's), so the relative difference is meaningful.
+void CheckAgreement(const MmsCase &candidate, const MmsCase &reference, Problem problem,
+                    const SurfaceImpedance &impedance = {})
+{
   REQUIRE(candidate.mu_r == reference.mu_r);
   REQUIRE(candidate.epsilon_r == reference.epsilon_r);
   REQUIRE(candidate.omega == reference.omega);
   constexpr int n = 8, order = 2;
   constexpr double linear_tol = 1.0e-13;
-  const auto candidate_error =
-      SolveCartesianMmsError(candidate, Problem::CURL_CURL_MASS, n, order, linear_tol);
-  const auto reference_error =
-      SolveCartesianMmsError(reference, Problem::CURL_CURL_MASS, n, order, linear_tol);
+  const auto candidate_error = SolveCartesianMmsError(
+      candidate, problem, n, order, linear_tol, mfem::Element::HEXAHEDRON, impedance);
+  const auto reference_error = SolveCartesianMmsError(
+      reference, problem, n, order, linear_tol, mfem::Element::HEXAHEDRON, impedance);
   REQUIRE(candidate_error.primary_dofs == reference_error.primary_dofs);
 
   const double electric_disagreement =
@@ -587,6 +770,27 @@ void CheckBackendAgreement(const MmsCase &candidate, const MmsCase &reference)
           candidate_error.curl, reference_error.curl, curl_disagreement);
   CHECK(electric_disagreement < kBackendAgreementTol);
   CHECK(curl_disagreement < kBackendAgreementTol);
+}
+
+}  // namespace
+
+// One end-to-end backend comparison per problem that uses derivatives of the manufactured
+// field (the mass projection uses only its values).
+void CheckBackendAgreement(const MmsCase &candidate, const MmsCase &reference)
+{
+  CheckAgreement(candidate, reference, Problem::CURL_CURL_MASS);
+}
+
+void CheckNeumannBackendAgreement(const MmsCase &candidate, const MmsCase &reference)
+{
+  CheckAgreement(candidate, reference, Problem::CURL_CURL_MASS_NEUMANN);
+}
+
+void CheckImpedanceBackendAgreement(const MmsCase &candidate, const MmsCase &reference)
+{
+  // The combined face, as in the convergence sweep.
+  CheckAgreement(candidate, reference, Problem::CURL_CURL_MASS_IMPEDANCE,
+                 SurfaceImpedance{kRs, kLs, kCs});
 }
 
 }  // namespace palace::testing::mms::driven
