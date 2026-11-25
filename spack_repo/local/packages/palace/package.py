@@ -274,6 +274,14 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 sha256="fe88f65bc03f97756c0d9c37b5f05ea6e75dad941e70f6f57379c72a1dc32163",
                 when="@8.1.0",
             ),
+            # LAB (ordering4), not for a pull request.
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "3d6e88bbff11807352102ddf4bcac2e32db40275/extern/patch/STRUMPACK/"
+                "strumpack_lab_ordering4.diff",
+                sha256="6cfc910252eb29c230ba596e50370cd38cd61234812f462a263324461882c9c8",
+                when="@8.1.0",
+            ),
         ],
     )
 

@@ -6,7 +6,9 @@
 #if defined(MFEM_USE_STRUMPACK)
 
 #include <complex>
+#include <cstdlib>
 #include <type_traits>
+#include "utils/communication.hpp"
 
 namespace palace
 {
@@ -45,6 +47,29 @@ void ConfigureStrumpackCompression(strumpack::SPOptions<ScalarType> &opts,
                                    SparseCompression compression, double lr_tol,
                                    int butterfly_l, int lossy_prec)
 {
+  // LAB (ordering4), not for a pull request: a "STRUMPACKButterflyLevels" of 1000 or more
+  // carries lab switches in its thousands (the rest is the number of butterfly levels).
+  // 1000: METIS may unbalance the separators of the distributed tree of the METIS_TREE
+  // ordering by 3% instead of its default of 20%. 2000: STRUMPACK prints a line "#LAB4" per
+  // symbolic factorization (rows which every process solves alone, rows of a right-hand
+  // side which change owner). 3000: both. The STRUMPACK lab patch reads environment
+  // variables, set here on every process of the solver; they stay set for the run.
+  {
+    const int lab = butterfly_l / 1000;
+    butterfly_l %= 1000;
+    if (lab & 1)
+    {
+      setenv("STRUMPACK_LAB_UFACTOR", "30", 1);
+      Mpi::Print(" LAB ordering4: this STRUMPACK solver object balances the separators of "
+                 "the distributed tree to 3% (where its ordering is METIS_TREE)\n");
+    }
+    if (lab & 2)
+    {
+      setenv("STRUMPACK_LAB_STATS", "1", 1);
+      Mpi::Print(" LAB ordering4: this STRUMPACK solver object prints the mapping "
+                 "statistics (#LAB4)\n");
+    }
+  }
   opts.set_compression(GetCompressionType(compression));
   switch (compression)
   {
