@@ -3788,10 +3788,16 @@ geometry; a line after the census names how many features), and then ends with e
 is built and the log names `"RecordRaw"` as the value that gives it, also when only the
 response operator's construction records a fallback. Wherever a solve-form run stops before
 its census (`"UnmatchedPolicy": "Error"` with missing requirements, a library it refuses, a
-placed discovery placeholder, coupon models without surface response matrices on a Maxwell
-run), `PreflightOnly` builds no census, prints one line `Resolution census: not evaluated:
-<why> (a solve-form run stops there)` and ends with the exit status it had before the census
-existed (0, or 3 after a `FailClosed` summary).
+placed discovery placeholder, a response model whose fabricated domain matrix its matrix
+step refuses (a negative-energy mode beyond roundoff, by the operator's own test) or whose
+domain matrix file cannot be opened, coupon models without surface response matrices on a
+Maxwell run), `PreflightOnly` builds no census, prints one line `Resolution census: not
+evaluated: <why> (a solve-form run stops there)` and ends with the exit status it had before
+the census existed (0, or 3 after a `FailClosed` summary). Every census that is not
+evaluated (these reasons, an explicit `"GeometryFailurePolicy": "FailClosed"`, a whole-run
+raw fallback, a problem type without a census) is named by its one line, and the same line
+is `SurfaceResponse.ResolutionCensusNotEvaluated` of `palace.json` (absent when the census
+is built).
 
 ### The per-iteration table of the response correction
 

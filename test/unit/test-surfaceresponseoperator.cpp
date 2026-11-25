@@ -4839,6 +4839,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const auto ring_manifest_path =
         temp.temp_dir / "surface-response-requirements-rings.json";
     const auto ring_patches_path = temp.temp_dir / "surface-response-patches.csv";
+    SurfaceResponsePreflightOutcome ring_outcome;
+    const std::string ring_refusal =
+        "Fabricated response matrix has a negative-energy mode beyond roundoff!";
     auto RunRings = [&](const fs::path &library)
     {
       ring_correction["Library"] = library.string();
@@ -4852,8 +4855,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       {
         fs::remove(ring_patches_path);
       }
-      WriteSurfaceResponseRequirements(ring_iodata, *ring_mesh,
-                                       ring_manifest_path.string());
+      ring_outcome = WriteSurfaceResponseRequirements(ring_iodata, *ring_mesh,
+                                                      ring_manifest_path.string());
       Mpi::Barrier(Mpi::World());
       std::ifstream input(ring_manifest_path);
       REQUIRE(input);
@@ -4886,6 +4889,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     };
     {
       const json manifest = RunRings(ring_library_path);
+      // CUT-PLAN step 4b (the supervisor's ruling (B)): a model of this library has a
+      // fabricated domain matrix with a negative-energy mode beyond roundoff; the preflight
+      // predicts the refusal of the operator's matrix step by its own test (the operator
+      // built from this configuration below refuses with the same message).
+      REQUIRE(ring_outcome.census_refusals.size() == 1);
+      CHECK_THAT(ring_outcome.census_refusals[0],
+                 StartsWith("response model \"") && EndsWith("\": " + ring_refusal));
       const auto &features = manifest["Identification"]["Features"];
       int curved = 0, straight_like = 0;
       for (const auto &feature : features)
@@ -5002,6 +5012,27 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       }
       CHECK(unmatched == 1);
       CHECK(anchor_only == 1);
+      REQUIRE(ring_outcome.census_refusals.size() == 1);
+      CHECK_THAT(ring_outcome.census_refusals[0], EndsWith("\": " + ring_refusal));
+    }
+    {
+      // The operator's matrix step on the full library's configuration: the refusal the
+      // preflight predicted (ruling (B)).
+      ring_correction["Library"] = ring_library_path.string();
+      IoData iodata(ring_config, false);
+      iodata.boundaries.cracked_attributes.insert(9);
+      std::vector<std::unique_ptr<Mesh>> meshes;
+      meshes.push_back(std::make_unique<Mesh>(*ring_mesh));
+      LaplaceOperator laplace(iodata, meshes);
+      if (Mpi::Root(Mpi::World()))
+      {
+        CHECK_THROWS_WITH(SurfaceResponseOperator(iodata, laplace),
+                          ContainsSubstring(ring_refusal));
+      }
+      else
+      {
+        CHECK_THROWS(SurfaceResponseOperator(iodata, laplace));
+      }
     }
   }
 

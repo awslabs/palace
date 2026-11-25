@@ -21524,11 +21524,17 @@ TraceMeshData ModelTraceMesh(
   return ReadTraceMesh(model_config.trace_vertices, model_config.trace_triangles);
 }
 
+// The message of a response matrix file ReadTable cannot read (shared with PreflightOnly's
+// prediction, DomainResponseMatrixRefusal).
+std::string UnreadableResponseMatrixMessage(const std::string &path)
+{
+  return "Unable to read response matrix file \"" + path + "\"!";
+}
+
 Table ReadTable(const std::string &path)
 {
   TableWithCSVFile input(path, true);
-  MFEM_VERIFY(!input.table.empty(),
-              "Unable to read response matrix file \"" << path << "\"!");
+  MFEM_VERIFY(!input.table.empty(), UnreadableResponseMatrixMessage(path));
   return std::move(input.table);
 }
 
@@ -21604,34 +21610,59 @@ mfem::DenseMatrix BuildDenseMatrix(const std::vector<MatrixEntry> &entries, int 
   return matrix;
 }
 
-mfem::DenseMatrix PositiveSemidefiniteInverseProduct(const mfem::DenseMatrix &matrix,
-                                                     const mfem::DenseMatrix &rhs)
+// The test of PositiveSemidefiniteInverseProduct on the fabricated domain matrix it
+// inverts, shared with PreflightOnly's prediction (DomainResponseMatrixRefusal; CUT-PLAN
+// step 4b, the supervisor's ruling (B)): one criterion, one tolerance, one message.
+constexpr const char *kNegativeEnergyModeRefusal =
+    "Fabricated response matrix has a negative-energy mode beyond roundoff!";
+
+bool NegativeEnergyModeBeyondRoundoff(const Eigen::VectorXd &eigenvalues)
 {
-  MFEM_VERIFY(matrix.Height() == matrix.Width() && rhs.Height() == matrix.Height(),
-              "Incompatible response matrices for quotient-space inverse!");
+  const double scale = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
+  const double negative_tolerance =
+      kResponseMatrixNegativeEigenvalueToleranceRelative * scale;
+  return !(eigenvalues.minCoeff() >= -negative_tolerance);
+}
+
+// The eigensystem of a symmetric response matrix (PositiveSemidefiniteInverseProduct's, and
+// so the prediction's eigenvalues are the operator's bit for bit).
+Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd>
+ResponseMatrixEigensystem(const mfem::DenseMatrix &matrix)
+{
   const int size = matrix.Height();
-  Eigen::MatrixXd A(size, size), B(size, rhs.Width());
+  Eigen::MatrixXd A(size, size);
   for (int i = 0; i < size; i++)
   {
     for (int j = 0; j < size; j++)
     {
       A(i, j) = matrix(i, j);
     }
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(A);
+  MFEM_VERIFY(eigensystem.info() == Eigen::Success,
+              "Failed to diagonalize a response matrix on its active quotient space!");
+  return eigensystem;
+}
+
+mfem::DenseMatrix PositiveSemidefiniteInverseProduct(const mfem::DenseMatrix &matrix,
+                                                     const mfem::DenseMatrix &rhs)
+{
+  MFEM_VERIFY(matrix.Height() == matrix.Width() && rhs.Height() == matrix.Height(),
+              "Incompatible response matrices for quotient-space inverse!");
+  const int size = matrix.Height();
+  Eigen::MatrixXd B(size, rhs.Width());
+  for (int i = 0; i < size; i++)
+  {
     for (int j = 0; j < rhs.Width(); j++)
     {
       B(i, j) = rhs(i, j);
     }
   }
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(A);
-  MFEM_VERIFY(eigensystem.info() == Eigen::Success,
-              "Failed to diagonalize a response matrix on its active quotient space!");
+  const auto eigensystem = ResponseMatrixEigensystem(matrix);
   const auto eigenvalues = eigensystem.eigenvalues();
   const double scale = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
-  const double negative_tolerance =
-      kResponseMatrixNegativeEigenvalueToleranceRelative * scale;
   const double active_tolerance = 1.0e-12 * scale;
-  MFEM_VERIFY(eigenvalues.minCoeff() >= -negative_tolerance,
-              "Fabricated response matrix has a negative-energy mode beyond roundoff!");
+  MFEM_VERIFY(!NegativeEnergyModeBeyondRoundoff(eigenvalues), kNegativeEnergyModeRefusal);
   Eigen::VectorXd inverse = Eigen::VectorXd::Zero(size);
   int numerical_rank = 0;
   for (int i = 0; i < size; i++)
@@ -21754,19 +21785,64 @@ mfem::DenseMatrix BlendedDomainResponseMatrix(
   return result;
 }
 
+// The scale of a model's domain matrices in solver units. The CSV stores coupon energy Q in
+// joules for basis traces measured in volts. Internally, 1/2 xᵀ C x must equal the
+// nondimensional energy defect, so C = 2 V_scale² / E_scale Q.
+double DomainResponseMatrixScale(const Units &units)
+{
+  const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
+  const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
+  return 2.0 * voltage_scale * voltage_scale / energy_scale;
+}
+
+// The knots of a basis of `expected_size` that are not zero-trace, in order.
+std::vector<int> FreeTraceIndices(int expected_size,
+                                  const std::vector<int> &zero_trace_indices)
+{
+  std::vector<bool> constrained(expected_size, false);
+  for (const int index : zero_trace_indices)
+  {
+    MFEM_VERIFY(index >= 0 && index < expected_size && !constrained[index],
+                "Invalid or duplicate zero-trace response basis index!");
+    constrained[index] = true;
+  }
+  std::vector<int> free_indices;
+  free_indices.reserve(expected_size - zero_trace_indices.size());
+  for (int i = 0; i < expected_size; i++)
+  {
+    if (!constrained[i])
+    {
+      free_indices.push_back(i);
+    }
+  }
+  MFEM_VERIFY(!free_indices.empty(),
+              "Fixed-flux response requires at least one free trace basis function!");
+  return free_indices;
+}
+
+// The block of `matrix` on the knots `indices`.
+mfem::DenseMatrix ResponseMatrixBlock(const mfem::DenseMatrix &matrix,
+                                      const std::vector<int> &indices)
+{
+  const int size = static_cast<int>(indices.size());
+  mfem::DenseMatrix block(size);
+  for (int i = 0; i < size; i++)
+  {
+    for (int j = 0; j < size; j++)
+    {
+      block(i, j) = matrix(indices[i], indices[j]);
+    }
+  }
+  return block;
+}
+
 DomainResponseMatrices ComputeDomainResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const std::vector<int> &zero_trace_indices, const Units &units)
 {
   auto fabricated = BlendedDomainResponseMatrix(config, true, expected_size);
   auto thin = BlendedDomainResponseMatrix(config, false, expected_size);
-
-  // The CSV stores coupon energy Q in joules for basis traces measured in volts.
-  // Internally, 1/2 xᵀ C x must equal the nondimensional energy defect, so
-  // C = 2 V_scale² / E_scale Q.
-  const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
-  const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
-  const double scale = 2.0 * voltage_scale * voltage_scale / energy_scale;
+  const double scale = DomainResponseMatrixScale(units);
   fabricated *= scale;
   thin *= scale;
 
@@ -21780,37 +21856,12 @@ DomainResponseMatrices ComputeDomainResponseMatrices(
   }
   else
   {
-    std::vector<bool> constrained(expected_size, false);
-    for (const int index : zero_trace_indices)
-    {
-      MFEM_VERIFY(index >= 0 && index < expected_size && !constrained[index],
-                  "Invalid or duplicate zero-trace response basis index!");
-      constrained[index] = true;
-    }
-    std::vector<int> free_indices;
-    free_indices.reserve(expected_size - zero_trace_indices.size());
-    for (int i = 0; i < expected_size; i++)
-    {
-      if (!constrained[i])
-      {
-        free_indices.push_back(i);
-      }
-    }
-    MFEM_VERIFY(!free_indices.empty(),
-                "Fixed-flux response requires at least one free trace basis function!");
-
+    const std::vector<int> free_indices =
+        FreeTraceIndices(expected_size, zero_trace_indices);
     const int free_size = static_cast<int>(free_indices.size());
-    mfem::DenseMatrix fabricated_free(free_size), thin_free(free_size);
-    for (int i = 0; i < free_size; i++)
-    {
-      for (int j = 0; j < free_size; j++)
-      {
-        fabricated_free(i, j) = fabricated(free_indices[i], free_indices[j]);
-        thin_free(i, j) = thin(free_indices[i], free_indices[j]);
-      }
-    }
     mfem::DenseMatrix fixed_flux_free =
-        PositiveSemidefiniteInverseProduct(fabricated_free, thin_free);
+        PositiveSemidefiniteInverseProduct(ResponseMatrixBlock(fabricated, free_indices),
+                                           ResponseMatrixBlock(thin, free_indices));
     for (int i = 0; i < free_size; i++)
     {
       for (int j = 0; j < free_size; j++)
@@ -21829,6 +21880,49 @@ DomainResponseMatrices ComputeDomainResponseMatrices(
   // space pseudoinverses are required.
   return {std::move(fabricated), std::move(thin), std::move(defect),
           std::move(fixed_flux_transform), std::move(fixed_flux_defect)};
+}
+
+// CUT-PLAN step 4b (the supervisor's ruling (B), lane v1step4b): PreflightOnly's prediction
+// of the operator's matrix step on one model (ComputeDomainResponseMatrices, which the root
+// runs for every model of its model loop): the refusal, empty when the step accepts the
+// model. A domain matrix file that does not open (the step reads the fabricated and thin
+// ones first) is named before any read, with ReadTable's message; then the step's own
+// fabricated matrix on the free knots, its eigensystem and its test.
+std::string DomainResponseMatrixRefusal(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
+    const Units &units)
+{
+  std::vector<std::string> files;
+  if (config.blend.empty())
+  {
+    files = {config.fabricated_matrix, config.thin_matrix};
+  }
+  for (const auto &source : config.blend)
+  {
+    files.push_back(source.fabricated_matrix);
+    files.push_back(source.thin_matrix);
+  }
+  for (const auto &file : files)
+  {
+    if (!std::ifstream(file))
+    {
+      return UnreadableResponseMatrixMessage(file);
+    }
+  }
+  const int expected_size =
+      static_cast<int>(ModelBasisPoints(config).size()) + config.conductor_state_count;
+  auto fabricated = BlendedDomainResponseMatrix(config, true, expected_size);
+  fabricated *= DomainResponseMatrixScale(units);
+  const auto tested =
+      config.zero_trace_indices.empty()
+          ? fabricated
+          : ResponseMatrixBlock(fabricated,
+                                FreeTraceIndices(expected_size, config.zero_trace_indices));
+  if (NegativeEnergyModeBeyondRoundoff(ResponseMatrixEigensystem(tested).eigenvalues()))
+  {
+    return kNegativeEnergyModeRefusal;
+  }
+  return {};
 }
 
 // The derived-matrix cache (decision 734 F1; GetDerivedResponseMatrixCacheCounters in the
@@ -24406,10 +24500,14 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
       !(!maxwell &&
         CollectiveGetenv(parallel_mesh.GetComm(), "PALACE_RESPONSE_GEOMETRY_CACHE"));
   AutomaticResponseDiagnostics share_diagnostics;
+  // The two-dimensional identification, kept for the prediction of the operator's matrix
+  // step below (ruling (B)).
+  ResponseCorrectionData identification_2d;
   if (parallel_mesh.Dimension() == 2 && parallel_mesh.SpaceDimension() == 2)
   {
-    BuildAutomaticResponseData2D(iodata, parallel_mesh, mat_op, request, maxwell, nullptr,
-                                 &requirements, &statistics);
+    identification_2d =
+        BuildAutomaticResponseData2D(iodata, parallel_mesh, mat_op, request, maxwell,
+                                     nullptr, &requirements, &statistics);
   }
   else if (parallel_mesh.Dimension() == 3 && parallel_mesh.SpaceDimension() == 3)
   {
@@ -25021,6 +25119,30 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   {
     Mpi::Print(parallel_mesh.GetComm(), " Patch dry run: {} ({:d} patches)\n", patches_path,
                static_cast<int>(patches.patches.size()));
+  }
+  // CUT-PLAN step 4b (the supervisor's ruling (B), lane v1step4b): the first model whose
+  // domain matrices the operator's matrix step refuses (the root builds every model of the
+  // identification's list in its model loop and stops at the first), predicted on the root
+  // after the outputs above, where this pass's list is the operator's (two dimensions;
+  // three on the Features path) and no earlier stop of a solve-form run was noted.
+  if (Mpi::Root(parallel_mesh.GetComm()) && requirements.CensusRefusals().empty() &&
+      !(request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR &&
+        requirements.UnmatchedPolicyRefusal()) &&
+      (parallel_mesh.Dimension() == 2 ||
+       request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES))
+  {
+    for (const auto &model :
+         parallel_mesh.Dimension() == 2 ? identification_2d.models : patches.models)
+    {
+      const auto refusal = DomainResponseMatrixRefusal(model, iodata.units);
+      if (!refusal.empty())
+      {
+        requirements.NoteCensusRefusal(fmt::format(
+            "response model \"{}\": {}",
+            model.name.empty() ? fmt::format("model-{}", model.idx) : model.name, refusal));
+        break;
+      }
+    }
   }
   SurfaceResponsePreflightOutcome outcome;
   outcome.written.push_back(path);

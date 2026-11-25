@@ -1203,10 +1203,18 @@ PreflightCensusOutcome BaseSolver::PreflightResolutionCensus(
     std::vector<std::unique_ptr<Mesh>> &mesh, bool /*fail_closed*/,
     const std::shared_ptr<const SurfaceResponseGeometry> & /*identified*/) const
 {
-  Mpi::Print(mesh.back()->GetComm(),
-             "\nResolution census: not evaluated in PreflightOnly for this problem type "
-             "(PreflightOnly evaluates it for Electrostatic, Eigenmode and Driven)\n");
+  ReportResolutionCensusNotEvaluated(
+      mesh.back()->GetComm(),
+      "Resolution census: not evaluated in PreflightOnly for this problem type "
+      "(PreflightOnly evaluates it for Electrostatic, Eigenmode and Driven)");
   return {};
+}
+
+void BaseSolver::ReportResolutionCensusNotEvaluated(MPI_Comm comm,
+                                                    const std::string &line) const
+{
+  Mpi::Print(comm, "\n{}\n", line);
+  SaveSurfaceResponseMetadata("ResolutionCensusNotEvaluated", line);
 }
 
 void BaseSolver::PrepareCensusFirstLevelMesh(
@@ -1233,12 +1241,13 @@ bool BaseSolver::PreflightCensusStopsFailClosed(const SurfaceResponseOperator &r
   {
     return false;
   }
-  Mpi::Print(
+  ReportResolutionCensusNotEvaluated(
       comm,
-      "\nResolution census: not evaluated: GeometryFailurePolicy \"FailClosed\" with "
-      "{:d} geometry fallback(s) recorded by the response operator's construction "
-      "(a solve-form run stops there); \"RecordRaw\" gives it\n",
-      fallbacks.size());
+      fmt::format(
+          "Resolution census: not evaluated: GeometryFailurePolicy \"FailClosed\" with "
+          "{:d} geometry fallback(s) recorded by the response operator's construction "
+          "(a solve-form run stops there); \"RecordRaw\" gives it",
+          fallbacks.size()));
   return true;
 }
 
@@ -1261,10 +1270,10 @@ PreflightCensusOutcome BaseSolver::PreflightMaxwellResolutionCensus(
   // form stops there (ruling R1, P7).
   if (!response->IsRawFallback() && !response->HasSurfaceResponse())
   {
-    Mpi::Print(space_op.GetComm(),
-               "\nResolution census: not evaluated: the selected coupon models carry no "
-               "fabricated and thin surface response matrices (a solve-form run stops "
-               "there)\n");
+    ReportResolutionCensusNotEvaluated(
+        space_op.GetComm(),
+        "Resolution census: not evaluated: the selected coupon models carry no "
+        "fabricated and thin surface response matrices (a solve-form run stops there)");
     return {};
   }
   return WritePreflightResolutionCensus(*response, space_op.GlobalTrueVSize(),
@@ -1278,8 +1287,9 @@ BaseSolver::WritePreflightResolutionCensus(SurfaceResponseOperator &response,
   if (response.IsRawFallback())
   {
     // The solve form makes no census on a whole-run raw fallback either.
-    Mpi::Print(comm, "\nResolution census: not evaluated: the correction falls back to "
-                     "the raw run (RawFallback: no patch applied)\n");
+    ReportResolutionCensusNotEvaluated(
+        comm, "Resolution census: not evaluated: the correction falls back to the raw run "
+              "(RawFallback: no patch applied)");
     return {};
   }
   // The census Types of the solve form (PostOperator::GetInterfaceTypes over the coverage

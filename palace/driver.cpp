@@ -208,13 +208,13 @@ int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
         kSurfaceResponsePreflightFailClosedExitStatus);
     if (policy)
     {
-      Mpi::Print(comm, "\nResolution census: not evaluated (GeometryFailurePolicy "
-                       "\"FailClosed\" is set); \"GeometryFailurePolicy\": \"RecordRaw\" "
-                       "gives it\n");
+      solver.ReportResolutionCensusNotEvaluated(
+          comm, "Resolution census: not evaluated (GeometryFailurePolicy \"FailClosed\" "
+                "is set); \"GeometryFailurePolicy\": \"RecordRaw\" gives it");
     }
     else if (!refusal.empty())
     {
-      Mpi::Print(comm, "\n{}\n", refusal);
+      solver.ReportResolutionCensusNotEvaluated(comm, refusal);
     }
     else
     {
@@ -234,7 +234,7 @@ int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
   }
   if (!refusal.empty())
   {
-    Mpi::Print(comm, "\n{}\n", refusal);
+    solver.ReportResolutionCensusNotEvaluated(comm, refusal);
   }
   else
   {

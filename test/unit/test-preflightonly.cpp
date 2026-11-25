@@ -5,14 +5,18 @@
 #include "surfaceresponse-fixtures.hpp"
 #include "test-helpers.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <iterator>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <tuple>
 #include <vector>
+#include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 #include <catch2/generators/catch_generators.hpp>
@@ -497,6 +501,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const fs::path no_corner = temp.temp_dir / (stem + "-no-corner.json");
   const fs::path no_model = temp.temp_dir / (stem + "-no-model.json");
   const fs::path no_match = temp.temp_dir / (stem + "-no-match.json");
+  const fs::path negative_matrix = temp.temp_dir / (stem + "-negative-fabricated.csv");
+  const fs::path negative_mode = temp.temp_dir / (stem + "-negative-mode.json");
+  const fs::path no_file = temp.temp_dir / (stem + "-no-file.json");
+  const fs::path absent_matrix = temp.temp_dir / (stem + "-absent-fabricated.csv");
   if (Mpi::Root(comm))
   {
     mfem::Mesh serial = MakeSerialIslandMesh();
@@ -517,6 +525,79 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     std::ofstream(no_corner) << edge_only.dump(2) << "\n";
     std::ofstream(no_model) << empty.dump(2) << "\n";
     std::ofstream(no_match) << concave_only.dump(2) << "\n";
+    // (d) / (e): the edge model's fabricated domain matrix with its lowest mode on the free
+    // knots moved to -1e-7 x the largest |eigenvalue| there (beyond the operator's roundoff
+    // 1e-9, which its matrix step refuses; a looser test on the preflight's side alone
+    // would miss it), or a file that does not exist.
+    {
+      const json &edge = sa["Models"][0];
+      std::ifstream input(edge["FabricatedMatrix"].get<std::string>());
+      std::string header, line;
+      std::getline(input, header);
+      std::vector<std::tuple<int, int, double>> entries;
+      int size = 0;
+      while (std::getline(input, line))
+      {
+        std::stringstream fields(line);
+        std::string i, j, q;
+        std::getline(fields, i, ',');
+        std::getline(fields, j, ',');
+        std::getline(fields, q);
+        entries.emplace_back(std::stoi(i) - 1, std::stoi(j) - 1, std::stod(q));
+        size = std::max(size, std::stoi(j));
+      }
+      mfem::DenseMatrix matrix(size);
+      matrix = 0.0;
+      for (const auto &[i, j, q] : entries)
+      {
+        matrix(i, j) = q;
+        matrix(j, i) = q;
+      }
+      const auto zero = edge.value("ZeroTraceIndices", std::vector<int>{});
+      std::vector<int> free;
+      for (int i = 0; i < size; i++)
+      {
+        if (std::find(zero.begin(), zero.end(), i) == zero.end())
+        {
+          free.push_back(i);
+        }
+      }
+      const int n = static_cast<int>(free.size());
+      Eigen::MatrixXd block(n, n);
+      for (int i = 0; i < n; i++)
+      {
+        for (int j = 0; j < n; j++)
+        {
+          block(i, j) = matrix(free[i], free[j]);
+        }
+      }
+      const Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(block);
+      REQUIRE(eigensystem.info() == Eigen::Success);
+      const auto &values = eigensystem.eigenvalues();  // ascending
+      const Eigen::VectorXd lowest = eigensystem.eigenvectors().col(0);
+      const double shift = values(0) + 1.0e-7 * values.cwiseAbs().maxCoeff();
+      for (int i = 0; i < n; i++)
+      {
+        for (int j = 0; j < n; j++)
+        {
+          matrix(free[i], free[j]) -= shift * lowest(i) * lowest(j);
+        }
+      }
+      std::ofstream output(negative_matrix);
+      output << header << "\n" << std::setprecision(17);
+      for (int i = 0; i < size; i++)
+      {
+        for (int j = i; j < size; j++)
+        {
+          output << i + 1 << "," << j + 1 << "," << matrix(i, j) << "\n";
+        }
+      }
+    }
+    json negative = sa, unreadable = sa;
+    negative["Models"][0]["FabricatedMatrix"] = negative_matrix.string();
+    unreadable["Models"][0]["FabricatedMatrix"] = absent_matrix.string();
+    std::ofstream(negative_mode) << negative.dump(2) << "\n";
+    std::ofstream(no_file) << unreadable.dump(2) << "\n";
   }
   Mpi::Barrier(comm);
   json config = electrostatic ? ConvexIslandConfig(test::CrackPolicy::Default)
@@ -589,6 +670,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     CHECK(fs::is_regular_file(result.dir / "surface-response-requirements.json"));
     CHECK_THAT(result.log, ContainsSubstring(line));
+    // The one field of every not-evaluated census (ruling (B)): the printed line.
+    CHECK_THAT(
+        "\n" + Response(result.dir).value("ResolutionCensusNotEvaluated", std::string()) +
+            "\n",
+        ContainsSubstring(line));
     CHECK_FALSE(Response(result.dir).contains("Resolution"));
     CHECK_FALSE(Response(result.dir).contains("ParticipationTable"));
     CHECK_FALSE(fs::exists(result.dir / patches));
@@ -614,6 +700,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     if (Mpi::Root(comm))
     {
       CHECK_THAT(census.log, !ContainsSubstring("Resolution census: not evaluated"));
+      CHECK_FALSE(Response(census.dir).contains("ResolutionCensusNotEvaluated"));
       const json resolution = Response(census.dir).at("Resolution");
       CHECK(resolution.at("Knots").at("Located").get<long long int>() > 0);
       CHECK(resolution.at("NoCellsReason") == "PreflightOnly: no solve");
@@ -631,6 +718,53 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   NoCensus(Run(no_match, "", "RecordRaw"),
            "\nResolution census: not evaluated: the correction falls back to the raw run "
            "(RawFallback: no patch applied)\n");
+  // (d) A model whose fabricated domain matrix the operator's matrix step refuses:
+  // predicted by the operator's own test (the supervisor's ruling (B)); no census, the line
+  // naming the model and the operator's message, exit status 0; the solve form stops with
+  // that message.
+  const std::string negative_line =
+      "\": Fabricated response matrix has a negative-energy mode beyond roundoff! (a "
+      "solve-form run stops there)\n";
+  for (const std::string unmatched : {"Warn", ""})
+  {
+    const auto refused = Run(negative_mode, unmatched, "");
+    NoCensus(refused, negative_line);
+    if (Mpi::Root(comm))
+    {
+      CHECK_THAT(refused.log,
+                 ContainsSubstring("\nResolution census: not evaluated: response "
+                                   "model \""));
+    }
+  }
+  auto SolveFormStops = [&](const fs::path &library, const std::string &message)
+  {
+    json run = config;
+    run["Problem"]["Output"] =
+        (temp.temp_dir / (library.stem().string() + "-solve")).string();
+    run[correction_key]["Library"] = library.string();
+    run[correction_key]["PreflightOnly"] = false;
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    if (Mpi::Root(comm))
+    {
+      CHECK_THROWS_WITH(palace::Run(iodata, comm, utils::ConfigureOmp()),
+                        ContainsSubstring(message));
+    }
+    else
+    {
+      CHECK_THROWS(palace::Run(iodata, comm, utils::ConfigureOmp()));
+    }
+    Mpi::Barrier(comm);
+  };
+  SolveFormStops(negative_mode,
+                 "Fabricated response matrix has a negative-energy mode beyond roundoff!");
+  // (e) A fabricated domain matrix file that does not exist (the solve form's matrix step
+  // reads it): ReadTable's message.
+  const std::string unreadable_message =
+      "Unable to read response matrix file \"" + absent_matrix.string() + "\"!";
+  NoCensus(Run(no_file, "", ""), unreadable_message + " (a solve-form run stops there)\n");
+  SolveFormStops(no_file, unreadable_message);
 #endif
 }
 
