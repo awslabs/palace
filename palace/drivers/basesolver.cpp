@@ -1325,6 +1325,16 @@ BaseSolver::WritePreflightResolutionCensus(SurfaceResponseOperator &response,
   auto block = ResolutionRunMetadata(record, 1, 1);
   block["Final"] = true;
   SaveSurfaceResponseMetadata("Resolution", block);
+  // CUT-PLAN step 4b with step 3 (Ls sheets served by default): the impedance-metal rule's
+  // record of the solve form (its mode, regime and served-Ls lines), which that run writes
+  // beside its first coverage block from this operator alone.
+  if (const auto *film = response.GetImpedanceApplyRule())
+  {
+    SaveSurfaceResponseMetadata("ImpedanceMetalRule",
+                                ImpedanceApplyRecord(*film,
+                                                     response.GetImpedanceLawFeatures(),
+                                                     iodata.units, false));
+  }
   surface_participation = NewSurfaceParticipationTable(iodata, post_dir);
   if (surface_participation)
   {

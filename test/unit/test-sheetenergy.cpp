@@ -26,6 +26,7 @@
 #include <catch2/generators/catch_generators_all.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include "driver.hpp"
 #include "fem/fespace.hpp"
 #include "fem/gridfunction.hpp"
 #include "fem/mesh.hpp"
@@ -35,6 +36,7 @@
 #include "models/postoperator.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
+#include "models/surfaceparticipationtable.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
@@ -43,6 +45,9 @@
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/omp.hpp"
+#include "utils/outputdir.hpp"
+#include "utils/timer.hpp"
 
 namespace palace
 {
@@ -1420,6 +1425,118 @@ TEST_CASE_METHOD(
   const auto off_normal = pec_off.ConstantFieldResponse(normal_coefficient);
   CHECK(pec_normal.domain_correction == off_normal.domain_correction);
   CHECK(pec_normal.fabricated_surface_energy == off_normal.fabricated_surface_energy);
+#endif
+}
+
+// CUT-PLAN step 4b (lane v1step4b) with the integration round v1integ1 (the pyramid fix and
+// Ls sheets served by default): a PreflightOnly eigenmode run of the island at order 2 on
+// the hexahedra-and-pyramids mesh, its island a purely inductive sheet at the designers' Ls
+// and no rule key. (iii) The order-2 H(curl) census path builds (the guard does not fire)
+// and the census is built; (i) its PREFLIGHT rows carry the flags "PREFLIGHT-ONLY" alone
+// (an Ls sheet word qualifies a value: a PREFLIGHT row has none); (iv) palace.json holds
+// the solve form's SurfaceResponse.ImpedanceMetalRule record, its one regime line among
+// them.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "PreflightOnly census of an Ls sheet under the default rule on hexahedra "
+                 "and pyramids at order 2",
+                 "[surfaceresponsefilmrule][impedancemetalrule][preflightonly]"
+                 "[MixedElementFaces][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  constexpr int metal_attr = 9;  // the island of MakeSerialIslandMesh
+  MPI_Comm comm = Mpi::World();
+  const auto mesh_path =
+      WriteSheetMesh(temp.temp_dir, MakeHexPyramidIslandMesh(MakeSerialIslandMesh()),
+                     "island-pyramids-preflight.mesh");
+  const fs::path library_path = temp.temp_dir / "impedance-default-pyramids-preflight.json";
+  if (Mpi::Root(comm))
+  {
+    json library = json::parse(std::ifstream(convex_library_3d_path));
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream(library_path) << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  // The configuration of the explicit-Apply test above (its uncracked sheet), with no rule
+  // key, as an eigenmode run through the driver.
+  json config = ConvexMaxwellIslandConfig();
+  auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["Library"] = library_path.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["GeometryFailurePolicy"] = "RecordRaw";
+  correction["TraceCoupling"] = "Collocated";
+  correction["CorrectionMode"] = "PostprocessOnly";
+  config["Solver"]["Order"] = 2;
+  config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;  // the library's units, as the driver reads them
+  config["Model"]["Lc"] = 1.0;
+  config["Model"].erase("CrackInternalBoundaryElements");
+  config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+  config["Boundaries"]["Impedance"] =
+      json::array({{{"Attributes", {metal_attr}}, {"Ls", 4.5e-14}, {"Crack", false}}});
+  config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {metal_attr};
+  auto Run = [&](bool preflight)
+  {
+    json run = config;
+    const fs::path output =
+        temp.temp_dir / (preflight ? "pyramids-ls-preflight" : "pyramids-ls-solve");
+    run["Problem"]["Output"] = output.string();
+    run["Solver"]["SurfaceResponseCorrection"]["PreflightOnly"] = preflight;
+    IoData iodata(run, false);
+    REQUIRE(
+        iodata.solver.surface_response_correction->impedance_metal_rule ==
+        config::ElectrostaticSolverData::ResponseCorrectionData::ImpedanceMetalRule::APPLY);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    int status = 0;
+    if (preflight)
+    {
+      status = RunSurfaceResponsePreflight(iodata, comm, utils::ConfigureOmp());
+    }
+    else
+    {
+      palace::Run(iodata, comm, utils::ConfigureOmp(), /*git_tag=*/nullptr);
+    }
+    Mpi::Barrier(comm);
+    return std::pair{output, status};
+  };
+  const auto [preflight, status] = Run(true);
+  CHECK(status == 0);
+  const auto [solve, solve_status] = Run(false);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  const auto ReadResponse = [](const fs::path &dir)
+  { return json::parse(std::ifstream(dir / "palace.json")).at("SurfaceResponse"); };
+  const json census = ReadResponse(preflight), solved = ReadResponse(solve);
+  CHECK(census.at("Resolution").at("Knots").at("Located").get<long long int>() > 0);
+  CHECK_FALSE(census.contains("ResolutionCensusNotEvaluated"));
+  const Table rows = test::LoadCsv(preflight / kSurfaceParticipationFile);
+  const auto &flags = test::ColumnByHeader(rows, "flags").text;
+  int preflight_rows = 0;
+  for (const auto &text : flags)
+  {
+    if (text != "NOT-TARGET")
+    {
+      CHECK(text == kParticipationPreflightFlags);
+      preflight_rows++;
+    }
+  }
+  CHECK(preflight_rows > 0);
+  REQUIRE(census.contains("ImpedanceMetalRule"));
+  CHECK(census.at("ImpedanceMetalRule") == solved.at("ImpedanceMetalRule"));
+  const auto lines =
+      census.at("ImpedanceMetalRule").at("Lines").get<std::vector<std::string>>();
+  CHECK(std::count_if(lines.begin(), lines.end(), [](const std::string &line)
+                      { return line.find("(APPLY): regime: ") != std::string::npos; }) ==
+        1);
 #endif
 }
 
