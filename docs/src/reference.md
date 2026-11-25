@@ -3798,13 +3798,18 @@ its census (`"UnmatchedPolicy": "Error"` with missing requirements, a library it
 placed discovery placeholder, a response model whose fabricated domain matrix its matrix
 step refuses (a negative-energy mode beyond roundoff, by the operator's own test) or whose
 domain matrix file cannot be opened, coupon models without surface response matrices on a
-Maxwell run), `PreflightOnly` builds no census, prints one line `Resolution census: not
-evaluated: <why> (a solve-form run stops there)` and ends with the exit status it had before
-the census existed (0, or 3 after a `FailClosed` summary). Every census that is not
-evaluated (these reasons, an explicit `"GeometryFailurePolicy": "FailClosed"`, a whole-run
-raw fallback, a problem type without a census) is named by its one line, and the same line
-is `SurfaceResponse.ResolutionCensusNotEvaluated` of `palace.json` (absent when the census
-is built).
+Maxwell run), `PreflightOnly` builds no census, prints one line
+`Resolution census: not evaluated: <why> (a solve-form run stops there)`
+and ends with the exit status it had before the census existed (0, or 3 after a
+`FailClosed` summary). Every census that is not evaluated (these reasons, an explicit
+`"GeometryFailurePolicy": "FailClosed"`, a whole-run raw fallback, a problem type without a
+census) is named by its one line, and the same line is
+`SurfaceResponse.ResolutionCensusNotEvaluated` of `palace.json` (absent when the census is
+built). One stop is not predicted: a domain matrix file that can be read but is inconsistent
+(for example a matrix that does not fit its model's basis points) stops `PreflightOnly`
+after the manifest and patch dry run are written, with the solve form's own message and a
+non-zero exit status, where a preflight without the census ended with 0; every solve-form
+run refuses such a library.
 
 ### The per-iteration table of the response correction
 
