@@ -133,8 +133,8 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   {
     EnableStrumpackSharedPermutation(this->solver_->options());
 
-    // Map the elimination tree by factor size (not in the mixed precision solver, where
-    // this was not measured).
+    // Map the elimination tree by factor size (the mixed precision solver keeps the
+    // STRUMPACK default).
     if (factor_size_mapping)
     {
       SetStrumpackFactorSizeMapping(this->solver_->options());
