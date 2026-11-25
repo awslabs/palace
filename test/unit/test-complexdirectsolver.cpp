@@ -171,6 +171,10 @@ TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]"
                                         SparseCompression::NONE, 0.0, 0, 0, true, 0),
       true, true, false, true);
   TestComplexDirectSolver(solver, ref, 1.0e-11, unsymmetric);
+
+  // The solver object maps the elimination tree to the processes by factor size.
+  CHECK(solver.GetSolver().options().proportional_mapping() ==
+        strumpack::ProportionalMapping::FACTOR_MEMORY);
 }
 
 TEST_CASE("STRUMPACK complex arithmetic solver with compression",

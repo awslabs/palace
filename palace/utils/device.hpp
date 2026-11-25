@@ -17,6 +17,27 @@ inline constexpr const char *UMPIRE_DEVICE_POOL_NAME = "PALACE_DEVICE_POOL";
 // Return the number of devices available.
 int GetDeviceCount();
 
+// Environment variables with the node-local rank of a process, set by Open MPI, MVAPICH,
+// MPICH and Intel MPI, PMI, Cray PALS, Flux, and Slurm. Slurm's comes last, since batch
+// scripts also set it for the launchers they start.
+inline constexpr const char *LAUNCHER_LOCAL_RANK_VARIABLES[] = {
+    "OMPI_COMM_WORLD_LOCAL_RANK",
+    "MV2_COMM_WORLD_LOCAL_RANK",
+    "MPI_LOCALRANKID",
+    "PMI_LOCAL_RANK",
+    "PALS_LOCAL_RANKID",
+    "FLUX_TASK_LOCAL_ID",
+    "SLURM_LOCALID"};
+
+// Return the node-local rank of this process from the first of
+// LAUNCHER_LOCAL_RANK_VARIABLES that is set, or -1 if none is set or its value is not a
+// non-negative integer.
+int GetLauncherLocalRank();
+
+// Select the device from the node-local rank set by the MPI launcher and create its
+// context, before MPI_Init. Return the device ID, or -1 if unavailable.
+int InitDeviceBeforeMpi();
+
 // Assign devices round-robin over MPI ranks.
 int GetDeviceId(MPI_Comm comm, int ngpu);
 

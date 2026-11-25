@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 #include <mpi.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -168,6 +168,33 @@ int main(int argc, char *argv[])
   // object), so credit everything before palace::Run, including MPI_Init, to INIT.
   std::optional<BlockTimer> init_timer(std::in_place, Timer::INIT);
 
+  // Parse command-line options, before MPI_Init so that a run can read its configuration
+  // file and select its device first (see utils::InitDeviceBeforeMpi). The options are
+  // acted on after MPI_Init.
+  std::string_view exit_option;  // The first of -h, --help, and --version, if any
+  bool dryrun = false;
+  for (int i = 1; i < argc; i++)
+  {
+    const std::string_view arg(argv[i]);
+    if (exit_option.empty() && (arg == "-h" || arg == "--help" || arg == "--version"))
+    {
+      exit_option = arg;
+    }
+    dryrun = dryrun || arg == "-dry-run" || arg == "--dry-run";
+  }
+  // A configuration file which cannot be opened is reported after MPI_Init.
+  nlohmann::json config;
+  int early_device_id = -1;
+  if (exit_option.empty() && !dryrun && argc >= 2 && std::ifstream(argv[1]).is_open())
+  {
+    config = IoData::Parse(argv[1]);
+    const nlohmann::json::json_pointer device("/Solver/Device");
+    if (config.contains(device) && config[device] == "GPU")
+    {
+      early_device_id = utils::InitDeviceBeforeMpi();
+    }
+  }
+
   // Initialize MPI.
 #if defined(MFEM_USE_STRUMPACK) && \
     (defined(STRUMPACK_USE_PTSCOTCH) || defined(STRUMPACK_USE_SLATE_SCALAPACK))
@@ -184,10 +211,7 @@ int main(int argc, char *argv[])
   int world_size = Mpi::Size(world_comm);
   Mpi::Print(world_comm, "\n");
 
-  // Parse command-line options.
-  std::vector<std::string_view> argv_sv(argv, argv + argc);
-  bool dryrun = false;
-  auto Help = [executable_path = argv_sv[0], &world_comm]()
+  auto Help = [executable_path = std::string_view(argv[0]), &world_comm]()
   {
     Mpi::Print(world_comm,
                "Usage: {} [OPTIONS] CONFIG_FILE\n\n"
@@ -197,24 +221,15 @@ int main(int argc, char *argv[])
                "  -dry-run, --dry-run  Parse configuration file for errors and exit\n\n",
                executable_path.substr(executable_path.find_last_of('/') + 1));
   };
-  for (int i = 1; i < argc; i++)
+  if (exit_option == "--version")
   {
-    std::string_view argv_i = argv_sv.at(i);
-    if ((argv_i == "-h") || (argv_i == "--help"))
-    {
-      Help();
-      return 0;
-    }
-    if (argv_i == "--version")
-    {
-      PrintPalaceVersion(world_comm);
-      return 0;
-    }
-    if ((argv_i == "-dry-run") || (argv_i == "--dry-run"))
-    {
-      dryrun = true;
-      continue;
-    }
+    PrintPalaceVersion(world_comm);
+    return 0;
+  }
+  if (!exit_option.empty())
+  {
+    Help();
+    return 0;
   }
   if (argc < 2)
   {
@@ -226,27 +241,28 @@ int main(int argc, char *argv[])
   // Perform dry run: Parse configuration file for errors and exit.
   if (dryrun)
   {
-    if (Mpi::Root(world_comm))
+    config = IoData::ParseAndValidate(argv[argc - 1]);
+    IoData iodata(config, false);
+    if (!std::filesystem::exists(iodata.model.mesh))
     {
-      auto config = IoData::ParseAndValidate(argv[argc - 1]);
-      IoData iodata(config, false);
-      if (!std::filesystem::exists(iodata.model.mesh))
-      {
-        MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
-      }
-      // Echo the fully-resolved configuration so users can inspect every filled-in
-      // default without running the simulation.
-      Mpi::Print(world_comm, "\nResolved configuration:\n{}\n",
-                 IoData::ConcretizeDefaults(iodata, config).dump(2));
+      MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
     }
+    // Echo the fully-resolved configuration so users can inspect every filled-in default
+    // without running the simulation.
+    Mpi::Print(world_comm, "\nResolved configuration:\n{}\n",
+               IoData::ConcretizeDefaults(iodata, config).dump(2));
     Mpi::Print(world_comm, "Dry-run: No errors detected in configuration file \"{}\"\n\n",
                argv[argc - 1]);
     return 0;
   }
 
-  // Parse configuration file.
+  // Validate the configuration file, parsed before MPI_Init if it could be opened.
   PrintPalaceBanner(world_comm);
-  auto config = IoData::ParseAndValidate(argv[1]);
+  if (config.is_null())
+  {
+    config = IoData::Parse(argv[1]);
+  }
+  IoData::Validate(config);
   IoData iodata(config, false);
   MakeOutputFolder(iodata, world_comm);
 
@@ -261,7 +277,24 @@ int main(int argc, char *argv[])
   const int omp_threads = utils::ConfigureOmp();
   const int ngpu = utils::GetDeviceCount();
   const std::string device_str = ConfigureDevice(iodata.solver.device);
-  const int device_id = utils::GetDeviceId(world_comm, ngpu);
+  int device_id = utils::GetDeviceId(world_comm, ngpu);
+  if (iodata.solver.device == Device::GPU)
+  {
+    // Keep a device selected before MPI_Init, but warn if it differs from the assignment by
+    // MPI, for example with a launcher variable inherited from an outer launch.
+    bool differs = (early_device_id >= 0 && early_device_id != device_id);
+    Mpi::GlobalOr(1, &differs, world_comm);
+    if (differs)
+    {
+      Mpi::Warning(world_comm,
+                   "The device selected from the node-local rank set by the MPI launcher "
+                   "differs from the node-local MPI rank on some processes!\n");
+    }
+    if (early_device_id >= 0)
+    {
+      device_id = early_device_id;
+    }
+  }
   utils::ConfigureMemory(device_str, device_id);
   mfem::Device device(device_str, device_id);
   ConfigureCeedBackend(iodata.solver.ceed_backend);

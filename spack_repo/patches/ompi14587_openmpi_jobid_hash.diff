@@ -1,0 +1,22 @@
+diff --git a/repos/spack_repo/builtin/packages/openmpi/package.py b/repos/spack_repo/builtin/packages/openmpi/package.py
+index e8f6535e39..bb7e064676 100644
+--- a/repos/spack_repo/builtin/packages/openmpi/package.py
++++ b/repos/spack_repo/builtin/packages/openmpi/package.py
+@@ -536,6 +536,17 @@ class Openmpi(AutotoolsPackage, CudaPackage, ROCmPackage):
+         when="@5.0.0:5.0.10 +openshmem",
+     )
+ 
++    # Concurrent mpirun jobs on one node can get the same 16-bit jobid, and then share
++    # btl/sm backing files. Hash only the tool and host part of the PRRTE namespace and
++    # fold in the mpirun PID instead. On v5.0.x after 5.0.11.
++    # https://github.com/open-mpi/ompi/pull/14561
++    # https://github.com/open-mpi/ompi/pull/14587
++    patch(
++        "https://github.com/open-mpi/ompi/commit/3bdfd05ccacd928340fa04813531845287036e5f.patch?full_index=1",
++        sha256="a677806aaf60658b0af2bd29b301feb5a3b0ddaec3d94ca825d62bbfa860b640",
++        when="@5.0.0:5.0.11",
++    )
++
+     FABRICS = (
+         "psm",
+         "psm2",
