@@ -106,8 +106,7 @@ FiniteElementSpace::GetInterpCeedElemRestriction(Ceed ceed, mfem::Geometry::Type
 CeedElemRestriction FiniteElementSpace::GetInterpRangeCeedElemRestriction(
     Ceed ceed, mfem::Geometry::Type geom, const ceed::CeedGeomFactorData &data) const
 {
-  const mfem::FiniteElement &fe = *GetFEColl().FiniteElementForGeometry(geom);
-  if (!HasUniqueInterpRangeRestriction(fe))
+  if (!HasUniqueInterpRangeRestriction(data.indices[0]))
   {
     return GetInterpCeedElemRestriction(ceed, geom, data);
   }

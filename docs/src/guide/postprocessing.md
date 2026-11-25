@@ -186,7 +186,12 @@ file. These include:
     PEC, conductivity, impedance, and rational-impedance boundaries require coupons with matching
     boundary-law metadata; the default path serves PEC and impedance (Ls) sheets, while
     conductivity and rational-impedance coupons and the boundary-mode correction are developer
-    options. See
+    options. Without an Ls coupon, a purely inductive `"Impedance"` sheet (`Rs` = `Cs` = 0)
+    at or below 9e-14 H/sq is served by the perfect-conductor models by default
+    (`"ImpedanceMetalRule"` `"Apply"`; validated at the designers' 4.5e-14 H/sq in driven
+    and eigenmode runs, cracked and uncracked); a sheet above the bound or with `Rs` or `Cs`
+    is not served by them (raw unless the library holds a model of its own law) and the run
+    names it. See
     [Maxwell response correction](../reference.md#Maxwell-response-correction)
     for the supported geometry and confidence limits.
     The energies (J) of these outputs are time averages, as the other energies of a

@@ -639,6 +639,14 @@ std::string ParticipationFlags(const SurfaceParticipationRow &row)
   {
     parts.push_back("developer: MarkNotApplied");
   }
+  if (row.sheet_served)
+  {
+    parts.push_back(kParticipationSheetServedFlag);
+  }
+  if (row.sheet_not_served)
+  {
+    parts.push_back(kParticipationSheetNotServedFlag);
+  }
   std::string flags;
   for (const auto &part : parts)
   {

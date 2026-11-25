@@ -1497,13 +1497,7 @@ TEST_CASE("Broken space error estimators",
   SECTION("Exact recovery of a jump")
   {
     // A piecewise constant flux with a jump across the interior boundary is recovered
-    // exactly by the broken spaces, but not by the continuous ones. (The recovery on the
-    // mesh with pyramids is not exact for piecewise constant fields at higher orders, also
-    // without interior boundaries.)
-    if (type == mfem::Element::PYRAMID && order > 1)
-    {
-      return;
-    }
+    // exactly by the broken spaces, but not by the continuous ones.
     const auto [grad_broken, curl_broken] = uncut_setup.Estimate(JumpE, JumpB, attr_list);
     const auto [grad_cont, curl_cont] = uncut_setup.Estimate(JumpE, JumpB, no_attr_list);
     const double grad_max = GlobalMax(comm, grad_cont),

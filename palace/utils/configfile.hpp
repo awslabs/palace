@@ -531,6 +531,12 @@ public:
   double Ls = 0.0;
   double Cs = 0.0;
 
+  // The surface inductance as configured [H/sq], recorded by Nondimensionalize before it
+  // scales Ls (0 until then). The impedance-metal rule compares it with its bound
+  // ImpedanceMetalMaxInductance: the scaled Ls times its scale can land one unit in the
+  // last place above the number the designer wrote. No solve reads it.
+  double configured_Ls = 0.0;
+
   // List of boundary attributes for this impedance boundary condition.
   std::vector<int> attributes = {};
 
@@ -1982,15 +1988,17 @@ public:
     // false.
     bool preflight_only = false;
 
-    // ImpedanceMetalRule (decisions 2006 / 2012; EXPERIMENTAL, stage A of the
-    // impedance-metal rule): OFF (default) = no new object, file, column or line; RECORD =
-    // the measuring-only mode: the operator of record is built and evaluated as under OFF,
-    // and a CANDIDATE (what the rule would give: the library's film metals served as
-    // perfect conductors) is written to separate files marked "CANDIDATE: NOT OF RECORD".
-    // APPLY (decision 2206 (a); DESIGN-APPLY) = the serving route: the operator of record
-    // itself serves perfect conductors and purely inductive Impedance sheets (Rs = 0,
-    // Cs = 0, Ls within impedance_metal_max_inductance) by the perfect-conductor models; no
-    // candidate is built and no law reading is taken.
+    // ImpedanceMetalRule (decisions 2006 / 2012 / 2206; CUT-PLAN step 3): OFF = no new
+    // object, file, column or line; RECORD (a developer option) = the measuring-only mode:
+    // the operator of record is built and evaluated as under OFF, and a CANDIDATE (what the
+    // rule would give: the library's film metals served as perfect conductors) is written
+    // to separate files marked "CANDIDATE: NOT OF RECORD". APPLY (decision 2206 (a);
+    // DESIGN-APPLY) = the serving route: the operator of record itself serves perfect
+    // conductors and purely inductive Impedance sheets (Rs = 0, Cs = 0, configured Ls
+    // within impedance_metal_max_inductance) by the perfect-conductor models; no candidate
+    // is built and no law reading is taken; inert on a run without an Impedance boundary.
+    // The default is the configuration's: APPLY in Solver.SurfaceResponseCorrection, OFF in
+    // Solver.Electrostatic.ResponseCorrection (ResponseCorrectionBlock); OFF in code.
     enum class ImpedanceMetalRule : char
     {
       OFF,
@@ -1999,16 +2007,18 @@ public:
     };
     ImpedanceMetalRule impedance_metal_rule = ImpedanceMetalRule::OFF;
     // ImpedanceMetalMaxInductance (APPLY only; H/sq, SI, never nondimensionalized): the
-    // upper end of the Ls range APPLY serves; an inductive sheet above it is not served
-    // (raw) and the run says so. The default is a placeholder until the breakdown study of
-    // decision 2206: twice the designers' value of record 4.5e-14 H/sq.
+    // upper end of the configured Ls that APPLY serves (inclusive); an inductive sheet
+    // above it is not served (raw) and the run says so. The default is the validated bound
+    // (lane bench-driven-ls part 3: twice the designers' value of record 4.5e-14 H/sq); a
+    // larger value is a developer option.
     static constexpr double kDefaultImpedanceMetalMaxInductance = 9.0e-14;
     double impedance_metal_max_inductance = kDefaultImpedanceMetalMaxInductance;
     bool impedance_metal_max_inductance_given = false;
-    // ImpedanceMetalFilmOverrides: per metal boundary attribute, serve (true) or do not
-    // serve (false) it as the library's film (ruling 2012): RECORD in either direction,
-    // whatever its law; APPLY un-serves any metal, and serves only what the rule serves by
-    // default (any other Serve true is refused at set-up). Every override is printed.
+    // ImpedanceMetalFilmOverrides (a developer option): per metal boundary attribute, serve
+    // (true) or do not serve (false) it as the library's film (ruling 2012): RECORD in
+    // either direction, whatever its law; APPLY un-serves any metal, and serves only what
+    // the rule serves by default (any other Serve true is refused at set-up). Every
+    // override is printed.
     struct ImpedanceMetalFilmOverrideData
     {
       std::vector<int> attributes;
@@ -2359,7 +2369,17 @@ public:
   std::optional<ResponseCorrectionData> response_correction = std::nullopt;
 
   ElectrostaticSolverData() = default;
-  ElectrostaticSolverData(const json &electrostatic);
+  // `block`: the response-correction block the parse reads (the Maxwell block
+  // Solver.SurfaceResponseCorrection is parsed through this constructor): the defaults that
+  // differ between the two blocks (ImpedanceMetalRule) follow it.
+  enum class ResponseCorrectionBlock : char
+  {
+    ELECTROSTATIC,
+    MAXWELL
+  };
+  ElectrostaticSolverData(
+      const json &electrostatic,
+      ResponseCorrectionBlock block = ResponseCorrectionBlock::ELECTROSTATIC);
 };
 
 // The impedance-metal rule's measuring mode (ImpedanceMetalRule "Record") prints candidate
