@@ -2787,10 +2787,12 @@ compares the CONFIGURED `Ls` (the number of the `Impedance` boundary) with
 `"ImpedanceMetalMaxInductance"` (H/sq; default `9e-14`, twice the common design value
 `4.5e-14`, the validated bound; a smaller value is a stricter bound, a larger one a developer
 option) in every form, inclusive: a sheet at exactly the bound is served. A sheet above it
-is not served (`ABOVE-RANGE`), nor is a sheet with `Rs` or `Cs` or a metal of another law:
-its values stay raw, one line names it with the bound and the validated range, and
-`UnmatchedPolicy` decides as for any `Missing` feature (`"Error"` stops the run naming the
-features; `"Warn"`, the default, runs on). An `Impedance` boundary with `Rs`, `Ls` and `Cs`
+is not served by the perfect-conductor models (`ABOVE-RANGE`), nor is a sheet with `Rs` or
+`Cs` or a metal of another law: its values stay raw unless the library holds a model of its
+own law (law status `EXACT`: corrected by that model), one line names it with the bound and
+the validated range, and `UnmatchedPolicy` decides for its unmatched features as for any
+`Missing` feature (`"Error"` stops the run naming the features; `"Warn"`, the default, runs
+on). An `Impedance` boundary with `Rs`, `Ls` and `Cs`
 all 0 is no sheet (not served, named; the solve refuses it). In `surface-participation.csv`
 every row with a value of a run that served a sheet carries the flags word
 `Ls sheet served as PEC`, and of a run with a feature on a metal the rule does not serve

@@ -190,7 +190,8 @@ file. These include:
     at or below 9e-14 H/sq is served by the perfect-conductor models by default
     (`"ImpedanceMetalRule"` `"Apply"`; validated at the designers' 4.5e-14 H/sq in driven
     and eigenmode runs, cracked and uncracked); a sheet above the bound or with `Rs` or `Cs`
-    stays raw and the run names it. See
+    is not served by them (raw unless the library holds a model of its own law) and the run
+    names it. See
     [Maxwell response correction](../reference.md#Maxwell-response-correction)
     for the supported geometry and confidence limits.
     The energies (J) of these outputs are time averages, as the other energies of a

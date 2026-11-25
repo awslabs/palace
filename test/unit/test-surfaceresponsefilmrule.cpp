@@ -223,11 +223,13 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
     CHECK(HasLine(film,
                   "not served (Impedance Rs 0 Ls 2e-12 Cs 0, uncracked (one sheet "
                   "of total Ls): ABOVE the Ls range <= 9e-14 H/sq): attributes [7]: "
-                  "their corrected values are not served (raw); Ls sheets are served "
-                  "at or below 9e-14 H/sq (validated at the designers' 4.5e-14 H/sq"));
+                  "not served by the perfect-conductor models: raw unless the library "
+                  "holds a model of this law (law status EXACT, corrected by that "
+                  "model); the perfect-conductor models serve Ls sheets at or below "
+                  "9e-14 H/sq (validated at the designers' 4.5e-14 H/sq"));
     CHECK(HasLine(film, "not served (Impedance Rs 1 Ls 0 Cs 0, uncracked (one sheet of "
-                        "total Ls)): attributes [3]: their corrected values are not served "
-                        "(raw); Ls sheets are served at or below 9e-14 H/sq"));
+                        "total Ls)): attributes [3]: not served by the perfect-conductor "
+                        "models: raw unless the library holds a model of this law"));
     CHECK(HasLine(film, "not served (Conductivity): attributes [5]"));
     // An above-range sheet serves no segment; a served one does.
     CHECK(film.SegmentService({7}) == FilmService::NOT_DECLARED);
@@ -1654,9 +1656,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                         [](const std::string &line)
                         {
                           return line.find("ABOVE the Ls range <= 9e-14 H/sq): attributes "
-                                           "[9]: their corrected values are not served "
-                                           "(raw); Ls sheets are served at or below 9e-14 "
-                                           "H/sq") != std::string::npos;
+                                           "[9]: not served by the perfect-conductor "
+                                           "models: raw unless the library holds a model "
+                                           "of this law") != std::string::npos;
                         }) == 1);
   }
 #endif
@@ -1694,5 +1696,98 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_THAT(message, ContainsSubstring("(UnmatchedPolicy = Error)"));
   CHECK_THAT(log, ContainsSubstring("ABOVE the Ls range <= 9e-14 H/sq): attributes [9]"));
   CHECK_THAT(log, ContainsSubstring("under another metal boundary law: device metal"));
+#endif
+}
+
+// The supervisor's ruling on lane v1lsdefault's finding: a sheet above the bound is not
+// served by the perfect-conductor models; its values are raw UNLESS the library holds a
+// model of its own law (law status EXACT: corrected by that model). The not-served line
+// names both outcomes (it precedes the matching); the feature statuses and the log's
+// law-status line say which one the run met, and only the raw one gives the designer
+// table's not-served word. Ls 1e-13 H/sq (> 9e-14), no rule key, the Features construction:
+// with the perfect-conductor library (no model of the law) every feature is NOT-DECLARED
+// and nothing is placed; with the library of that law (the finite-impedance convex
+// library, the six value tests' library) every feature is EXACT and corrected by a model.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "Impedance-metal rule default: a sheet above the bound is raw unless the "
+                 "library holds a model of its law",
+                 "[surfaceresponsefilmrule][impedancemetalrule][maxwell][3d][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  // Both libraries keyed on the island's one target interface (SA), as the Features
+  // construction reads them.
+  auto SaLibrary = [&](const fs::path &source, const std::string &name)
+  {
+    const auto path = temp.temp_dir / (name + ".json");
+    if (Mpi::Root(comm))
+    {
+      json library = json::parse(std::ifstream(source));
+      library["Name"] = name;
+      for (auto &model : library["Models"])
+      {
+        model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+      }
+      std::ofstream(path) << library.dump(2) << "\n";
+    }
+    Mpi::Barrier(comm);
+    return path;
+  };
+  const auto pec_library =
+      SaLibrary(convex_library_3d_path, "unit-test-process-above-bound-pec-sa-3d");
+  const auto law_library = SaLibrary(finite_impedance_convex_library_3d_path,
+                                     "unit-test-process-above-bound-impedance-sa-3d");
+  const std::string line_text =
+      "not served (Impedance Rs 0 Ls 1e-13 Cs 0, cracked (two faces of Ls each): ABOVE the "
+      "Ls range <= 9e-14 H/sq): attributes [9]: not served by the perfect-conductor "
+      "models: "
+      "raw unless the library holds a model of this law (law status EXACT, corrected by "
+      "that model); the perfect-conductor models serve Ls sheets at or below 9e-14 H/sq";
+  auto Check = [&](const fs::path &library, const std::string &stem, bool exact)
+  {
+    INFO(stem);
+    json config = ConvexMaxwellIslandConfig(test::CrackPolicy::Default);
+    config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
+    config["Boundaries"]["Impedance"] =
+        json::array({{{"Attributes", {9}}, {"Ls", 1.0e-13}}});
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Attributes"] = {9};
+    auto &correction = config["Solver"]["SurfaceResponseCorrection"];
+    correction.erase("PatchConstruction");
+    correction.erase("Developer");
+    correction["Library"] = library.string();
+    correction["UnmatchedPolicy"] = "Warn";
+    correction["GeometryFailurePolicy"] = "RecordRaw";
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    std::vector<std::unique_ptr<Mesh>> meshes;
+    meshes.push_back(std::make_unique<Mesh>(MakeIslandMesh()));
+    SpaceOperator space(iodata, meshes);
+    std::unique_ptr<SurfaceResponseOperator> response;
+    const std::string log = CaptureStdout(
+        temp.temp_dir / (stem + ".log"),
+        [&] { response = std::make_unique<SurfaceResponseOperator>(iodata, space); });
+    const auto *film = response->GetImpedanceApplyRule();
+    REQUIRE(film != nullptr);
+    CHECK(film->attributes.at(9).service == FilmService::INDUCTIVE_ABOVE_RANGE);
+    CHECK(HasLine(*film, line_text));
+    CHECK_THAT(log, ContainsSubstring(line_text));
+    CHECK_THAT(log, ContainsSubstring(exact ? "feature law statuses: EXACT"
+                                            : "feature law statuses: NOT-DECLARED"));
+    const auto &features = response->GetImpedanceLawFeatures();
+    REQUIRE(!features.empty());
+    for (const auto &feature : features)
+    {
+      CHECK(feature.status == (exact ? "EXACT" : "NOT-DECLARED"));
+      CHECK(feature.model.empty() == !exact);
+    }
+    const auto counts = CountImpedanceApplyFeatures(features);
+    CHECK(counts.sheet == static_cast<int>(features.size()));
+    CHECK(counts.not_served == (exact ? 0 : counts.sheet));
+    CHECK((response->GetPatchCount() > 0) == exact);
+  };
+  Check(pec_library, "above-bound-pec-library", false);
+  Check(law_library, "above-bound-law-library", true);
 #endif
 }

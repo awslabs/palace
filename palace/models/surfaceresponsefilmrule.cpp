@@ -347,10 +347,15 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
                           override_lines.end());
   for (const auto &[law, attributes] : not_served_laws)
   {
+    // Not served by the perfect-conductor models; raw unless the library holds a model of
+    // the device law itself (the feature's law status EXACT: corrected by that model). The
+    // line precedes the matching, so it names both outcomes.
     resolution.lines.push_back(fmt::format(
         "  not served ({}): attributes [{}]{}", law, fmt::join(attributes, ", "),
-        apply ? fmt::format(": their corrected values are not served (raw); Ls sheets are "
-                            "served at or below {:.6g} H/sq ({})",
+        apply ? fmt::format(": not served by the perfect-conductor models: raw unless the "
+                            "library holds a model of this law (law status EXACT, "
+                            "corrected by that model); the perfect-conductor models serve "
+                            "Ls sheets at or below {:.6g} H/sq ({})",
                             resolution.max_inductance, kImpedanceApplyValidatedRange)
               : std::string()));
   }

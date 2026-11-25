@@ -1189,9 +1189,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                 .service == FilmService::INDUCTIVE_ABOVE_RANGE);
       CHECK_THAT(default_above.response->GetImpedanceApplyRule()->lines.back(),
                  ContainsSubstring("ABOVE the Ls range <= 9e-14 H/sq): attributes [9]: "
-                                   "their corrected values are not served (raw); Ls "
-                                   "sheets are served at or below 9e-14 H/sq (validated "
-                                   "at the designers' 4.5e-14 H/sq"));
+                                   "not served by the perfect-conductor models: raw "
+                                   "unless the library holds a model of this law (law "
+                                   "status EXACT, corrected by that model); the "
+                                   "perfect-conductor models serve Ls sheets at or below "
+                                   "9e-14 H/sq (validated at the designers' 4.5e-14 H/sq"));
       CHECK(default_above.response->GetPatchCount() == 0);
     }
 
