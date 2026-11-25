@@ -131,7 +131,9 @@ file. These include:
     [https://arxiv.org/pdf/1509.01854.pdf](https://arxiv.org/pdf/1509.01854.pdf) or
     [https://aip.scitation.org/doi/10.1063/1.3637047](https://aip.scitation.org/doi/10.1063/1.3637047)
     for more information. The participation ratios and associated quality factors are
-    written to the file `surface-Q.csv` in the specified output directory.
+    written to the file `surface-Q.csv` in the specified output directory (for a driven
+    [substructuring](../features/substructuring.md) of a region, whose field gives no total
+    energy, the energies of the interfaces instead).
 
 ## Visualization
 

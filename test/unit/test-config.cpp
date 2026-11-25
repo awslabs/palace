@@ -383,8 +383,12 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
                                                 {"Attributes", {4}},
                                                 {"Thickness", 1.0e-3},
                                                 {"Permittivity", 10.0}}}}};
-    CHECK_THROWS_WITH(IoData(saved, false), Catch::Matchers::ContainsSubstring(
-                                                "does not compute interface dielectric"));
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Boundaries"]["Postprocessing"] = {
+        {"FarField", {{"Attributes", {4}}, {"NSample", 8}}}};
+    CHECK_THROWS_WITH(IoData(saved, false),
+                      Catch::Matchers::ContainsSubstring(
+                          "does not compute \"Boundaries.Postprocessing.FarField\""));
 #endif
 #if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     json fields = uniform;

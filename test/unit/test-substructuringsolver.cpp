@@ -5036,6 +5036,55 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring gives the energies of the interface dielectrics",
+                 "[substructure][Serial][Parallel]")
+{
+  // A "Dielectric" postprocessing on the boundary of the lumped port, in the region: an
+  // online sweep writes its energy, without the participation and the quality factor,
+  // which need the total energy. A regular run gives it as p U, with U = E_elec + E_cap
+  // (constant materials).
+  auto dielectric = [](json &config)
+  {
+    config["Boundaries"]["Postprocessing"]["Dielectric"] = {
+        {{"Index", 1}, {"Attributes", {1}}, {"Thickness", 1.0e-3}, {"Permittivity", 10.0}}};
+    config["Solver"]["Linear"]["Tol"] = 1.0e-12;
+  };
+  RunDrivenBox(temp_dir, "Offline", dielectric);
+  RunDrivenBox(temp_dir, "Online", dielectric);
+  RunDrivenBox(temp_dir, "Regular",
+               [&](json &config)
+               {
+                 dielectric(config);
+                 config["Solver"].erase("Substructuring");
+               });
+  auto column =
+      [&](const std::string &mode, const std::string &csv, const std::string &name)
+  {
+    const auto [header, rows] = ReadCsv(temp_dir / ("postpro_" + mode) / csv);
+    const auto it = std::ranges::find(header, name);
+    REQUIRE(it != header.end());
+    std::vector<double> v;
+    for (const auto &row : rows)
+    {
+      v.push_back(row[it - header.begin()]);
+    }
+    return v;
+  };
+  const auto E_surf = column("Online", "surface-Q.csv", "E_surf[1] (J)");
+  const auto p = column("Regular", "surface-Q.csv", "p_surf[1]");
+  const auto E_elec = column("Regular", "domain-E.csv", "E_elec (J)");
+  const auto E_cap = column("Regular", "domain-E.csv", "E_cap (J)");
+  REQUIRE(!p.empty());
+  REQUIRE(E_surf.size() == p.size());
+  for (std::size_t i = 0; i < p.size(); i++)
+  {
+    const double ref = p[i] * (E_elec[i] + E_cap[i]);
+    CAPTURE(i, E_surf[i], ref);
+    CHECK(std::abs(E_surf[i] - ref) <= 1.0e-6 * std::abs(ref));
+  }
+}
+
 TEST_CASE("DrivenSubstructure finds the boundary attributes on Γ",
           "[substructure][Serial][Parallel]")
 {

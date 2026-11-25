@@ -816,8 +816,9 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &su
   {
     return;
   }
-  // The participations are normalized by U, so omitted without it.
-  if (!total_energy)
+  // The participations are normalized by U, so omitted without it: a substructured region
+  // (whose field gives no U) writes the energies of the interfaces instead.
+  if (!total_energy && !domain_partial)
   {
     RemoveOmittedTable("surface-Q.csv");
     return;
@@ -826,7 +827,7 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &su
 
   Table t;  // Define table locally first due to potential reload.
   auto nr_expected_measurement_cols =
-      1 + ex_idx_v_all.size() * (2 * surf_post_op.eps_surfs.size());
+      1 + ex_idx_v_all.size() * ((total_energy ? 2 : 1) * surf_post_op.eps_surfs.size());
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
   for (const auto ex_idx : ex_idx_v_all)
@@ -834,6 +835,12 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &su
     std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
     for (const auto &[idx, data] : surf_post_op.eps_surfs)
     {
+      if (!total_energy)
+      {
+        t.insert(fmt::format("E_{}_{}", idx, ex_idx),
+                 fmt::format("E_surf[{}]{} (J)", idx, ex_label), ex_idx);
+        continue;
+      }
       t.insert(fmt::format("p_{}_{}", idx, ex_idx),
                fmt::format("p_surf[{}]{}", idx, ex_label), ex_idx);
       t.insert(fmt::format("Q_{}_{}", idx, ex_idx),
@@ -854,6 +861,11 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
 
   for (const auto &data : measurement_cache.interface_eps_i)
   {
+    if (domain_partial)
+    {
+      surface_Q->table[fmt::format("E_{}_{}", data.idx, m_ex_idx)] << data.energy;
+      continue;
+    }
     surface_Q->table[fmt::format("p_{}_{}", data.idx, m_ex_idx)]
         << data.energy_participation;
     surface_Q->table[fmt::format("Q_{}_{}", data.idx, m_ex_idx)] << data.quality_factor;
@@ -1919,8 +1931,10 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
     return;
   }
   // Whether U, which normalizes the participations and coupling rates, is available
-  // (Measurement::ElectricEnergyNormalization), fixed for the run.
-  const bool total_energy = post_op.dom_post_op.HasStoredElectricFieldEnergy();
+  // (Measurement::ElectricEnergyNormalization), fixed for the run: not for a substructured
+  // region (see config::DomainPostData::partial).
+  const bool total_energy =
+      post_op.dom_post_op.HasStoredElectricFieldEnergy() && !post_op.dom_post_op.partial;
   InitializeDomainE(post_op.dom_post_op);
   InitializeSurfaceF(post_op.surf_post_op);
   InitializeSurfaceQ(post_op.surf_post_op, total_energy);

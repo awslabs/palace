@@ -1250,23 +1250,12 @@ void IoData::CheckConfiguration()
       // side of Γ (see BilinearForm::PartialAssemble).
       MFEM_VERIFY(domains.pml.empty(),
                   "Driven substructuring does not support PML regions yet!");
-      // From a model (online, or after an adaptive sweep's samples), the field is known in
-      // the region and on Γ only.
-      MFEM_VERIFY(
-          (!sub.Online() && solver.driven.adaptive_tol <= 0.0) ||
-              (boundaries.postpro.dielectric.empty() &&
-               boundaries.postpro.farfield.attributes.empty()),
-          "Online or adaptive driven substructuring does not compute interface dielectric "
-          "or far-field postprocessing yet!");
     }
-    else
-    {
-      // The substructured static solves postprocess the field of the region (see
-      // SubstructuringSolver::RegionPostprocessing), which gives no far field.
-      MFEM_VERIFY(boundaries.postpro.farfield.empty(),
-                  "Substructuring does not compute \"Boundaries.Postprocessing.FarField\": "
-                  "remove it, or run without \"Solver.Substructuring\"!");
-    }
+    // The substructured solves postprocess the field of the region (see
+    // RegionPostprocessing), which gives no far field.
+    MFEM_VERIFY(boundaries.postpro.farfield.empty(),
+                "Substructuring does not compute \"Boundaries.Postprocessing.FarField\": "
+                "remove it, or run without \"Solver.Substructuring\"!");
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
       // One condensed environment serves every excitation, so inactive surface-current

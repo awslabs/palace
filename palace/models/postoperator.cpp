@@ -1756,12 +1756,17 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // the frequency (of an eigenmode).
     // Without a stored electric energy of a frequency-dependent material (the same on
     // every process), the energies with it, and the participations in the total, are
-    // left empty. A given total (substructuring, whose materials are constant) is both.
+    // left empty. A given total (substructuring, whose materials are constant) is both,
+    // and the field of a substructured region alone (partial) gives none.
     const double omega = measurement_cache.freq.real();
-    const auto [energy, material] =
+    auto [energy, material] =
         total_field_energy ? DomainPostOperator::ElectricFieldEnergies{*total_field_energy,
                                                                        *total_field_energy}
                            : dom_post_op.GetElectricFieldEnergies(field, omega);
+    if (!total_field_energy && dom_post_op.partial)
+    {
+      energy.reset();
+    }
     measurement_cache.domain_E_field_energy_all = energy;
     measurement_cache.domain_E_field_energy_material = material;
 
@@ -2274,9 +2279,10 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
     // solver does not support lumped ports.
     //
     // TODO: Should this not include other types of energy too (surface impedance case)?
-    // Without U, the participations are not measured.
+    // Without U, the participations are not measured, nor the interfaces, except for a
+    // substructured region (partial), whose field gives their energies.
     const auto energy_electric_all = measurement_cache.ElectricEnergyNormalization();
-    if (!energy_electric_all)
+    if (!energy_electric_all && !dom_post_op.partial)
     {
       return;
     }
@@ -2286,6 +2292,13 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
     {
       auto energy = surf_post_op.GetInterfaceElectricFieldEnergy(
           idx, *E, measurement_cache.freq.real());
+      if (!energy_electric_all)
+      {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        measurement_cache.interface_eps_i.emplace_back(Measurement::InterfaceData{
+            idx, energy, surf_post_op.GetInterfaceLossTangent(idx), nan, nan});
+        continue;
+      }
 
       auto energy_participation_p = energy / *energy_electric_all;
       auto loss_tangent_delta = surf_post_op.GetInterfaceLossTangent(idx);
@@ -2582,7 +2595,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   measurement_cache = {};
   measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
-  if (stored_E)
+  if (stored_E && !dom_post_op.partial)
   {
     measurement_cache.domain_E_field_energy_all = quadratic_E(
         reduced_energy_E, reduced_energy_E_fd, DomainPostOperator::ElectricEnergy::STORED);
@@ -2599,7 +2612,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     {
       d.energy = quadratic_E(forms.first, reduced_domain_energy_E_fd.at(idx),
                              DomainPostOperator::ElectricEnergy::STORED);
-      if (stored_E)
+      if (measurement_cache.domain_E_field_energy_all)
       {
         d.participation_ratio =
             ParticipationRatio(*d.energy, *measurement_cache.domain_E_field_energy_all);

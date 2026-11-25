@@ -237,10 +237,14 @@ only (a regular simulation gives the rest):
     the region, without the total energies and participation ratios (and the power of the
     environment's ports, and the voltage of its wave ports, are not available);
   - surface fluxes (`"Boundaries"/"Postprocessing"/"SurfaceFlux"`) on boundaries that border only
-    region elements (on the mesh of the region, as the model records), and probes in the region
-    or on the interface (there, with the field of the region), are those of a regular simulation;
-    the others are skipped;
-  - fields (`"Save"`) are written in the region and on the interface, zero elsewhere.
+    region elements (on the mesh of the region, those away from the environment's), and probes in
+    the region or on the interface (there, with the field of the region), are those of a regular
+    simulation; the others are skipped;
+  - interface dielectrics (`"Boundaries"/"Postprocessing"/"Dielectric"`) on such boundaries give
+    their energies in `surface-Q.csv` (`E_surf`), without the participation ratios and quality
+    factors, which need the total energy;
+  - fields (`"Save"`) are written in the region and on the interface, zero elsewhere;
+  - `"FarField"` is rejected.
 
 The mesh of the region written by the offline sweep (see [Configuration](#Configuration)) also
 holds the environment elements at the environment's ports, whose excitations and outputs need
@@ -293,10 +297,9 @@ voltage of a lumped port, would depend on both sides.
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names
     is used for all of them instead. Floquet ports and periodic boundaries (which make the system
     non-symmetric), frequency-dependent permittivity, PML regions, `"AdaptiveCircuitSynthesis"` and
-    the adaptive refinement of the region in online sweeps are not supported yet, nor, from a model,
-    interface dielectric and far-field postprocessing. The model holds one dense
-    ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry of its lower
-    triangle). Online, the processes read it in parallel and hold it distributed; offline, one
+    the adaptive refinement of the region in online sweeps are not supported yet. The model holds
+    one dense ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry of its
+    lower triangle). Online, the processes read it in parallel and hold it distributed; offline, one
     process holds it whole to write it, and the samples of an adaptive sweep.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
