@@ -575,10 +575,13 @@ void ModeEigenSolver::SetUpLinearSolver(MPI_Comm comm)
                  pc_type == LinearSolver::STRUMPACK_MP)
         {
 #if defined(MFEM_USE_STRUMPACK)
+          // Without the mapping of the elimination tree by factor size (not measured
+          // here): a mode solve factors a 2D matrix for few solves, so its cost is the
+          // factorization, which the STRUMPACK default mapping by operations balances.
           return std::make_unique<StrumpackSolver>(
               comm, linear.sym_factorization, linear.strumpack_compression_type,
               linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-              linear.strumpack_lossy_precision, reorder_reuse, verbose - 1);
+              linear.strumpack_lossy_precision, reorder_reuse, verbose - 1, false);
 #endif
         }
         else if (pc_type == LinearSolver::MUMPS)
@@ -664,11 +667,13 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
       case LinearSolver::STRUMPACK:
       case LinearSolver::STRUMPACK_MP:
 #if defined(MFEM_USE_STRUMPACK)
+        // Without the mapping of the elimination tree by factor size, as in
+        // SetUpLinearSolver.
         return std::make_unique<MfemWrapperSolver<ComplexOperator>>(
             std::make_unique<StrumpackSolver>(
                 comm, linear.sym_factorization, linear.strumpack_compression_type,
                 linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-                linear.strumpack_lossy_precision, true, print),
+                linear.strumpack_lossy_precision, true, print, false),
             false, linear.complex_coarse_solve, linear.drop_small_entries,
             linear.reorder_reuse);
 #else
