@@ -58,8 +58,9 @@ protected:
   // of iterations.
   mutable int ksp_mult, ksp_mult_it;
 
-  // Whether the most recent Mult converged.
-  mutable bool converged;
+  // Whether the most recent Mult converged, and whether it was stopped by the correction
+  // limit (see SetMaxRelativeCorrection).
+  mutable bool converged, correction_exceeded;
 
   // Enable timer contribution for Timer::KSP_PRECONDITIONER.
   bool use_timer;
@@ -71,6 +72,9 @@ protected:
 
   bool MultAutoCycle(const VecType &x, VecType &y, double &final_res,
                      double &initial_res) const;
+
+  // Whether the most recent solve of the Krylov solver was stopped by the correction limit.
+  bool KrylovCorrectionExceeded() const;
 
 public:
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,

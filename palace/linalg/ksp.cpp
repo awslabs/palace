@@ -513,7 +513,7 @@ template <OperatorType OperType>
 BaseKspSolver<OperType>::BaseKspSolver(std::unique_ptr<IterativeSolver<OperType>> &&ksp,
                                        std::unique_ptr<Solver<OperType>> &&pc)
   : ksp(std::move(ksp)), pc(std::move(pc)), ksp_mult(0), ksp_mult_it(0), converged(false),
-    use_timer(false), auto_cycle_print(0)
+    correction_exceeded(false), use_timer(false), auto_cycle_print(0)
 {
   if (this->pc)
   {
@@ -568,6 +568,12 @@ void BaseKspSolver<OperType>::SetMaxRelativeCorrection(double tol)
 template <OperatorType OperType>
 bool BaseKspSolver<OperType>::GetCorrectionExceeded() const
 {
+  return correction_exceeded;
+}
+
+template <OperatorType OperType>
+bool BaseKspSolver<OperType>::KrylovCorrectionExceeded() const
+{
   const auto *gmres = dynamic_cast<const GmresSolver<OperType> *>(ksp.get());
   return gmres && gmres->GetCorrectionExceeded();
 }
@@ -588,6 +594,7 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
     final_res = ksp->GetFinalRes();
     initial_res = ksp->GetInitialRes();
     ksp_mult_it += ksp->GetNumIterations();
+    correction_exceeded = KrylovCorrectionExceeded();
   }
   if (!converged && !GetCorrectionExceeded())
   {
@@ -625,10 +632,12 @@ bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double
   final_res = ksp->GetFinalRes();
   initial_res = ksp->GetInitialRes();
   ksp_mult_it += its_sym;
-  if (converged_sym && its_sym == 0)
+  correction_exceeded = KrylovCorrectionExceeded();
+  if ((converged_sym && its_sym == 0) || correction_exceeded)
   {
-    // Nothing to compare: the next solve tries again.
-    return true;
+    // Nothing to compare after a solve without iterations, or one stopped by the
+    // correction limit, which the caller repeats: the next solve tries again.
+    return converged_sym;
   }
   const int max_it = ksp->GetMaxIter();
   const auto print = ksp->GetPrintLevel();
@@ -651,6 +660,7 @@ bool BaseKspSolver<OperType>::MultAutoCycle(const VecType &x, VecType &y, double
     initial_res = ksp->GetInitialRes();
   }
   SetOneSided(one_sided);
+  correction_exceeded = false;  // Neither kept solve was stopped by the correction limit
   if (auto_cycle_print > 0)
   {
     Mpi::Print(ksp->GetComm(),

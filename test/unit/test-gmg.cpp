@@ -398,6 +398,28 @@ TEST_CASE("Geometric multigrid V-cycles chosen on the first solve",
     CHECK(gmg.IsOneSided() == one_sided);
     CHECK(Solve(ksp, x2, u) == Solve(one_sided ? ksp_one_sided : ksp_symmetric, x2, u2));
     CHECK(RelativeDifference(comm, u, u2) <= 1.0e-12);
+
+    // A first solve stopped by the correction limit, which its caller repeats, does not
+    // choose the V-cycles: the next solve does.
+    InspectableKspSolver<ComplexOperator> ksp_limit(problem.iodata, nd_spaces, &h1_spaces);
+    ksp_limit.SetOperators(*problem.A, *problem.P);
+    const auto &gmg_limit = dynamic_cast<GeometricMultigridSolver<ComplexOperator> &>(
+        ksp_limit.GetPreconditioner());
+    ComplexVector u0(n);
+    u0.UseDevice(true);
+    linalg::SetRandom(comm, u0, 3);
+    ksp_limit.SetInitialGuess(true);
+    ksp_limit.SetMaxRelativeCorrection(1.0e-12);
+    ksp_limit.Mult(x1, u0);
+    CHECK_FALSE(ksp_limit.GetConverged());
+    CHECK(ksp_limit.GetCorrectionExceeded());
+    CHECK_FALSE(gmg_limit.IsOneSided());
+    ksp_limit.SetMaxRelativeCorrection(0.0);
+    ksp_limit.SetInitialGuess(false);
+    CHECK(Solve(ksp_limit, x1, u) ==
+          its_symmetric + (one_sided ? its_one_sided : its_symmetric));
+    CHECK_FALSE(ksp_limit.GetCorrectionExceeded());
+    CHECK(gmg_limit.IsOneSided() == one_sided);
   }
 }
 
