@@ -58,7 +58,11 @@ reference values are effectively chosen to satisfy the constraints on space,
 time and power given above. For example, the magnetic field strength `H` solved
 for is actually `H/Hc`, where `Hc` satisfies `Hc² × Z₀ × Lc² = 1 W`, with `Z₀`
 impedance of free space. Similarly, the non-dimensional electric field `E` is
-`E/Ec` with `Ec = Z₀ × Hc`.
+`E/Ec` with `Ec = Z₀ × Hc`. The units of voltage and current,
+`Vc = Ec × Lc = √(Z₀ × 1 W) ≈ 19.41 V` and `Ic = Hc × Lc = √(1 W / Z₀) ≈ 51.5 mA`, do not
+depend on `Lc`: they are the unit voltage of a terminal in electrostatic simulations and
+the unit current of a surface current source. The unit of magnetic flux,
+`Φc = μ₀ × Ic × Lc`, does depend on `Lc`: it is the unit of a flux loop's `"FluxAmounts"`.
 
 !!! note "Example: converting times and distances"
 

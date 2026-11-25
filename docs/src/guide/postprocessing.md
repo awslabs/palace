@@ -18,8 +18,8 @@ or time step, for examples). For a frequency-dependent dielectric, electric ener
 polarization storage according to the [material model](model.md#Energy-and-postprocessing),
 evaluated at the real part of the frequency for eigenmodes.
 
-Models containing lumped or wave port boundaries or surface current excitations will
-automatically postprocess quantities related to those boundaries. This is described in
+Models containing lumped or wave port boundaries, terminals, or surface current excitations
+will automatically postprocess quantities related to those boundaries. This is described in
 [Ports and surface currents](#Ports-and-surface-currents).
 
 ## Resolved configuration record
@@ -74,6 +74,14 @@ currents, computed from the field phasors. The current of a lumped port is ``V/Z
 through its own `"R"`, `"L"`, and `"C"`, and not the current delivered to the model. Quadratic
 quantities (powers, energies, Poynting vectors) are time averages over one period, and each
 excited port delivers 1 W of time-averaged incident power.
+
+Electrostatic and magnetostatic simulations write their excitations to `terminal-V.csv`
+(terminal voltages), `terminal-I.csv` (surface current sources), and `terminal-Phi.csv`
+(the flux imposed by flux loops, in webers). A terminal voltage or source current is one
+unit in the non-dimensional unit system, about 19.41 V or 51.5 mA, and the energies and
+fields of each excitation are those of this voltage or current (see
+[Electrostatic problems](problem.md#Electrostatic-problems) and
+[Magnetostatic problems](problem.md#Magnetostatic-problems)).
 
 ## Domain postprocessing
 

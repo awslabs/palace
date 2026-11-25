@@ -353,7 +353,8 @@ For our electrostatic problem, we define:
   - Two `Terminal` surfaces (one for each sphere)
 
 `Terminals` are particularly important for `Electrostatic` simulations. *Palace*
-activates each terminal sequentially (applying a unit of potential and grounding
+activates each terminal sequentially (applying a
+[unit of potential](guide/problem.md#Electrostatic-problems), about 19.41 V, and grounding
 all the other ones) and solves Maxwell's equations. Each of these steps adds a
 new row to the output CSV files.
 

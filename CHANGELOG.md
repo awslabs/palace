@@ -74,6 +74,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added the microstrip patch antenna example and a PML section to the dipole antenna
     example, and described the PML in the boundary conditions guide.
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Documented that the unit voltage of electrostatic terminals and the unit current of
+    magnetostatic sources are units of the non-dimensional unit system, about 19.41 V and
+    51.5 mA (written to `terminal-V.csv` and `terminal-I.csv`), and that the energies and
+    fields of each excitation are those of this voltage or current.
+    [PR 1313](https://github.com/awslabs/palace/pull/1313).
 
 ## [0.20.0] - 2026-11-23
 

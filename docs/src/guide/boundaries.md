@@ -829,8 +829,10 @@ driven simulations is a surface current excitation, specified under
 [`config["Boundaries"]["SurfaceCurrent"]`](../config/reference.md#config-boundaries-surfacecurrent).
 This is the excitation used for magnetostatic simulation types as well. This option
 prescribes a unit source surface current excitation on the given boundary in order to
-excite the model. It does does not prescribe any boundary condition to the model and only
-affects the source term on the right hand side.
+excite the model. The unit current is ``\sqrt{1\text{ W}/Z_0} \approx 51.5`` mA, one unit of
+current in the non-dimensional unit system (see
+[Magnetostatic problems](problem.md#Magnetostatic-problems)). It does not prescribe any
+boundary condition to the model and only affects the source term on the right hand side.
 
 ## Flux boundary
 
