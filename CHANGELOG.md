@@ -33,6 +33,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `Solver.Eigenmode.N` modes converge within `Solver.Eigenmode.MaxIts` iterations,
     instead of aborting without output.
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - For problems with damping, the SLEPc eigenvalue solver no longer searches for strongly
+    damped or growing modes with quality factor `|Q|` below
+    `config["Solver"]["Eigenmode"]["MinQ"]` (new, default `0.54`), whose slowly converging
+    Ritz values could stall the others. With adaptive mesh refinement, a warm-started solve
+    then accepts an eigenpair at its first Krylov restart only if its error estimate is
+    below a tenth of the tolerance, and a warm start follows a cold solve of two Krylov
+    cycles, not only one of three or more, until a warm start after such a solve takes more
+    than one cycle. After a solve with the restriction which takes more than 10 Krylov
+    cycles, the later solves of the adaptive run use 6 more basis vectors than the default
+    `config["Solver"]["Eigenmode"]["MaxSize"]`. SchemaVer 6-2-0
+    [PR 1205](https://github.com/awslabs/palace/pull/1205).
 
 #### Performance Improvements
 

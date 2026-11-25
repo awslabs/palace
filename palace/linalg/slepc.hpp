@@ -42,6 +42,10 @@ void Initialize(int &argc, char **&argv, const char rc_file[], const char help[]
 void Initialize();
 void Finalize();
 
+// Configure the region of the eigenvalues λ = iω (scaled) searched for above the target
+// λ = i s, s > 0: Im{λ} >= s, and quality factors |Q| = |ω| / (2 |Im{ω}|) >= q_min > 0.5.
+void ConfigureQualityFactorRegion(RG rg, PetscReal s, double q_min);
+
 //
 // A wrapper for the SLEPc library for generalized linear eigenvalue problems or quadratic
 // polynomial eigenvalue problems. Shift-and-invert spectral transformations can be used to
@@ -116,6 +120,15 @@ protected:
   // Boolean to handle SetFromOptions calls.
   mutable bool cl_custom;
 
+  // Minimum quality factor of the search (see SetMinQualityFactor), and whether the region
+  // of the current solve restricts it.
+  double q_min;
+  bool q_region;
+
+  // Whether the next solve is warm-started, and whether the convergence test of the
+  // warm-started solves with the quality factor region is installed.
+  bool warm_start, first_restart_test;
+
   // Customize object with command line options set.
   virtual void Customize();
 
@@ -168,6 +181,10 @@ public:
 
   // Configure the basis vectors object associated with the eigenvalue solver.
   void SetOrthogonalization(bool mgs, bool cgs2);
+
+  void SetMinQualityFactor(double q) override { q_min = q; }
+
+  void SetWarmStart(bool warm) override { warm_start = warm; }
 
   // Get the corresponding eigenpair error.
   PetscReal GetError(int i, ErrorType type) const override;
