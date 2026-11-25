@@ -158,8 +158,8 @@ gmsh.finalize()
 
   - Velocities are not available with periodic boundaries or coaxial surface current
     sources, eigenmode sensitivities not with wave ports, Floquet ports, a Floquet wave
-    vector or frequency-dependent permittivities, and magnetostatic ones not with flux
-    loops, superconductors or shorted inactive ports.
+    vector, PML regions or frequency-dependent permittivities, and magnetostatic ones not
+    with flux loops, superconductors or shorted inactive ports.
   - With domain conductivity, eigenmode sensitivities require the divergence-free
     projection to be off (`config["Solver"]["Linear"]["DivFreeMaxIts"]` of 0), as it does
     not account for it.

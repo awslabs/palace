@@ -38,24 +38,39 @@ struct CeedQFunctionInfo
   // operator application in true matrix-free fashion.
   bool assemble_q_data;
 
+  // Whether the assembled quadrature data couples a pair of 3-component active fields
+  // across, (u₁, u₂) ↦ (qd₁ u₂, qd₂ u₁), rather than each field to itself (see
+  // f_apply_33_cross).
+  bool q_data_cross;
+
   CeedQFunctionInfo()
     : apply_qf(nullptr), apply_qf_path(""), trial_ops(0), test_ops(0),
-      assemble_q_data(false)
+      assemble_q_data(false), q_data_cross(false)
   {
   }
 };
 
-// Helper function to get the geometry space dimension.
+// Number of components of the geometry factor quadrature data {attr, w |J|, adj(J)ᵀ / |J|},
+// followed with coords by the physical coordinates of the quadrature points (see
+// Mesh::GetCeedGeomFactorData).
+constexpr CeedInt CeedGeometryDataSize(CeedInt space_dim, CeedInt dim, bool coords = false)
+{
+  return 2 + space_dim * dim + (coords ? space_dim : 0);
+}
+
+// Helper function to get the geometry space dimension, for geometry factor quadrature data
+// without coordinates.
 int CeedGeometryDataGetSpaceDimension(CeedElemRestriction geom_data_restr, CeedInt dim,
                                       CeedInt *space_dim);
 
 // Assemble libCEED mesh geometry factor quadrature data for use in a partially assembled
-// libCEED operator.
+// libCEED operator, with the quadrature point coordinates if coords (see
+// CeedGeometryDataSize).
 void AssembleCeedGeometryData(Ceed ceed, CeedElemRestriction mesh_restr,
                               CeedBasis mesh_basis, CeedVector mesh_nodes,
                               CeedElemRestriction attr_restr, CeedBasis attr_basis,
                               CeedVector elem_attr, CeedVector geom_data,
-                              CeedElemRestriction geom_data_restr);
+                              CeedElemRestriction geom_data_restr, bool coords = false);
 
 // Construct libCEED operator using the given quadrature data, element restriction, and
 // basis objects.

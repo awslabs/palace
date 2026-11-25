@@ -84,6 +84,7 @@ zmax(x::Tuple) = gmsh.model.occ.get_bounding_box(x...)[6]
                           arm_radius::Real=arm_length/20,
                           gap_size::Real=arm_length/100,
                           outer_boundary_radius::Real=1.5wavelength,
+                          n_farfield::Real=3,
                           verbose::Integer=5,
                           gui::Bool=false
                          )
@@ -98,6 +99,7 @@ Generate a mesh for a dipole antenna using Gmsh.
   - arm_radius - radius of the cylindrical antenna arms
   - gap_size - size of the gap between the two arms (port region)
   - outer_boundary_radius - radius of the outer spherical boundary
+  - n_farfield - number of elements per wavelength away from the antenna
   - verbose -  gmsh verbosity level (0-5, higher = more verbose)
   - gui - whether to launch the Gmsh GUI after mesh generation
 """
@@ -108,6 +110,7 @@ function generate_antenna_mesh(;
     arm_radius::Real=arm_length/20,
     gap_size::Real=arm_length/100,
     outer_boundary_radius::Real=1.5wavelength,
+    n_farfield::Real=3,
     verbose::Integer=5,
     gui::Bool=false
 )
@@ -144,10 +147,6 @@ function generate_antenna_mesh(;
     # Mesh refinement parameter: controls elements around cylinder circumference.
     # Higher number = higher resolution.
     n_circle = 12
-    # How many elements per wavelength on the outer sphere.
-    # Higher number = higher resolution.
-    n_farfield = 3
-
     # Create geometry: outer sphere and two cylindrical arms.
     outer_boundary = kernel.addSphere(0, 0, 0, outer_boundary_radius)
     top_arm = kernel.addCylinder(0, 0, gap_size / 2, 0, 0, arm_length, arm_radius)

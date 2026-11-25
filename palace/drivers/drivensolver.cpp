@@ -567,6 +567,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // for the online output sweep; failed residual checks transparently fall back to the
   // exact port eigensolver and enrich the basis.
   space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
+  prom_op.PrepareOnlinePhase();
   post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
 
   // Main fast frequency sweep loop (online phase).

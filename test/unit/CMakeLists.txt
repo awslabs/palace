@@ -39,6 +39,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-constants.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-curlcurloperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-densematrix.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-device.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainpostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-domainsubmesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-eigenmode.cpp
@@ -64,6 +65,8 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-orthog.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-outputdir.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-permittivitymodel.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-pml.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-pml-extrude.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp

@@ -19,12 +19,84 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### New Features
 
+  - Added perfectly matched layer (PML) absorbing regions for 3D frequency domain driven and
+    eigenmode simulations, meshed with the model (`config["Domains"]["PML"]`) or extruded by
+    *Palace* from farfield boundaries of the mesh (`config["Boundaries"]["PML"]`), with a
+    stretch evaluated at a reference frequency or at the solve frequency. The multigrid
+    preconditioner solves the PML regions with a sparse direct solver, and `eig.csv` reports
+    the fraction of the energy of each mode in the PML regions. SchemaVer 6-1-0
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Added shape and material sensitivities. With the `"Sensitivity"` section, *Palace*
+    writes the derivatives of the capacitance and inductance matrices (electrostatic and
+    magnetostatic simulations), and of the frequencies and quality factors of the eigenmodes,
+    with respect to design parameters, the material properties and the lumped port elements
+    to `sensitivity.json`, with no adjoint solve. The design parameters are given by a table
+    of their velocities at the nodes of the input mesh, for example from DeviceLayout.jl,
+    which *Palace* carries through its refinement of the mesh, so that the derivatives are
+    those of simulations on morphed input meshes, at fixed lumped port elements and source
+    currents. SchemaVer 6-2-0.
+    [PR 1127](https://github.com/awslabs/palace/pull/1127).
+
+#### Interface Changes
+
+  - Eigenmode simulations now postprocess the converged modes, with a warning, when fewer than
+    `Solver.Eigenmode.N` modes converge within `Solver.Eigenmode.MaxIts` iterations,
+    instead of aborting without output.
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
+#### Performance Improvements
+
+  - The STRUMPACK coarse solvers map the elimination tree to the processes by factor size,
+    the cost of a triangular solve, instead of by the operations of the factorization. On a
+    model with 115M unknowns on 3072 processes a coarse solve takes 43 ms instead of 72 ms.
+    [PR 1306](https://github.com/awslabs/palace/pull/1306).
+  - In GPU runs, when the MPI launcher sets the node-local rank of each process, the GPU
+    of each process is selected, and its context created, before `MPI_Init`, so that MPI
+    libraries which set up the communication between the GPUs of a node in `MPI_Init`,
+    like Open MPI 5, can do so. [PR 1260](https://github.com/awslabs/palace/pull/1260).
+
+#### Bug Fixes
+
+  - Fixed the S-parameters of Floquet ports in `port-floquet-S.csv` for the excitation of a
+    wave port with a nonzero `"Offset"`, which lacked the de-embedding factor
+    exp(i kₙ d) of the excited wave port: their phase was off by kₙ d, and for a lossy wave
+    port their magnitude too.
+    [PR 1289](https://github.com/awslabs/palace/pull/1289).
+  - Fixed the abort "Incident Floquet mode is evanescent or not found!" when measuring the
+    S-parameters of a Floquet port which is not excited and whose specular (0,0) order is
+    below cutoff, for example in total internal reflection. Such a port only terminates the
+    model and needs no incident wave: it reports the orders which carry power, if any.
+    [PR 1289](https://github.com/awslabs/palace/pull/1289).
+  - With a Floquet wave vector and `Solver.Linear.PCMatShifted`, the preconditioner matrix
+    is now unsymmetric for the sparse direct solvers, which were told that it is symmetric
+    positive definite: with MUMPS, the linear solver did not converge and gave wrong
+    S-parameters. [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Fixed the resolved configuration `<input>_resolved.json`, which left out the default
+    `"TwoSided": false` of `Boundaries.Superconductor` entries. The schema no longer gives
+    their `PenetrationDepth`, `Thickness` and `KineticInductance` a default of 0.0, which
+    only meant that the form is not used. SchemaVer 6-1-1
+    [PR 1293](https://github.com/awslabs/palace/pull/1293).
+  - `--dry-run` with more than one process no longer hangs when the configuration file
+    fails the schema validation. [PR 1260](https://github.com/awslabs/palace/pull/1260).
+
+#### Documentation
+
+  - Added the microstrip patch antenna example and a PML section to the dipole antenna
+    example, and described the PML in the boundary conditions guide.
+    [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
+## [0.20.0] - 2026-11-23
+
+#### New Features
+
   - Magnetostatic simulations now model domains with a `LondonDepth`: the London term is
     added to the curl-curl operator and the kinetic energy of the supercurrent to the
     extracted inductance, so conductors of any thickness and width can be modeled as
-    volumes. SchemaVer 4-4-1 [PR 1111](https://github.com/awslabs/palace/pull/1111).
+    volumes. SchemaVer 4-4-1
+    [PR 1111](https://github.com/awslabs/palace/pull/1111).
   - `validate-config` accepts several configuration files and validates them in one Julia
-    session. [PR 1180](https://github.com/awslabs/palace/pull/1180).
+    session.
+    [PR 1180](https://github.com/awslabs/palace/pull/1180).
   - Added `Boundaries.LumpedPort[].ExcitationAmplitude` and `ExcitationPhase` (degrees),
     a complex weight a = A e^{iφ} on the unit-power incident wave of each lumped port, so
     ports sharing an `Excitation` index can be driven with different amplitudes and phases.
@@ -44,17 +116,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     nonlinear eigensolver take these pole terms exactly. General PoleResidue models remain
     usable with gain warnings; a PoleResidue term with a nonzero pole specifies no stored
     electric energy, so the electric energy outputs of a material with one are omitted.
-    SchemaVer 5-1-0 [PR 877](https://github.com/awslabs/palace/pull/877).
-  - Added shape and material sensitivities. With the `"Sensitivity"` section, *Palace*
-    writes the derivatives of the capacitance and inductance matrices (electrostatic and
-    magnetostatic simulations), and of the frequencies and quality factors of the eigenmodes,
-    with respect to design parameters, the material properties and the lumped port elements
-    to `sensitivity.json`, with no adjoint solve. The design parameters are given by a table
-    of their velocities at the nodes of the input mesh, for example from DeviceLayout.jl,
-    which *Palace* carries through its refinement of the mesh, so that the derivatives are
-    those of simulations on morphed input meshes, at fixed lumped port elements and source
-    currents. SchemaVer 6-1-0.
-    [PR 1127](https://github.com/awslabs/palace/pull/1127).
+    SchemaVer 5-1-0
+    [PR 877](https://github.com/awslabs/palace/pull/877).
+  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
+    that far fields can be computed when the outer boundary is not a valid integration
+    surface, or away from the truncation. The fields of each face are taken from the side
+    facing the center of the bounding box of the surface. SchemaVer 4-2-3
+    [PR 1110](https://github.com/awslabs/palace/pull/1110).
 
 #### Interface Changes
 
@@ -90,7 +158,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     one, transferred to the refined mesh, instead of the start vector of
     `config["Solver"]["Eigenmode"]["StartVector"]`, and then need fewer Krylov restarts. The
     eigenvalues of adaptive simulations change at the level of the solver tolerances, and
-    fewer converged eigenpairs beyond the requested ones can be reported. SchemaVer 4-4-2.
+    fewer converged eigenpairs beyond the requested ones can be reported. SchemaVer 4-4-2
     [PR 1203](https://github.com/awslabs/palace/pull/1203).
 
   - Rebalancing a nonconforming mesh during adaptive refinement now keeps each root of its
@@ -121,15 +189,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
   - `"AdaptiveGSOrthogonalization": "MGS"` now orthogonalizes the reduced-order basis of
     adaptive driven sweeps with `"CGS2"`, which is as stable with fewer reductions. The
-    minimal rational interpolation of the error estimate always uses `"CGS2"`. SchemaVer
-    4-3-1 [PR 1187](https://github.com/awslabs/palace/pull/1187).
+    minimal rational interpolation of the error estimate always uses `"CGS2"`.
+    SchemaVer 4-3-1
+    [PR 1187](https://github.com/awslabs/palace/pull/1187).
 
   - Added a warning for interior `"Conductivity"` boundaries without `"Crack"`, such as the
     surface of a conductor meshed as a dielectric volume. Since
     [PR 994](https://github.com/awslabs/palace/pull/994) these are uncracked sheets with the
     admittance of both faces, which lowers the conductor loss compared to previous versions:
     set `"Crack": true` to restore the previous results, or `"Crack": false` to silence the
-    warning. [PR 1168](https://github.com/awslabs/palace/pull/1168).
+    warning.
+    [PR 1168](https://github.com/awslabs/palace/pull/1168).
 
   - Uniform lumped ports and surface current sources now take their width from a
     cross-section across the port, and their length as their area over their width (in 2D,
@@ -155,14 +225,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"InitialGuess": false` to restore the previous default behavior. SchemaVer 5-0-0
     [PR 1126](https://github.com/awslabs/palace/pull/1126).
 
-#### New Features
-
-  - Far-field extraction (`Boundaries.Postprocessing.FarField`) on interior surfaces, so
-    that far fields can be computed when the outer boundary is not a valid integration
-    surface, or away from the truncation. The fields of each face are taken from the side
-    facing the center of the bounding box of the surface. SchemaVer 4-2-3.
-    [PR 1110](https://github.com/awslabs/palace/pull/1110).
-
 #### Performance Improvements
 
   - Added a hypre patch, a prototype for
@@ -182,7 +244,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     flags its zero initial guess. With a hypre patch, it then computes no residual norms,
     each a fine-level matrix-vector product and a reduction over all processes, and the
     first relaxation of its auxiliary space solves skips the exchange of their zero initial
-    guess. Results are unchanged. [PR 1238](https://github.com/awslabs/palace/pull/1238).
+    guess. Results are unchanged.
+    [PR 1238](https://github.com/awslabs/palace/pull/1238).
   - With `Model.Refinement.SaveAdaptMesh`, a nonconforming adapted mesh is saved without
     gathering it on the root: every process prints its part of the file, and the root only
     writes the compressed parts. The saved file holds the same mesh and refinement tree as
@@ -201,7 +264,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     node, in an MPI shared memory window, instead of on every process, for the sequential
     column orderings (all but ParMETIS and PT-Scotch) without compression. If the window
     cannot be allocated, or with `OMPI_MCA_osc=^sm,ucx` for Open MPI, every process keeps
-    its copy. Results are unchanged. [PR 1231](https://github.com/awslabs/palace/pull/1231).
+    its copy. Results are unchanged.
+    [PR 1231](https://github.com/awslabs/palace/pull/1231).
   - Complex operators on CPUs which pack matching pairs of real and imaginary libCEED terms
     now also pair the H1 diffusion terms and pack the real terms without a partner, such as
     those of the lossless materials of partially lossy models, so that each of them acts on
@@ -227,12 +291,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     cannot be given the real-valued system of twice the size (AMS aborted, and simulations
     with BoomerAMG did not converge), `"ComplexCoarseSolve": true` is now disabled with a
     warning. Wave ports keep it for their mode solver, which uses a sparse direct solver.
-    SchemaVer 4-4-0 [PR 1193](https://github.com/awslabs/palace/pull/1193).
+    SchemaVer 4-4-0
+    [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - The linear solves of driven simulations without adaptive frequency sweep now start from
     the minimal-residual combination of the solutions at up to four previous frequencies,
     and GMRES and FGMRES scale nonzero initial guesses to minimize the initial residual
     (except when certifying the PROM solution of an adaptive frequency sweep). This reduces
-    the iterations of frequency sweeps. SchemaVer 5-0-1.
+    the iterations of frequency sweeps. SchemaVer 5-0-1
     [PR 1229](https://github.com/awslabs/palace/pull/1229).
   - Each excitation of a uniform driven sweep now starts its first linear solve from zero
     instead of from the last solution of the previous excitation, which saves a few
@@ -245,11 +310,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     matrix on every process. Results are unchanged.
     [PR 1198](https://github.com/awslabs/palace/pull/1198).
   - STRUMPACK is now built with a PBLAS block size of 128 instead of 32 in the superbuild
-    and in Spack builds of STRUMPACK without SLATE, such as the containers. Spack builds
-    of STRUMPACK with SLATE, the default of its Spack package, keep the block size of 512
-    of SLATE. The block size is set with a STRUMPACK patch for
-    [pghysels/STRUMPACK#169](https://github.com/pghysels/STRUMPACK/pull/169). The patch
-    for [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165)
+    and in Spack builds of STRUMPACK without SLATE, the default of the Spack package since
+    [PR 1223](https://github.com/awslabs/palace/pull/1223). Spack builds of STRUMPACK with
+    SLATE keep the block size of 512 of SLATE. The block size is set with a STRUMPACK
+    patch for [pghysels/STRUMPACK#169](https://github.com/pghysels/STRUMPACK/pull/169).
+    The patch for [pghysels/STRUMPACK#165](https://github.com/pghysels/STRUMPACK/pull/165)
     ([PR 1170](https://github.com/awslabs/palace/pull/1170)) is still applied, but its
     lower-latency distributed triangular solves for a few right-hand sides only handle
     block sizes up to 32 and are thus no longer used. With a block size of 128, the time
@@ -259,7 +324,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Used two levels of aggressive coarsening in the BoomerAMG coarse solver of the
     multigrid preconditioner of the divergence-free projection, instead of one. Its
     V-cycle is latency bound at high process counts, and the shorter hierarchy makes it
-    faster. [PR 1149](https://github.com/awslabs/palace/pull/1149).
+    faster.
+    [PR 1149](https://github.com/awslabs/palace/pull/1149).
   - Uniform frequency sweeps of driven simulations release the linear solver and system
     matrices after the last solve, before the final field output and error estimation.
     This lowers the peak memory when the final postprocessing sets it.
@@ -330,7 +396,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     pass over memory. Each conjugate gradient iteration also updates the solution in the
     same pass as the next search direction, with any preconditioner and on CPUs and GPUs.
     This speeds up the error estimator's flux recovery and the GMRES orthogonalization of
-    driven and eigenmode simulations. [PR 1146](https://github.com/awslabs/palace/pull/1146).
+    driven and eigenmode simulations.
+    [PR 1146](https://github.com/awslabs/palace/pull/1146).
   - Expanded the reduced-order solution at each frequency of an adaptive sweep into the
     full space in one pass over memory on CPUs, reading each basis vector once.
     [PR 1165](https://github.com/awslabs/palace/pull/1165).
@@ -352,7 +419,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1189](https://github.com/awslabs/palace/pull/1189).
   - The reduced system of adaptive driven sweeps is solved with partial-pivoting LU instead
     of full-pivoting QR, falling back to the QR when the LU solution is not finite or
-    inaccurate. [PR 1190](https://github.com/awslabs/palace/pull/1190).
+    inaccurate.
+    [PR 1190](https://github.com/awslabs/palace/pull/1190).
   - The Floquet port DtN correction and the wave-port modal correction now use a single MPI
     reduction per operator application instead of four per rank-one term, and only touch
     the port degrees of freedom instead of full-length vectors.
@@ -360,12 +428,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The Floquet port DtN correction and the wave-port modal correction now pack their
     rank-one terms per port, so that each term only touches the degrees of freedom of its
     own port, and compute their dot products on GPUs with block reductions instead of one
-    thread per term. [PR 1155](https://github.com/awslabs/palace/pull/1155).
+    thread per term.
+    [PR 1155](https://github.com/awslabs/palace/pull/1155).
   - GPU builds now share one Umpire device memory pool between MFEM and hypre, created on
     each rank's GPU, and use standard host memory instead of the slow Umpire host allocator.
-    hypre no longer reserves its own 4 GiB device pool per rank, which reduces peak GPU memory
-    use substantially for small and medium problems (5.2 GiB to 1.25 GiB for the spheres
-    example on one NVIDIA L4) and speeds up setup and postprocessing.
+    hypre no longer reserves its own 4 GiB device pool per rank, which reduces peak GPU
+    memory use substantially for small and medium problems (5.2 GiB to 1.25 GiB for the
+    spheres example on one NVIDIA L4) and speeds up setup and postprocessing.
     [PR 1085](https://github.com/awslabs/palace/pull/1085).
   - Sped up the per-port wave-port PROM of adaptive driven sweeps for port modes whose shape
     changes with frequency, as for lossy lines, where every exact port solve adds a basis
@@ -395,7 +464,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed slow and failing linear solves with the second-order absorbing boundary condition
     (`"Absorbing"` with `"Order": 2`) without `"ComplexCoarseSolve"`: the sign of its term
     is now flipped in the real-valued coarse solve, as it already was for AMS and BoomerAMG,
-    which now flip it only there. [PR 1252](https://github.com/awslabs/palace/pull/1252).
+    which now flip it only there.
+    [PR 1252](https://github.com/awslabs/palace/pull/1252).
   - A failed write of an output file, for example on a full disk, aborts the run instead
     of leaving the file empty or truncated, and a failed rewrite keeps the previous file.
     [PR 1256](https://github.com/awslabs/palace/pull/1256).
@@ -424,7 +494,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     PEC boundaries allow a constant vector potential: no PEC at all, or PEC only on planes
     normal to one axis, such as planar films with a natural far field. For singular
     operators, AMS now relaxes the coarsest level of its auxiliary space solves instead of
-    using Gaussian elimination. [PR 1244](https://github.com/awslabs/palace/pull/1244).
+    using Gaussian elimination.
+    [PR 1244](https://github.com/awslabs/palace/pull/1244).
   - Fixed the pivoting of distributed BLR fronts in STRUMPACK with a patch from upstream.
     With BLR compression (`"STRUMPACKCompressionType"` `"BLR"`, `"BLR-HODLR"` or
     `"ZFP-BLR-HODLR"`) on two or more MPI processes, the factorization of an indefinite
@@ -437,12 +508,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `"AdaptiveTol"`, no longer aborts on a sample in the span of the basis, and warns when
     the sampling reaches `"AdaptiveMaxSamples"` before converging.
     [PR 1218](https://github.com/awslabs/palace/pull/1218).
-  - Fixed the flux recovery in the error estimators to use the projection which minimizes the
-    error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the magnetic
-    field). The unweighted projection overestimated the error in the low-permittivity
-    elements next to a dielectric interface, by up to an order of magnitude next to a
-    sapphire substrate, and AMR spent refinement there. The error indicator decreases for
-    models with material interfaces, and their AMR meshes change.
+  - Fixed the flux recovery in the error estimators to use the projection which minimizes
+    the error it is measured in (ε⁻¹-weighted for the electric flux, μ-weighted for the
+    magnetic field). The unweighted projection overestimated the error in the
+    low-permittivity elements next to a dielectric interface, by up to an order of magnitude
+    next to a sapphire substrate, and AMR spent refinement there. The error indicator
+    decreases for models with material interfaces, and their AMR meshes change.
     [PR 1072](https://github.com/awslabs/palace/pull/1072).
   - Scaling a nonconforming mesh without nodes (for example with
     `Model.RemoveCurvature`) now also scales the top-level vertex coordinates kept by its
@@ -532,7 +603,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     reused (`Solver.Linear.ReorderingReuse`, the default). With the STRUMPACK patch of
     [PR 1143](https://github.com/awslabs/palace/pull/1143), these solves could abort with
     an MPI error at high process counts, or give a poor preconditioner which needs more
-    linear solver iterations. [PR 1164](https://github.com/awslabs/palace/pull/1164).
+    linear solver iterations.
+    [PR 1164](https://github.com/awslabs/palace/pull/1164).
   - Fixed SuperLU_DIST solves with `config["Solver"]["Linear"]["SuperLU3DCommunicator"]`,
     which gave wrong solutions and crashed at exit. SuperLU_DIST patches for
     [xiaoyeli/superlu_dist#254](https://github.com/xiaoyeli/superlu_dist/pull/254) and
@@ -549,7 +621,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     when a process holds very few rows of the matrix, for example a coarse multigrid level
     at a high MPI rank count. The sparsity pattern of the matrix passed to STRUMPACK is no
     longer declared symmetric, since hypre's parallel matrix products can store explicit
-    zeros without their transposes. [PR 1137](https://github.com/awslabs/palace/pull/1137).
+    zeros without their transposes.
+    [PR 1137](https://github.com/awslabs/palace/pull/1137).
   - Added an MFEM patch for [mfem/mfem#5717](https://github.com/mfem/mfem/pull/5717),
     which fixes hangs and memory corruption on nonconforming meshes with triangular faces
     when the face neighbors of some processes have only quadrilateral faces.
@@ -709,7 +782,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - The superbuild now builds MUMPS with complex double precision (`zmumps`), which
     *Palace* now requires with `PALACE_WITH_MUMPS`, also in the Spack package
-    (`mumps@5.3:+double+complex`). [PR 1193](https://github.com/awslabs/palace/pull/1193).
+    (`mumps@5.3:+double+complex`).
+    [PR 1193](https://github.com/awslabs/palace/pull/1193).
   - The superbuild now builds ParMETIS, which *Palace* links directly, whenever it is
     enabled. Previously it was built only with SuperLU_DIST, STRUMPACK, or MUMPS, so
     configuring with cuDSS as the only sparse direct solver failed.
@@ -724,7 +798,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - ParMETIS is now optional and disabled by default: enable it with
     `-DPALACE_WITH_PARMETIS=ON` (Spack variant `+parmetis`). Otherwise, `"ParMETIS"` for
     `config["Solver"]["Linear"]["ColumnOrdering"]` falls back to METIS with a warning.
-    SchemaVer 4-4-3. [PR 1195](https://github.com/awslabs/palace/pull/1195).
+    SchemaVer 4-4-3
+    [PR 1195](https://github.com/awslabs/palace/pull/1195).
   - Building the unit tests now requires MFEM with exceptions (`PALACE_MFEM_USE_EXCEPTIONS`
     in the superbuild, `mfem+exceptions` in Spack). The tests of error handling expect
     `MFEM_VERIFY` and `MFEM_ABORT` to throw, and without exceptions the first of them ended
@@ -737,16 +812,26 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Removed the `PALACE_WITH_GPU_AWARE_MPI` option: *Palace* now asks MPI at runtime whether
     it is GPU aware.
     [PR 1226](https://github.com/awslabs/palace/pull/1226).
+  - Spack builds with `+cudss` now allow cuDSS 0.8, which the builtin `mfem` package capped
+    at 0.7.1, with a patch for
+    [spack/spack-packages#7693](https://github.com/spack/spack-packages/pull/7693), which
+    also applies [mfem/mfem#5758](https://github.com/mfem/mfem/pull/5758).
+    [PR 1211](https://github.com/awslabs/palace/pull/1211).
   - With cuDSS, the superbuild now patches MFEM with
     [mfem/mfem#5758](https://github.com/mfem/mfem/pull/5758), as the Spack build does. With
     cuDSS 0.8, the parallel cuDSS solver of MFEM 4.10 did not set the communicator for
     device buffers, and `"Type": "cuDSS"` in `config["Solver"]["Linear"]` crashed in the
-    first factorization. [PR 1250](https://github.com/awslabs/palace/pull/1250).
+    first factorization.
+    [PR 1250](https://github.com/awslabs/palace/pull/1250).
   - The unit tests now pass with MFEM's debug device, and the long tests run them on it, on
-    1 and 2 processes, to catch host accesses to data whose valid copy is on the device. The installed test tree now also discovers each case on the number of
-    processes it runs on, which adds the `[Parallel]`-only regression cases to the Spack
-    test jobs.
+    1 and 2 processes, to catch host accesses to data whose valid copy is on the device. The
+    installed test tree now also discovers each case on the number of processes it runs on,
+    which adds the `[Parallel]`-only regression cases to the Spack test jobs.
     [PR 1241](https://github.com/awslabs/palace/pull/1241).
+  - The local Spack repository (`spack_repo/local`) now has an `mfem` package which derives
+    from the builtin one, so *Palace* builds from it without linking the builtin MFEM recipe
+    into it by hand. Remove such a link (`spack_repo/local/packages/mfem`) before updating.
+    [PR 1151](https://github.com/awslabs/palace/pull/1151).
 
 ## [0.19.0] - 2026-11-02
 

@@ -242,6 +242,142 @@ public:
   }
 };
 
+// PML configuration (the "PML" object of config["Domains"]): the domain attributes of the
+// PML regions, whose materials define the background material properties, and the
+// coordinate stretch, the same in all PML regions. For an entry of
+// config["Boundaries"]["PML"] (extruded), the PML regions are extruded from boundaries of
+// the mesh instead (see mesh::ExtrudePML), and the extrusion replaces the entry with one
+// more block for each part of its surface.
+struct PMLData
+{
+public:
+  // Domain attributes of the PML regions. For an extruded PML, these are the attributes of
+  // the extruded elements, assigned by the extrusion.
+  std::vector<int> attributes = {};
+
+  // Extrusion of the PML regions from boundaries of the mesh, if its attributes are
+  // nonempty.
+  struct Extrusion
+  {
+    // Boundary attributes of the surface to extrude from, and the index of the entry in
+    // config["Boundaries"]["PML"].
+    std::vector<int> attributes = {};
+    int entry = 0;
+
+    // Thickness of the layer in mesh length units (nondimensionalized at load time), and
+    // number of layers of elements.
+    double thickness = 0.0;
+    int layers = 4;
+
+    // By default, the parts of the surface are its connected parts, and a flat part is
+    // extruded along its normal. For NORMAL, the parts are the flat patches (connected,
+    // coplanar faces), each extruded along its normal. RADIAL is the default, and a flat
+    // part is an error. Any other part is extruded away from the closest point of each
+    // surface point on the core, the axis-aligned box with the lower and upper corners
+    // center[0] and center[1] (a point, a segment, or a rectangle where they share
+    // coordinates), in mesh length units (nondimensionalized at load time). Unless
+    // configured (has_center), this is the centre of the bounding box of the part, moved
+    // onto the open sides of a box, set by the extrusion.
+    enum class Type
+    {
+      DEFAULT,
+      NORMAL,
+      RADIAL
+    } type = Type::DEFAULT;
+    bool has_center = false;
+    std::array<std::array<double, 3>, 2> center{};
+
+    // Boundary attribute of the outer (back) surface of the layer, PEC unless it has
+    // another boundary condition. By default (0), the extrusion assigns one larger than the
+    // largest boundary attribute of the mesh, of the configuration, and of the configured
+    // back attributes.
+    int back_attribute = 0;
+
+    // Domain attribute of the elements below the extruded elements of each attribute of
+    // the block, whose material they share. Set by the extrusion.
+    std::vector<int> base_attributes = {};
+
+    // Form of the depth into the layer, set by the extrusion (see
+    // fem/qfunctions/coeff/pml_qf.h): a flat surface extruded along its normal, on the
+    // plane n · x = h of plane = (n, h), or a surface extruded along the rays from the core
+    // at the distance r₀ (distance) from it, or a box extruded per component, whose layer
+    // is the Cartesian PML with the inner faces box (its lower and upper corners) on the
+    // sides with a face of the surface (box_sides, ordered {-x, +x, -y, +y, -z, +z}).
+    enum class Depth : int
+    {
+      NORMAL = 1,
+      DISTANCE = 2,
+      BOX = 3
+    } depth = Depth::NORMAL;
+    std::array<double, 4> plane{};
+    double distance = 0.0;
+    std::array<std::array<double, 3>, 2> box{};
+    std::array<bool, 6> box_sides{};
+  } extrusion;
+
+  bool IsExtruded() const { return !extrusion.attributes.empty(); }
+
+  // Active absorption directions, per face of the physical domain. Layout: [x_neg, x_pos,
+  // y_neg, y_pos, z_neg, z_pos].
+  std::array<bool, 6> directions{{false, false, false, false, false, false}};
+
+  // PML layer thickness per face, in mesh length units (nondimensionalized at load time).
+  // Same layout as directions.
+  std::array<double, 6> thickness{{0.0, 0.0, 0.0, 0.0, 0.0, 0.0}};
+
+  // True when neither Direction nor Thickness is specified: the layer geometry is then
+  // detected by comparing the bounding boxes of the physical (non-PML) region and of the
+  // whole mesh.
+  bool autodetect_geometry = true;
+
+  // Polynomial grading order n of the profiles (·)(r) = (·)_max rⁿ, with r ∈ [0, 1] the
+  // normalized depth into the layer. Must be ≥ 2.
+  int order = 3;
+
+  // Compute σ_max (for the axes without a configured value) per face from the size h of the
+  // PML elements normal to the face, as σ_max = C (n + 1) p / (n_r h) for the finite
+  // element order p (see pml::BuildStretch), unless a reflection target is specified.
+  bool sigma_auto = true;
+
+  // Peak conductivity σ_max per axis, in S/m (nondimensionalized at load time). The stretch
+  // factor along each axis is s = κ + σ / (ε₀ (2π α + iω)). Negative entries are computed
+  // per face from the element size (sigma_auto), or from reflection_target as σ_max =
+  // −(n + 1) ln(R) / (2 Z₀ n_r d), with d the face thickness and n_r the smallest
+  // refractive index of the materials of the PML regions.
+  std::array<double, 3> sigma_max{{-1.0, -1.0, -1.0}};
+
+  // Peak real coordinate scaling κ_max per axis (dimensionless, ≥ 1).
+  std::array<double, 3> kappa_max{{1.0, 1.0, 1.0}};
+
+  // Peak complex frequency shift α_max per axis for CFS-PML, as a frequency in GHz
+  // (nondimensionalized to the angular frequency 2π α_max at load time). Only for a
+  // frequency-dependent stretch.
+  std::array<double, 3> alpha_max{{0.0, 0.0, 0.0}};
+
+  // Target normal-incidence reflection coefficient for the computed σ_max, if specified
+  // (!sigma_auto).
+  double reflection_target = 1.0e-6;
+
+  // If true, the stretch factors are evaluated at the solve frequency: the real frequency
+  // of each driven solve, or the complex eigenfrequency of the eigenmode nonlinear solve
+  // (making the eigenvalue problem nonlinear). If false, they are evaluated at the
+  // reference frequency below, which keeps the system matrices frequency-independent.
+  bool frequency_dependent = false;
+
+  // Reference frequency f₀ in GHz for a static stretch (nondimensionalized to the angular
+  // frequency ω₀ = 2π f₀ at load time). Negative means use the solver default (the lowest
+  // driven frequency or the eigenmode target, so that the absorption, which grows with
+  // frequency, meets the target at all frequencies). Ignored when frequency_dependent.
+  double reference_frequency = -1.0;
+
+  // If false, adaptive mesh refinement is disabled inside of the PML regions (the error
+  // indicators of their elements are ignored for marking and the refinement tolerance).
+  bool allow_refinement = false;
+
+  PMLData() = default;
+  PMLData(const json &pml, bool extruded = false);
+};
+
 // Terms of a frequency-dependent relative permittivity ε(s) = ε∞ + Σₖ χₖ(s), s = iω.
 // Angular rates are in rad/s and times in s until inputs are nondimensionalized. The typed
 // terms are passive polarization models whose parameters are positive by construction;
@@ -387,6 +523,9 @@ public:
   std::vector<MaterialData> materials = {};
   std::map<int, CurrentDipoleData> current_dipole = {};
   DomainPostData postpro = {};
+
+  // Optional PML regions, in blocks with their own stretch (with disjoint attributes).
+  std::vector<PMLData> pml = {};
 
   DomainData() = default;
   DomainData(const json &domains);
@@ -1253,6 +1392,18 @@ public:
   // solver.
   bool drop_small_entries = false;
 
+  // For problems with PML regions, solver for the subdomain correction on the true DOFs of
+  // the PML elements, applied at the finest level of the geometric multigrid
+  // preconditioner. The default is resolved in IoData (direct for frequency domain
+  // problems with PML regions and multigrid enabled).
+  PMLSubdomainSolver pml_subdomain_solver = PMLSubdomainSolver::DEFAULT;
+
+  // Threshold of the PML stretch magnitude max_a |s_a| of an element above which the
+  // geometric multigrid smoothers do not update its true DOFs (not shared with other
+  // elements), when the PML subdomain correction is used (≤ 0 to disable, all of the PML
+  // elements for a threshold in (0, 1]).
+  double pml_smoother_threshold = 2.0;
+
   // Reuse the sparsity pattern (reordering) for repeated factorizations.
   bool reorder_reuse = true;
 
@@ -1399,6 +1550,7 @@ namespace palace::config
 // given struct using the provided Units.
 void Nondimensionalize(const Units &units, RefinementData &data);
 void Nondimensionalize(const Units &units, MaterialData &data);
+void Nondimensionalize(const Units &units, PMLData &data);
 void Nondimensionalize(const Units &units, ProbeData &data);
 void Nondimensionalize(const Units &units, CurrentDipoleData &data);
 void Nondimensionalize(const Units &units, ConductivityData &data);

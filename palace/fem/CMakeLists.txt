@@ -38,6 +38,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedveccurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/mixedvecgrad.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/integ/pml.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/rotatedmass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/shape.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/vecfemass.cpp
