@@ -989,6 +989,70 @@ void NondimensionalizeMesh(mfem::Mesh &mesh, double L)
   ScaleMesh(mesh, 1.0 / L);
 }
 
+ScopedDimensionalizeMesh::ScopedDimensionalizeMesh(mfem::Mesh &mesh, double L) : mesh(&mesh)
+{
+  // Copy everything that ScaleMesh scales, to put it back exactly.
+  vertices.SetSize(mesh.GetNV());
+  for (int i = 0; i < mesh.GetNV(); i++)
+  {
+    vertices[i].SetCoords(mesh.SpaceDimension(), mesh.GetVertex(i));
+  }
+  if (auto *pmesh = dynamic_cast<mfem::ParMesh *>(&mesh))
+  {
+    pmesh->face_nbr_vertices.Copy(face_nbr_vertices);
+  }
+  if (const auto *coordinates = GetNCMeshCoordinates(mesh))
+  {
+    coordinates->Copy(nc_coordinates);
+  }
+  if (mesh.GetNodes())
+  {
+    nodes = *mesh.GetNodes();
+    if (auto *pnodes = dynamic_cast<mfem::ParGridFunction *>(mesh.GetNodes()))
+    {
+      face_nbr_nodes = pnodes->FaceNbrData();
+    }
+  }
+  ScaleMesh(mesh, L);
+}
+
+void ScopedDimensionalizeMesh::Restore()
+{
+  if (!mesh)
+  {
+    return;
+  }
+  MFEM_VERIFY(vertices.Size() == mesh->GetNV(),
+              "The mesh changed while ScopedDimensionalizeMesh scaled it!");
+  for (int i = 0; i < mesh->GetNV(); i++)
+  {
+    std::copy_n(vertices[i](), mesh->SpaceDimension(), mesh->GetVertex(i));
+  }
+  if (auto *pmesh = dynamic_cast<mfem::ParMesh *>(mesh))
+  {
+    MFEM_VERIFY(face_nbr_vertices.Size() == pmesh->face_nbr_vertices.Size(),
+                "The mesh changed while ScopedDimensionalizeMesh scaled it!");
+    face_nbr_vertices.Copy(pmesh->face_nbr_vertices);
+  }
+  if (auto *coordinates = GetNCMeshCoordinates(*mesh))
+  {
+    MFEM_VERIFY(nc_coordinates.Size() == coordinates->Size(),
+                "The mesh changed while ScopedDimensionalizeMesh scaled it!");
+    nc_coordinates.Copy(*coordinates);
+  }
+  if (mesh->GetNodes())
+  {
+    MFEM_VERIFY(nodes.Size() == mesh->GetNodes()->Size(),
+                "The mesh changed while ScopedDimensionalizeMesh scaled it!");
+    *mesh->GetNodes() = nodes;
+    if (auto *pnodes = dynamic_cast<mfem::ParGridFunction *>(mesh->GetNodes()))
+    {
+      pnodes->FaceNbrData() = face_nbr_nodes;
+    }
+  }
+  mesh = nullptr;
+}
+
 void Nondimensionalize(const Units &units, mfem::Mesh &mesh)
 {
   NondimensionalizeMesh(mesh, units.GetMeshLengthRelativeScale());

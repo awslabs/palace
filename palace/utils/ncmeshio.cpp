@@ -447,13 +447,19 @@ void RebalanceRootAligned(mfem::ParMesh &mesh, double tol)
 
 void ScaleNCMeshCoordinates(mfem::Mesh &mesh, double length_scale)
 {
-  if (mesh.ncmesh && !mesh.GetNodes())
+  if (auto *coordinates = GetNCMeshCoordinates(mesh))
   {
-    for (auto &x : NCMeshData::Coordinates(*mesh.ncmesh))
+    for (auto &x : *coordinates)
     {
       x *= length_scale;
     }
   }
+}
+
+mfem::Array<mfem::real_t> *GetNCMeshCoordinates(mfem::Mesh &mesh)
+{
+  return (mesh.ncmesh && !mesh.GetNodes()) ? &NCMeshData::Coordinates(*mesh.ncmesh)
+                                           : nullptr;
 }
 
 // The roots of the refinement tree are listed process by process (a root whose leaves are

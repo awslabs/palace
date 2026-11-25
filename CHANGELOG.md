@@ -534,6 +534,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     vertex orders), uniform refinement of tetrahedra with tied diagonals. At exact ties of
     edge lengths, the marks, and so an adapted mesh, can differ between compilers.
     [PR 1232](https://github.com/awslabs/palace/pull/1232).
+  - Writing ParaView or MFEM grid function output now restores the mesh coordinates exactly,
+    rather than scaling them back by the inverse of the length unit, which changed them by
+    round-off. With the exact marking above, that change could alter the next conformal
+    rebalance, and so the adapted mesh.
+    [PR 1232](https://github.com/awslabs/palace/pull/1232).
   - Added an MFEM patch for [mfem/mfem#5754](https://github.com/mfem/mfem/pull/5754): a
     prerequisite of the conformal rebalance of PR 1254; no other Palace path needs it.
     [PR 1232](https://github.com/awslabs/palace/pull/1232).
