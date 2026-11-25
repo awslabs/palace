@@ -72,7 +72,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     magnetostatic sources are units of the non-dimensional unit system, about 19.41 V and
     51.5 mA (written to `terminal-V.csv` and `terminal-I.csv`), and that the energies and
     fields of each excitation are those of this voltage or current.
-    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
+    [PR 1313](https://github.com/awslabs/palace/pull/1313).
 
 ## [0.20.0] - 2026-11-23
 
