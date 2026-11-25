@@ -832,7 +832,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   Mpi::Print("\n");
   int num_conv = eigen->Solve();
   warm_start_gate.Update(num_warm > 0, eigen->GetNumIterations());
-  subspace_growth.Update(q_region, eigen->GetNumIterations());
+  // [Experiment] No subspace growth: subspace_growth.Update(q_region, its) removed.
   {
     std::complex<double> lambda = (num_conv > 0) ? eigen->GetEigenvalue(0) : 0.0;
     Mpi::Print(" Found {:d} converged eigenvalue{}{}\n", num_conv,
