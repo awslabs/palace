@@ -2008,7 +2008,8 @@ void RequireDeveloperOption(ElectrostaticSolverData::ResponseCorrectionData &dat
   data.developer_options.push_back(option);
 }
 
-ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
+ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic,
+                                                 ResponseCorrectionBlock block)
 {
   n_post = electrostatic.value("Save", n_post);
   response_matrix = electrostatic.value("ResponseMatrix", response_matrix);
@@ -2478,6 +2479,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                     "Response-correction \"PreflightOnly\" must be a boolean!");
         data.preflight_only = preflight->get<bool>();
       }
+      // CUT-PLAN step 3 (lane v1lsdefault): "Apply" by default in the Maxwell block (purely
+      // inductive sheets within the validated bound are served by the perfect-conductor
+      // models); "Off" in the electrostatic block, which solves no impedance boundary.
+      data.impedance_metal_rule = block == ResponseCorrectionBlock::MAXWELL
+                                      ? ResponseCorrectionData::ImpedanceMetalRule::APPLY
+                                      : ResponseCorrectionData::ImpedanceMetalRule::OFF;
       if (auto rule = correction.find("ImpedanceMetalRule"); rule != correction.end())
       {
         MFEM_VERIFY(rule->is_string(),
@@ -2490,6 +2497,8 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
         }
         else if (value == "Record")
         {
+          // The measuring-only mode of stage A (candidate files beside the record).
+          RequireDeveloperOption(data, "\"ImpedanceMetalRule\": \"Record\"");
           data.impedance_metal_rule = ResponseCorrectionData::ImpedanceMetalRule::RECORD;
         }
         else if (value == "Apply")
@@ -2516,6 +2525,18 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                     "finite positive surface inductance (H/sq)!");
         data.impedance_metal_max_inductance = bound->get<double>();
         data.impedance_metal_max_inductance_given = true;
+        // The supervisor's ruling on lane bench-driven-ls part 3: no larger bound than the
+        // validated one for designers; a stricter (smaller) bound is accepted.
+        if (data.impedance_metal_max_inductance >
+            ResponseCorrectionData::kDefaultImpedanceMetalMaxInductance)
+        {
+          RequireDeveloperOption(
+              data,
+              fmt::format("\"ImpedanceMetalMaxInductance\": {} H/sq (above the "
+                          "validated bound {} H/sq)",
+                          data.impedance_metal_max_inductance,
+                          ResponseCorrectionData::kDefaultImpedanceMetalMaxInductance));
+        }
       }
       if (auto overrides = correction.find("ImpedanceMetalFilmOverrides");
           overrides != correction.end())
@@ -2525,6 +2546,7 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic)
                     "Response-correction \"ImpedanceMetalFilmOverrides\" requires "
                     "\"ImpedanceMetalRule\": \"Record\" or \"Apply\" (an override "
                     "has no effect otherwise and is refused rather than ignored)!");
+        RequireDeveloperOption(data, "\"ImpedanceMetalFilmOverrides\"");
         MFEM_VERIFY(overrides->is_array(),
                     "Response-correction \"ImpedanceMetalFilmOverrides\" must be an "
                     "array!");
@@ -2814,7 +2836,9 @@ SolverData::SolverData(const json &solver)
 
   if (auto it = solver.find("SurfaceResponseCorrection"); it != solver.end())
   {
-    ElectrostaticSolverData response_parser(json{{"ResponseCorrection", *it}});
+    ElectrostaticSolverData response_parser(
+        json{{"ResponseCorrection", *it}},
+        ElectrostaticSolverData::ResponseCorrectionBlock::MAXWELL);
     surface_response_correction = std::move(response_parser.response_correction);
     // "PatchEnergy" (decisions 913 / 920 / 922 B): the per-patch export of the driven and
     // eigenmode paths (per frequency / per mode); the boundary-mode refusal is IoData's.
@@ -3094,6 +3118,7 @@ void Nondimensionalize(const Units &units, ConductivityData &data)
 void Nondimensionalize(const Units &units, ImpedanceData &data)
 {
   data.Rs /= units.GetScaleFactor<Units::ValueType::IMPEDANCE>();
+  data.configured_Ls = data.Ls;
   data.Ls /= units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
   data.Cs /= units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
 }

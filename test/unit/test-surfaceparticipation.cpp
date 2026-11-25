@@ -849,6 +849,30 @@ TEST_CASE("Surface participation join, history, words and flags across levels",
   CHECK(third[0].convergence == "SETTLED");
   CHECK(third[0].resolution == "RESOLVED");
   CHECK(third[0].flags.empty());
+  // CUT-PLAN step 3 (lane v1lsdefault): the impedance-metal rule's two flags words follow
+  // the verdict words; a NOT-TARGET row keeps its one word.
+  third[0].sheet_served = true;
+  CHECK(ParticipationFlags(third[0]) == kParticipationSheetServedFlag);
+  CHECK(ParticipationFlags(third[0]) == "Ls sheet served as PEC");
+  third[0].sheet_not_served = true;
+  CHECK(ParticipationFlags(third[0]) ==
+        "Ls sheet served as PEC; metal law not served: raw there");
+  third[0].sheet_served = false;
+  CHECK(ParticipationFlags(third[0]) == kParticipationSheetNotServedFlag);
+  third[1].sheet_served = true;
+  CHECK(ParticipationFlags(third[1]) ==
+        "UNDER-RESOLVED; regime NO-RANGE; MOVING; "
+        "developer: MarkNotApplied; Ls sheet served as PEC");
+  third[2].sheet_not_served = true;
+  CHECK(ParticipationFlags(third[2]) == "NOT-TARGET");
+  // A Type total carries its interface rows' words.
+  const auto totals = AddParticipationTypeTotals({third[0]});
+  REQUIRE(totals.size() == 2);
+  CHECK(totals[0].type_total);
+  CHECK(totals[0].sheet_not_served);
+  third[0].sheet_not_served = false;
+  third[1].sheet_served = false;
+  third[2].sheet_not_served = false;
   // Driven: the same output-frequency index joins only at the same frequency and
   // excitation.
   auto driven_first = Level("Driven", 1000, {Row(1, 1, "SA", 1.0e-4, 1.2e-4)});
