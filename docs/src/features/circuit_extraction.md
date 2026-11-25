@@ -157,8 +157,8 @@ of the driven solver as well as the following additional files:
     `surface-Q.csv` for every interface (the loss of the circuit does not involve ``U_{E}``).
     Like ``\widehat{\bm{C}}``, the matrix of an `"MS"` interface next to a frequency-dependent
     substrate uses ``\varepsilon_\infty`` of the substrate, where `surface-Q.csv` uses
-    ``|\varepsilon(i\omega)|`` at the frequency of the field. *Palace* prints the largest
-    participation of the synthesized eigenvectors in each interface.
+    ``|\varepsilon(i\omega)|`` at the frequency of the field. *Palace* prints the
+    participations of each synthesized eigenvector with its eigenvalue estimate.
 
 There are several constraints and considerations for using this feature:
 

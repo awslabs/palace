@@ -3542,12 +3542,31 @@ void RomOperator::PrintPROMMatrices(
   // C − i tan δ_Γ C_Γ, as that of a material with Im{ε} = −ε tan δ. Auxiliary states have
   // zero rows and columns.
   std::map<int, Eigen::MatrixXd> interface_C;
+  // Participations of the synthesized eigenvectors in the interfaces, from the exported
+  // matrices (rom-C-re.csv for the electric energy), printed with the eigenvalue estimates.
+  std::vector<std::vector<double>> participations(eigs.size());
   if (!interface_forms.empty())
   {
     const long n = static_cast<long>(V.size());
     const long na = matrices.C->rows();
     const Eigen::VectorXd d = GetSynthesisPortScaling();
     const double unit_farad = units.GetScaleFactor<Units::ValueType::CAPACITANCE>();
+    const Eigen::MatrixXd C_re = matrices.C->real();
+    std::vector<double> energies(eigs.size());
+    for (std::size_t k = 0; k < eigs.size(); k++)
+    {
+      const auto &y = eigs[k].eigvec;
+      energies[k] = (y.adjoint() * C_re * y)(0).real();
+    }
+    if (space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
+    {
+      Mpi::Warning(
+          space_op.GetComm(),
+          "The interface participations of the synthesized eigenvectors are "
+          "relative to the electric energy of rom-C-re.csv, with the high-frequency "
+          "permittivity of the frequency-dependent materials and without their "
+          "polarization energy, so they differ from those of surface-Q.csv!\n");
+    }
     for (const auto &[idx, B] : interface_forms)
     {
       MFEM_VERIFY(B.rows() == n && B.cols() == n,
@@ -3558,21 +3577,13 @@ void RomOperator::PrintPROMMatrices(
       Eigen::MatrixXd C_i = Eigen::MatrixXd::Zero(na, na);
       C_i.topLeftCorner(n, n) = 0.5 * (C_b + C_b.transpose());
 
-      // The largest participation of the synthesized eigenvectors in the interface, from
-      // the exported matrices (rom-C-re.csv for the electric energy).
-      double max_p = 0.0;
-      for (const auto &est : eigs)
+      for (std::size_t k = 0; k < eigs.size(); k++)
       {
-        const auto &y = est.eigvec;
-        const double energy = (y.adjoint() * matrices.C->real() * y)(0).real();
-        if (energy > 0.0)
-        {
-          max_p = std::max(max_p, (y.adjoint() * C_i * y)(0).real() / energy);
-        }
+        const auto &y = eigs[k].eigvec;
+        participations[k].push_back((energies[k] > 0.0)
+                                        ? (y.adjoint() * C_i * y)(0).real() / energies[k]
+                                        : std::numeric_limits<double>::quiet_NaN());
       }
-      Mpi::Print(" Interface dielectric {:d}: rom-interface-{:d}-C.csv, max. participation "
-                 "{:.3e} over {:d} synthesized eigenvectors\n",
-                 idx, idx, max_p, eigs.size());
       interface_C.emplace(idx, std::move(C_i));
     }
   }
@@ -3944,14 +3955,27 @@ void RomOperator::PrintPROMMatrices(
                   "rom-eigenvectors-re.csv");
     print_eigvecs([](std::complex<double> v) { return v.imag(); },
                   "rom-eigenvectors-im.csv");
-    Mpi::Print("\n Synthesized-system eigenvalue estimates ({:d} modes in [{:.3f}, "
-               "{:.3f}] GHz):\n",
-               eigs.size(), fmin_GHz, fmax_GHz);
-    for (const auto &e : eigs)
+    std::vector<int> interface_idx;
+    for (const auto &[idx, C_i] : interface_C)
     {
-      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e},  bkwd. error = {}\n",
+      interface_idx.push_back(idx);
+    }
+    Mpi::Print("\n Synthesized-system eigenvalue estimates ({:d} modes in [{:.3f}, "
+               "{:.3f}] GHz){}:\n",
+               eigs.size(), fmin_GHz, fmax_GHz,
+               interface_idx.empty()
+                   ? ""
+                   : fmt::format(", with their participations p in the interfaces {}",
+                                 fmt::join(interface_idx, ", ")));
+    for (std::size_t k = 0; k < eigs.size(); k++)
+    {
+      const auto &e = eigs[k];
+      Mpi::Print("   f = {:+.6e} {:+.6e}i GHz,  Q = {:.3e},  bkwd. error = {}{}\n",
                  e.freq_re_GHz, e.freq_im_GHz, e.Q,
-                 e.errors_available ? fmt::format("{:.3e}", e.error_bkwd) : "unavailable");
+                 e.errors_available ? fmt::format("{:.3e}", e.error_bkwd) : "unavailable",
+                 participations[k].empty()
+                     ? ""
+                     : fmt::format(",  p = {:.3e}", fmt::join(participations[k], ", ")));
     }
   }
 }
