@@ -23,6 +23,7 @@ Requires CSV, DataFrames, and CairoMakie.
 
 import CSV, CairoMakie
 import DataFrames: DataFrame, rename!
+import Printf: @printf
 
 # Tip: you can choose a different Makie backend. For example GLMakie gives you
 # interactivity. CairoMakie is best at producing static images, especially on
@@ -166,6 +167,78 @@ function generate_theoretical_dipole(model_type="halfwave_dipole")
     hplane = ones(length(angles))
 
     return angles, eplane, angles, hplane
+end
+
+"""
+    read_farfield(filename; verbose=false)
+
+Read the far-field file `filename` (`farfield-rE.csv`), with the spaces and units removed
+from the column names. Return the rows of its first frequency (or eigenmode) and of its first
+excitation, and a label for them.
+"""
+function read_farfield(filename; verbose=false)
+    df = CSV.read(filename, DataFrame)
+    rename!(df, [name => strip(replace(name, r"\s*\([^)]*\)" => "")) for name in names(df)])
+
+    # Process the first frequency/mode we find.
+    if "m" in names(df)         # Eigenmode
+        mode = first(df[:, "m"])
+        verbose && println("Processing mode: $mode")
+        label = "m = $mode"
+        data = filter(row -> row["m"] == mode, df)
+    else
+        freq = first(df[:, "f"])
+        verbose && println("Processing frequency: $(freq) GHz")
+        label = "freq = $freq GHz"
+        data = filter(row -> row["f"] == freq, df)
+    end
+
+    # Multi-excitation driven sweeps emit one row per (frequency, excitation, angle)
+    # triple. Pick the first excitation so that downstream extractors see a single
+    # value per (theta, phi).
+    if "exc" in names(data)
+        exc = first(data[:, "exc"])
+        verbose && println("Processing excitation: $exc")
+        label *= ", exc = $exc"
+        data = filter(row -> row["exc"] == exc, data)
+    end
+    return data, label
+end
+
+"""
+    directivity(df; magnitude=compute_field_magnitude(df))
+
+Directivity `D = 4π max U / ∫ U dΩ` of the far field, with the radiation intensity
+`U ∝ |r E|²` and `magnitude` the values of `|r E|` at the points of `df`.
+
+The integral is a sum over the rings of constant polar angle θ of the uniform sampling of
+`"NSample"`: the points of a ring share the band of the sphere between the midpoints in
+`cos θ` to the neighboring rings equally, and each pole has the cap up to the first ring.
+Isolated points, rings of a single point away from the poles such as those of
+`"ThetaPhis"`, are ignored.
+"""
+function directivity(df; magnitude=compute_field_magnitude(df))
+    U = magnitude .^ 2
+    θ = df[:, "theta"]
+    rings = filter(t -> t == 0 || t == 180 || count(==(t), θ) > 1, sort(unique(θ)))
+    c = cosd.(rings)
+    edges = vcat(1.0, (c[1:(end - 1)] .+ c[2:end]) ./ 2, -1.0)
+    total = 0.0
+    for (k, t) in enumerate(rings)
+        mask = θ .== t
+        total += 2π * (edges[k] - edges[k + 1]) * sum(U[mask]) / count(mask)
+    end
+    return 4π * maximum(U) / total
+end
+
+"""
+    halfwave_dipole_pattern(θ)
+
+The far-field pattern `|cos(π/2 cos θ) / sin θ|` of a thin half-wave dipole along z, for the
+polar angle `θ` in degrees, which is zero on the axis.
+"""
+function halfwave_dipole_pattern(θ)
+    return abs(sind(θ)) > 1e-6 ? abs(cos(π / 2 * cosd(θ)) / sind(θ)) : 0.0
 end
 
 """
@@ -329,39 +402,18 @@ function main()
     println("Reading farfield data from: $filename")
     println("Using dipole model: $model_type")
 
-    # Read the entire data file into a DataFrame
-    df = CSV.read(filename, DataFrame)
-    # Remove spaces and units from column names.
-    rename!(df, [name => strip(replace(name, r"\s*\([^)]*\)" => "")) for name in names(df)])
-
-    # Process the first frequency/mode we find.
-    if "m" in names(df)         # Eigenmode
-        mode = df[:, "m"]
-        println("Processing mode: $mode")
-        label = "m = $mode"
-        data = filter(row -> row["m"] == mode, df)
-    else
-        freq = first(df[:, "f"])
-        println("Processing frequency: $(freq) GHz")
-        label = "freq = $freq GHz"
-        data = filter(row -> row["f"] == freq, df)
-    end
-
-    # Multi-excitation driven sweeps emit one row per (frequency, excitation, angle)
-    # triple. Pick the first excitation so that downstream extractors see a single
-    # value per (theta, phi).
-    if "exc" in names(data)
-        exc = first(data[:, "exc"])
-        println("Processing excitation: $exc")
-        label *= ", exc = $exc"
-        data = filter(row -> row["exc"] == exc, data)
-    end
+    data, label = read_farfield(filename; verbose=true)
 
     polar_filename = "farfield_polar_$(model_type).png"
     three_d_filename = "farfield_3d_$(model_type).png"
 
     polar_plots(data, label, model_type, polar_filename)
     three_d_plot(data, label, three_d_filename)
+    @printf(
+        "Directivity: %.3f (%.2f dBi)\n",
+        directivity(data),
+        10 * log10(directivity(data))
+    )
     return nothing
 end
 
@@ -385,6 +437,7 @@ function print_usage()
     )
 end
 
-if !isinteractive()
+# Run only as a script, so that other scripts can include the functions above.
+if abspath(PROGRAM_FILE) == @__FILE__
     main()
 end
