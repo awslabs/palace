@@ -1099,7 +1099,7 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
       config["Problem"] = {{"Type", "Driven"}};
       config["Model"] = {{"Mesh", "test.msh"}};
       config["Domains"]["Materials"] = {{{"Attributes", {1}}}};
-      config["Boundaries"]["Conductivity"] = {boundary};
+      config["Boundaries"]["Conductivity"] = json::array({boundary});
       config["Solver"]["Driven"]["Samples"] = {
           {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}};
       return ValidateConfig(config);
