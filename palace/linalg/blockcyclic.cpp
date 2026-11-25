@@ -138,6 +138,58 @@ std::vector<T> BlockCyclicGrid::ScatterFromRoot(const std::vector<T> &full,
   return local;
 }
 
+template <typename T>
+std::vector<T> BlockCyclicGrid::GatherToRoot(const std::vector<T> &local) const
+{
+  // Each local part as columns of its leading dimension, so that the counts are columns.
+  const auto type = mpi::DataType<T>();
+  std::vector<T> full;
+  if (n == 0)
+  {
+    return full;
+  }
+  MFEM_VERIFY(local.size() == LocalSize(), "Wrong size of a block cyclic matrix!");
+  if (Mpi::Root(comm))
+  {
+    full.assign(static_cast<std::size_t>(n) * n, T(0.0));
+    std::vector<T> block;
+    for (int q = 0; q < nprow * npcol; q++)
+    {
+      const int pr = q / npcol, pc = q % npcol, mq = LocalCount(n, mb, pr, nprow),
+                nq = LocalCount(n, mb, pc, npcol), lld = std::max(1, mq);
+      const std::vector<T> *part = &local;
+      if (q > 0)
+      {
+        block.resize(static_cast<std::size_t>(lld) * std::max(1, nq));
+        MPI_Datatype column;
+        MPI_Type_contiguous(lld, type, &column);
+        MPI_Type_commit(&column);
+        MPI_Recv(block.data(), std::max(1, nq), column, q, 0, comm, MPI_STATUS_IGNORE);
+        MPI_Type_free(&column);
+        part = &block;
+      }
+      for (int jl = 0; jl < nq; jl++)
+      {
+        const auto j = static_cast<std::size_t>(GlobalIndex(jl, mb, pc, npcol));
+        for (int il = 0; il < mq; il++)
+        {
+          const auto i = static_cast<std::size_t>(GlobalIndex(il, mb, pr, nprow));
+          full[i + j * n] = (*part)[il + static_cast<std::size_t>(lld) * jl];
+        }
+      }
+    }
+  }
+  else if (InGrid())
+  {
+    MPI_Datatype column;
+    MPI_Type_contiguous(LeadingDim(), type, &column);
+    MPI_Type_commit(&column);
+    MPI_Send(local.data(), std::max(1, nloc), column, 0, 0, comm);
+    MPI_Type_free(&column);
+  }
+  return full;
+}
+
 void BlockCyclicGrid::AddFromRows(const std::vector<double> &rows, int row0, int nrows,
                                   int col0, int ncols, std::vector<double> &local,
                                   int chunk) const
@@ -387,6 +439,10 @@ template std::vector<double> BlockCyclicGrid::ScatterFromRoot(const std::vector<
                                                               bool) const;
 template std::vector<std::complex<double>>
 BlockCyclicGrid::ScatterFromRoot(const std::vector<std::complex<double>> &, bool) const;
+template std::vector<double>
+BlockCyclicGrid::GatherToRoot(const std::vector<double> &) const;
+template std::vector<std::complex<double>>
+BlockCyclicGrid::GatherToRoot(const std::vector<std::complex<double>> &) const;
 template class BlockCyclicFactorization<double>;
 template class BlockCyclicFactorization<std::complex<double>>;
 

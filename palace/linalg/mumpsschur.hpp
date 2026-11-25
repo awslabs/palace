@@ -76,9 +76,7 @@ public:
   // With the sparsity pattern and the ordering of the analysis.
   void Refactor() override;
 
-  std::vector<T> ReleaseSchurRows() override;
-
-  std::vector<T> ReleaseSchur() override { return gather.GatherSchur(ReleaseSchurRows()); }
+  std::vector<T> ReleaseSchur() override;
 
   // Its distributed Schur complement, on a grid of the shape and block size it was made
   // with.
@@ -135,7 +133,6 @@ private:
   int n_loc, n_schur;
   // The grid of the Schur complement (nprow x npcol, of the first ranks, in blocks of mb).
   int nprow = 1, npcol = 1, mb;
-  SchurRowGather gather;
   std::vector<int> row_cnt, row_disp, rows;
   int parent = 0;  // the vectors of the solves are of the parent space of rows
   std::vector<MUMPS_INT> irn, jcn, listvar, irhs_loc, isol_loc;

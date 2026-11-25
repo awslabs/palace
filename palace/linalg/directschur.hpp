@@ -47,7 +47,6 @@ public:
 
   std::vector<T> &Values() override { return val; }
   void Refactor() override;
-  std::vector<T> ReleaseSchurRows() override { return gather.ScatterSchur(ReleaseSchur()); }
   std::vector<T> ReleaseSchur() override;
   void SolveInternal(const std::vector<const VecType *> &X,
                      const std::vector<VecType *> &Y) override;
@@ -58,7 +57,6 @@ public:
 private:
   MPI_Comm comm;
   int rank = 0, n_loc = 0, n_schur = 0;
-  SchurRowGather gather;
   std::vector<int> rows;
   std::vector<T> val;
   // The local rows: their position among the Schur variables, or their local index in

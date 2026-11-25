@@ -163,7 +163,7 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   }
   const std::string backend = GENERATE_COPY(from_range(backends));
   CAPTURE(backend, ns);
-  auto make = [&]() -> std::unique_ptr<SchurSolver<double>>
+  auto make = [&]() -> std::unique_ptr<SchurFactorization<double>>
   {
 #if defined(MFEM_USE_MUMPS)
     if (backend == "MUMPS")
@@ -191,26 +191,18 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
         (backend == "STRUMPACK") ? LinearSolver::STRUMPACK : LinearSolver::SUPERLU);
   };
 
-  // The rows of the Schur complement of the Schur variables of each rank, in the order of
-  // their positions.
-  const std::unique_ptr<SchurSolver<double>> solver = make();
+  // The Schur complement on rank 0.
+  const std::unique_ptr<SchurFactorization<double>> solver = make();
   {
-    std::vector<int> mine;
-    for (int p = 0; p < ns; p++)
-    {
-      if (schur_vars[p] >= row0 && schur_vars[p] < row0 + n_loc)
-      {
-        mine.push_back(p);
-      }
-    }
-    const std::vector<double> R = solver->ReleaseSchurRows();
-    CHECK(R.size() == mine.size() * ns);
+    const std::vector<double> S = solver->ReleaseSchur();
+    CHECK(S.size() == (Mpi::Root(comm) ? static_cast<std::size_t>(ns) * ns : 0));
     double err = 0.0;
-    for (std::size_t r = 0; r < mine.size() && R.size() == mine.size() * ns; r++)
+    for (int j = 0; j < ns && S.size() == static_cast<std::size_t>(ns) * ns; j++)
     {
-      for (int j = 0; j < ns; j++)
+      for (int i = 0; i < ns; i++)
       {
-        err = std::max(err, std::abs(R[r * ns + j] - S_ref(mine[r], j)));
+        err =
+            std::max(err, std::abs(S[i + static_cast<std::size_t>(ns) * j] - S_ref(i, j)));
       }
     }
     MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, comm);

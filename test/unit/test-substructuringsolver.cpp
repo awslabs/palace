@@ -2600,11 +2600,8 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
           static_cast<int>(side.rows.size()),
           {std::move(side.irn), std::move(side.jcn), std::move(side.parts[0])},
           side.Indices(schur_vars), side.rows, true, false);
-      CHECK(schur->ReleaseSchurRows().size() ==
-            static_cast<std::size_t>(std::count_if(
-                schur_vars.begin(), schur_vars.end(), [&](HYPRE_BigInt g)
-                { return g >= A->GetRowStarts()[0] && g < A->GetRowStarts()[1]; })) *
-                schur_vars.size());
+      CHECK(schur->ReleaseSchur().size() ==
+            (Mpi::Root(Mpi::World()) ? schur_vars.size() * schur_vars.size() : 0));
     }
   }
 

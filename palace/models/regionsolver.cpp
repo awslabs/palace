@@ -39,7 +39,7 @@ RegionSolver<T>::RegionSolver(const BlockCyclicGrid &grid, LinearSolver type,
   else
 #endif
   {
-    dense = grid.ScatterFromRoot(factorization->ReleaseSchur());
+    dense = factorization->ReleaseSchurBlocks(grid);
   }
   add_interface(*C);
   factors = std::make_unique<BlockCyclicFactorization<T>>(grid);

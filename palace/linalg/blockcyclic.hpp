@@ -78,6 +78,11 @@ public:
   template <typename T>
   std::vector<T> ScatterFromRoot(const std::vector<T> &full, bool row_major = false) const;
 
+  // The n x n matrix on rank 0 (column-major; empty on the other processes) from the local
+  // parts of the processes of the grid, which it receives in turn. Collective.
+  template <typename T>
+  std::vector<T> GatherToRoot(const std::vector<T> &local) const;
+
   // Adds the columns [col0, col0 + ncols) of an n x n matrix, given by rows, each process's
   // nrows of them from row row0 (nrows x ncols, row-major), to the local part of this
   // process (local), exchanging at most chunk entries per process at a time. Collective.

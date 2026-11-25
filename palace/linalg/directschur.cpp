@@ -493,8 +493,8 @@ DirectSchurSolverT<T>::DirectSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, in
                                           std::vector<int> local_rows, LinearSolver type,
                                           SymbolicFactorization ordering)
   : comm(comm), rank(Mpi::Rank(comm)), n_loc(n_loc),
-    n_schur(static_cast<int>(schur_vars.size())), gather(comm, n_loc, schur_vars),
-    rows(std::move(local_rows)), val(std::move(A.val))
+    n_schur(static_cast<int>(schur_vars.size())), rows(std::move(local_rows)),
+    val(std::move(A.val))
 {
   switch (type)
   {

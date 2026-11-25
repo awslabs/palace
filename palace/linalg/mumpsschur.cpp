@@ -83,8 +83,8 @@ MumpsSchurSolverT<T>::MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int 
                                         int grid_rows, int grid_cols)
   : comm(comm), refactor(refactor), spd(spd), ordering(ordering), n_glob(n_glob),
     n_loc(n_loc), n_schur(static_cast<int>(schur_vars.size())), nprow(grid_rows),
-    npcol(grid_cols), mb(block), gather(comm, n_loc, schur_vars), rows(std::move(rows)),
-    irn(std::move(A.irn)), jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
+    npcol(grid_cols), mb(block), rows(std::move(rows)), irn(std::move(A.irn)),
+    jcn(std::move(A.jcn)), val(std::move(A.val)), blr_tol(blr_tol)
 {
   // Parent vectors if any rank gives rows (a rank with no local rows gives none).
   int mine = !this->rows.empty();
@@ -233,104 +233,10 @@ std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurBlocks(const BlockCyclicGrid &g
 }
 
 template <typename T>
-std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurRows()
+std::vector<T> MumpsSchurSolverT<T>::ReleaseSchur()
 {
-  // S is 2D block cyclic (local parts column-major) on the grid of the first nprow npcol
-  // ranks, rank p at (p / npcol, p % npcol). Each round sends
-  // one local block column of every process to the owners of its rows, column by column and
-  // in a column the rows of each owner in turn, which place them by the same traversal.
-  const int nranks = static_cast<int>(row_cnt.size()), ns = n_schur,
-            m = static_cast<int>(gather.Rows().size());
-  std::vector<T> S(static_cast<std::size_t>(m) * ns);
-  if (ns == 0)
-  {
-    return S;
-  }
-  // The owner of each Schur row and its place among the rows of its owner, and the places
-  // of the rows of each process row owned here.
-  std::vector<int> owner(ns), slot(ns), count(nranks, 0);
-  for (int p = 0; p < ns; p++)
-  {
-    owner[p] = static_cast<int>(
-                   std::upper_bound(row_disp.begin(), row_disp.end(), listvar[p] - 1) -
-                   row_disp.begin()) -
-               1;
-    slot[p] = count[owner[p]]++;
-  }
-  std::vector<std::vector<int>> mine(nprow);
-  for (int pr = 0; pr < nprow; pr++)
-  {
-    for (int l = 0; l < LocalCount(ns, mb, pr, nprow); l++)
-    {
-      const int g = GlobalIndex(l, mb, pr, nprow);
-      if (owner[g] == rank)
-      {
-        mine[pr].push_back(slot[g]);
-      }
-    }
-  }
-  const int ngrid = nprow * npcol;
-  const bool grid = InGrid();
-  const int myrow = grid ? rank / npcol : 0, mycol = grid ? rank % npcol : 0,
-            mloc = grid ? LocalCount(ns, mb, myrow, nprow) : 0;
-  const std::size_t lld = std::max(1, mloc);
-  std::vector<int> dest(mloc);
-  for (int l = 0; l < mloc; l++)
-  {
-    dest[l] = owner[GlobalIndex(l, mb, myrow, nprow)];
-  }
-  std::vector<int> scnt(nranks), sdsp(nranks, 0), rcnt(nranks, 0), rdsp(nranks, 0), at;
-  std::vector<T> sbuf, rbuf;
-  const int rounds = (LocalCount(ns, mb, 0, npcol) + mb - 1) / mb;
-  for (int k = 0; k < rounds; k++)
-  {
-    // The local columns [k mb, k mb + width) of the processes of a grid column.
-    auto width = [&](int pc)
-    { return std::clamp(LocalCount(ns, mb, pc, npcol) - k * mb, 0, mb); };
-    const int w = grid ? width(mycol) : 0;
-    std::fill(scnt.begin(), scnt.end(), 0);
-    for (int l = 0; l < mloc; l++)
-    {
-      scnt[dest[l]] += w;
-    }
-    for (int p = 0; p < ngrid; p++)
-    {
-      rcnt[p] = static_cast<int>(mine[p / npcol].size()) * width(p % npcol);
-    }
-    for (int r = 1; r < nranks; r++)
-    {
-      sdsp[r] = sdsp[r - 1] + scnt[r - 1];
-      rdsp[r] = rdsp[r - 1] + rcnt[r - 1];
-    }
-    sbuf.resize(sdsp[nranks - 1] + scnt[nranks - 1]);
-    rbuf.resize(rdsp[nranks - 1] + rcnt[nranks - 1]);
-    at = sdsp;
-    for (int j = 0; j < w; j++)
-    {
-      const T *col = schur.data() + lld * (k * mb + j);
-      for (int l = 0; l < mloc; l++)
-      {
-        sbuf[at[dest[l]]++] = col[l];
-      }
-    }
-    MPI_Alltoallv(sbuf.data(), scnt.data(), sdsp.data(), mpi::DataType<T>(), rbuf.data(),
-                  rcnt.data(), rdsp.data(), mpi::DataType<T>(), comm);
-    for (int p = 0; p < ngrid; p++)
-    {
-      const int pr = p / npcol, pc = p % npcol;
-      std::size_t q = rdsp[p];
-      for (int j = 0; j < width(pc); j++)
-      {
-        const int c = GlobalIndex(k * mb + j, mb, pc, npcol);
-        for (int r : mine[pr])
-        {
-          S[static_cast<std::size_t>(r) * ns + c] = rbuf[q++];
-        }
-      }
-    }
-  }
-  std::vector<T>().swap(schur);
-  return S;
+  const BlockCyclicGrid grid(comm, n_schur, nprow * npcol, mb);
+  return grid.GatherToRoot(ReleaseSchurBlocks(grid));
 }
 
 template <typename T>
@@ -361,7 +267,7 @@ void MumpsSchurSolverT<T>::Factor()
   // (INFO(2) entries) more on the processes that ran short, and retry.
   if (InGrid() && n_schur > 0 && schur.empty())
   {
-    // (Again after ReleaseSchurRows.)
+    // (Again after ReleaseSchurBlocks.)
     schur.assign(static_cast<std::size_t>(id.schur_lld) *
                      std::max<MUMPS_INT>(1, id.schur_nloc),
                  T(0.0));

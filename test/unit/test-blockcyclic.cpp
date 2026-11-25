@@ -54,7 +54,7 @@ TEST_CASE("Block cyclic grids hold each entry once", "[blockcyclic][Serial][Para
   BlockCyclicGrid grid(comm, n, nproc, 16);
   CHECK(grid.NumProcessRows() * grid.NumProcessCols() <= nproc);
 
-  // The local parts of the matrix with entries (i, j), from rank 0.
+  // The local parts of the matrix with entries (i, j), from rank 0, and back.
   std::vector<cplx> full;
   if (Mpi::Root(comm))
   {
@@ -86,6 +86,15 @@ TEST_CASE("Block cyclic grids hold each entry once", "[blockcyclic][Serial][Para
   CHECK(count[0] == static_cast<long long>(n) * n);
   CHECK(count[1] == 0);
   CHECK(count[2] == 0);
+
+  // Gathered back on rank 0, column-major.
+  const auto back = grid.GatherToRoot(local);
+  bool same = (back.size() == (Mpi::Root(comm) ? static_cast<std::size_t>(n) * n : 0));
+  for (std::size_t q = 0; same && q < back.size(); q++)
+  {
+    same = (back[q] == cplx(static_cast<double>(q % n), static_cast<double>(q / n)));
+  }
+  CHECK(same);
 }
 
 TEST_CASE("Block cyclic grids add a matrix given by rows",
