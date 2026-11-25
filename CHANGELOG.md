@@ -26,13 +26,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (default 9e-14 H/sq, the validated bound; validated at the designers' 4.5e-14 H/sq in
     driven and eigenmode runs, cracked and uncracked) is corrected; the run prints this
     regime in one line (it replaces the line "experimental and not validated") and
-    `surface-participation.csv` flags the rows `Ls sheet served as PEC`. A sheet above the
-    bound, with `Rs` or `Cs`, or a metal of another law is not served by the
-    perfect-conductor models: its values stay raw unless the library holds a model of its
-    own law, one line names it with the bound, its rows are flagged
-    `metal law not served: raw there`, and `"UnmatchedPolicy"` decides as before. A run
-    without an `Impedance` boundary runs exactly as `"Off"`, also under an explicit
-    `"Apply"` (which printed its lines and wrote its record there before). `"Record"`,
+    `surface-participation.csv` flags the rows `Ls sheet served as PEC`. On a run with an
+    `Impedance` boundary, a sheet above the bound, with `Rs` or `Cs`, or a metal of another
+    law is not served by the perfect-conductor models: its values stay raw unless the
+    library holds a model of its own law, one line names it with the bound, its rows are
+    flagged `metal law not served: raw there`, and `"UnmatchedPolicy"` decides as before. A
+    run without an `Impedance` boundary runs exactly as `"Off"`, also under an explicit
+    `"Apply"` (which printed its lines and wrote its record there before): a metal of
+    another law there (a `Conductivity` metal alone) is named only by the law-caused
+    warning, as under `"Off"`. `"Record"`,
     `"ImpedanceMetalFilmOverrides"` and an `"ImpedanceMetalMaxInductance"` above 9e-14
     H/sq need `"Developer": true`. The
     bound compares the configured `Ls` (H/sq as written), inclusive: a sheet at exactly the
