@@ -2868,7 +2868,8 @@ TEST_CASE("substructuring_magnetostatic_two_sided_end_swapped_region",
 
 // Driven substructuring with exact per-frequency condensation: lumped ports across two
 // holes of a PEC film crossing the interface, one in the region (lossy dielectric) and one
-// in the environment. The references are regular simulations of the same configuration.
+// in the environment. The references are regular simulations of the same configuration, in
+// the columns of the region's outputs (no total energies).
 TEST_CASE("substructuring_driven", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

@@ -46,25 +46,6 @@ namespace palace
 namespace
 {
 
-using Factorization = SchurFactorization<std::complex<double>>;
-
-// The sparse direct solver of the coupled system: that given, or the preferences.
-LinearSolver CoupledSolver(LinearSolver type)
-{
-  if (type == LinearSolver::STRUMPACK || type == LinearSolver::MUMPS ||
-      type == LinearSolver::SUPERLU)
-  {
-    return type;
-  }
-#if defined(MFEM_USE_STRUMPACK)
-  return LinearSolver::STRUMPACK;
-#elif defined(MFEM_USE_MUMPS)
-  return LinearSolver::MUMPS;
-#else
-  return LinearSolver::SUPERLU;
-#endif
-}
-
 // Free a vector's storage (v = {} empties it but keeps its capacity).
 template <typename V>
 void Release(V &v)
@@ -88,13 +69,13 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        bool online, const DrivenSubstructureModel *saved,
                                        bool region_mesh, LinearSolver solver,
                                        SymbolicFactorization ordering)
-  : space_op(space_op), solver(solver), ordering(ordering), online(online)
+  : space_op(space_op), solver(solver), ordering(ordering), online(online),
+    region_attrs(region_attributes)
 {
   env.attrs = environment_attributes;
-  region.attrs = region_attributes;
   const auto &fes = space_op.GetNDSpace().Get();
   const auto &mesh = *fes.GetParMesh();
-  CheckSubstructuringAttributes(mesh, region.attrs, env.attrs);
+  CheckSubstructuringAttributes(mesh, region_attrs, env.attrs);
   fp_centers =
       saved ? saved->fp_centers
             : palace::FingerprintCenters(space_op.GetNDSpace().GetParMesh(), env.attrs);
@@ -103,7 +84,7 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
   // environment (region) elements only; all without the Dirichlet DOFs.
   mfem::Array<int> rm, em;
   {
-    mfem::Array<int> ra(region.attrs.data(), static_cast<int>(region.attrs.size())),
+    mfem::Array<int> ra(region_attrs.data(), static_cast<int>(region_attrs.size())),
         ea(env.attrs.data(), static_cast<int>(env.attrs.size()));
     MarkInterfaceTrueDofs(const_cast<mfem::ParFiniteElementSpace &>(fes), ra, ea, rm, em);
   }
@@ -143,10 +124,6 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
     {
       env.pinned.Append(i);
     }
-    if (!is_gamma[i] && !is_region_int[i])
-    {
-      region.pinned.Append(i);
-    }
   }
 
   // Interface order: by owner rank, then local index.
@@ -172,8 +149,8 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                  gamma_disp.data(), HYPRE_MPI_BIG_INT, comm);
 
   // Wave ports: each inside the region or the environment, away from Γ, so that its modal
-  // terms (if active) border one side's system and its overlap is a functional of that
-  // side's field.
+  // terms (if active) border the environment's system or are the region's, and its overlap
+  // is a functional of that side's field.
   for (const auto &[idx, data] : space_op.GetWavePortOp())
   {
     const auto &list = data.GetAttrList();
@@ -191,7 +168,10 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
         "Wave port " << idx
                      << " touches the substructuring interface: wave ports must lie "
                         "inside the region or the environment!");
-    ((n[0] > 0.0) ? env : region).wave_ports.push_back(idx);
+    if (n[0] > 0.0)
+    {
+      env.wave_ports.push_back(idx);
+    }
     wave_port_dofs[idx] = std::move(mark);
   }
 }
@@ -537,102 +517,20 @@ std::vector<int> DrivenSubstructure::InterfaceIndex() const
   return index;
 }
 
-void DrivenSubstructure::Condense(double omega, bool region_too)
+void DrivenSubstructure::Condense(double omega)
 {
-  MFEM_VERIFY(!online, "An online substructure is condensed with a given S_E!");
+  MFEM_VERIFY(!online, "An online substructure has no environment to condense!");
   if (!env.schur)
   {
-    // The patterns first, so that the assembled operators are released before the
-    // factorizations.
+    // The pattern first, so that the assembled operators are released before the
+    // factorization.
     Setup(env, omega);
-  }
-  const bool set_up = region_too && !coupled;
-  if (set_up)
-  {
-    Setup(region, omega);
   }
   // S_E on rank 0 moves out of MUMPS's Schur buffer without a copy (the buffer is allocated
   // again at the next factorization).
   Release(S);
   Factor(env, omega);
   S = env.schur->ReleaseSchur();
-  if (region_too)
-  {
-    FactorCoupled(omega, S, false, set_up);
-  }
-  solvable = region_too;
-}
-
-void DrivenSubstructure::Condense(double omega, std::vector<std::complex<double>> &&S_env)
-{
-  MFEM_VERIFY(online, "An offline substructure condenses its own environment!");
-  FactorCoupled(omega, S_env, true, false);
-  solvable = true;
-}
-
-void DrivenSubstructure::FactorCoupled(double omega,
-                                       std::vector<std::complex<double>> &S_env,
-                                       bool release, bool set_up)
-{
-  MPI_Comm comm = space_op.GetComm();
-  const bool root = Mpi::Root(comm);
-  const int nG = InterfaceSize();
-  MFEM_VERIFY(!root || S_env.size() == static_cast<std::size_t>(nG) * nG,
-              "Wrong size of a given S_E!");
-  // The region with S_E added on Γ, factored as one system: the region's entries, then on
-  // rank 0 those of S_E's lower triangle, in the rows of the interface DOFs (whose system
-  // indices increase with the interface order).
-  auto add_schur = [&](auto &&add)
-  {
-    for (int q = 0; q < nG && root; q++)
-    {
-      for (int p = q; p < nG; p++)
-      {
-        add(region.gamma_sys[p], region.gamma_sys[q],
-            S_env[p + static_cast<std::size_t>(nG) * q]);
-      }
-    }
-  };
-  if (!coupled)
-  {
-    if (!set_up)
-    {
-      Setup(region, omega);
-    }
-    Factorization::Coo coo{std::move(region.irn_sys), std::move(region.jcn_sys),
-                           std::move(region.val)};
-    coupled_region_entries = coo.val.size();
-    add_schur(
-        [&](HYPRE_BigInt a, HYPRE_BigInt b, std::complex<double> v)
-        {
-          coo.irn.push_back(static_cast<int>(a + 1));
-          coo.jcn.push_back(static_cast<int>(b + 1));
-          coo.val.push_back(v);
-        });
-    if (release)
-    {
-      Release(S_env);
-    }
-    const int n_loc = static_cast<int>(region.rows.size());
-    coupled = MakeSchurFactorization<std::complex<double>>(
-        CoupledSolver(solver), ordering, comm, region.n_sys, n_loc, std::move(coo), {},
-        region.rows, false, true);
-  }
-  else
-  {
-    auto &val = coupled->Values();
-    auto extra = ExtraParts(region, omega);
-    MFEM_VERIFY(region.extra == (extra[0] || extra[1]),
-                "The frequency-dependent part of a substructure operator changed!");
-    Fill(region, omega, extra, ModalTerms(region, omega), val);
-    std::size_t k = coupled_region_entries;
-    add_schur([&](HYPRE_BigInt, HYPRE_BigInt, std::complex<double> v) { val[k++] = v; });
-    if (release)
-    {
-      Release(S_env);
-    }
-    coupled->Refactor();
-  }
 }
 
 namespace
@@ -656,147 +554,6 @@ ComplexVector Masked(const ComplexVector &b, const std::vector<char> &mask,
 }
 
 }  // namespace
-
-void DrivenSubstructure::Solve(const std::vector<const ComplexVector *> &rhs,
-                               std::vector<ComplexVector> &u,
-                               const std::vector<std::complex<double>> *g_env)
-{
-  MFEM_VERIFY(solvable, "Condense (with the region) must be called before Solve!");
-  MFEM_VERIFY(online == (g_env != nullptr),
-              "The environment's source condensation is given online only!");
-  if (online)
-  {
-    SolveCoupled(rhs, u, *g_env);
-    return;
-  }
-
-  // The environment's sources condensed onto Γ with the interface loads b_Γ,
-  // b_Γ - A_ΓE A_EE^-1 b_E, the region and Γ solved with them as online, and the
-  // environment interior from the interface solution, A_EE^-1 (b_E - A_EΓ u_Γ).
-  const int n = static_cast<int>(rhs.size()), nt = space_op.GetNDSpace().GetTrueVSize();
-  std::vector<ComplexVector> w(n);
-  std::vector<const ComplexVector *> W(n);
-  std::vector<ComplexVector *> Wo(n);
-  for (int k = 0; k < n; k++)
-  {
-    w[k] = Masked(*rhs[k], is_env_int, &is_gamma);
-    W[k] = &w[k];
-    Wo[k] = &w[k];
-  }
-  env.schur->Reduce(W, g_last);
-  SolveCoupled(rhs, u, g_last);
-  env.schur->Expand(u_last, Wo);
-  for (int k = 0; k < n; k++)
-  {
-    double *ur = u[k].Real().HostReadWrite(), *ui = u[k].Imag().HostReadWrite();
-    const double *wr = w[k].Real().HostRead(), *wi = w[k].Imag().HostRead();
-    for (int i = 0; i < nt; i++)
-    {
-      if (is_env_int[i])
-      {
-        ur[i] = wr[i];
-        ui[i] = wi[i];
-      }
-    }
-  }
-}
-
-void DrivenSubstructure::SolveCoupled(const std::vector<const ComplexVector *> &rhs,
-                                      std::vector<ComplexVector> &u,
-                                      const std::vector<std::complex<double>> &g_env)
-{
-  // The region's sources on its interior and the environment's condensation on Γ (from rank
-  // 0, by the ranks of the interface DOFs), solved for the region and Γ at once.
-  MPI_Comm comm = space_op.GetComm();
-  const int n = static_cast<int>(rhs.size()), nt = static_cast<int>(is_gamma.size());
-  const int nG = InterfaceSize(), rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
-  const bool root = (rank == 0);
-  MFEM_VERIFY(!root || g_env.size() == static_cast<std::size_t>(nG) * n,
-              "Wrong size of the environment's source condensation!");
-  std::vector<int> cnt(nranks), disp(nranks);
-  for (int r = 0; r < nranks; r++)
-  {
-    cnt[r] = gamma_cnt[r] * n;
-    disp[r] = gamma_disp[r] * n;
-  }
-  const int m = gamma_cnt[rank];
-  std::vector<std::complex<double>> blocks(root ? static_cast<std::size_t>(nG) * n : 0),
-      loc(static_cast<std::size_t>(m) * n);
-  // Rank-major blocks of the interface rows, each column-major.
-  auto block = [&](int r, int l, int k)
-  {
-    return static_cast<std::size_t>(disp[r]) + l +
-           static_cast<std::size_t>(gamma_cnt[r]) * k;
-  };
-  for (int r = 0; r < nranks && root; r++)
-  {
-    for (int k = 0; k < n; k++)
-    {
-      for (int l = 0; l < gamma_cnt[r]; l++)
-      {
-        blocks[block(r, l, k)] =
-            g_env[gamma_disp[r] + l + static_cast<std::size_t>(nG) * k];
-      }
-    }
-  }
-  MPI_Scatterv(blocks.data(), cnt.data(), disp.data(), MPI_C_DOUBLE_COMPLEX, loc.data(),
-               m * n, MPI_C_DOUBLE_COMPLEX, 0, comm);
-  std::vector<ComplexVector> y(n);
-  std::vector<const ComplexVector *> Y(n);
-  std::vector<ComplexVector *> Yo(n);
-  for (int k = 0; k < n; k++)
-  {
-    y[k] = Masked(*rhs[k], is_region_int);
-    double *yr = y[k].Real().HostReadWrite(), *yi = y[k].Imag().HostReadWrite();
-    for (int i = 0, l = 0; i < nt; i++)
-    {
-      if (is_gamma[i])
-      {
-        const auto v = loc[l++ + static_cast<std::size_t>(m) * k];
-        yr[i] = v.real();
-        yi[i] = v.imag();
-      }
-    }
-    Y[k] = &y[k];
-    Yo[k] = &y[k];
-  }
-  coupled->SolveInternal(Y, Yo);
-
-  // The solution on the region's interior and Γ, and its interface part on rank 0.
-  u.resize(n);
-  for (int k = 0; k < n; k++)
-  {
-    u[k].SetSize(nt);
-    u[k].UseDevice(true);
-    u[k] = y[k];
-    const double *yr = y[k].Real().HostRead(), *yi = y[k].Imag().HostRead();
-    for (int i = 0, l = 0; i < nt; i++)
-    {
-      if (is_gamma[i])
-      {
-        loc[l++ + static_cast<std::size_t>(m) * k] = {yr[i], yi[i]};
-      }
-    }
-  }
-  MPI_Gatherv(loc.data(), m * n, MPI_C_DOUBLE_COMPLEX, blocks.data(), cnt.data(),
-              disp.data(), MPI_C_DOUBLE_COMPLEX, 0, comm);
-  if (root)
-  {
-    g_last = g_env;
-    u_last.resize(static_cast<std::size_t>(nG) * n);
-    for (int r = 0; r < nranks; r++)
-    {
-      for (int k = 0; k < n; k++)
-      {
-        for (int l = 0; l < gamma_cnt[r]; l++)
-        {
-          u_last[gamma_disp[r] + l + static_cast<std::size_t>(nG) * k] =
-              blocks[block(r, l, k)];
-        }
-      }
-    }
-  }
-}
 
 std::vector<std::complex<double>>
 DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *> &b,
@@ -915,7 +672,7 @@ DrivenSubstructure::WriteRegionMesh(const std::string &path,
   }
   std::vector<char> keep = BoundaryTrueDofs(port_attributes);
   mfem::Array<int> rm, em, ra, ea;
-  for (int a : region.attrs)
+  for (int a : region_attrs)
   {
     ra.Append(a);
   }
@@ -931,7 +688,7 @@ DrivenSubstructure::WriteRegionMesh(const std::string &path,
     keep[dl[q]] = keep[dl[q]] || rm[dl[q]];
   }
   std::vector<char> written =
-      palace::WriteRegionMesh(path, fes, region.attrs, env.attrs, keep, length_scale);
+      palace::WriteRegionMesh(path, fes, region_attrs, env.attrs, keep, length_scale);
   Mpi::Print(" Writing the mesh of the region for online runs to {}\n", path);
   return written;
 }

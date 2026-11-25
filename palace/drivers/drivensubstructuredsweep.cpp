@@ -14,8 +14,6 @@
 #include <vector>
 #include <fmt/core.h>
 #include <mfem.hpp>
-#include "fem/errorindicator.hpp"
-#include "fem/interpolator.hpp"
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
 #include "linalg/vector.hpp"
@@ -23,7 +21,6 @@
 #include "models/environmentoperator.hpp"
 #include "models/lumpedportoperator.hpp"
 #include "models/portexcitations.hpp"
-#include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
@@ -34,8 +31,6 @@
 
 namespace palace
 {
-
-using namespace std::complex_literals;
 
 namespace
 {
@@ -114,25 +109,25 @@ ComplexVector VoltageFunctional(SpaceOperator &space_op, int idx,
   return l;
 }
 
-// The frequency sweep of driven substructuring. Exact per-frequency substructuring: at each
-// frequency, condense the environment and factor the region against it once, then solve all
-// excitations (so the frequency loop is the outer one). An adaptive sweep condenses the
-// environment at frequencies chosen greedily for a rational model of its condensed data
-// (BarycentricInterpolant), then solves every frequency on the region against the model.
-// With a saved model, an offline sweep saves the condensed data per frequency, and an
-// online sweep factors the region only: at the saved frequencies, or anywhere in the band
-// of a rational model.
+// The condensation of the environment of an offline driven substructuring, as the
+// environment of the region (see EnvironmentOperator): exactly at each frequency of the
+// sweep, or at frequencies chosen greedily for a rational model of its condensed data
+// (BarycentricInterpolant). The region is then solved against it as online (with a saved
+// model, which this saves: at the saved frequencies, or anywhere in the band of a rational
+// model).
 class DrivenSubstructuredSweep
 {
 public:
   DrivenSubstructuredSweep(const IoData &iodata, SpaceOperator &space_op,
                            bool adaptive_sweep);
 
-  // The exact sweep: the full field at each frequency.
-  ErrorIndicator Run();
+  // The exact model, whose records are condensed (and saved) when the region's sweep
+  // reaches their frequencies, by its record function, which holds the sweep (self).
+  static std::unique_ptr<EnvironmentOperator>
+  ExactModel(const std::shared_ptr<DrivenSubstructuredSweep> &self);
 
-  // The adaptive sampling of the environment's rational model, as the environment of the
-  // region (see EnvironmentOperator), which the adaptive sweep then reduces.
+  // The adaptive sampling of the environment's rational model, which the adaptive sweep
+  // then reduces the region against.
   std::unique_ptr<EnvironmentOperator> SampleModel();
 
 private:
@@ -148,22 +143,18 @@ private:
   const bool save;
   MPI_Comm comm;
   const bool root;
-  const Operator &Curl;
   const double unit_GHz;
-  const int nt;
   DrivenSubstructureModel model;
   std::unique_ptr<DrivenSubstructure> ds;
   int nG = 0, n = 0;
   std::vector<int> ex_idx;
-  std::vector<ComplexVector> rhs, E;
-  std::vector<const ComplexVector *> rhs_ptr;
+  std::vector<ComplexVector> rhs;
   // The lumped ports of the environment (for a model).
   std::map<int, std::vector<char>> port_dofs;
   std::vector<int> env_ports, env_port_attributes;
   // A restart continues the sweep in its order, all excitations at a frequency before the
-  // next one: "Restart" - 1 results are written.
-  std::size_t first_freq = 0, first_ex = 0;
-  std::unique_ptr<PostOperator<ProblemType::DRIVEN>> post_op;
+  // next one: the records of the frequencies before that of solve "Restart" are kept.
+  std::size_t first_freq = 0;
   // The model: the functionals of the environment's ports, and the model column of each
   // excitation (-1: no sources in the environment).
   std::vector<ComplexVector> port_l;
@@ -175,7 +166,7 @@ private:
   BarycentricInterpolant fit;
   std::vector<double> part_scale;
 
-  // The model of an offline sweep that saves one, or of an adaptive sweep.
+  // The model of the sweep.
   void SetUpModel();
 
   // The tolerance of an excitation's source fingerprint: the modes of the environment's
@@ -186,13 +177,10 @@ private:
   void CheckSource(int k) const;
   // The functionals l_j of the environment's ports at ω.
   std::vector<const ComplexVector *> PortFunctionals(double omega);
-  // Condense the environment at ω and solve all excitations, and the record of the model
-  // (on rank 0), with the condensed functionals of the environment's ports,
-  // h_j = Reduce(l_j), and c_jk = l_j^T u_k - h_j^T u_Γ,k.
-  Record CondenseAndSolve(double omega, bool with_record);
-  // The record alone, from the environment (not factoring the region): with the condensed
-  // sources g_k and interior solutions x_k = A_EE^-1 b_E,k (Γ held at 0) of the excitations
-  // with environment sources, c_jk = l_j^T x_k, since l_j^T u_k = l_j^T x_k + h_j^T u_Γ,k.
+  // The record of the environment at ω (on rank 0): S_E, the condensed functionals of the
+  // environment's ports h_j = Reduce(l_j), and with the condensed sources g_k and interior
+  // solutions x_k = A_EE^-1 b_E,k (Γ held at 0) of the excitations with environment
+  // sources, c_jk = l_j^T x_k, since l_j^T u_k = l_j^T x_k + h_j^T u_Γ,k.
   Record EnvironmentRecord(double omega);
   void ScaleRecord(std::vector<std::complex<double>> &x, bool inverse);
   // Adaptive: sample the environment for the rational model, and check its passivity.
@@ -206,10 +194,8 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
     omega_sample(iodata.solver.driven.sample_f), sub(*iodata.solver.substructuring),
     adaptive(adaptive_sweep), model_path(substructuring::SaveModelPath(iodata)),
     save(!model_path.empty()), comm(space_op.GetComm()), root(Mpi::Root(comm)),
-    Curl(space_op.GetCurlMatrix()),
     unit_GHz(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
-             (2 * std::numbers::pi)),
-    nt(static_cast<int>(Curl.Width()))
+             (2 * std::numbers::pi))
 {
   ds = std::make_unique<DrivenSubstructure>(
       space_op, sub.region_attributes, sub.environment_attributes, false, nullptr, false,
@@ -224,28 +210,14 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
     ex_idx.push_back(idx);
   }
   n = static_cast<int>(ex_idx.size());
-  rhs.assign(n, ComplexVector(Curl.Width()));
-  rhs_ptr.resize(n);
+  rhs.assign(n, ComplexVector(space_op.GetNDSpace().GetTrueVSize()));
   for (int k = 0; k < n; k++)
   {
     rhs[k].UseDevice(true);
-    rhs_ptr[k] = &rhs[k];
   }
-  if (save || adaptive)
-  {
-    env_ports = EnvironmentPorts(iodata, *ds, port_dofs, env_port_attributes);
-  }
-  const std::size_t restart = iodata.solver.driven.restart - 1;
-  first_freq = restart / n;
-  first_ex = restart % n;
-  if (!adaptive)
-  {
-    post_op = std::make_unique<PostOperator<ProblemType::DRIVEN>>(iodata, space_op);
-  }
-  if (save || adaptive)
-  {
-    SetUpModel();
-  }
+  env_ports = EnvironmentPorts(iodata, *ds, port_dofs, env_port_attributes);
+  first_freq = (iodata.solver.driven.restart - 1) / n;
+  SetUpModel();
   np = static_cast<int>(env_ports.size());
   ne = static_cast<int>(model.excitations.size());
 }
@@ -389,59 +361,6 @@ std::vector<const ComplexVector *> DrivenSubstructuredSweep::PortFunctionals(dou
   return L;
 }
 
-// Offline: condense the environment at ω and solve all excitations, and the record of the
-// model (on rank 0), with the condensed functionals of the environment's ports,
-// h_j = Reduce(l_j), and c_jk = l_j^T u_k - h_j^T u_Γ,k.
-DrivenSubstructureModel::Record DrivenSubstructuredSweep::CondenseAndSolve(double omega,
-                                                                           bool with_record)
-{
-  for (int k = 0; k < n; k++)
-  {
-    space_op.GetExcitationVector(ex_idx[k], omega, rhs[k]);
-  }
-  ds->Condense(omega);
-  ds->Solve(rhs_ptr, E);
-  DrivenSubstructureModel::Record rec;
-  if (!with_record)
-  {
-    return rec;
-  }
-  rec.h = ds->CondenseEnvironment(PortFunctionals(omega));
-  std::vector<std::complex<double>> lu(static_cast<std::size_t>(np) * n);
-  for (int k = 0; k < n; k++)
-  {
-    for (int j = 0; j < np; j++)
-    {
-      lu[static_cast<std::size_t>(k) * np + j] = port_l[j].TransposeDot(E[k]);
-    }
-  }
-  Mpi::GlobalSum(static_cast<int>(lu.size()), lu.data(), comm);
-  if (root)
-  {
-    rec.S = ds->TakeSchur();
-    const auto &gl = ds->EnvironmentSourceCondensation();
-    const auto &uG = ds->InterfaceSolution();
-    for (int e = 0; e < ne; e++)
-    {
-      const int k = static_cast<int>(std::ranges::find(ex_idx, model.excitations[e]) -
-                                     ex_idx.begin());
-      rec.g.insert(rec.g.end(), gl.begin() + static_cast<std::ptrdiff_t>(k) * nG,
-                   gl.begin() + static_cast<std::ptrdiff_t>(k + 1) * nG);
-      for (int j = 0; j < np; j++)
-      {
-        std::complex<double> c = lu[static_cast<std::size_t>(k) * np + j];
-        for (int a = 0; a < nG; a++)
-        {
-          c -= rec.h[static_cast<std::size_t>(j) * nG + a] *
-               uG[static_cast<std::size_t>(k) * nG + a];
-        }
-        rec.c.push_back(c);
-      }
-    }
-  }
-  return rec;
-}
-
 // The record alone, from the environment (not factoring the region): with the condensed
 // sources g_k and interior solutions x_k = A_EE^-1 b_E,k (Γ held at 0) of the excitations
 // with environment sources, c_jk = l_j^T x_k, since l_j^T u_k = l_j^T x_k + h_j^T u_Γ,k.
@@ -455,7 +374,7 @@ DrivenSubstructureModel::Record DrivenSubstructuredSweep::EnvironmentRecord(doub
     space_op.GetExcitationVector(ex_idx[k], omega, rhs[k]);
     B[e] = &rhs[k];
   }
-  ds->Condense(omega, false);
+  ds->Condense(omega);
   DrivenSubstructureModel::Record rec;
   rec.h = ds->CondenseEnvironment(PortFunctionals(omega));
   std::vector<ComplexVector> x;
@@ -659,55 +578,7 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   {
     model.WriteHeader(model_path, false);
   }
-
-  // The frequencies of the sweep from the model, on the region only.
-  ds.reset();
-  ds = std::make_unique<DrivenSubstructure>(
-      space_op, sub.region_attributes, sub.environment_attributes, true, nullptr, false,
-      sub.direct_solver, iodata.solver.linear.sym_factorization);
 }
-
-ErrorIndicator DrivenSubstructuredSweep::Run()
-{
-  ComplexVector B(Curl.Height());
-  B.UseDevice(true);
-  auto t0 = Timer::Now();
-  for (std::size_t omega_i = first_freq; omega_i < omega_sample.size(); omega_i++)
-  {
-    const double omega = omega_sample[omega_i];
-    Mpi::Print("\nIt {:d}/{:d}: ω/2π = {:.3e} GHz (total elapsed time = {:.2e} s)\n",
-               omega_i + 1, omega_sample.size(), omega * unit_GHz,
-               Timer::Duration(Timer::Now() - t0).count());
-    {
-      BlockTimer bt(Timer::KSP);
-      const auto rec = CondenseAndSolve(omega, save);
-      if (save && root)
-      {
-        model.AppendRecord(model_path, rec);
-      }
-    }
-    for (int k = (omega_i == first_freq) ? static_cast<int>(first_ex) : 0; k < n; k++)
-    {
-      BlockTimer bt(Timer::POSTPRO);
-      // B = -1/(iω) ∇ x E on the true dofs.
-      Curl.Mult(E[k].Real(), B.Real());
-      Curl.Mult(E[k].Imag(), B.Imag());
-      B *= -1.0 / (1i * omega);
-      if (n > 1 && post_op->WillWriteFields(static_cast<int>(omega_i)))
-      {
-        // As in a regular sweep, the fields of each excitation go to its own ParaView
-        // collection, continued at each frequency (the run starts with no ParaView output).
-        post_op->InitializeParaviewDataCollection(ex_idx[k], true);
-      }
-      post_op->MeasureAndPrintAll(ex_idx[k], int(omega_i), E[k], B, omega);
-    }
-  }
-  // Substructuring computes no error estimate.
-  ErrorIndicator indicator;
-  post_op->MeasureFinalize(indicator);
-  return indicator;
-}
-
 std::unique_ptr<EnvironmentOperator> DrivenSubstructuredSweep::SampleModel()
 {
   SampleEnvironment();
@@ -717,21 +588,50 @@ std::unique_ptr<EnvironmentOperator> DrivenSubstructuredSweep::SampleModel()
   Mpi::Broadcast(1, &nw, 0, comm);
   model.weights.resize(nw);
   Mpi::Broadcast(nw, model.weights.data(), 0, comm);
+  // The region is factored without the environment's factorization.
   ds.reset();
-  return std::make_unique<EnvironmentOperator>(iodata, space_op, model,
-                                               [this](std::size_t j)
-                                               {
-                                                 auto x = fit.Sample(j);
-                                                 ScaleRecord(x, true);
-                                                 return x;
-                                               });
+  return std::make_unique<EnvironmentOperator>(
+      iodata, space_op, model,
+      [this](std::size_t j)
+      {
+        if (!root)
+        {
+          return std::vector<std::complex<double>>();
+        }
+        auto x = fit.Sample(j);
+        ScaleRecord(x, true);
+        return x;
+      });
+}
+
+std::unique_ptr<EnvironmentOperator>
+DrivenSubstructuredSweep::ExactModel(const std::shared_ptr<DrivenSubstructuredSweep> &self)
+{
+  return std::make_unique<EnvironmentOperator>(
+      self->iodata, self->space_op, self->model,
+      [self](std::size_t j)
+      {
+        BlockTimer bt(Timer::KSP);
+        const auto rec = self->EnvironmentRecord(self->omega_sample[j]);
+        if (!self->root)
+        {
+          return std::vector<std::complex<double>>();
+        }
+        if (self->save)
+        {
+          self->model.AppendRecord(self->model_path, rec);
+        }
+        return self->model.Flatten(rec);
+      });
 }
 
 }  // namespace
 
-ErrorIndicator SweepSubstructured(const IoData &iodata, SpaceOperator &space_op)
+std::unique_ptr<EnvironmentOperator> ExactEnvironmentModel(const IoData &iodata,
+                                                           SpaceOperator &space_op)
 {
-  return DrivenSubstructuredSweep(iodata, space_op, false).Run();
+  return DrivenSubstructuredSweep::ExactModel(
+      std::make_shared<DrivenSubstructuredSweep>(iodata, space_op, false));
 }
 
 std::unique_ptr<EnvironmentOperator> SampleEnvironmentModel(const IoData &iodata,

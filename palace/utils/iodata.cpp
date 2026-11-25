@@ -735,12 +735,10 @@ void IoData::CheckConfiguration()
     }
     solver.substructuring->direct_solver = solver.linear.type;
 
-    // An online driven sweep, and an offline adaptive one once it has sampled the
-    // environment, solve the region as a driven problem with the dense S_E of the
+    // A driven sweep solves the region as a driven problem with the dense S_E of the
     // environment on Γ (see the SpaceOperator of an environment), preconditioned by the
-    // RegionSolver: from the region's exact complex matrix on one level, factored for its
-    // Schur complement onto Γ by a sparse direct solver (see RegionSolver). An offline
-    // exact sweep factors with its own solvers.
+    // region solver: from the region's exact complex matrix on one level, factored for its
+    // Schur complement onto Γ by a sparse direct solver (see DrivenRegionSolver).
     if (problem.type == ProblemType::DRIVEN)
     {
       auto &linear = solver.linear;

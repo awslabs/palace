@@ -37,15 +37,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     at saved frequencies solves a redesigned region against the saved environment. Adaptive
     sweeps condense it at frequencies chosen greedily for a rational model, checked for
     passivity, which online sweeps evaluate anywhere in its band, with the region reduced by
-    the adaptive fast frequency sweep. The offline sweep also writes a mesh of the
-    region, on which online sweeps read and partition the region only. Runs on CPUs and
-    GPUs, with the factorizations on the CPU. Offline, the partial factorization of MUMPS
-    or, without it, of STRUMPACK gives the condensed environment (SuperLU_DIST, whose
-    condensation goes wrong through a resonance, is not used offline). An offline exact
-    sweep factors the region with the condensed environment as one system, by STRUMPACK or
-    MUMPS; online and adaptive sweeps solve it by FGMRES, preconditioned by its Schur
-    complement onto the interface with the condensed environment added, factored as a
-    dense matrix across the processes (ScaLAPACK). A sparse direct solver that
+    the adaptive fast frequency sweep. The offline sweep also writes a mesh of the region,
+    on which online sweeps read and partition the region only. Runs on CPUs and GPUs, with
+    the factorizations on the CPU. Offline, the partial factorization of MUMPS or, without
+    it, of STRUMPACK gives the condensed environment (SuperLU_DIST, whose condensation goes
+    wrong through a resonance, is not used offline). Every sweep solves the region by
+    FGMRES, preconditioned by its Schur complement onto the interface with the condensed
+    environment added, factored as a dense matrix across the processes (ScaLAPACK), and
+    gives the outputs of the region, offline too. A sparse direct solver that
     `config["Solver"]["Linear"]["Type"]` names factors both instead. Adds a driven example
     in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 6-2-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).

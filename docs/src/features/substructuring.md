@@ -217,19 +217,19 @@ connected conductor. A current that does not close has no magnetostatic solution
 For a [driven](../guide/problem.md#Driven-problems-in-the-frequency-domain) simulation the
 environment operator depends on the frequency, and substructuring condenses it exactly at each
 frequency of a sweep (`"Solver"/"Driven"/"Samples"`): one partial factorization of the environment
-gives ``\bm{S}_E(\omega)``, and the region is factored against it once for all excitations. Lumped
-ports, impedance, absorbing and conductivity boundaries, and lossy materials may lie in the region,
-in the environment, or on both sides, and wave ports inside either side, away from the interface
-(their modal terms border that side's factorization); the outputs are those of a regular simulation
-(port S-parameters, voltages and currents, domain energies and fields).
+gives ``\bm{S}_E(\omega)``, the condensation of the environment's sources onto the interface, and
+the condensed voltages of the environment's lumped ports and wave port overlaps. The region is then
+solved against them, factored once per frequency for all excitations. Lumped ports, impedance,
+absorbing and conductivity boundaries, and lossy materials may lie in the region, in the
+environment, or on both sides, and wave ports inside either side, away from the interface (the
+modal terms of the environment's border its factorization).
 
-An offline sweep also saves, per frequency, ``\bm{S}_E(\omega)``, the condensation of the
-environment's sources onto the interface, and the condensed voltages of the environment's lumped
-ports and wave port overlaps (unless `"SaveModel": false`). An online sweep at saved frequencies
-(any subset of them, matched by value) then factors only the region, which may be redesigned
-(materials, re-meshing) and run on a different number of processes, as long as the environment and
-the interface are unchanged and the excitations with sources in the environment are among the
-model's. The online field is known in the region and on the interface only:
+An offline sweep saves these per frequency (unless `"SaveModel": false`). An online sweep at saved
+frequencies (any subset of them, matched by value) then solves only the region, which may be
+redesigned (materials, re-meshing) and run on a different number of processes, as long as the
+environment and the interface are unchanged and the excitations with sources in the environment
+are among the model's. Offline and online, the field is known in the region and on the interface
+only (a regular simulation gives the rest):
 
   - S-parameters of all ports, voltages and currents of the lumped ports, and the energies of
     lumped elements, are those of a regular simulation;
@@ -277,32 +277,27 @@ voltage of a lumped port, would depend on both sides.
 
 !!! note
 
-    Offline, driven substructuring condenses the environment with MUMPS or, without it,
-    STRUMPACK, so *Palace* must be built with one of them: their partial factorizations give its
-    Schur complement onto the interface directly (STRUMPACK with the Schur complement interface
-    that the superbuild and the Spack package patch in, else with one solve per interface
-    unknown). SuperLU_DIST, whose condensation goes wrong through a resonance, is not used
-    offline. An offline exact sweep factors the region with the Schur complement of the
-    environment as one sparse system, by STRUMPACK or MUMPS (preferred in this order). Online,
-    and once an offline adaptive sweep has sampled the environment, FGMRES solves the region,
-    preconditioned by the region's own Schur complement onto the interface with the
-    environment's added, a dense matrix factored across the processes by ScaLAPACK (which MUMPS
-    and STRUMPACK build with; without it, on one process). The region's Schur complement is
-    MUMPS's, distributed, or, without it, STRUMPACK's, gathered on one process (or, without
-    them, from SuperLU_DIST's solves). Near a resonance of the region with the interface held fixed,
-    where this preconditioner is nearly singular, FGMRES takes a few more iterations (it is used
-    whatever
+    Offline, driven substructuring condenses the environment with MUMPS or, without it, STRUMPACK,
+    so *Palace* must be built with one of them: their partial factorizations give its Schur
+    complement onto the interface directly (STRUMPACK with the Schur complement interface that the
+    superbuild and the Spack package patch in, else with one solve per interface unknown).
+    SuperLU_DIST, whose condensation goes wrong through a resonance, is not used offline. FGMRES
+    solves the region, preconditioned by the region's own Schur complement onto the interface with
+    the environment's added, a dense matrix factored across the processes by ScaLAPACK (which MUMPS
+    and STRUMPACK build with; without it, on one process). The region's Schur complement is MUMPS's,
+    distributed, or, without it, STRUMPACK's, gathered on one process (or, without them, from
+    SuperLU_DIST's solves). Near a resonance of the region with the interface held fixed, where this
+    preconditioner is nearly singular, FGMRES takes a few more iterations (it is used whatever
     [`config["Solver"]["Linear"]["KSPType"]`](../config/reference.md#config-solver-linear-ksptype)
     names, as GMRES loses digits there). A sparse direct solver that
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names
-    is used for all of them instead.
-    Floquet ports and periodic boundaries (which make the system non-symmetric), frequency-dependent
-    permittivity, PML regions, `"AdaptiveCircuitSynthesis"` and the adaptive refinement of the
-    region in online sweeps are not supported yet, nor, from a model, interface dielectric and
-    far-field postprocessing. The model holds one dense ``|\Gamma| \times |\Gamma|`` matrix per
-    frequency or sample (16 bytes per entry of its lower triangle). Online, the processes read it in
-    parallel and hold it distributed; offline, one process holds it whole to write it, and the
-    samples of an adaptive sweep.
+    is used for all of them instead. Floquet ports and periodic boundaries (which make the system
+    non-symmetric), frequency-dependent permittivity, PML regions, `"AdaptiveCircuitSynthesis"` and
+    the adaptive refinement of the region in online sweeps are not supported yet, nor, from a model,
+    interface dielectric and far-field postprocessing. The model holds one dense
+    ``|\Gamma| \times |\Gamma|`` matrix per frequency or sample (16 bytes per entry of its lower
+    triangle). Online, the processes read it in parallel and hold it distributed; offline, one
+    process holds it whole to write it, and the samples of an adaptive sweep.
 
 ## [Example: transmon capacitance](@id substructuring-transmon-example)
 

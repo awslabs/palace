@@ -180,24 +180,22 @@ private:
 };
 
 //
-// Exact per-frequency substructuring of a driven problem: the environment operator
-// A_E(ω) = K_E + iω C_E - ω² M_E + A2_E(ω), assembled with Palace's operators restricted
-// to the environment, is condensed onto the interface Γ by a partial complex symmetric
-// MUMPS factorization, which gives S_E(ω). The region is factored with S_E(ω) added on Γ
-// as one system. Online, the environment is not assembled: S_E(ω) and the condensation of
-// the environment's sources come from a saved model, and the environment interior of the
-// solution is not computed.
+// The environment of a driven substructuring, condensed at a frequency: the environment
+// operator A_E(ω) = K_E + iω C_E - ω² M_E + A2_E(ω), assembled with Palace's operators
+// restricted to the environment, is condensed onto the interface Γ by a partial complex
+// symmetric factorization, which gives S_E(ω) and the condensations of vectors of the
+// environment (see CondenseEnvironment). Online, with a saved model, the environment is
+// not assembled: the class classifies the DOFs of Γ and of the two sides, and gives the
+// fingerprints and the port and boundary queries of the run (see EnvironmentOperator).
 //
 class DrivenSubstructure
 {
 public:
   // Online, with the saved model: on the mesh of the region (region_mesh), Γ is the set of
-  // the region's boundary DOFs at the points of the saved interface DOFs. The
-  // factorizations are by the sparse direct solver given (STRUMPACK, MUMPS or SUPERLU),
-  // else: of the environment with its Schur complement onto Γ, by MUMPS (its partial
-  // factorization), STRUMPACK or SuperLU_DIST (one solve per interface DOF), of the region
-  // with S_E (one system) by STRUMPACK, MUMPS or SuperLU_DIST, in these orders among those
-  // Palace is built with, with the fill-reducing ordering given.
+  // the region's boundary DOFs at the points of the saved interface DOFs. Offline, the
+  // environment is factored with its Schur complement onto Γ by the sparse direct solver
+  // given (STRUMPACK, MUMPS or SUPERLU), else by MUMPS, STRUMPACK or SuperLU_DIST (see
+  // SchurSolverFor), with the fill-reducing ordering given.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
                      const std::vector<int> &environment_attributes, bool online = false,
                      const DrivenSubstructureModel *saved = nullptr,
@@ -205,21 +203,10 @@ public:
                      SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
   ~DrivenSubstructure();
 
-  // Condense the environment and factor the region against it at the angular frequency ω
-  // (nondimensional), or only condense the environment (without region, for its condensed
-  // data). The analyses of the first frequency are reused at the next ones. Online, S_E(ω)
-  // is given on rank 0 (|Γ| x |Γ|, column-major, in interface order). Collective.
-  void Condense(double omega, bool region = true);
-  void Condense(double omega, std::vector<std::complex<double>> &&S_env);
-
-  // Solve the coupled problem at the frequency of the last condensation for a batch of
-  // right-hand sides (full true-DOF vectors): the region with the interface loads of the
-  // environment sources, then the environment interior. Online, g_env on rank 0
-  // (|Γ| x |rhs|, column-major) is the condensation of the environment's sources, which
-  // replaces the environment part of the right-hand sides, and the environment interior
-  // of u is zero. Collective.
-  void Solve(const std::vector<const ComplexVector *> &rhs, std::vector<ComplexVector> &u,
-             const std::vector<std::complex<double>> *g_env = nullptr);
+  // Condense the environment at the angular frequency ω (nondimensional): S_E(ω) (see
+  // TakeSchur), and its factorization for CondenseEnvironment. The analysis of the first
+  // frequency is reused at the next ones. Offline only. Collective.
+  void Condense(double omega);
 
   // Condensation onto Γ of vectors supported on the environment interior and Γ with the
   // environment factorization of the last condensation, b_Γ - A_ΓE A_EE^-1 b_E, on rank 0
@@ -229,17 +216,8 @@ public:
   CondenseEnvironment(const std::vector<const ComplexVector *> &b,
                       std::vector<ComplexVector> *x = nullptr);
 
-  // On rank 0, after Solve: the condensation of the environment's sources (|Γ| x |rhs|,
-  // offline) and the interface solution (|Γ| x |rhs|), column-major.
-  const std::vector<std::complex<double>> &EnvironmentSourceCondensation() const
-  {
-    return g_last;
-  }
-  const std::vector<std::complex<double>> &InterfaceSolution() const { return u_last; }
-
   // S_E(ω) of the last condensation on rank 0 (|Γ| x |Γ|, column-major, complex
-  // symmetric), in interface order (offline), or handed over.
-  const std::vector<std::complex<double>> &Schur() const { return S; }
+  // symmetric), in interface order, handed over.
   std::vector<std::complex<double>> TakeSchur() { return std::move(S); }
 
   // Global true DOFs of the interface in interface order (replicated), and its size.
@@ -303,12 +281,13 @@ private:
   LinearSolver solver;
   SymbolicFactorization ordering;
   bool online, region_only = false;
+  std::vector<int> region_attrs;
   std::vector<char> is_env_int, is_gamma, is_region_int;
   std::vector<HYPRE_BigInt> gamma_tdofs;
   std::vector<int> gamma_cnt, gamma_disp;  // interface DOFs per rank
 
-  // The operator K + iω C - ω² M + A2(ω) of one side (environment or region), factored on
-  // the side's interior and Γ: the lower-triangle pattern and the entries of the
+  // The operator K + iω C - ω² M + A2(ω) of the environment, factored on its interior and
+  // Γ: the lower-triangle pattern and the entries of the
   // frequency-independent parts in pattern order (the assembled operators are not kept).
   struct Side
   {
@@ -340,15 +319,9 @@ private:
     HYPRE_BigInt n_dofs = 0;
     double border = 1.0;
   };
-  Side env, region;
-  bool solvable = false;  // the region is factored against the environment
-  // The region with S_E on Γ, factored as one system; its entries are the region's, then
-  // (on rank 0) S_E's lower triangle.
-  std::unique_ptr<SchurFactorization<std::complex<double>>> coupled;
-  std::size_t coupled_region_entries = 0;
-  // On rank 0: S_E (offline), the environment's source condensation and the interface
-  // solution of the last Solve.
-  std::vector<std::complex<double>> S, g_last, u_last;
+  Side env;
+  // On rank 0: S_E of the last condensation (offline).
+  std::vector<std::complex<double>> S;
 
   // The local true DOFs of the wave ports (each in the wave_ports of its side).
   std::map<int, std::vector<char>> wave_port_dofs;
@@ -362,17 +335,6 @@ private:
   // of a side, assembled on its elements, with its pinned DOFs eliminated (null if zero).
   std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> SideParts(const Side &side,
                                                                  int op) const;
-
-  // Factor the region with S_E (on rank 0) added on Γ as one system, releasing S_E once its
-  // entries are in the factored values if release (set_up: Setup of the region was called
-  // for its first factorization).
-  void FactorCoupled(double omega, std::vector<std::complex<double>> &S_env, bool release,
-                     bool set_up);
-
-  // The region and Γ from the coupled factorization, with g_env (rank 0) on Γ.
-  void SolveCoupled(const std::vector<const ComplexVector *> &rhs,
-                    std::vector<ComplexVector> &u,
-                    const std::vector<std::complex<double>> &g_env);
 
   // The rank-one modal terms of a side's wave ports at ω with their ports, in a fixed
   // order.

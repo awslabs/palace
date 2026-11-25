@@ -194,9 +194,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
     }
     for (std::size_t j = 0; j < model.omega.size(); j++)
     {
-      records.push_back(
-          sampled ? Distribute(root ? record(j) : std::vector<std::complex<double>>())
-                  : ReadRecord(static_cast<int>(j)));
+      records.push_back(sampled ? Distribute(record(j)) : ReadRecord(static_cast<int>(j)));
     }
     Mpi::Print(" Rational substructuring model: {:d} samples from {:.3e} to {:.3e} GHz\n",
                model.omega.size(), lo * unit_GHz, hi * unit_GHz);
@@ -219,6 +217,10 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
   }
   else
   {
+    if (sampled)
+    {
+      exact_records = record;
+    }
     for (double omega : omega_sample)
     {
       MFEM_VERIFY(FindValue(model.omega, omega) >= 0,
@@ -426,7 +428,8 @@ void EnvironmentOperator::Prepare(double omega)
   }
   if (records.empty())
   {
-    cur = ReadRecord(FindValue(model.omega, omega));
+    const int j = FindValue(model.omega, omega);
+    cur = exact_records ? Distribute(exact_records(j)) : ReadRecord(j);
     omega_fun = omega;
   }
   else

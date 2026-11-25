@@ -4784,11 +4784,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring writes the probes it interpolates in the region",
                  "[substructure][Serial][Parallel][Long]")
 {
-  // Two probes on Γ, one in the region and one in the environment. Online on the full mesh,
-  // the first three are written, those on Γ with the field of the region, on its side of Γ,
-  // where the normal E jumps (the permittivities of the sides differ): the values of a
-  // regular sweep with the probes on Γ moved into the region by 1e-9. The exact offline
-  // sweep, of the whole device, writes those off Γ as a regular sweep.
+  // Two probes on Γ, one in the region and one in the environment. Offline and online on
+  // the full mesh, the first three are written, those on Γ with the field of the region, on
+  // its side of Γ, where the normal E jumps (the permittivities of the sides differ): the
+  // values of a regular sweep with the probes on Γ moved into the region by 1e-9.
   auto probes = [](double shift)
   {
     return [shift](json &config)
@@ -4847,8 +4846,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       }
       return written;
     };
-    CHECK(check("postpro_Online", true) == std::set<std::string>{"1", "2", "3"});
-    CHECK(check("postpro_Offline", false) == std::set<std::string>{"1", "2", "3", "4"});
+    for (const std::string dir : {"postpro_Offline", "postpro_Online"})
+    {
+      CHECK(check(dir, true) == std::set<std::string>{"1", "2", "3"});
+    }
   }
 }
 #endif
@@ -4937,14 +4938,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
-TEST_CASE_METHOD(
-    palace::test::SharedTempDir,
-    "Driven substructuring gives no voltage of the environment's wave port online",
-    "[substructure][Serial][Parallel][Long]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring gives no voltage of the environment's wave port",
+                 "[substructure][Serial][Parallel][Long]")
 {
-  // The voltage and the impedance of a wave port need its field: offline they are those of
-  // the environment's port, online, where the port's field is not known, they are NaN, not
-  // 0 (its S-parameter comes from the model).
+  // The voltage and the impedance of a wave port need its field, which a substructured
+  // sweep knows in the region and on Γ only: those of the environment's port are NaN
+  // offline and online, not 0 (its S-parameter comes from the condensed environment).
   const auto dir = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
                    "substructuring_driven_wave";
   auto run = [&](const std::string &file)
@@ -4988,18 +4988,16 @@ TEST_CASE_METHOD(
   };
   run("driven_wave_inactive_offline.json");
   run("driven_wave_inactive_online.json");
-  for (const std::string name : {"V_wp[2]", "Z[2]"})
+  for (const std::string file :
+       {"driven_wave_inactive_offline.json", "driven_wave_inactive_online.json"})
   {
-    CAPTURE(name);
-    const auto off = values("driven_wave_inactive_offline.json",
-                            (name == "Z[2]") ? "port-Z.csv" : "port-V.csv", name);
-    const auto on = values("driven_wave_inactive_online.json",
-                           (name == "Z[2]") ? "port-Z.csv" : "port-V.csv", name);
-    REQUIRE(!off.empty());
-    REQUIRE(on.size() == off.size());
-    CHECK(std::ranges::all_of(off, [](double x) { return std::isfinite(x); }));
-    CHECK(std::ranges::any_of(off, [](double x) { return x != 0.0; }));
-    CHECK(std::ranges::all_of(on, [](double x) { return std::isnan(x); }));
+    for (const std::string name : {"V_wp[2]", "Z[2]"})
+    {
+      CAPTURE(file, name);
+      const auto v = values(file, (name == "Z[2]") ? "port-Z.csv" : "port-V.csv", name);
+      REQUIRE(!v.empty());
+      CHECK(std::ranges::all_of(v, [](double x) { return std::isnan(x); }));
+    }
   }
 }
 
@@ -5485,9 +5483,9 @@ TEST_CASE("DrivenSubstructure rejects attribute sets that do not split the mesh"
 TEST_CASE("DrivenSubstructure condenses the environment exactly",
           "[substructure][Serial][Parallel][Long]")
 {
-  // S_E(ω) from the partial factorization of the environment operator (alone, and with the
-  // region) against a dense condensation of the same operator, and the substructured solve
-  // against the full system: PEC in the region, a lumped port in the environment, a
+  // S_E(ω) from the partial factorization of the environment operator against a dense
+  // condensation of the same operator, and the condensations and interior solutions of
+  // vectors of the environment: PEC in the region, a lumped port in the environment, a
   // second-order absorbing boundary on both sides, an impedance sheet crossing Γ, a lossy
   // dielectric region and a conducting environment. A second frequency reuses the analyses.
   // Hex meshes with an impedance sheet, conforming and nonconforming (hanging nodes on Γ
@@ -5659,27 +5657,40 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     return A;
   };
 
-  // S_ref = A_GG - A_GE A_EE^-1 A_EG with the standard real representation [[Re, -Im],
-  // [Im, Re]] of the complex blocks.
+  // The standard real representation [[Re, -Im], [Im, Re]] of a block of A, and of a
+  // vector.
+  auto real_form =
+      [&](const std::vector<std::complex<double>> &A, int r0, int nr, int c0, int nc)
+  {
+    mfem::DenseMatrix T(2 * nr, 2 * nc);
+    for (int i = 0; i < nr; i++)
+    {
+      for (int j = 0; j < nc; j++)
+      {
+        const auto a = A[static_cast<std::size_t>(c0 + j) * n + (r0 + i)];
+        T(i, j) = T(nr + i, nc + j) = a.real();
+        T(i, nc + j) = -a.imag();
+        T(nr + i, j) = a.imag();
+      }
+    }
+    return T;
+  };
+  auto real_vector = [](const std::complex<double> *x, int m)
+  {
+    mfem::Vector v(2 * m);
+    for (int i = 0; i < m; i++)
+    {
+      v(i) = x[i].real();
+      v(m + i) = x[i].imag();
+    }
+    return v;
+  };
+
+  // S_ref = A_GG - A_GE A_EE^-1 A_EG.
   auto dense_schur = [&](const std::vector<std::complex<double>> &A)
   {
-    auto real_form = [&](int r0, int nr, int c0, int nc)
-    {
-      mfem::DenseMatrix T(2 * nr, 2 * nc);
-      for (int i = 0; i < nr; i++)
-      {
-        for (int j = 0; j < nc; j++)
-        {
-          const auto a = A[static_cast<std::size_t>(c0 + j) * n + (r0 + i)];
-          T(i, j) = T(nr + i, nc + j) = a.real();
-          T(i, nc + j) = -a.imag();
-          T(nr + i, j) = a.imag();
-        }
-      }
-      return T;
-    };
-    mfem::DenseMatrix Aee = real_form(0, nE, 0, nE), Aeg = real_form(0, nE, nE, nG),
-                      Age = real_form(nE, nG, 0, nE), Agg = real_form(nE, nG, nE, nG);
+    mfem::DenseMatrix Aee = real_form(A, 0, nE, 0, nE), Aeg = real_form(A, 0, nE, nE, nG),
+                      Age = real_form(A, nE, nG, 0, nE), Agg = real_form(A, nE, nG, nE, nG);
     mfem::DenseMatrixInverse inv(Aee);
     mfem::DenseMatrix X(2 * nE, 2 * nG), Y(2 * nG, 2 * nG);
     inv.Mult(Aeg, X);
@@ -5696,24 +5707,65 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     return S;
   };
 
-  // Online, with the region only: given S_E and the environment's source condensation
-  // (offline), the region and interface solution must be the offline one.
-  DrivenSubstructure ds_online(space_op, {1}, {2}, true, nullptr, false, type);
-  REQUIRE(ds_online.InterfaceSize() == nG);
+  // The condensation b_G - A_GE A_EE^-1 b_E and the interior solution A_EE^-1 b_E of a
+  // vector b on (E, Γ).
+  auto dense_condense = [&](const std::vector<std::complex<double>> &A,
+                            const std::vector<std::complex<double>> &b)
+  {
+    mfem::DenseMatrix Aee = real_form(A, 0, nE, 0, nE), Age = real_form(A, nE, nG, 0, nE);
+    mfem::DenseMatrixInverse inv(Aee);
+    const mfem::Vector bE = real_vector(b.data(), nE), bG = real_vector(b.data() + nE, nG);
+    mfem::Vector xE(2 * nE), r(2 * nG);
+    inv.Mult(bE, xE);
+    Age.Mult(xE, r);
+    std::vector<std::complex<double>> red(nG), x(nE);
+    for (int a = 0; a < nG; a++)
+    {
+      red[a] = {bG(a) - r(a), bG(nG + a) - r(nG + a)};
+    }
+    for (int i = 0; i < nE; i++)
+    {
+      x[i] = {xE(i), xE(nE + i)};
+    }
+    return std::make_pair(red, x);
+  };
+
+  // A vector on (E, Γ) at rank 0.
+  auto gather = [&](const ComplexVector &v)
+  {
+    Vector full(root ? disp[nranks - 1] + cnt[nranks - 1] : 0), full_i(full.Size());
+    MPI_Gatherv(v.Real().HostRead(), nt, MPI_DOUBLE, full.HostWrite(), cnt.data(),
+                disp.data(), MPI_DOUBLE, 0, comm);
+    MPI_Gatherv(v.Imag().HostRead(), nt, MPI_DOUBLE, full_i.HostWrite(), cnt.data(),
+                disp.data(), MPI_DOUBLE, 0, comm);
+    std::vector<std::complex<double>> y(root ? n : 0);
+    for (int i = 0; root && i < n; i++)
+    {
+      y[i] = {full(idx[i]), full_i(idx[i])};
+    }
+    return y;
+  };
+  auto rel_diff =
+      [](const std::complex<double> *x, const std::vector<std::complex<double>> &y)
+  {
+    double d = 0.0, m = 0.0;
+    for (std::size_t i = 0; i < y.size(); i++)
+    {
+      d = std::max(d, std::abs(x[i] - y[i]));
+      m = std::max(m, std::abs(y[i]));
+    }
+    return d / m;
+  };
 
   for (const double omega : {1.3, 0.7})
   {
     CAPTURE(omega);
     const auto A = dense_operator(omega);
-    const auto S_ref = root ? dense_schur(A) : std::vector<std::complex<double>>();
-    for (const bool region : {false, true})  // the environment alone, then both sides
+    ds.Condense(omega);
+    const auto S = ds.TakeSchur();
+    if (root)
     {
-      ds.Condense(omega, region);
-      if (!root)
-      {
-        continue;
-      }
-      const auto &S = ds.Schur();
+      const auto S_ref = dense_schur(A);
       REQUIRE(S.size() == S_ref.size());
       double d = 0.0, m = 0.0, asym = 0.0;
       for (int b = 0; b < nG; b++)
@@ -5731,131 +5783,45 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
       CHECK(asym <= exact_tol * m);
     }
 
-    // Substructured solves for the port excitation (an environment source) and random
-    // right-hand sides (sources on both sides; the third has the second's environment
-    // part): residuals of the full system.
-    std::vector<ComplexVector> b(3, ComplexVector(nt)), u;
+    // The condensations of the port excitation (an environment source), of a random vector
+    // on both sides and of a functional of the environment interior (as of a port voltage),
+    // and their interior solutions (0 on Γ).
+    std::vector<ComplexVector> b(3, ComplexVector(nt)), x;
     space_op.GetExcitationVector(1, omega, b[0]);
     b[1].Real().Randomize(3 + Mpi::Rank(comm));
     b[1].Imag().Randomize(5 + Mpi::Rank(comm));
-    b[2].Real().Randomize(7 + Mpi::Rank(comm));
-    b[2].Imag().Randomize(11 + Mpi::Rank(comm));
+    b[2].Real().Randomize(13 + Mpi::Rank(comm));
+    b[2].Imag() = 0.0;
     for (int i = 0; i < nt; i++)
     {
-      if (!ds.RegionInterior()[i])
+      if (!ds.EnvironmentInterior()[i])
       {
-        b[2].Real()(i) = b[1].Real()(i);
-        b[2].Imag()(i) = b[1].Imag()(i);
+        b[2].Real()(i) = 0.0;
       }
     }
-    for (int d : space_op.GetNDDbcTDofLists().back())
-    {
-      b[1].Real()(d) = b[1].Imag()(d) = b[2].Real()(d) = b[2].Imag()(d) = 0.0;
-    }
-    ds.Solve({&b[0], &b[1], &b[2]}, u);
-    const auto g_env = ds.EnvironmentSourceCondensation();
-    const auto u_gamma = ds.InterfaceSolution();
-
-    // A condensed environment functional (as for the environment's port voltages):
-    // l^T u_k = c + h^T u_Γ,k with c fixed by the environment sources, so the value for the
-    // third right-hand side follows from the second's.
-    {
-      ComplexVector l(nt);
-      l.Real().Randomize(13 + Mpi::Rank(comm));
-      l.Imag() = 0.0;
-      for (int i = 0; i < nt; i++)
-      {
-        if (!ds.EnvironmentInterior()[i])
-        {
-          l.Real()(i) = 0.0;
-        }
-      }
-      const auto h = ds.CondenseEnvironment({&l});
-      CHECK(ds.CondenseEnvironment({}).empty());  // an environment without ports
-      std::vector<ComplexVector> x;  // the environment interior solution for b[1]
-      ds.CondenseEnvironment({&b[1]}, &x);
-      double lx[2] = {mfem::InnerProduct(l.Real(), x[0].Real()),
-                      mfem::InnerProduct(l.Real(), x[0].Imag())};
-      Mpi::GlobalSum(2, lx, comm);
-      std::complex<double> V[2];
-      for (int k = 0; k < 2; k++)
-      {
-        double v[2] = {mfem::InnerProduct(l.Real(), u[k + 1].Real()),
-                       mfem::InnerProduct(l.Real(), u[k + 1].Imag())};
-        Mpi::GlobalSum(2, v, comm);
-        V[k] = {v[0], v[1]};
-      }
-      if (root)
-      {
-        std::complex<double> hu[2] = {0.0, 0.0};
-        for (int k = 0; k < 2; k++)
-        {
-          for (int a = 0; a < nG; a++)
-          {
-            hu[k] += h[a] * u_gamma[static_cast<std::size_t>(k + 1) * nG + a];
-          }
-        }
-        const double dv = std::abs(V[1] - (V[0] - hu[0] + hu[1]));
-        CAPTURE(dv, std::abs(V[1]));
-        CHECK(dv <= exact_tol * std::abs(V[1]));
-        // and l^T u = l^T x + h^T u_Γ, with x the environment interior solution.
-        const double dc = std::abs(V[0] - (std::complex<double>(lx[0], lx[1]) + hu[0]));
-        CAPTURE(dc);
-        CHECK(dc <= exact_tol * std::abs(V[0]));
-      }
-    }
-
-    // Online: the region and interface values of the offline solution, 0 in the
-    // environment interior.
-    {
-      std::vector<std::complex<double>> S_env;
-      if (root)
-      {
-        S_env = ds.Schur();
-      }
-      ds_online.Condense(omega, std::move(S_env));
-      std::vector<ComplexVector> u_online;
-      ds_online.Solve({&b[0], &b[1], &b[2]}, u_online, &g_env);
-      for (int k = 0; k < 3; k++)
-      {
-        double dmax[2] = {0.0, 0.0};
-        const double *xr = u_online[k].Real().HostRead(),
-                     *xi = u_online[k].Imag().HostRead();
-        const double *yr = u[k].Real().HostRead(), *yi = u[k].Imag().HostRead();
-        for (int i = 0; i < nt; i++)
-        {
-          const std::complex<double> x(xr[i], xi[i]), y(yr[i], yi[i]);
-          if (ds.EnvironmentInterior()[i])
-          {
-            dmax[1] = std::max(dmax[1], std::abs(x));
-          }
-          else
-          {
-            dmax[0] = std::max(dmax[0], std::abs(x - y));
-          }
-        }
-        Mpi::GlobalMax(2, dmax, comm);
-        const double unorm = linalg::Norml2(comm, u[k]);
-        CAPTURE(k, dmax[0], dmax[1], unorm);
-        CHECK(dmax[0] <= exact_tol * unorm);
-        CHECK(dmax[1] == 0.0);
-      }
-    }
-    auto K1 = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-    auto C1 = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    auto M1 = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    auto A21 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-    auto A_full = space_op.GetSystemMatrix(
-        std::complex<double>(1.0, 0.0), std::complex<double>(0.0, omega),
-        std::complex<double>(-omega * omega, 0.0), K1.get(), C1.get(), M1.get(), A21.get());
+    const auto red = ds.CondenseEnvironment({&b[0], &b[1], &b[2]}, &x);
+    CHECK(ds.CondenseEnvironment({}).empty());  // an environment without ports
+    REQUIRE(x.size() == 3);
     for (int k = 0; k < 3; k++)
     {
-      ComplexVector r(nt);
-      A_full->Mult(u[k], r);
-      r -= b[k];
-      const double res = linalg::Norml2(comm, r) / linalg::Norml2(comm, b[k]);
-      CAPTURE(k, res);
-      CHECK(res <= exact_tol);
+      const auto bk = gather(b[k]), xk = gather(x[k]);
+      if (!root)
+      {
+        continue;
+      }
+      const auto [red_ref, x_ref] = dense_condense(A, bk);
+      REQUIRE(red.size() == 3 * static_cast<std::size_t>(nG));
+      const double d_red = rel_diff(red.data() + static_cast<std::size_t>(k) * nG, red_ref),
+                   d_x = rel_diff(xk.data(), x_ref);
+      double x_gamma = 0.0;
+      for (int a = 0; a < nG; a++)
+      {
+        x_gamma = std::max(x_gamma, std::abs(xk[nE + a]));
+      }
+      CAPTURE(k, d_red, d_x, x_gamma);
+      CHECK(d_red <= exact_tol);
+      CHECK(d_x <= exact_tol);
+      CHECK(x_gamma == 0.0);
     }
   }
 }

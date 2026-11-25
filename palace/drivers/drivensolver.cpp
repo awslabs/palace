@@ -138,15 +138,11 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
   // Main frequency sweep loop. A substructured region is solved against its environment,
   // with the operators of the region (see SpaceOperator): the environment of the saved
-  // model online, or sampled offline for a rational model by an adaptive sweep (on the
-  // operators of the full problem, which are then released). An offline exact sweep solves
-  // the whole device frequency by frequency.
+  // model online, or condensed by this run offline, sampled for a rational model by an
+  // adaptive sweep, or at each frequency of an exact one, as its sweep reaches it (on the
+  // operators of the full problem, which the others release).
   if (const auto &sub = iodata.solver.substructuring)
   {
-    if (!sub->Online() && !adaptive)
-    {
-      return {SweepSubstructured(iodata, space_op), space_op.GlobalTrueVSize()};
-    }
     std::unique_ptr<EnvironmentOperator> env;
     if (sub->Online())
     {
@@ -160,9 +156,13 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     }
     else
     {
-      env = SampleEnvironmentModel(iodata, space_op);
+      env = adaptive ? SampleEnvironmentModel(iodata, space_op)
+                     : ExactEnvironmentModel(iodata, space_op);
     }
-    full_op.reset();
+    if (sub->Online() || adaptive)
+    {
+      full_op.reset();
+    }
     SpaceOperator region_op(iodata, mesh, env.get());
     return {adaptive ? SweepAdaptive(region_op) : SweepUniform(region_op),
             region_op.GlobalTrueVSize()};

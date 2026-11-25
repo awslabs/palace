@@ -44,7 +44,8 @@ class SpaceOperator;
 class EnvironmentOperator
 {
 public:
-  // The records of a model, in order (flat, in the saved basis, on root).
+  // Record j of a model (flat, in the saved basis, on root): called on every process, in
+  // turn. Collective.
   using RecordFunction = std::function<std::vector<std::complex<double>>(std::size_t)>;
 
   // Read the model and check it against the run: the environment (its record and, on the
@@ -55,8 +56,9 @@ public:
   // Collective.
   EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op, int grid_procs = 0);
 
-  // The rational model of this run's environment, sampled offline on the full mesh, with
-  // its records. Collective.
+  // A model of this run's environment, condensed offline on the full mesh: rational, with
+  // its samples as records, taken here, or exact, at the frequencies of the sweep, whose
+  // records are taken when the sweep reaches them. Collective.
   EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
                       const DrivenSubstructureModel &sampled, const RecordFunction &record);
   ~EnvironmentOperator();
@@ -146,6 +148,8 @@ private:
   const std::string model_path;
   std::vector<int> region_attrs;
   DrivenSubstructureModel model;
+  // The records of an exact model of this run (see the constructor).
+  RecordFunction exact_records;
   bool region_mesh = false;
   int nG = 0, np = 0, ne = 0;
   std::vector<int> env_ports;
