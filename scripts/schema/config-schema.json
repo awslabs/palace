@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-1-1",
+  "$id": "urn:palace:schema:6-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -2799,6 +2799,27 @@
         }
       ]
     },
+    "MultigridCycle": {
+      "type": "string",
+      "oneOf": [
+        {
+          "const": "Default",
+          "description": "Use Palace's default V-cycles for the problem type and Krylov solver."
+        },
+        {
+          "const": "Symmetric",
+          "description": "Pre-smooth and post-smooth on each multigrid level."
+        },
+        {
+          "const": "OneSided",
+          "description": "Pre-smooth only, at twice the smoothing order (see [`\"MGSmoothOrder\"`](@ref config-solver-linear-mgsmoothorder)), apart from the auxiliary space correction of distributive relaxation, which follows the coarse-grid correction. The preconditioner is not symmetric, so this requires the GMRES or FGMRES Krylov solver."
+        },
+        {
+          "const": "Auto",
+          "description": "Solve the first linear system with symmetric V-cycles and again with one-sided ones, which are kept for the next solves if they need at most as many iterations. Requires the GMRES or FGMRES Krylov solver."
+        }
+      ]
+    },
     "MultigridCoarsening": {
       "type": "string",
       "default": "Logarithmic",
@@ -3519,13 +3540,13 @@
         },
         "MGSmoothIts": {
           "type": "integer",
-          "description": "Number of pre- and post-smooth iterations for multigrid preconditioners, when the geometric multigrid preconditioner is enabled.",
+          "description": "Number of pre- and post-smooth iterations for multigrid preconditioners, when the geometric multigrid preconditioner is enabled. One-sided V-cycles ([`\"MGCycleType\"`](@ref config-solver-linear-mgcycletype)) only pre-smooth.",
           "exclusiveMinimum": 0,
           "default": 1
         },
         "MGSmoothOrder": {
           "type": "integer",
-          "description": "Polynomial smoothing order for geometric multigrid. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`.",
+          "description": "Polynomial smoothing order for geometric multigrid, of the pre- and post-smoothers of symmetric V-cycles. One-sided V-cycles ([`\"MGCycleType\"`](@ref config-solver-linear-mgcycletype)) smooth once per level, for about the same smoothing work per V-cycle: at twice this order on every level or, with the default, at twice the default of each level, `max(4 \u00d7 p_l, 8)` for its finite element order `p_l`. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`.",
           "exclusiveMinimum": 0
         },
         "MGSmoothEigScaleMax": {
@@ -3546,6 +3567,11 @@
           "type": "boolean",
           "description": "Use 4th-kind Chebyshev polynomial smoother.",
           "default": true,
+          "x-palace-advanced": true
+        },
+        "MGCycleType": {
+          "$ref": "#/$defs/MultigridCycle",
+          "description": "Multigrid V-cycles. If omitted, Palace uses `\"Auto\"` for eigenmode simulations with GMRES or FGMRES, and `\"Symmetric\"` otherwise: one-sided V-cycles can slow down the strongly indefinite linear systems of some driven simulations and boundary mode solves.",
           "x-palace-advanced": true
         },
         "PCMatReal": {

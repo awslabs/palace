@@ -6,6 +6,7 @@
 
 #include <memory>
 #include <type_traits>
+#include <vector>
 #include "linalg/iterative.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
@@ -16,6 +17,9 @@ namespace palace
 
 class FiniteElementSpaceHierarchy;
 class IoData;
+
+template <OperatorType OperType>
+class GeometricMultigridSolver;
 
 namespace config
 {
@@ -54,8 +58,23 @@ protected:
   // of iterations.
   mutable int ksp_mult, ksp_mult_it;
 
+  // Whether the most recent Mult converged, and whether it was stopped by the correction
+  // limit (see SetMaxRelativeCorrection).
+  mutable bool converged, correction_exceeded;
+
   // Enable timer contribution for Timer::KSP_PRECONDITIONER.
   bool use_timer;
+
+  // Multigrid preconditioners (not owned) whose V-cycles the first solve chooses, and the
+  // print level for the choice.
+  mutable std::vector<GeometricMultigridSolver<OperType> *> auto_cycle_gmg;
+  int auto_cycle_print;
+
+  bool MultAutoCycle(const VecType &x, VecType &y, double &final_res,
+                     double &initial_res) const;
+
+  // Whether the most recent solve of the Krylov solver was stopped by the correction limit.
+  bool KrylovCorrectionExceeded() const;
 
 public:
   BaseKspSolver(const config::LinearSolverData &linear, MatrixSymmetry pc_mat_sym,
@@ -70,7 +89,7 @@ public:
   int NumTotalMultIterations() const { return ksp_mult_it; }
 
   // Whether the most recent Mult converged to the requested tolerance.
-  bool GetConverged() const { return ksp->GetConverged(); }
+  bool GetConverged() const { return converged; }
 
   // Forward tolerance access to the underlying iterative solver.
   double GetRelTol() const { return ksp->GetRelTol(); }
@@ -79,6 +98,12 @@ public:
   void SetAbsTol(double tol) { ksp->SetAbsTol(tol); }
 
   void SetOperators(const OperType &op, const OperType &pc_op);
+
+  // Choose between symmetric and one-sided V-cycles for these multigrid preconditioners on
+  // the next solve: the one-sided V-cycles are kept if they need at most as many
+  // iterations.
+  void SetAutoMultigridCycle(std::vector<GeometricMultigridSolver<OperType> *> &&gmg,
+                             int print);
 
   // Whether the iterative solver uses the given solution vector as initial guess.
   void SetInitialGuess(bool guess) { ksp->SetInitialGuess(guess); }

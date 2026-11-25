@@ -9,7 +9,6 @@
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
-#include "utils/iodata.hpp"
 
 namespace mfem
 {
@@ -23,10 +22,26 @@ class HypreParMatrix;
 namespace palace
 {
 
+class FiniteElementSpaceHierarchy;
+
+// The smoothing orders of the levels of one-sided V-cycles, from the finite element order
+// p_l of each level and the smoothing order of symmetric V-cycles, which is the same on
+// every level: twice the default order of each level, max(4 p_l, 8), when the order of
+// symmetric V-cycles is the default for the finest level, max(2 p, 4), and twice it
+// otherwise. Twice the order of the finest level on every level, at an order 16 on the
+// order 2 level of an order 4 hierarchy, amplifies the components below the shift of
+// eigenvalue problems more.
+std::vector<int> GetOneSidedSmoothOrders(const std::vector<int> &level_orders,
+                                         int smooth_order);
+
+// The same, from the finite element order of each level of a space hierarchy.
+std::vector<int> GetOneSidedSmoothOrders(const FiniteElementSpaceHierarchy &fespaces,
+                                         int smooth_order);
+
 //
 // Geometric multigrid preconditioner using a given coarse solver for the provided
 // hierarchy of finite element spaces. Optionally can be configured to use auxiliary space
-// smoothing at each level.
+// smoothing at each level, and one-sided V-cycles.
 //
 template <OperatorType OperType>
 class GeometricMultigridSolver : public Solver<OperType>
@@ -54,6 +69,20 @@ private:
   // Enable timer contribution for Timer::KSP_COARSE_SOLVE.
   bool use_timer;
 
+  // Polynomial order of the pre- and post-smoothers of symmetric V-cycles.
+  const int smooth_order;
+
+  // One-sided V-cycles, which pre-smooth but do not post-smooth, at about twice the
+  // smoothing order (Phillips and Fischer, 2022): the preconditioner is not symmetric, so
+  // only for GMRES and FGMRES. Their smoothing order on each level (see
+  // GetOneSidedSmoothOrders), twice the order of symmetric V-cycles if empty.
+  bool one_sided;
+  std::vector<int> one_sided_orders;
+  int GetOneSidedOrder(std::size_t l) const
+  {
+    return one_sided_orders.empty() ? 2 * smooth_order : one_sided_orders[l];
+  }
+
   // Optional subdomain correction at the finest level, Y += S A_S⁻¹ Sᵀ (X - A Y), with S
   // the selection of the subdomain true DOFs of the multigrid operator and A_S = Sᵀ A S the
   // corresponding principal submatrix (complex-valued operators only).
@@ -73,18 +102,8 @@ public:
                            const std::vector<const Operator *> &P,
                            const std::vector<const Operator *> *G, int cycle_it,
                            int smooth_it, int cheby_order, double cheby_sf_max,
-                           double cheby_sf_min, bool cheby_4th_kind);
-  GeometricMultigridSolver(const IoData &iodata, MPI_Comm comm,
-                           std::unique_ptr<Solver<OperType>> &&coarse_solver,
-                           const std::vector<const Operator *> &P,
-                           const std::vector<const Operator *> *G = nullptr)
-    : GeometricMultigridSolver(
-          comm, std::move(coarse_solver), P, G, iodata.solver.linear.mg_cycle_it,
-          iodata.solver.linear.mg_smooth_it, iodata.solver.linear.mg_smooth_order,
-          iodata.solver.linear.mg_smooth_sf_max, iodata.solver.linear.mg_smooth_sf_min,
-          iodata.solver.linear.mg_smooth_cheby_4th)
-  {
-  }
+                           double cheby_sf_min, bool cheby_4th_kind, bool one_sided = false,
+                           const std::vector<int> &one_sided_orders = {});
 
   ~GeometricMultigridSolver() override;
 
@@ -100,6 +119,12 @@ public:
   void Mult(const VecType &x, VecType &y) const override;
 
   void EnableTimer() { use_timer = true; }
+
+  auto GetNumLevels() const { return A.size(); }
+
+  // Switch between one-sided and symmetric V-cycles.
+  void SetOneSided(bool one_sided_cycle);
+  bool IsOneSided() const { return one_sided; }
 };
 
 }  // namespace palace

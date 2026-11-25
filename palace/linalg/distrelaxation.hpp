@@ -63,6 +63,9 @@ public:
 
   void SetOperators(const OperType &op, const OperType &op_G);
 
+  // Change the order of the Chebyshev smoothers of both spaces.
+  void SetOrder(int cheby_order);
+
   // Set the local true DOFs of the primary and auxiliary spaces which are not updated by
   // the smoothers, used at the next call to SetOperators.
   void SetMasks(const std::vector<int> &tdofs, const std::vector<int> &tdofs_G);
@@ -90,6 +93,12 @@ public:
   void Mult2(const VecType &x, VecType &y, VecType &r) const override;
 
   void MultTranspose2(const VecType &x, VecType &y, VecType &r) const override;
+
+  // Mult2 is MultExceptLastAuxiliary2 followed by MultAuxiliary2, the auxiliary space
+  // correction y = y + G B_G Gᵀ (x - A y) of the last smoother iteration.
+  void MultExceptLastAuxiliary2(const VecType &x, VecType &y, VecType &r) const;
+
+  void MultAuxiliary2(const VecType &x, VecType &y, VecType &r) const;
 };
 
 }  // namespace palace
