@@ -1,17 +1,34 @@
 diff --git a/repos/spack_repo/builtin/packages/mumps/package.py b/repos/spack_repo/builtin/packages/mumps/package.py
-index aaa57a1bb5..e6a8cc2125 100644
+index 00ece99b771..007c02752ef 100644
 --- a/repos/spack_repo/builtin/packages/mumps/package.py
 +++ b/repos/spack_repo/builtin/packages/mumps/package.py
-@@ -270,6 +270,12 @@ class Mumps(Package):
-         if "+blr_mt" in self.spec:
-             optf.append("-DBLR_MT")
+@@ -51,6 +51,14 @@ class Mumps(Package):
+         description="Enable MPI_IN_PLACE optimization (Not supported by some MPI environments)",
+         when="@5.6.2: +mpi",
+     )
++    # Off by default where it conflicts (see below): otherwise the concretizer avoids the
++    # conflict by turning off shared or mpi instead.
++    variant(
++        "mpi_in_place",
++        default=False,
++        description="Enable MPI_IN_PLACE optimization (Not supported by some MPI environments)",
++        when="@5.6.2: +mpi +shared platform=darwin",
++    )
+     variant("scotch", default=False, description="Activate Scotch as a possible ordering library")
+     variant(
+         "ptscotch", default=False, description="Activate PT-Scotch as a possible ordering library"
+@@ -107,6 +115,14 @@ class Mumps(Package):
+         when="~int64",
+         msg="mumps~int64 calls BLAS with 32-bit integers",
+     )
++    # Avoid MPI_IN_PLACE for shared libraries on macOS: they are linked without MPI, so each has
++    # its own copy of the Fortran MPI_IN_PLACE sentinel (a COMMON block), and MPI recognizes only
++    # one copy per process.
++    conflicts(
++        "+mpi_in_place",
++        when="@5.6.2: +mpi +shared platform=darwin",
++        msg="MPI_IN_PLACE does not work with shared libraries on macOS",
++    )
  
-+        # On macOS the shared libraries are linked without MPI, so each has its
-+        # own copy of the Fortran MPI_IN_PLACE sentinel (a COMMON block), and
-+        # MPI recognizes only one copy per process.
-+        if self.spec.satisfies("+mpi+shared platform=darwin"):
-+            optf.append("-DAVOID_MPI_IN_PLACE")
-+
-         # Intel and oneAPI Fortran compilers link for_main.o which provides
-         # its own main(). This conflicts with the C examples' main(), causing
-         # "multiple definition of `main'" errors. The -nofor-main flag
+     @when("+incfort")
+     def patch(self):

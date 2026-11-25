@@ -69,6 +69,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     example, and described the PML in the boundary conditions guide.
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
+#### Build system
+
+  - The superbuild builds the versions of hypre (v3.2.1), MUMPS (5.9.2), PETSc, and SLEPc
+    (v3.26.1) that the Spack build uses with the updated spack-packages pin.
+    [PR 1274](https://github.com/awslabs/palace/pull/1274).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features
