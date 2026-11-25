@@ -170,12 +170,21 @@ TEMPLATE_TEST_CASE("Block cyclic factorizations solve dense systems",
   std::vector<T> A;
   if (root)
   {
+    // The symmetric part, each entry computed once, and the diagonal or the shift.
     A.resize(static_cast<std::size_t>(n) * n);
+    for (int j = 0; j < n; j++)
+    {
+      for (int i = j; i < n; i++)
+      {
+        A[i + static_cast<std::size_t>(n) * j] = A[j + static_cast<std::size_t>(n) * i] =
+            Entry<T>(0.1 * Value(i, j));
+      }
+    }
     for (int j = 0; j < n; j++)
     {
       for (int i = 0; i < n; i++)
       {
-        T v = Entry<T>(0.05 * (Value(i, j) + Value(j, i)));
+        T &v = A[i + static_cast<std::size_t>(n) * j];
         if (pivoting)
         {
           v += (i == (j + 1) % n) ? 1.0 : 0.0;
@@ -185,7 +194,6 @@ TEMPLATE_TEST_CASE("Block cyclic factorizations solve dense systems",
         {
           v += (i == j) ? double(n) : 0.0;
         }
-        A[i + static_cast<std::size_t>(n) * j] = v;
       }
     }
   }

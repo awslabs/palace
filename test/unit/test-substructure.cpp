@@ -794,18 +794,25 @@ void CheckTriangleRedistribution(int n, bool mapped)
 {
   MPI_Comm comm = Mpi::World();
   const int nranks = Mpi::Size(comm), rank = Mpi::Rank(comm);
-  auto value = [](int a, int b)
+  // The entries of S, each computed once, so that each use of one is the same value.
+  std::vector<T> S(static_cast<std::size_t>(n) * n);
+  for (int i = 0; i < n; i++)
   {
-    const int i = std::max(a, b), j = std::min(a, b);
-    if constexpr (std::is_same_v<T, double>)
+    for (int j = 0; j <= i; j++)
     {
-      return std::sin(1.0 + i + 3.1 * j);
+      if constexpr (std::is_same_v<T, double>)
+      {
+        S[static_cast<std::size_t>(i) * n + j] = std::sin(1.0 + i + 3.1 * j);
+      }
+      else
+      {
+        S[static_cast<std::size_t>(i) * n + j] =
+            T(std::sin(1.0 + i + 3.1 * j), std::cos(0.5 * i - 2.0 * j));
+      }
+      S[static_cast<std::size_t>(j) * n + i] = S[static_cast<std::size_t>(i) * n + j];
     }
-    else
-    {
-      return T(std::sin(1.0 + i + 3.1 * j), std::cos(0.5 * i - 2.0 * j));
-    }
-  };
+  }
+  auto value = [&](int a, int b) { return S[static_cast<std::size_t>(a) * n + b]; };
   std::vector<int> perm(n);
   std::iota(perm.begin(), perm.end(), 0);
   std::mt19937 rng(7);

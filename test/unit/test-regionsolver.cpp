@@ -115,11 +115,17 @@ TEMPLATE_TEST_CASE("RegionSolver solves a system with a dense interface term",
     keep[i] = on_gamma(row0 + i) || (row0 + i) % 7 != 3;
   }
   const int nG = static_cast<int>(gamma.size());
-  auto X = [&](int a, int b)
+  // The term X, symmetric, each entry computed once.
+  std::vector<cplx> Xs(static_cast<std::size_t>(nG) * nG);
+  for (int a = 0; a < nG; a++)
   {
-    return 0.05 * (Value(a, b) + Value(b, a)) +
-           ((a == b) ? cplx(1.0 + 0.1 * nG, 0.0) : cplx(0.0));
-  };
+    for (int b = 0; b <= a; b++)
+    {
+      Xs[static_cast<std::size_t>(a) * nG + b] = Xs[static_cast<std::size_t>(b) * nG + a] =
+          0.1 * Value(a, b) + ((a == b) ? cplx(1.0 + 0.1 * nG, 0.0) : cplx(0.0));
+    }
+  }
+  auto X = [&](int a, int b) { return Xs[static_cast<std::size_t>(a) * nG + b]; };
 
   std::vector<LinearSolver> types;
 #if defined(MFEM_USE_MUMPS)
