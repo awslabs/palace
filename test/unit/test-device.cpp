@@ -2,77 +2,39 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <cstdlib>
-#include <optional>
+#include <deque>
+#include <iterator>
 #include <string>
-#include <vector>
 #include <catch2/catch_test_macros.hpp>
+#include "test-helpers.hpp"
 #include "utils/device.hpp"
 
 using namespace palace;
 
-namespace
-{
-
-// Unsets the launcher variables read by utils::GetLauncherLocalRank for the scope of a
-// test, and restores them afterwards.
-class LauncherEnvironment
-{
-private:
-  static constexpr const char *names[] = {"OMPI_COMM_WORLD_LOCAL_RANK",
-                                          "MV2_COMM_WORLD_LOCAL_RANK",
-                                          "MPI_LOCALRANKID",
-                                          "PMI_LOCAL_RANK",
-                                          "SLURM_LOCALID",
-                                          "PALS_LOCAL_RANKID",
-                                          "FLUX_TASK_LOCAL_ID"};
-  std::vector<std::optional<std::string>> saved;
-
-public:
-  LauncherEnvironment()
-  {
-    for (const char *name : names)
-    {
-      const char *value = std::getenv(name);
-      saved.push_back(value ? std::optional<std::string>(value) : std::nullopt);
-      unsetenv(name);
-    }
-  }
-  ~LauncherEnvironment()
-  {
-    for (std::size_t i = 0; i < saved.size(); i++)
-    {
-      if (saved[i])
-      {
-        setenv(names[i], saved[i]->c_str(), 1);
-      }
-      else
-      {
-        unsetenv(names[i]);
-      }
-    }
-  }
-};
-
-}  // namespace
-
 TEST_CASE("GetLauncherLocalRank", "[device][Serial]")
 {
-  LauncherEnvironment env;
+  // Unset the launcher variables, restoring them at the end of the test.
+  std::deque<ScopedEnvironmentVariable> environment;
+  for (const char *name : utils::LAUNCHER_LOCAL_RANK_VARIABLES)
+  {
+    environment.emplace_back(name, nullptr);
+  }
   CHECK(utils::GetLauncherLocalRank() == -1);
 
-  // Each launcher's variable is read, and the first one set wins.
-  setenv("FLUX_TASK_LOCAL_ID", "4", 1);
-  CHECK(utils::GetLauncherLocalRank() == 4);
-  setenv("SLURM_LOCALID", "3", 1);
-  CHECK(utils::GetLauncherLocalRank() == 3);
-  setenv("OMPI_COMM_WORLD_LOCAL_RANK", "1", 1);
-  CHECK(utils::GetLauncherLocalRank() == 1);
+  // The first variable that is set wins.
+  const int num_variables =
+      static_cast<int>(std::size(utils::LAUNCHER_LOCAL_RANK_VARIABLES));
+  for (int i = num_variables - 1; i >= 0; i--)
+  {
+    setenv(utils::LAUNCHER_LOCAL_RANK_VARIABLES[i], std::to_string(i).c_str(), 1);
+    CHECK(utils::GetLauncherLocalRank() == i);
+  }
 
   // A value that is not a non-negative integer gives no rank, without falling back to the
   // variables after it.
   for (const char *value : {"", "x", "-1", "2x", " 2", "99999999999"})
   {
-    setenv("OMPI_COMM_WORLD_LOCAL_RANK", value, 1);
+    setenv(utils::LAUNCHER_LOCAL_RANK_VARIABLES[0], value, 1);
     CHECK(utils::GetLauncherLocalRank() == -1);
   }
 }

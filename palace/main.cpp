@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -168,8 +169,8 @@ int main(int argc, char *argv[])
   std::optional<BlockTimer> init_timer(std::in_place, Timer::INIT);
 
   // Parse command-line options, before MPI_Init so that a run can read its configuration
-  // file and select its device first (see utils::InitDeviceBeforeMpi). Messages are
-  // printed after MPI_Init.
+  // file and select its device first (see utils::InitDeviceBeforeMpi). The options are
+  // acted on after MPI_Init.
   std::string_view exit_option;  // The first of -h, --help, and --version, if any
   bool dryrun = false;
   for (int i = 1; i < argc; i++)
@@ -181,9 +182,10 @@ int main(int argc, char *argv[])
     }
     dryrun = dryrun || arg == "-dry-run" || arg == "--dry-run";
   }
+  // A configuration file which cannot be opened is reported after MPI_Init.
   nlohmann::json config;
   int early_device_id = -1;
-  if (exit_option.empty() && !dryrun && argc >= 2)
+  if (exit_option.empty() && !dryrun && argc >= 2 && std::ifstream(argv[1]).is_open())
   {
     config = IoData::Parse(argv[1]);
     const nlohmann::json::json_pointer device("/Solver/Device");
@@ -239,26 +241,27 @@ int main(int argc, char *argv[])
   // Perform dry run: Parse configuration file for errors and exit.
   if (dryrun)
   {
-    if (Mpi::Root(world_comm))
+    config = IoData::ParseAndValidate(argv[argc - 1]);
+    IoData iodata(config, false);
+    if (!std::filesystem::exists(iodata.model.mesh))
     {
-      auto config = IoData::ParseAndValidate(argv[argc - 1]);
-      IoData iodata(config, false);
-      if (!std::filesystem::exists(iodata.model.mesh))
-      {
-        MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
-      }
-      // Echo the fully-resolved configuration so users can inspect every filled-in
-      // default without running the simulation.
-      Mpi::Print(world_comm, "\nResolved configuration:\n{}\n",
-                 IoData::ConcretizeDefaults(iodata, config).dump(2));
+      MFEM_ABORT("Unable to open mesh file \"" << iodata.model.mesh << "\"!");
     }
+    // Echo the fully-resolved configuration so users can inspect every filled-in default
+    // without running the simulation.
+    Mpi::Print(world_comm, "\nResolved configuration:\n{}\n",
+               IoData::ConcretizeDefaults(iodata, config).dump(2));
     Mpi::Print(world_comm, "Dry-run: No errors detected in configuration file \"{}\"\n\n",
                argv[argc - 1]);
     return 0;
   }
 
-  // Validate the configuration file, parsed before MPI_Init.
+  // Validate the configuration file, parsed before MPI_Init if it could be opened.
   PrintPalaceBanner(world_comm);
+  if (config.is_null())
+  {
+    config = IoData::Parse(argv[1]);
+  }
   IoData::Validate(config);
   IoData iodata(config, false);
   MakeOutputFolder(iodata, world_comm);
@@ -275,11 +278,11 @@ int main(int argc, char *argv[])
   const int ngpu = utils::GetDeviceCount();
   const std::string device_str = ConfigureDevice(iodata.solver.device);
   int device_id = utils::GetDeviceId(world_comm, ngpu);
-  if (early_device_id >= 0)
+  if (iodata.solver.device == Device::GPU)
   {
-    // Keep the device selected before MPI_Init, but warn if it differs from the assignment
-    // by MPI, for example with a launcher variable inherited from an outer launch.
-    bool differs = (early_device_id != device_id);
+    // Keep a device selected before MPI_Init, but warn if it differs from the assignment by
+    // MPI, for example with a launcher variable inherited from an outer launch.
+    bool differs = (early_device_id >= 0 && early_device_id != device_id);
     Mpi::GlobalOr(1, &differs, world_comm);
     if (differs)
     {
@@ -287,7 +290,10 @@ int main(int argc, char *argv[])
                    "The device selected from the node-local rank set by the MPI launcher "
                    "differs from the node-local MPI rank on some processes!\n");
     }
-    device_id = early_device_id;
+    if (early_device_id >= 0)
+    {
+      device_id = early_device_id;
+    }
   }
   utils::ConfigureMemory(device_str, device_id);
   mfem::Device device(device_str, device_id);

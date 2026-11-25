@@ -19,10 +19,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
-  - The GPU of each process is selected, and its context created, before `MPI_Init`, so
-    that MPI libraries which set up the communication between the GPUs of a node in
-    `MPI_Init`, like Open MPI 5, can do so.
-    [PR 1260](https://github.com/awslabs/palace/pull/1260).
+  - In GPU runs, when the MPI launcher sets the node-local rank of each process, the GPU
+    of each process is selected, and its context created, before `MPI_Init`, so that MPI
+    libraries which set up the communication between the GPUs of a node in `MPI_Init`,
+    like Open MPI 5, can do so. [PR 1260](https://github.com/awslabs/palace/pull/1260).
+
+#### Bug Fixes
+
+  - `--dry-run` with more than one process no longer hangs when the configuration file
+    fails the schema validation. [PR 1260](https://github.com/awslabs/palace/pull/1260).
 
 ## [0.20.0] - 2026-11-23
 

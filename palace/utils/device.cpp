@@ -31,11 +31,7 @@ int GetDeviceCount()
 
 int GetLauncherLocalRank()
 {
-  // Node-local rank set by Open MPI, MVAPICH, MPICH and Intel MPI, PMI, Slurm, Cray PALS,
-  // or Flux.
-  for (const char *name :
-       {"OMPI_COMM_WORLD_LOCAL_RANK", "MV2_COMM_WORLD_LOCAL_RANK", "MPI_LOCALRANKID",
-        "PMI_LOCAL_RANK", "SLURM_LOCALID", "PALS_LOCAL_RANKID", "FLUX_TASK_LOCAL_ID"})
+  for (const char *name : LAUNCHER_LOCAL_RANK_VARIABLES)
   {
     if (const char *value = std::getenv(name))
     {
