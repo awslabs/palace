@@ -191,16 +191,22 @@ private:
 class DrivenSubstructure
 {
 public:
-  // Online, with the saved model: on the mesh of the region (region_mesh), Γ is the set of
-  // the region's boundary DOFs at the points of the saved interface DOFs. Offline, the
-  // environment is factored with its Schur complement onto Γ by the sparse direct solver
-  // given (STRUMPACK, MUMPS or SUPERLU), else by MUMPS, STRUMPACK or SuperLU_DIST (see
-  // SchurSolverFor), with the fill-reducing ordering given.
+  // Offline: the environment is condensed (see Condense), factored with its Schur
+  // complement onto Γ by the sparse direct solver given (STRUMPACK, MUMPS or SUPERLU), else
+  // by MUMPS, STRUMPACK or SuperLU_DIST (see SchurSolverFor), with the fill-reducing
+  // ordering given.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
-                     const std::vector<int> &environment_attributes, bool online = false,
-                     const DrivenSubstructureModel *saved = nullptr,
-                     bool region_mesh = false, LinearSolver solver = LinearSolver::DEFAULT,
+                     const std::vector<int> &environment_attributes,
+                     LinearSolver solver = LinearSolver::DEFAULT,
                      SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
+
+  // Online, against a model of the environment (saved, or sampled in this run): its
+  // fingerprint centers, and on the mesh of the region (region_mesh) Γ is the set of the
+  // region's boundary DOFs at the points of its interface DOFs. The environment is not
+  // condensed.
+  DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
+                     const std::vector<int> &environment_attributes,
+                     const DrivenSubstructureModel &model, bool region_mesh);
   ~DrivenSubstructure();
 
   // Condense the environment at the angular frequency ω (nondimensional): S_E(ω) (see
@@ -220,18 +226,9 @@ public:
   // symmetric), in interface order, handed over.
   std::vector<std::complex<double>> TakeSchur() { return std::move(S); }
 
-  // Global true DOFs of the interface in interface order (replicated), and its size.
-  const std::vector<HYPRE_BigInt> &InterfaceTrueDofs() const { return gamma_tdofs; }
-  int InterfaceSize() const { return static_cast<int>(gamma_tdofs.size()); }
-
-  // Local true-DOF classification: environment interior, interface (excluding the
-  // Dirichlet DOFs).
-  const std::vector<char> &EnvironmentInterior() const { return is_env_int; }
-  const std::vector<char> &Interface() const { return is_gamma; }
-  const std::vector<char> &RegionInterior() const { return is_region_int; }
-
-  // Interface index of each local true DOF (-1 if not on Γ).
-  std::vector<int> InterfaceIndex() const;
+  // The interface Γ, in its order, with the classes of the local true DOFs: the
+  // environment interior, Γ and the region interior, none of them Dirichlet.
+  const SubstructureInterface &GetInterface() const { return iface; }
 
   MPI_Comm GetComm() const;
 
@@ -282,9 +279,12 @@ private:
   SymbolicFactorization ordering;
   bool online, region_only = false;
   std::vector<int> region_attrs;
-  std::vector<char> is_env_int, is_gamma, is_region_int;
-  std::vector<HYPRE_BigInt> gamma_tdofs;
-  std::vector<int> gamma_cnt, gamma_disp;  // interface DOFs per rank
+  SubstructureInterface iface;
+
+  DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
+                     const std::vector<int> &environment_attributes,
+                     const DrivenSubstructureModel *model, bool region_mesh,
+                     LinearSolver solver, SymbolicFactorization ordering);
 
   // The operator K + iω C - ω² M + A2(ω) of the environment, factored on its interior and
   // Γ: the lower-triangle pattern and the entries of the

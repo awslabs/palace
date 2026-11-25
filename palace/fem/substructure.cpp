@@ -1483,6 +1483,69 @@ SubstructureInterface::SubstructureInterface(InterfaceClasses &&classes,
                  offsets.data(), HYPRE_MPI_BIG_INT, comm);
 }
 
+namespace
+{
+
+// A row of w values, so that the counts of a row exchange are rows (n w entries can
+// overflow an int).
+class RowType
+{
+public:
+  RowType(int w, MPI_Datatype value)
+  {
+    MPI_Type_contiguous(w, value, &type);
+    MPI_Type_commit(&type);
+  }
+  ~RowType() { MPI_Type_free(&type); }
+  RowType(const RowType &) = delete;
+  RowType &operator=(const RowType &) = delete;
+  MPI_Datatype type;
+};
+
+}  // namespace
+
+template <typename T>
+std::vector<T> SubstructureInterface::ScatterRows(MPI_Comm comm, const std::vector<T> &full,
+                                                  int w) const
+{
+  std::vector<T> rows(static_cast<std::size_t>(count) * w, T(0.0));
+  if (w == 0)
+  {
+    return rows;
+  }
+  const RowType row(w, mpi::DataType<T>());
+  MPI_Scatterv(Mpi::Root(comm) ? full.data() : nullptr, counts.data(), offsets.data(),
+               row.type, rows.data(), count, row.type, 0, comm);
+  return rows;
+}
+
+template <typename T>
+std::vector<T> SubstructureInterface::GatherRows(MPI_Comm comm, const std::vector<T> &rows,
+                                                 int w) const
+{
+  const bool root = Mpi::Root(comm);
+  std::vector<T> full(root ? static_cast<std::size_t>(size) * w : 0, T(0.0));
+  if (w == 0)
+  {
+    return full;
+  }
+  const RowType row(w, mpi::DataType<T>());
+  MPI_Gatherv(rows.data(), count, row.type, root ? full.data() : nullptr, counts.data(),
+              offsets.data(), row.type, 0, comm);
+  return full;
+}
+
+template std::vector<double>
+SubstructureInterface::ScatterRows(MPI_Comm, const std::vector<double> &, int) const;
+template std::vector<std::complex<double>>
+SubstructureInterface::ScatterRows(MPI_Comm, const std::vector<std::complex<double>> &,
+                                   int) const;
+template std::vector<double>
+SubstructureInterface::GatherRows(MPI_Comm, const std::vector<double> &, int) const;
+template std::vector<std::complex<double>>
+SubstructureInterface::GatherRows(MPI_Comm, const std::vector<std::complex<double>> &,
+                                  int) const;
+
 bool FingerprintsMatch(std::span<const double> a, std::span<const double> b,
                        std::size_t n_counts, double tol, bool complex)
 {

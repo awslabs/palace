@@ -93,11 +93,8 @@ public:
   // C += S_E(ω) for the local part C of a matrix on Grid().
   void AddSchurBlocks(double omega, std::vector<std::complex<double>> &C);
 
-  // The true DOFs of Γ on this process, a block of the interface order: its first index is
-  // InterfaceOffsets()[rank], and the counts of all processes are InterfaceCounts().
-  const std::vector<int> &InterfaceTrueDofs() const { return gamma_local; }
-  const std::vector<int> &InterfaceCounts() const { return gamma_cnt; }
-  const std::vector<int> &InterfaceOffsets() const { return gamma_disp; }
+  // The interface Γ of the run, in its order (see SubstructureInterface).
+  const SubstructureInterface &Interface() const { return iface; }
 
   // RHS += R_Γᵀ g_E(ω) of an excitation; false if it has no sources in the environment.
   bool AddExcitation(int excitation_idx, double omega, ComplexVector &RHS);
@@ -156,10 +153,9 @@ private:
   std::map<int, int> ex_col;
   mfem::Array<int> pinned;
 
-  // The rows of Γ of this process: its local true DOFs (in interface order), and the
-  // counts and offsets of all processes.
+  // The interface, and the local true DOFs of Γ on this process, in interface order.
+  SubstructureInterface iface;
   std::vector<int> gamma_local;
-  std::vector<int> gamma_cnt, gamma_disp;
 
   // A record on the current interface: the local part of S_E on the grid, the rows of Γ of
   // this process of the condensed sources g (per model column) and of the port functionals

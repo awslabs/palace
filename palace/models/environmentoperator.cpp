@@ -67,8 +67,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
                                   region_mesh);
   }
   auto ds = std::make_unique<DrivenSubstructure>(
-      space_op, sub.region_attributes, sub.environment_attributes, true, &model,
-      region_mesh, sub.direct_solver, iodata.solver.linear.sym_factorization);
+      space_op, sub.region_attributes, sub.environment_attributes, model, region_mesh);
   if (region_mesh)
   {
     // Γ is on the boundary of the mesh of the region, so a boundary term on it would be the
@@ -95,39 +94,31 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
                     << fmt::format("{}", fmt::join(on_gamma, ", "))
                     << ") would be held by the region alone: run online on the full mesh!");
   }
-  nG = ds->InterfaceSize();
+  nG = ds->GetInterface().size;
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
   std::map<int, std::vector<char>> port_dofs;
   std::vector<int> port_attributes;
   env_ports = EnvironmentPorts(iodata, *ds, port_dofs, port_attributes);
 
-  // The pinned DOFs, and the rows of Γ of each process: its interface DOFs are a block of
-  // the interface order (by owner, then local index).
+  // The interface, the local true DOFs of Γ in its order, and the pinned DOFs.
+  iface = ds->GetInterface();
   const auto &dbc = space_op.GetNDDbcTDofLists().back();
-  std::vector<char> is_dbc(ds->Interface().size(), 0);
+  std::vector<char> is_dbc(iface.gamma.size(), 0);
   const int *dl = dbc.HostRead();
   for (int q = 0; q < dbc.Size(); q++)
   {
     is_dbc[dl[q]] = 1;
   }
-  for (std::size_t i = 0; i < ds->Interface().size(); i++)
+  for (std::size_t i = 0; i < iface.gamma.size(); i++)
   {
-    if (ds->Interface()[i])
+    if (iface.gamma[i])
     {
       gamma_local.push_back(static_cast<int>(i));
     }
-    else if (!ds->RegionInterior()[i] && !is_dbc[i])
+    else if (!iface.region_int[i] && !is_dbc[i])
     {
       pinned.Append(static_cast<int>(i));
     }
-  }
-  const int nranks = Mpi::Size(comm), nloc = static_cast<int>(gamma_local.size());
-  gamma_cnt.assign(nranks, 0);
-  gamma_disp.assign(nranks, 0);
-  MPI_Allgather(&nloc, 1, MPI_INT, gamma_cnt.data(), 1, MPI_INT, comm);
-  for (int r = 1; r < nranks; r++)
-  {
-    gamma_disp[r] = gamma_disp[r - 1] + gamma_cnt[r - 1];
   }
   grid.emplace(comm, nG, grid_procs);
   for (int l = 0; l < grid->LocalRows(); l++)
@@ -149,7 +140,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
                   << "); the interface (Gamma) must be identical between the offline and "
                      "online runs.");
   gamma_map = MatchSignatureBasis(
-      TrueDofSignatures(space_op.GetNDSpace().Get(), ds->InterfaceIndex(), nG),
+      TrueDofSignatures(space_op.GetNDSpace().Get(), ds->GetInterface().index, nG),
       model.signatures, model.sig_w);
   saved_to_current.resize(nG);
   for (int g = 0; g < nG; g++)
@@ -360,29 +351,21 @@ EnvironmentOperator::DistributeVectors(const std::complex<double> *tail) const
 
   // The rows of Γ of each process.
   Rows rows;
-  const auto type = mpi::DataType<std::complex<double>>();
-  const int m = gamma_cnt[Mpi::Rank(comm)];
-  auto scatter = [&](const std::complex<double> *x, int width)
+  auto scatter = [&](const std::vector<std::complex<double>> &all, int k)
   {
-    std::vector<int> cnt(gamma_cnt.size()), disp(gamma_cnt.size());
-    for (std::size_t q = 0; q < gamma_cnt.size(); q++)
-    {
-      cnt[q] = gamma_cnt[q] * width;
-      disp[q] = gamma_disp[q] * width;
-    }
-    std::vector<std::complex<double>> y(static_cast<std::size_t>(m) * width);
-    MPI_Scatterv(x, cnt.data(), disp.data(), type, y.data(), m * width, type, 0, comm);
-    return y;
+    const auto *x = all.data() + static_cast<std::size_t>(k) * nG;
+    return iface.ScatterRows(comm,
+                             root ? std::vector<std::complex<double>>(x, x + nG)
+                                  : std::vector<std::complex<double>>(),
+                             1);
   };
   for (int e = 0; e < ne; e++)
   {
-    rows.g.push_back(
-        scatter(root ? all_g.data() + static_cast<std::size_t>(e) * nG : nullptr, 1));
+    rows.g.push_back(scatter(all_g, e));
   }
   for (int j = 0; j < np; j++)
   {
-    rows.h.push_back(
-        scatter(root ? all_h.data() + static_cast<std::size_t>(j) * nG : nullptr, 1));
+    rows.h.push_back(scatter(all_h, j));
   }
   rows.c.resize(static_cast<std::size_t>(np) * ne);
   if (root)
@@ -498,7 +481,7 @@ EnvironmentOperator::AllInterfaceValues(const ComplexVector &x) const
   const auto x_loc = LocalInterfaceValues(x);
   std::vector<std::complex<double>> xG(nG);
   MPI_Allgatherv(x_loc.data(), static_cast<int>(x_loc.size()), type, xG.data(),
-                 gamma_cnt.data(), gamma_disp.data(), type, comm);
+                 iface.counts.data(), iface.offsets.data(), type, comm);
   return xG;
 }
 
@@ -511,7 +494,7 @@ std::vector<double> EnvironmentOperator::AllInterfaceValues(const Vector &x) con
     x_loc[a] = px[gamma_local[a]];
   }
   MPI_Allgatherv(x_loc.data(), static_cast<int>(x_loc.size()), MPI_DOUBLE, xG.data(),
-                 gamma_cnt.data(), gamma_disp.data(), MPI_DOUBLE, comm);
+                 iface.counts.data(), iface.offsets.data(), MPI_DOUBLE, comm);
   return xG;
 }
 
@@ -570,7 +553,7 @@ void EnvironmentOperator::RecordProduct(const std::vector<std::complex<double>> 
                                         const ComplexVector &x, ComplexVector &y) const
 {
   const auto yG = Product(S, AllInterfaceValues(x));
-  const int off = gamma_disp[Mpi::Rank(comm)];
+  const int off = iface.offset;
   double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
   for (std::size_t a = 0; a < gamma_local.size(); a++)
   {
@@ -612,7 +595,7 @@ void EnvironmentOperator::RecordAddMultPart(std::size_t k, bool imag, const Vect
                                             Vector &y) const
 {
   const auto yG = ProductPart(records[k].S, imag, AllInterfaceValues(x));
-  const int off = gamma_disp[Mpi::Rank(comm)];
+  const int off = iface.offset;
   double *py = y.HostReadWrite();
   for (std::size_t a = 0; a < gamma_local.size(); a++)
   {

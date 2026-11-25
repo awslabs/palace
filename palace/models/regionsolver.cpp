@@ -149,16 +149,6 @@ void DrivenRegionSolver::SetOperator(const ComplexOperator &op)
   }
   side =
       std::make_unique<SideSystem>(std::vector<const mfem::HypreParMatrix *>{Ar, Ai}, keep);
-  const HYPRE_BigInt tstart = fes.GetMyTDofOffset();
-  const auto &gamma = env.InterfaceTrueDofs();
-  std::vector<HYPRE_BigInt> mine(gamma.size()), tdofs(env.Grid().Size());
-  for (std::size_t a = 0; a < gamma.size(); a++)
-  {
-    mine[a] = tstart + gamma[a];
-  }
-  MPI_Allgatherv(mine.data(), static_cast<int>(mine.size()), HYPRE_MPI_BIG_INT,
-                 tdofs.data(), env.InterfaceCounts().data(), env.InterfaceOffsets().data(),
-                 HYPRE_MPI_BIG_INT, comm);
   auto val = side->Values(std::vector<std::complex<double>>{
       std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 1.0)});
   const int n_loc = static_cast<int>(side->rows.size());
@@ -166,7 +156,7 @@ void DrivenRegionSolver::SetOperator(const ComplexOperator &op)
       env.Grid(), type, ordering, side->n_glob, n_loc,
       SchurFactorization<std::complex<double>>::Coo{std::move(side->irn),
                                                     std::move(side->jcn), std::move(val)},
-      side->Indices(tdofs), side->rows, add, true);
+      side->Indices(env.Interface().tdofs), side->rows, add, true);
   Mpi::Print(comm, " Region solver: {}, dense LU on a {:d} x {:d} process grid\n",
              SchurFactorizationName(type), env.Grid().NumProcessRows(),
              env.Grid().NumProcessCols());

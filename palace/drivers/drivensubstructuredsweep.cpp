@@ -197,10 +197,10 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
     unit_GHz(iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
              (2 * std::numbers::pi))
 {
-  ds = std::make_unique<DrivenSubstructure>(
-      space_op, sub.region_attributes, sub.environment_attributes, false, nullptr, false,
-      sub.direct_solver, iodata.solver.linear.sym_factorization);
-  nG = ds->InterfaceSize();
+  ds = std::make_unique<DrivenSubstructure>(space_op, sub.region_attributes,
+                                            sub.environment_attributes, sub.direct_solver,
+                                            iodata.solver.linear.sym_factorization);
+  nG = ds->GetInterface().size;
   MFEM_VERIFY(nG > 0, "The substructuring interface holds no unknowns, as of a region "
                       "enclosed by PEC: the region does not couple to the environment, so "
                       "solve it without \"Substructuring\"!");
@@ -227,7 +227,7 @@ void DrivenSubstructuredSweep::SetUpModel()
   model.nG = nG;
   model.sig_w = SignatureWidth(space_op.GetNDSpace().Get());
   model.signatures =
-      TrueDofSignatures(space_op.GetNDSpace().Get(), ds->InterfaceIndex(), nG);
+      TrueDofSignatures(space_op.GetNDSpace().Get(), ds->GetInterface().index, nG);
   model.fp_centers = ds->FingerprintCenters();
   model.env_fp = ds->EnvironmentFingerprint(omega_sample[0]);
   for (int k = 0; k < n; k++)

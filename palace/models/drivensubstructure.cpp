@@ -66,10 +66,29 @@ std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool i
 DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        const std::vector<int> &region_attributes,
                                        const std::vector<int> &environment_attributes,
-                                       bool online, const DrivenSubstructureModel *saved,
+                                       LinearSolver solver, SymbolicFactorization ordering)
+  : DrivenSubstructure(space_op, region_attributes, environment_attributes, nullptr, false,
+                       solver, ordering)
+{
+}
+
+DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
+                                       const std::vector<int> &region_attributes,
+                                       const std::vector<int> &environment_attributes,
+                                       const DrivenSubstructureModel &model,
+                                       bool region_mesh)
+  : DrivenSubstructure(space_op, region_attributes, environment_attributes, &model,
+                       region_mesh, LinearSolver::DEFAULT, SymbolicFactorization::DEFAULT)
+{
+}
+
+DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
+                                       const std::vector<int> &region_attributes,
+                                       const std::vector<int> &environment_attributes,
+                                       const DrivenSubstructureModel *saved,
                                        bool region_mesh, LinearSolver solver,
                                        SymbolicFactorization ordering)
-  : space_op(space_op), solver(solver), ordering(ordering), online(online),
+  : space_op(space_op), solver(solver), ordering(ordering), online(saved != nullptr),
     region_attrs(region_attributes)
 {
   env.attrs = environment_attributes;
@@ -114,39 +133,15 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
     cut = RegionMeshInterface(const_cast<mfem::ParFiniteElementSpace &>(fes), region_side,
                               {}, saved->signatures, saved->sig_w);
   }
-  auto classes = ClassifyInterfaceTrueDofs(rm, em, dbc, cut);
-  is_gamma = std::move(classes.gamma);
-  is_env_int = std::move(classes.env_int);
-  is_region_int = std::move(classes.region_int);
+  iface = SubstructureInterface(ClassifyInterfaceTrueDofs(rm, em, dbc, cut),
+                                fes.GetMyTDofOffset(), comm);
   for (int i = 0; i < nt; i++)
   {
-    if (!is_gamma[i] && !is_env_int[i])
+    if (!iface.gamma[i] && !iface.env_int[i])
     {
       env.pinned.Append(i);
     }
   }
-
-  // Interface order: by owner rank, then local index.
-  std::vector<HYPRE_BigInt> mine;
-  const HYPRE_BigInt tstart = fes.GetMyTDofOffset();
-  for (int i = 0; i < nt; i++)
-  {
-    if (is_gamma[i])
-    {
-      mine.push_back(tstart + i);
-    }
-  }
-  const int nranks = Mpi::Size(comm), nloc = static_cast<int>(mine.size());
-  gamma_cnt.assign(nranks, 0);
-  gamma_disp.assign(nranks, 0);
-  MPI_Allgather(&nloc, 1, MPI_INT, gamma_cnt.data(), 1, MPI_INT, comm);
-  for (int r = 1; r < nranks; r++)
-  {
-    gamma_disp[r] = gamma_disp[r - 1] + gamma_cnt[r - 1];
-  }
-  gamma_tdofs.resize(gamma_disp[nranks - 1] + gamma_cnt[nranks - 1]);
-  MPI_Allgatherv(mine.data(), nloc, HYPRE_MPI_BIG_INT, gamma_tdofs.data(), gamma_cnt.data(),
-                 gamma_disp.data(), HYPRE_MPI_BIG_INT, comm);
 
   // Wave ports: each inside the region or the environment, away from Γ, so that its modal
   // terms (if active) border the environment's system or are the region's, and its overlap
@@ -158,9 +153,9 @@ DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
     double n[3] = {0.0, 0.0, 0.0};  // environment interior, interface, region interior
     for (int i = 0; i < nt; i++)
     {
-      n[0] += mark[i] && is_env_int[i];
-      n[1] += mark[i] && is_gamma[i];
-      n[2] += mark[i] && is_region_int[i];
+      n[0] += mark[i] && iface.env_int[i];
+      n[1] += mark[i] && iface.gamma[i];
+      n[2] += mark[i] && iface.region_int[i];
     }
     Mpi::GlobalSum(3, n, comm);
     MFEM_VERIFY(
@@ -292,14 +287,14 @@ void DrivenSubstructure::Setup(Side &side, double omega)
   std::vector<HYPRE_BigInt> mine;
   for (int i = 0; i < nt; i++)
   {
-    if (is_gamma[i])
+    if (iface.gamma[i])
     {
       mine.push_back(sys[i]);
     }
   }
-  side.gamma_sys.resize(gamma_tdofs.size());
+  side.gamma_sys.resize(iface.tdofs.size());
   MPI_Allgatherv(mine.data(), static_cast<int>(mine.size()), HYPRE_MPI_BIG_INT,
-                 side.gamma_sys.data(), gamma_cnt.data(), gamma_disp.data(),
+                 side.gamma_sys.data(), iface.counts.data(), iface.offsets.data(),
                  HYPRE_MPI_BIG_INT, comm);
 
   // The frequency-independent parts, assembled once and one at a time: the pattern of the
@@ -502,21 +497,6 @@ MPI_Comm DrivenSubstructure::GetComm() const
   return space_op.GetComm();
 }
 
-std::vector<int> DrivenSubstructure::InterfaceIndex() const
-{
-  const int nt = static_cast<int>(is_gamma.size());
-  std::vector<int> index(nt, -1);
-  const int off = gamma_disp[Mpi::Rank(space_op.GetComm())];
-  for (int i = 0, g = 0; i < nt; i++)
-  {
-    if (is_gamma[i])
-    {
-      index[i] = off + g++;
-    }
-  }
-  return index;
-}
-
 void DrivenSubstructure::Condense(double omega)
 {
   MFEM_VERIFY(!online, "An online substructure has no environment to condense!");
@@ -570,7 +550,7 @@ DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *>
   std::vector<ComplexVector *> Xo(b.size());
   for (std::size_t k = 0; k < b.size(); k++)
   {
-    x[k] = Masked(*b[k], is_env_int, &is_gamma);
+    x[k] = Masked(*b[k], iface.env_int, &iface.gamma);
     X[k] = &x[k];
     Xo[k] = &x[k];
   }
@@ -612,7 +592,7 @@ std::vector<int> DrivenSubstructure::InterfaceBoundaryAttributes(
   }
   for (int i = 0; i < t.Size(); i++)
   {
-    if (is_gamma[i])
+    if (iface.gamma[i])
     {
       t(i) = 2.0;
     }
@@ -710,8 +690,8 @@ std::vector<double> DrivenSubstructure::EnvironmentFingerprint(double omega) con
   double counts[2] = {0.0, 0.0};
   for (int i = 0; i < nt; i++)
   {
-    counts[0] += is_env_int[i];
-    counts[1] += is_gamma[i];
+    counts[0] += iface.env_int[i];
+    counts[1] += iface.gamma[i];
   }
   Mpi::GlobalSum(2, counts, comm);
   std::vector<double> fp = {counts[0], counts[1]};
@@ -762,14 +742,14 @@ std::vector<double> DrivenSubstructure::SourceFingerprint(const ComplexVector &b
   double v[nfp] = {};
   for (int i = 0; i < fes.GetTrueVSize(); i++)
   {
-    v[0] = std::max(v[0], (is_env_int[i] && (br[i] != 0.0 || bi[i] != 0.0)) ? 1.0 : 0.0);
+    v[0] = std::max(v[0], (iface.env_int[i] && (br[i] != 0.0 || bi[i] != 0.0)) ? 1.0 : 0.0);
   }
   for (int k = 0; k < 3; k++)
   {
     const double *rr = FingerprintField(k).HostRead();
     for (int i = 0; i < fes.GetTrueVSize(); i++)
     {
-      if (is_env_int[i])
+      if (iface.env_int[i])
       {
         v[1 + 2 * k] += rr[i] * br[i];
         v[2 + 2 * k] += rr[i] * bi[i];
@@ -785,9 +765,9 @@ bool DrivenSubstructure::OnInterface(const ComplexVector &b) const
 {
   const double *br = b.Real().HostRead(), *bi = b.Imag().HostRead();
   int on = 0;
-  for (std::size_t i = 0; i < is_gamma.size() && !on; i++)
+  for (std::size_t i = 0; i < iface.gamma.size() && !on; i++)
   {
-    on = is_gamma[i] && (br[i] != 0.0 || bi[i] != 0.0);
+    on = iface.gamma[i] && (br[i] != 0.0 || bi[i] != 0.0);
   }
   Mpi::GlobalMax(1, &on, space_op.GetComm());
   return on != 0;
@@ -1306,9 +1286,9 @@ std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure
     double n[3] = {0.0, 0.0, 0.0};  // environment interior, interface, region interior
     for (std::size_t i = 0; i < mark.size(); i++)
     {
-      n[0] += mark[i] && ds.EnvironmentInterior()[i];
-      n[1] += mark[i] && ds.Interface()[i];
-      n[2] += mark[i] && ds.RegionInterior()[i];
+      n[0] += mark[i] && ds.GetInterface().env_int[i];
+      n[1] += mark[i] && ds.GetInterface().gamma[i];
+      n[2] += mark[i] && ds.GetInterface().region_int[i];
     }
     Mpi::GlobalSum(3, n, ds.GetComm());
     MFEM_VERIFY(n[1] == 0.0 && (n[0] == 0.0 || n[2] == 0.0),

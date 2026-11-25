@@ -5560,8 +5560,8 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   const auto &fes = space_op.GetNDSpace().Get();
   MPI_Comm comm = fes.GetComm();
   const bool root = Mpi::Root(comm);
-  DrivenSubstructure ds(space_op, {1}, {2}, false, nullptr, false, type);
-  const int nG = ds.InterfaceSize();
+  DrivenSubstructure ds(space_op, {1}, {2}, type);
+  const int nG = ds.GetInterface().size;
   REQUIRE(nG > 0);
 
   // Global environment-interior and interface true DOFs (replicated), and the environment
@@ -5571,7 +5571,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   std::vector<HYPRE_BigInt> E_loc, E;
   for (int i = 0; i < nt; i++)
   {
-    if (ds.EnvironmentInterior()[i])
+    if (ds.GetInterface().env_int[i])
     {
       E_loc.push_back(tstart + i);
     }
@@ -5588,7 +5588,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     MPI_Allgatherv(E_loc.data(), n, HYPRE_MPI_BIG_INT, E.data(), cnt.data(), disp.data(),
                    HYPRE_MPI_BIG_INT, comm);
   }
-  const std::vector<HYPRE_BigInt> &G = ds.InterfaceTrueDofs();
+  const std::vector<HYPRE_BigInt> &G = ds.GetInterface().tdofs;
   std::vector<HYPRE_BigInt> idx(E);
   idx.insert(idx.end(), G.begin(), G.end());
   const int nE = static_cast<int>(E.size()), n = nE + nG;
@@ -5794,7 +5794,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     b[2].Imag() = 0.0;
     for (int i = 0; i < nt; i++)
     {
-      if (!ds.EnvironmentInterior()[i])
+      if (!ds.GetInterface().env_int[i])
       {
         b[2].Real()(i) = 0.0;
       }

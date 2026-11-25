@@ -80,6 +80,14 @@ struct SubstructureInterface : InterfaceClasses
   // index (replicated).
   std::vector<int> index;
   std::vector<HYPRE_BigInt> tdofs;
+
+  // The rows of Γ of this rank (count x w, row-major) of a matrix on rank 0 (size x w,
+  // row-major), and that matrix on rank 0 from the rows of all ranks (empty elsewhere).
+  // Collective.
+  template <typename T>
+  std::vector<T> ScatterRows(MPI_Comm comm, const std::vector<T> &full, int w) const;
+  template <typename T>
+  std::vector<T> GatherRows(MPI_Comm comm, const std::vector<T> &rows, int w) const;
 };
 
 // Geometric signatures of a set of true DOFs, replicated on all ranks (n x width,
