@@ -338,7 +338,9 @@ with a screening angular frequency $\nu$ well below the sweep band, where $\nu/2
 default one tenth of the lowest sweep frequency). This is the system of the lossless DC-limit
 model of the device at the imaginary frequency $s = \nu$: the damping terms, which vanish at DC,
 are left out, and frequency-dependent boundaries and materials enter $\bm{K}$ at their static
-limit. An inductive `"RationalImpedance"` keeps its DC term, while `"Conductivity"` and
+limit. An inductive `"RationalImpedance"` keeps its DC term, and the capacitive $s^2$ term of the
+polynomial part of the Robin coefficient of a `"RationalImpedance"`, which ``\widehat{\bm{C}}``
+has, enters with $\nu^2\bm{M}$, while `"Conductivity"` and
 frequency-dependent `"Permittivity"` terms vanish at DC (the anchor of a model with
 `"Conductivity"` boundaries is that of the model without them), and the wave-port terms and the
 second-order `"Absorbing"` term, a pole at $\omega = 0$ with no static limit, are left out.

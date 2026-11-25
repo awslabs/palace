@@ -6105,6 +6105,22 @@ double RelativeDifference(const Vector &a, const Vector &b)
   return std::sqrt(linalg::Dot(Mpi::World(), d, d)) / na;
 }
 
+// The anchor columns (basis vectors 1, 2, ..., after the single port mode) for the given
+// configuration, at its anchor frequencies.
+std::vector<Vector> ComputeAnchorColumns(const json &setup_json)
+{
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+  prom_op.AddLumpedPortModesForSynthesis();
+  const auto &nu = iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq;
+  prom_op.AddLumpedPortAnchorModesForSynthesis(nu);
+  REQUIRE(prom_op.GetReducedDimension() == 1 + nu.size());
+  const auto &V = prom_op.GetVectors();
+  return {V.begin() + 1, V.begin() + 1 + nu.size()};
+}
+
 // Purely inductive sheet, Zs(s) = s·Ls, as an Impedance boundary (stiffness 1/Ls) or a
 // RationalImpedance (Robin coefficient g(s) = 1/Ls, a constant in A2).
 constexpr double sheet_Ls = 2.0e-9;
@@ -6120,6 +6136,23 @@ json InductiveRationalImpedance(int attr)
   return json::array({json::object({{"Attributes", json::array({attr})},
                                     {"Numerator", json::array({sheet_Ls, 0.0})},
                                     {"Denominator", json::array({1.0})}})});
+}
+
+// Parallel LC sheet, Ys(s) = 1/(s·Ls) + s·Cs, as an Impedance boundary (stiffness 1/Ls,
+// mass Cs) or a RationalImpedance, Zs(s) = s·Ls / (1 + s²·Ls·Cs), whose Robin coefficient
+// g(s) = 1/Ls + s²·Cs is the polynomial part of its quotient.
+constexpr double sheet_Cs = 1.0e-15;
+json ParallelLCImpedance(int attr)
+{
+  return json::array({json::object(
+      {{"Attributes", json::array({attr})}, {"Ls", sheet_Ls}, {"Cs", sheet_Cs}})});
+}
+json ParallelLCRationalImpedance(int attr)
+{
+  return json::array(
+      {json::object({{"Attributes", json::array({attr})},
+                     {"Numerator", json::array({sheet_Ls, 0.0})},
+                     {"Denominator", json::array({sheet_Ls * sheet_Cs, 0.0, 1.0})}})});
 }
 
 }  // namespace
@@ -6157,9 +6190,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
 
 // An inductive rational surface impedance carries DC current, so it must enter the anchor
 // solve through its DC Robin term 1/Ls: a RationalImpedance sheet must give the same anchor
-// as the equivalent Impedance sheet, whose 1/Ls term is part of the stiffness matrix. (A
-// sheet with capacitance would differ at O(ν²) for a single shift: the anchor screening is
-// ν²M, and an Impedance sheet's Cs is part of M while a rational one's is not.)
+// as the equivalent Impedance sheet, whose 1/Ls term is part of the stiffness matrix.
 TEST_CASE_METHOD(palace::test::PerRankTempDir,
                  "RomOperator-Synthesis-AnchorInductiveRationalImpedance",
                  "[romoperator][Serial]")
@@ -6174,4 +6205,38 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
   // The DC Robin term must actually matter: without the sheet, the anchor differs.
   const auto v_open = ComputeAnchorColumn(AnchorCubeConfig(temp_dir, json::object()));
   CHECK(RelativeDifference(v_impedance, v_open) > 1.0e-3);
+}
+
+// The capacitive term of a rational surface impedance, which circuit synthesis puts in the
+// capacitance matrix, enters the anchor solves with the screening term: a parallel LC sheet
+// as a RationalImpedance must give the anchors of the equivalent Impedance sheet, whose Cs
+// is part of the mass matrix, also at a screening frequency at which the capacitance
+// matters, here about 7% of the Robin coefficient.
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator-Synthesis-AnchorParallelLCRationalImpedance",
+                 "[romoperator][Serial]")
+{
+  auto Config = [this](const json &sheet)
+  {
+    json boundaries;
+    boundaries[sheet.begin().key()] = sheet.begin().value();
+    auto setup_json = AnchorCubeConfig(temp_dir, boundaries);
+    setup_json["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"] =
+        json::array({0.0, 30.0});
+    return setup_json;
+  };
+  const auto v_impedance =
+      ComputeAnchorColumns(Config({{"Impedance", ParallelLCImpedance(101)}}));
+  const auto v_rational = ComputeAnchorColumns(
+      Config({{"RationalImpedance", ParallelLCRationalImpedance(101)}}));
+  const auto v_inductive =
+      ComputeAnchorColumns(Config({{"Impedance", InductiveImpedance(101)}}));
+  REQUIRE(v_impedance.size() == 2);
+  REQUIRE(v_rational.size() == 2);
+  for (std::size_t k = 0; k < v_impedance.size(); k++)
+  {
+    CAPTURE(k);
+    CHECK(RelativeDifference(v_impedance[k], v_rational[k]) < 1.0e-8);
+  }
+  CHECK(RelativeDifference(v_impedance[1], v_inductive[1]) > 1.0e-3);
 }

@@ -662,7 +662,9 @@ public:
   // and add the solution to the PROM basis (labels "anchor_<idx>"). K₀ is the
   // static system stiffness, K plus the DC limit of the frequency-dependent terms
   // (SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit, ...)): nonzero only for an
-  // inductive rational surface impedance, since wave-port, surface-conductivity, and
+  // inductive rational surface impedance (with the capacitive terms of the rational
+  // surface impedances at the screening frequency), since wave-port, surface-conductivity,
+  // and
   // frequency-dependent permittivity terms vanish at DC like the damping matrix, and the
   // second-order farfield pole at ω = 0 is omitted. When no port inductance is negative,
   // the positive screening term makes the system symmetric positive definite, so the solve

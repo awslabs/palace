@@ -55,6 +55,10 @@ public:
   // terms survive the limit (the volume terms of frequency-dependent materials do not).
   struct QuasistaticLimit
   {
+    // Square of the screening frequency s = ν of the anchor solves, at which the capacitive
+    // (s²) terms of the rational surface impedances, which circuit synthesis puts in the
+    // capacitance matrix, are evaluated.
+    double nu2 = 0.0;
   };
 
 private:
@@ -450,7 +454,8 @@ public:
   // Quasistatic overload: the ω → 0 limit of A2(ω), for the screened quasistatic
   // (inductive-limit) anchor solves of circuit synthesis. The static system stiffness is
   // then K + A2(QuasistaticLimit). Only boundaries with a finite, nonzero DC term
-  // contribute (an inductive rational surface impedance, Zs(s) ~ s·L as s → 0); returns
+  // contribute (an inductive rational surface impedance, Zs(s) ~ s·L as s → 0), with the
+  // capacitive terms of the rational surface impedances at the screening frequency; returns
   // null when there are none. See AddExtraSystemBdrCoefficients(QuasistaticLimit, ...).
   std::unique_ptr<ComplexOperator>
   GetExtraSystemMatrix(QuasistaticLimit, Operator::DiagonalPolicy diag_policy);

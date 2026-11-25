@@ -180,16 +180,19 @@ void SurfaceTerms::AddExtraSystemBdrCoefficients(
   AddExtraSystemBdrMassImpl(omega, false, false, fbr, fbi);
 }
 
-void SurfaceTerms::AddStaticExtraSystemBdrMassCoefficients(
-    MaterialPropertyCoefficient &fb) const
+void SurfaceTerms::AddStaticExtraSystemBdrMassCoefficients(MaterialPropertyCoefficient &fb,
+                                                           double nu2) const
 {
   const int num_sigma = static_cast<int>(sigma_terms.size());
   for (int b = 0; b < surf_rz_op.GetNumBoundaries(); b++)
   {
-    const double g0 = surf_rz_op.GetStaticRobinCoefficient(b);
-    if (g0 != 0.0)
+    // The quotient q of the Robin coefficient is stored with its highest coefficient first.
+    const auto &q = surf_rz_op.GetRobinQuotient(b);
+    const double q2 = (q.size() >= 3) ? q[q.size() - 3] : 0.0;
+    const double g = surf_rz_op.GetStaticRobinCoefficient(b) + nu2 * q2;
+    if (g != 0.0)
     {
-      AddExtraSystemBdrMassTermCoefficients(num_sigma + b, fb, g0);
+      AddExtraSystemBdrMassTermCoefficients(num_sigma + b, fb, g);
     }
   }
 }

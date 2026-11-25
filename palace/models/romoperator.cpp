@@ -1315,7 +1315,9 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
   // Damping (iωC) vanishes in this limit, and so do the frequency-dependent terms A2(ω) of
   // surface conductivity and frequency-dependent permittivity (whose ε∞ is part of M); an
   // inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a finite DC Robin term,
-  // and the wave ports (whose DC limit this is for TEM modes only) and the second-order
+  // the capacitive (s²) terms of the rational surface impedances, which synthesis puts in
+  // the capacitance matrix, are evaluated at s = ν with the screening term ν²M, and the
+  // wave ports (whose DC limit this is for TEM modes only) and the second-order
   // farfield pole at ω = 0 are omitted (see
   // SpaceOperator::AddExtraSystemBdrCoefficients(QuasistaticLimit, ...)). When no port or
   // boundary inductance is negative, the positive mass coefficient makes the (real part of
@@ -1359,20 +1361,19 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
   u.SetSize(space_op.GetNDSpace().GetTrueVSize());
   u.UseDevice(true);
 
-  // DC limit of the frequency-dependent boundary terms (null when none contributes).
-  constexpr SpaceOperator::QuasistaticLimit dc{};
-  auto A2_dc = space_op.GetExtraSystemMatrix(dc, Operator::DIAG_ZERO);
-
   // One (expensive) operator and preconditioner assembly for each frequency, shared by all
   // anchored ports: the quasistatic anchors at the lowest frequency, and the screened ones
-  // at the others.
+  // at the others. The DC limit of the frequency-dependent boundary terms (null when none
+  // contributes) has the capacitive terms of the rational surface impedances at s = ν.
   for (std::size_t k = 0; k < nu.size(); k++)
   {
+    const SpaceOperator::QuasistaticLimit qs{nu[k] * nu[k]};
+    auto A2_qs = space_op.GetExtraSystemMatrix(qs, Operator::DIAG_ZERO);
     auto A = space_op.GetSystemMatrix(
         std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 0.0),
-        std::complex<double>(nu[k] * nu[k], 0.0), K.get(), C.get(), M.get(), A2_dc.get());
+        std::complex<double>(nu[k] * nu[k], 0.0), K.get(), C.get(), M.get(), A2_qs.get());
     auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 0.0 + 0.0i,
-                                                               nu[k] * nu[k] + 0.0i, dc);
+                                                               nu[k] * nu[k] + 0.0i, qs);
     // The solver of the HDM solves, repurposed for the anchor solves. Each starts from
     // zero, not from the response of the previous port (or the contents of u before the
     // first solve).

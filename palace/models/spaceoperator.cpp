@@ -2888,20 +2888,24 @@ bool SpaceOperator::HasExtraSystemBdrTerms() const
 }
 
 void SpaceOperator::AddExtraSystemBdrCoefficients(
-    QuasistaticLimit, MaterialPropertyCoefficient &dfbr, MaterialPropertyCoefficient &dfbi,
-    MaterialPropertyCoefficient &fbr, MaterialPropertyCoefficient &fbi,
-    MaterialPropertyCoefficient &frbr, MaterialPropertyCoefficient &frbi,
-    MaterialPropertyCoefficient *fpbr, MaterialPropertyCoefficient *fpbi)
+    QuasistaticLimit qs, MaterialPropertyCoefficient &dfbr,
+    MaterialPropertyCoefficient &dfbi, MaterialPropertyCoefficient &fbr,
+    MaterialPropertyCoefficient &fbi, MaterialPropertyCoefficient &frbr,
+    MaterialPropertyCoefficient &frbi, MaterialPropertyCoefficient *fpbr,
+    MaterialPropertyCoefficient *fpbi)
 {
   // The ω → 0 limit of the frequency-dependent boundary terms, defining the static system
   // stiffness K + A2(0) of the quasistatic (inductive-limit) anchor solves. As for the
   // damping matrix (whose iω·C term also vanishes), a boundary term contributes only if it
   // stays finite and nonzero at DC:
   //  - Surface boundary terms: only an inductive rational surface impedance (Zs ~ s·L),
-  //    which carries DC current, keeps a Robin term; the second-order farfield pole at
-  //    ω = 0, which has no static limit (circuit synthesis realizes this pole by auxiliary
-  //    states, not in L⁻¹), is left out, so the farfield boundary takes the same natural
-  //    condition at DC as the first-order absorbing boundary (see
+  //    which carries DC current, keeps a Robin term, to which the capacitive (s²) term of
+  //    the polynomial part of the Robin coefficient of a rational surface impedance is
+  //    added at the screening frequency s = ν, as circuit synthesis puts it in the
+  //    capacitance matrix with the mass matrix; the second-order farfield pole at ω = 0,
+  //    which has no static limit (circuit synthesis realizes this pole by auxiliary states,
+  //    not in L⁻¹), is left out, so the farfield boundary takes the same natural condition
+  //    at DC as the first-order absorbing boundary (see
   //    SurfaceTerms::AddStaticExtraSystemBdrMassCoefficients).
   //  - Wave ports: no port mode is solved at ω = 0, and their terms are left out. This is
   //    their DC limit for a TEM or quasi-TEM mode, whose terms vanish (k_n ∝ ω, and the
@@ -2910,16 +2914,16 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(
   //  - Floquet ports and Floquet wave vectors are not supported with circuit synthesis, and
   //    the Floquet terms of second-order farfield boundaries (frb, fpb) are omitted with
   //    the farfield term.
-  surface_terms.AddStaticExtraSystemBdrMassCoefficients(fbr);
+  surface_terms.AddStaticExtraSystemBdrMassCoefficients(fbr, qs.nu2);
 }
 
 void SpaceOperator::AddRealPreconditionerExtraSystemBdrCoefficients(
-    QuasistaticLimit, MaterialPropertyCoefficient &dfb, MaterialPropertyCoefficient &fb,
+    QuasistaticLimit qs, MaterialPropertyCoefficient &dfb, MaterialPropertyCoefficient &fb,
     MaterialPropertyCoefficient &frb)
 {
   // The static terms of the system (see the quasistatic AddExtraSystemBdrCoefficients) are
   // real.
-  surface_terms.AddStaticExtraSystemBdrMassCoefficients(fb);
+  surface_terms.AddStaticExtraSystemBdrMassCoefficients(fb, qs.nu2);
 }
 
 void SpaceOperator::AddRealPeriodicCoefficients(double coeff,
