@@ -1,14 +1,14 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Runs long, expensive tests on self-hosted large runners.
+# Runs long, expensive tests on a self-hosted Graviton4 (arm64-8g) runner.
 #
 # On a pull request, the `long-tests` job succeeds either when testing is
 # deferred (there is no `trigger-long-tests` label), or after the tests pass.
 # New commits are tested automatically while the label remains present.
 #
 # Every merge to main runs the tests too, so that the logs record the wall time
-# of the long cases after each merge.
+# of the long cases after each merge, always on the same instance type.
 name: Long Tests
 
 on:
@@ -53,7 +53,7 @@ jobs:
           )
         )
       )
-    runs-on: [self-hosted, x64]
+    runs-on: [self-hosted, arm64-8g]
     timeout-minutes: 180
     steps:
       # On a push, the merge commit on main; on a pull request, its head.

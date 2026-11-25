@@ -44,6 +44,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     instead of aborting without output.
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
 
+#### Performance Improvements
+
+  - The STRUMPACK coarse solvers map the elimination tree to the processes by factor size,
+    the cost of a triangular solve, instead of by the operations of the factorization. On a
+    model with 115M unknowns on 3072 processes a coarse solve takes 43 ms instead of 72 ms.
+    [PR 1306](https://github.com/awslabs/palace/pull/1306).
+  - In GPU runs, when the MPI launcher sets the node-local rank of each process, the GPU
+    of each process is selected, and its context created, before `MPI_Init`, so that MPI
+    libraries which set up the communication between the GPUs of a node in `MPI_Init`,
+    like Open MPI 5, can do so. [PR 1260](https://github.com/awslabs/palace/pull/1260).
+
 #### Bug Fixes
 
   - Fixed the S-parameters of Floquet ports in `port-floquet-S.csv` for the excitation of a
@@ -65,6 +76,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     their `PenetrationDepth`, `Thickness` and `KineticInductance` a default of 0.0, which
     only meant that the form is not used. SchemaVer 6-1-1
     [PR 1293](https://github.com/awslabs/palace/pull/1293).
+  - `--dry-run` with more than one process no longer hangs when the configuration file
+    fails the schema validation. [PR 1260](https://github.com/awslabs/palace/pull/1260).
   - Fixed the domain energies of boundary mode simulations, which omitted the out-of-plane
     electric field and the in-plane magnetic flux density: the magnetic energy of a
     quasi-TEM mode was nearly zero, and the electric energy of a mode with a longitudinal

@@ -191,6 +191,7 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
+      // Also maps the elimination tree by factor size, which does not change the accuracy.
       pc = std::make_unique<StrumpackComplexSolver>(
           comm, linear.sym_factorization, SparseCompression::NONE, linear.strumpack_lr_tol,
           linear.strumpack_butterfly_l, linear.strumpack_lossy_precision,

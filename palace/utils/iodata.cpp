@@ -182,7 +182,7 @@ IoData::IoData(const Units &units) : units(units), init(false)
   fem::DefaultIntegrationOrder::p_trial = -1;
 }
 
-json IoData::ParseAndValidate(const char *filename)
+json IoData::Parse(const char *filename)
 {
   // Open configuration file and preprocess: strip whitespace, comments, and expand integer
   // ranges.
@@ -227,19 +227,25 @@ json IoData::ParseAndValidate(const char *filename)
   {
     MFEM_ABORT("Error parsing configuration file!\n  " << e.what());
   }
+  return config;
+}
 
-  // Validate against JSON schema.
+void IoData::Validate(const json &config)
+{
+  std::string err = ValidateConfig(config);
+  if (!err.empty())
   {
-    std::string err = ValidateConfig(config);
-    if (!err.empty())
-    {
-      Mpi::Warning("{}", err);
-      std::cout << std::flush;  // Flush before abort to avoid clipping the error message
-      Mpi::Barrier();
-      MFEM_ABORT("Configuration file validation failed!");
-    }
+    Mpi::Warning("{}", err);
+    std::cout << std::flush;  // Flush before abort to avoid clipping the error message
+    Mpi::Barrier();
+    MFEM_ABORT("Configuration file validation failed!");
   }
+}
 
+json IoData::ParseAndValidate(const char *filename)
+{
+  json config = Parse(filename);
+  Validate(config);
   return config;
 }
 
