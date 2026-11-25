@@ -192,6 +192,79 @@ the equator, and minimum along the z axis.
     All the subsequent times, just make sure to start Julia with `--project` from the `examples`
     folder or one of its subfolders.
 
+## Perfectly Matched Layer
+
+In
+[`antenna_halfwave_dipole_pml.json`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna_halfwave_dipole_pml.json),
+a perfectly matched layer (PML), extruded from the outer sphere by *Palace* (see
+[Extruded perfectly matched layer](../guide/boundaries.md#Extruded-perfectly-matched-layer)),
+replaces the absorbing boundary:
+
+```json
+"PML": [{ "Attributes": [4], "Thickness": 1.0, "Layers": 4 }]
+```
+
+The sphere is curved, so the layer is extruded along the rays from its center, here
+``1\text{ m}`` (``\lambda / 4``) thick in 4 layers of prisms. The far field is computed on
+the same attribute 4, now an interior boundary between the physical region and the layer.
+
+The script
+[`antenna_pml.jl`](https://github.com/awslabs/palace/blob/main/examples/antenna/antenna_pml.jl)
+runs the half-wave dipole with the absorbing boundaries and with the PML for several
+thicknesses and numbers of layers, and prints the input impedance of the antenna,
+``Z = R (1 + S_{11}) / (1 - S_{11})`` for the port resistance ``R = 50\,\Omega``:
+
+```bash
+julia --project=examples -e 'include("examples/antenna/antenna_pml.jl"); generate_antenna_pml_data()'
+```
+
+| Truncation             | Thickness             | Layers | ``Z`` (Ω)                          | ``\lvert Z - Z_\text{ref} \rvert`` (Ω) | Time (16 processes) |
+|:---------------------- |:---------------------:|:------:|:----------------------------------:|:--------------------------------------:|:-------------------:|
+| First-order absorbing  |                       |        | 123.40 - 20.91j                    | 1.38                                   | 8 s                 |
+| Second-order absorbing |                       |        | 123.43 - 20.91j                    | 1.38                                   | 8 s                 |
+| PML                    | 0.5 m (``\lambda/8``) | 2      | 120.23 - 20.77j                    | 3.35                                   | 10 s                |
+| PML                    | 0.5 m                 | 4      | 122.96 - 22.23j                    | 0.26                                   | 12 s                |
+| PML                    | 0.5 m                 | 8      | 123.18 - 22.28j                    | 0.04                                   | 18 s                |
+| PML                    | 1 m (``\lambda/4``)   | 2      | 123.71 - 18.79j                    | 3.52                                   | 10 s                |
+| PML                    | 1 m                   | 4      | 123.16 - 22.07j                    | 0.21                                   | 11 s                |
+| PML                    | 1 m                   | 8      | 123.20 - 22.26j                    | 0.03                                   | 17 s                |
+| PML                    | 2 m (``\lambda/2``)   | 2      | 128.70 - 29.11j                    | 8.76                                   | 10 s                |
+| PML                    | 2 m                   | 4      | 123.43 - 22.50j                    | 0.31                                   | 11 s                |
+| PML                    | 2 m                   | 8      | ``Z_\text{ref}`` = 123.22 - 22.27j |                                        | 17 s                |
+
+With 8 layers, the impedance is the same to 0.04 Ω for any thickness from ``\lambda / 8``
+to ``\lambda / 2``, and with 4 layers to 0.3 Ω. Two layers are under-resolved, and reflect
+(see
+[Absorption and discretization of the layer](../guide/boundaries.md#Absorption-and-discretization-of-the-layer)):
+the thickness then matters, since it sets the element size, and the impedance is 3.4 to
+8.8 Ω off. The absorbing boundaries are 1.4 Ω off, mostly in the reactance. They are the
+same to 0.03 Ω, since the magnetic field of the dipole is tangential to the sphere, and the
+second-order term only acts on fields whose curl has a normal component (see
+[Other boundary conditions](../reference.md#Other-boundary-conditions)). These differences are those of the truncations on one mesh: on a finer mesh, with 10
+instead of 3 elements per wavelength away from the antenna (`n_farfield` in `mesh/mesh.jl`),
+the impedance is 122.19 - 23.96j Ω with the PML of the example and 122.44 - 22.80j Ω with the
+second-order absorbing boundary, 1.2 Ω apart, and 2.1 Ω from the impedance with the PML on
+the mesh of the example. The script runs every case with the complex coarse solve
+(`"ComplexCoarseSolve": true`), without which the absorbing boundary on the finer mesh does
+not converge in the 100 iterations of `antenna_halfwave_dipole.json`.
+
+The figure shows the E-plane pattern on the finer mesh against the pattern of the thin
+half-wave dipole, ``\lvert \cos(\pi/2 \cos\theta) / \sin\theta \rvert``, and the
+difference from it. The patterns with the PML and with the absorbing boundary are the same
+to ``10^{-4}`` of the maximum. They are a little narrower than the pattern of the thin
+dipole, within ``2.1\%`` of the maximum. The directivity, integrated from the far field at the
+`"NSample": 64800` points, is 1.680 with the PML and 1.679 with the absorbing boundary,
+against 1.64 for the thin half-wave dipole [[3]](#References) (1.641 for the thin dipole
+integrated on the same points). The modeled dipole is thick, ``a = L / 20``, with a feed gap,
+and on the mesh of the example, the directivity is 1.78 with any of the truncations: the far
+field depends on the resolution of the mesh more than on the truncation.
+
+```@raw html
+<br/><p align="center">
+  <img src="../../assets/examples/antenna-pml-eplane.svg" width="80%" />
+</p><br/>
+```
+
 ## Alternative: Short Dipole Using the Electric Current Dipole Operator
 
 As an alternative to explicitly modeling the antenna geometry with a lumped port excitation, *Palace* provides an electric current dipole operator that represents an infinitesimally short current-carrying wire. This approach is particularly useful for theoretical studies or when the detailed geometry of the feeding structure is not critical to the analysis.
@@ -291,3 +364,5 @@ The polar plots show the theoretical radiation pattern for a short dipole: the E
 [1] Stutzman, W. L., & Thiele, G. A., *Antenna Theory and Design* (3rd ed.), John Wiley & Sons, 2012.
 
 [2] Heagy, L. J., Cockett, R., Kang, S., Rosenkjaer, G. K., & Oldenburg, D. W., "Defining the Electrical Current Dipole," *EM GeoSci*, [https://em.geosci.xyz/content/maxwell1_fundamentals/dipole_sources_in_homogeneous_media/electric_dipole_definition/index.html](https://em.geosci.xyz/content/maxwell1_fundamentals/dipole_sources_in_homogeneous_media/electric_dipole_definition/index.html).
+
+[3] Balanis, C. A., *Antenna Theory: Analysis and Design* (4th ed.), John Wiley & Sons, 2016.

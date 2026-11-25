@@ -14,6 +14,7 @@
 #include "fem/libceed/restriction.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
+#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -76,6 +77,30 @@ FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
     return geom_restr.emplace(geom, val).first->second;
   }
   return geom_restr.emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, indices))
+      .first->second;
+}
+
+CeedElemRestriction
+FiniteElementSpace::GetCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                           const ceed::CeedGeomFactorData &data,
+                                           const std::vector<int> &attr_list) const
+{
+  if (attr_list.empty())
+  {
+    return GetCeedElemRestriction(ceed, geom, data);
+  }
+  // The map entries are inserted by each thread for its own Ceed context.
+  ceed::GeometryObjectMap<CeedElemRestriction> *restr_map;
+  PalacePragmaOmp(critical(GetCeedElemRestriction))
+  {
+    restr_map = &restr_attr[attr_list][ceed];
+  }
+  auto restr_it = restr_map->find(geom);
+  if (restr_it != restr_map->end())
+  {
+    return restr_it->second;
+  }
+  return restr_map->emplace(geom, BuildCeedElemRestriction(*this, ceed, geom, data.indices))
       .first->second;
 }
 
@@ -149,6 +174,11 @@ void FiniteElementSpace::ResetCeedObjects()
   DestroyRestrictions(active_restr);
   DestroyRestrictions(interp_restr);
   DestroyRestrictions(interp_range_restr);
+  for (auto &[attr_list, ceed_map] : restr_attr)
+  {
+    DestroyRestrictions(ceed_map);
+  }
+  restr_attr.clear();
   basis.clear();
   restr.clear();
   active_restr.clear();
