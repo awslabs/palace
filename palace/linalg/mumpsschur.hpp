@@ -80,6 +80,10 @@ public:
 
   std::vector<T> ReleaseSchur() override { return gather.GatherSchur(ReleaseSchurRows()); }
 
+  // Its distributed Schur complement, on a grid of the shape and block size it was made
+  // with.
+  std::vector<T> ReleaseSchurBlocks(const BlockCyclicGrid &grid) override;
+
   // The local part of the Schur complement of the last factorization, 2D block cyclic as
   // BlockCyclicGrid lays it out (of the given grid and block size), which the caller may
   // overwrite: the next factorization writes the Schur complement in it again.

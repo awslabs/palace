@@ -727,8 +727,8 @@ void SubstructuringSolver::Impl::EnumerateInterface()
 
   gamma_off = off;
   gamma_nloc = nloc;
-  // The condensation fills S_rows: free that of a previous interface first.
-  std::vector<double>().swap(S_rows);
+  // The condensation fills S_grid: free that of a previous interface first.
+  std::vector<double>().swap(S_grid);
 }
 
 }  // namespace palace

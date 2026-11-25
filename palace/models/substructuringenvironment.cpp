@@ -233,11 +233,12 @@ void SubstructuringSolver::Impl::EnsureEnv()
   const LinearSolver type = SchurSolverFor(iodata.solver.substructuring->direct_solver);
   env_factorization = SchurFactorizationName(type);
   const auto gamma = side.Indices(InterfaceTrueDofs());
+  MFEM_VERIFY(gamma_grid, "The environment is factored before the interface is numbered!");
   env_schur = MakeSchurFactorization<double>(
       type, iodata.solver.linear.sym_factorization, parent_fes.GetComm(), side.n_glob,
       static_cast<int>(side.rows.size()),
       {std::move(side.irn), std::move(side.jcn), std::move(side.parts[0])}, gamma,
-      side.rows, true, false);
+      side.rows, true, false, gamma_grid.get());
   env_built = true;
 }
 
@@ -590,12 +591,12 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
       col_to_dof[gamma_global[i] - off] = i;
     }
   }
-  // S_E from the environment's factorization. The energy operator S^K = S_E - P^T D P, for
-  // the lift p = e_c - y with y = A_EE^-1 (A_env e_c)|_E, takes the condensation P^T D p
-  // onto Gamma, and the kinetic one S^Kin = P^T M_kin^E P that of M_kin^E p, in batches of
-  // kMaterializeBlock lifts; the thin coupling is G = A_env E_Gamma. Each rank stores its
-  // own rows.
-  S_rows = env_schur->ReleaseSchurRows();
+  // S_E from the environment's factorization, on gamma_grid. The energy operator S^K = S_E
+  // - P^T D P, for the lift p = e_c - y with y = A_EE^-1 (A_env e_c)|_E, takes the
+  // condensation P^T D p onto Gamma, and the kinetic one S^Kin = P^T M_kin^E P that of
+  // M_kin^E p, in batches of kMaterializeBlock lifts whose condensations (by rows) are
+  // added to the grid; the thin coupling is G = A_env E_Gamma.
+  S_grid = env_schur->ReleaseSchurBlocks(*gamma_grid);
   std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_gamma);
   std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&Aenv(), E.get()));
   E.reset();
@@ -605,12 +606,12 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
   std::vector<const mfem::Vector *> X(B), V;
   std::vector<mfem::Vector *> Y(B);
   Vector ec(nloc);
-  SK_rows.assign(static_cast<std::size_t>(nloc) * nG, 0.0);
+  SK_grid = S_grid;
   have_sk = true;
-  SKin_rows.assign(kin ? static_cast<std::size_t>(nloc) * nG : 0, 0.0);
+  SKin_grid.assign(kin ? gamma_grid->LocalSize() : 0, 0.0);
   have_skin = kin;
   const mfem::HypreParMatrix &Dm = Denv();
-  std::vector<double> gr;
+  std::vector<double> gr, panel;
   for (int c0 = 0; c0 < nG; c0 += B)
   {
     const int nb = std::min(B, nG - c0);
@@ -650,18 +651,20 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
       }
     }
     CondenseRows(V, gr);
+    // The columns of the batch of S^K (less the condensations of D p) and of S^Kin.
     const std::size_t nv = V.size();
-    for (int k = 0; k < nb; k++)
+    panel.resize(static_cast<std::size_t>(nloc) * nb);
+    for (int part = 0; part < (kin ? 2 : 1); part++)
     {
       for (int r = 0; r < nloc; r++)
       {
-        const std::size_t q = static_cast<std::size_t>(r) * nG + c0 + k;
-        SK_rows[q] = S_rows[q] - gr[r * nv + k];
-        if (kin)
+        for (int k = 0; k < nb; k++)
         {
-          SKin_rows[q] = gr[r * nv + nb + k];
+          const double v = gr[r * nv + part * nb + k];
+          panel[static_cast<std::size_t>(r) * nb + k] = (part == 0) ? -v : v;
         }
       }
+      gamma_grid->AddFromRows(panel, off, nloc, c0, nb, (part == 0) ? SK_grid : SKin_grid);
     }
   }
 }

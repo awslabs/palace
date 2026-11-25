@@ -112,12 +112,11 @@ attributes works: the interface follows the element faces between them and need 
 cost of the condensation grows with the number of interface degrees of freedom, so a region boundary
 in a coarsely meshed part of the domain (substrate or vacuum away from the metal) is cheaper than
 one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense
-(``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``), and each process holds its rows, except
-with STRUMPACK or SuperLU_DIST, which form it whole on one process (two copies while the
-environment is condensed). The region solve holds as many values again, distributed over a grid of
-processes. One process holds the whole mesh to write the mesh of the region. The
-[transmon example](@ref substructuring-transmon-example) retags the elements of an existing mesh by
-the position of their centroids.
+(``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``), distributed over a grid of processes
+(STRUMPACK and SuperLU_DIST form it whole on one process first), and the region solve holds as many
+values again. A saved model holds its lower triangle. One process holds the whole mesh to write the
+mesh of the region. The [transmon example](@ref substructuring-transmon-example) retags the elements
+of an existing mesh by the position of their centroids.
 
 ### Adaptive mesh refinement
 

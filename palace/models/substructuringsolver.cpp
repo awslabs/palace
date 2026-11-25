@@ -508,8 +508,16 @@ void SubstructuringSolver::Impl::EnsureRegionSolver()
       iodata.solver.linear.sym_factorization, side.n_glob, n_rf,
       SchurFactorization<double>::Coo{std::move(side.irn), std::move(side.jcn),
                                       std::move(side.parts[0])},
-      side.Indices(InterfaceTrueDofs()), std::move(rows), [this](std::vector<double> &C)
-      { gamma_grid->AddFromRows(S_rows, gamma_off, gamma_nloc, C); });
+      side.Indices(InterfaceTrueDofs()), std::move(rows),
+      [this](std::vector<double> &C)
+      {
+        MFEM_VERIFY(C.size() == S_grid.size(),
+                    "The interface system of the region is not on the grid of S_E!");
+        for (std::size_t q = 0; q < C.size(); q++)
+        {
+          C[q] += S_grid[q];
+        }
+      });
 }
 
 void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x)
@@ -871,7 +879,7 @@ void SubstructuringSolver::CondenseEnvironment()
     }
     else
     {
-      impl->S_rows = impl->env_schur->ReleaseSchurRows();
+      impl->S_grid = impl->env_schur->ReleaseSchurBlocks(*impl->gamma_grid);
     }
     if (!impl->magnetostatic)
     {
@@ -890,17 +898,18 @@ void SubstructuringSolver::CondenseEnvironment()
       impl->SaveModel(model_path, sig_w);
     }
   }
-  impl->mat_dtn = std::make_unique<substructuring::MaterializedDtN>(
-      impl->S_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
+  const BlockCyclicGrid &grid = *impl->gamma_grid;
+  impl->mat_dtn = std::make_unique<substructuring::MaterializedDtN>(grid, impl->S_grid,
+                                                                    impl->gamma_global);
   if (impl->have_sk)
   {
-    impl->mat_dtn_K = std::make_unique<substructuring::MaterializedDtN>(
-        impl->SK_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
+    impl->mat_dtn_K = std::make_unique<substructuring::MaterializedDtN>(grid, impl->SK_grid,
+                                                                        impl->gamma_global);
   }
   if (impl->have_skin)
   {
     impl->mat_dtn_Kin = std::make_unique<substructuring::MaterializedDtN>(
-        impl->SKin_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
+        grid, impl->SKin_grid, impl->gamma_global);
   }
 
   std::string region_solver = SchurFactorizationName(

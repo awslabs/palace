@@ -15,6 +15,8 @@
 namespace palace
 {
 
+class BlockCyclicGrid;
+
 // Lower-triangle COO pattern (1-based global indices, one entry per position, columns
 // ascending in each row) of the local rows of the union of the given symmetric matrices
 // (same row distribution; null ones skipped). The entries of each matrix in pattern order
@@ -82,8 +84,9 @@ constexpr long long TriangleColumnStart(long long n, long long b)
 std::array<long long, 2> TriangleEntry(long long n, long long e);
 
 // The share [e0, e1) of this process of the entries of the triangle of an n x n matrix, an
-// equal one of the processes of comm.
+// equal one of the processes of comm, and the sizes of the shares of all of them.
 std::array<long long, 2> TriangleShare(long long n, MPI_Comm comm);
+std::vector<long long> TriangleShareSizes(long long n, MPI_Comm comm);
 
 // The most entries of a triangle that a process handles at a time when it moves them.
 inline constexpr long long kTriangleChunk = 1LL << 18;
@@ -110,6 +113,12 @@ void RedistributeTriangle(MPI_Comm comm, long long n,
 template <typename T>
 void ToRoot(MPI_Comm comm, const std::vector<T> &x, const std::vector<long long> &size,
             std::size_t chunk, const std::function<void(const T *, std::size_t)> &write);
+
+// The share of this process (TriangleShare) of the lower triangle of a symmetric matrix on
+// a grid, from the local parts of the processes in it (the entries above the diagonal
+// ignored). Collective.
+template <typename T>
+std::vector<T> ShareFromGrid(const BlockCyclicGrid &grid, const std::vector<T> &local);
 
 }  // namespace palace
 

@@ -841,6 +841,21 @@ void CheckTriangleRedistribution(int n, bool mapped)
       err = std::max(err, std::abs(local[grid.LocalIndex(g, h)] - expected(g, h)));
     }
   }
+
+  // Back to the share of each process of the lower triangle, from the grid.
+  const auto share = ShareFromGrid(grid, local);
+  const auto range = TriangleShare(n, comm);
+  REQUIRE(share.size() == static_cast<std::size_t>(range[1] - range[0]));
+  const auto entry = TriangleEntry(n, range[0]);
+  long long a = entry[0], b = entry[1];
+  for (const T v : share)
+  {
+    err = std::max(err, std::abs(v - expected(static_cast<int>(a), static_cast<int>(b))));
+    if (++a == n)
+    {
+      a = ++b;
+    }
+  }
   Mpi::GlobalMax(1, &err, comm);
   CHECK(err == 0.0);
 }

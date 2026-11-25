@@ -40,69 +40,56 @@ namespace palace
 namespace substructuring
 {
 
-// Materialized DtN: applies the precomputed interface operator S_E to a distributed
-// interface vector (gathered by an Allreduce): each rank multiplies its own dense row
-// block.
+// A materialized interface operator (S_E, S^K or S^Kin), on a grid, applied to the
+// interface entries of true-DOF vectors (gamma_global): the interface vector is summed onto
+// every process, each process of the grid multiplies its local part, and the products are
+// summed. The operator is 0 off the interface.
 class MaterializedDtN : public mfem::Operator
 {
 public:
-  MaterializedDtN(const std::vector<double> &S_rows, int row_off,
-                  const std::vector<int> &gamma_global, int nG_global, MPI_Comm comm)
-    : mfem::Operator(static_cast<int>(gamma_global.size())), S_rows(S_rows),
-      row_off(row_off), gamma_global(gamma_global), nG_global(nG_global), comm(comm),
-      xg(nG_global)
+  MaterializedDtN(const BlockCyclicGrid &grid, const std::vector<double> &local,
+                  const std::vector<int> &gamma_global)
+    : mfem::Operator(static_cast<int>(gamma_global.size())), grid(grid), local(local),
+      gamma_global(gamma_global), xg(grid.Size()), yg(grid.Size())
   {
-    // Each rank owns a contiguous block of the global interface order, in rank order.
-    const int nloc = static_cast<int>(std::count_if(
-        gamma_global.begin(), gamma_global.end(), [](int g) { return g >= 0; }));
-    cnt.resize(Mpi::Size(comm));
-    disp.assign(cnt.size(), 0);
-    MPI_Allgather(&nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
-    for (std::size_t r = 1; r < cnt.size(); r++)
-    {
-      disp[r] = disp[r - 1] + cnt[r - 1];
-    }
-    xo.resize(nloc);
   }
 
   void Mult(const mfem::Vector &x, mfem::Vector &y) const override
   {
+    MPI_Comm comm = grid.GetComm();
     const double *xx = x.HostRead();
+    std::fill(xg.begin(), xg.end(), 0.0);
     for (int i = 0; i < height; i++)
     {
       if (gamma_global[i] >= 0)
       {
-        xo[gamma_global[i] - row_off] = xx[i];
+        xg[gamma_global[i]] = xx[i];
       }
     }
-    MPI_Allgatherv(xo.data(), static_cast<int>(xo.size()), MPI_DOUBLE, xg.data(),
-                   cnt.data(), disp.data(), MPI_DOUBLE, comm);
+    MPI_Allreduce(MPI_IN_PLACE, xg.data(), grid.Size(), MPI_DOUBLE, MPI_SUM, comm);
+    std::fill(yg.begin(), yg.end(), 0.0);
+    const std::size_t lld = grid.LeadingDim();
+    for (int jl = 0; jl < grid.LocalCols(); jl++)
+    {
+      const double xj = xg[grid.GlobalCol(jl)];
+      for (int il = 0; il < grid.LocalRows(); il++)
+      {
+        yg[grid.GlobalRow(il)] += local[il + lld * jl] * xj;
+      }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, yg.data(), grid.Size(), MPI_DOUBLE, MPI_SUM, comm);
     double *yy = y.HostWrite();
-    std::fill(yy, yy + height, 0.0);
     for (int i = 0; i < height; i++)
     {
-      if (gamma_global[i] >= 0)
-      {
-        const int r = gamma_global[i] - row_off;
-        const double *row = &S_rows[static_cast<std::size_t>(r) * nG_global];
-        double s = 0.0;
-        for (int j = 0; j < nG_global; j++)
-        {
-          s += row[j] * xg[j];
-        }
-        yy[i] = s;
-      }
+      yy[i] = (gamma_global[i] >= 0) ? yg[gamma_global[i]] : 0.0;
     }
   }
 
 private:
-  const std::vector<double> &S_rows;
-  int row_off;
+  const BlockCyclicGrid &grid;
+  const std::vector<double> &local;
   const std::vector<int> &gamma_global;
-  int nG_global;
-  MPI_Comm comm;
-  std::vector<int> cnt, disp;
-  mutable std::vector<double> xo, xg;
+  mutable std::vector<double> xg, yg;
 };
 
 }  // namespace substructuring
@@ -159,8 +146,8 @@ struct SubstructuringSolver::Impl
 
   std::unique_ptr<mfem::HypreParMatrix> A_region;
   mfem::Array<int> ra_arr, ea_arr;
-  // The grid of Gamma, for the dense interface system of the region solve, and the region
-  // solver.
+  // The grid of Gamma, of S_E, S^K and S^Kin and of the dense interface system of the
+  // region solve, and the region solver.
   std::unique_ptr<BlockCyclicGrid> gamma_grid;
   std::unique_ptr<RegionSolver<double>> region_solver;
   // Local true DOFs: region-free (the region solve), of region elements (where the region
@@ -188,11 +175,12 @@ struct SubstructuringSolver::Impl
   // attributes of the mesh not in the region.
   std::vector<int> env_attributes;
 
-  // Interface operator S_E over a global interface enumeration, distributed by rows: each
-  // rank stores its own rows [gamma_off, gamma_off + gamma_nloc) (row-major, x nG_global).
+  // The global interface enumeration: each rank's interface DOFs are its own contiguous
+  // block [gamma_off, gamma_off + gamma_nloc) of it, in rank order. The interface operator
+  // S_E is on gamma_grid (its local part).
   std::vector<int> gamma_global;  // owned parent true DOF -> global interface index, or -1
   int nG_global = 0;
-  std::vector<double> S_rows;
+  std::vector<double> S_grid;
   int gamma_off = 0, gamma_nloc = 0;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn;
 
@@ -206,19 +194,19 @@ struct SubstructuringSolver::Impl
   std::vector<double> mode_fp;  // 2 per mode
   std::vector<double> G_rows, Cmode;
   bool modes_ready = false;
-  // Magnetostatic energy interface operator S^K (distributed like S_rows), materialized
+  // Magnetostatic energy interface operator S^K (on gamma_grid, like S_E), materialized
   // with a saved model; otherwise the energies use environment solves (electrostatics: S^K
   // = S_E).
-  std::vector<double> SK_rows;
-  // Rank-independent presence flags (the distributed arrays are empty on ranks that own no
-  // interface DOFs, so their emptiness must not gate collectives).
+  std::vector<double> SK_grid;
+  // Rank-independent presence flags (the local parts are empty on the processes outside
+  // the grid, so their emptiness must not gate collectives).
   bool have_sk = false;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_K;
   // Kinetic energy interface operator S^Kin = P^T M_kin^E P of the London sheets and
-  // domains of the environment, M_kin^E = M_sheet^E + M_London^E (distributed like S_rows),
+  // domains of the environment, M_kin^E = M_sheet^E + M_London^E (on gamma_grid),
   // materialized with S^K when the environment has them (EnvKinetic); the region's kinetic
   // energy is that of its solution.
-  std::vector<double> SKin_rows;
+  std::vector<double> SKin_grid;
   bool have_skin = false;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_Kin;
   bool env_built = false;  // environment interior solver set up
@@ -458,20 +446,19 @@ struct SubstructuringSolver::Impl
   // Scatter a full (rank 0) interface-row array of width w onto the owned rows.
   void ScatterRows(const std::vector<double> &full, int w, std::vector<double> &rows) const;
 
-  // Append an interface operator (symmetric nG x nG, row-major, each rank its rows like
-  // S_rows) to the model as the record tag, by its lower triangle (see
-  // TriangleSize): column b is row b from its diagonal, so that the rows of
-  // a rank give a contiguous part of it, which rank 0 writes in rank order (see
-  // ToRoot). Collective.
-  void AppendRows(const std::string &path, std::uint32_t tag,
-                  const std::vector<double> &rows) const;
+  // Append a symmetric interface operator on gamma_grid (its local part) to the model as
+  // the record tag, by its lower triangle by columns (see TriangleSize): each rank takes
+  // its share of the triangle from the grid (ShareFromGrid), which rank 0 writes in rank
+  // order (ToRoot). Collective.
+  void AppendTriangle(const std::string &path, std::uint32_t tag,
+                      const std::vector<double> &local) const;
 
-  // The rows of this rank of an interface operator of the model at byte offset pos, mapped
-  // onto the current interface (S_cur = M^-T S M^-1, see SignatureMap): each rank reads its
-  // share of the lower triangle, whose entries go to the ranks holding the rows they add to
-  // (see RedistributeTriangle). Collective.
-  std::vector<double> ReadRows(const std::string &path, std::streamoff pos,
-                               const SignatureMap &map) const;
+  // The local part on gamma_grid of an interface operator of the model at byte offset pos,
+  // mapped onto the current interface (S_cur = M^-T S M^-1, see SignatureMap): each rank
+  // reads its share of the lower triangle, whose entries go to the processes of the grid
+  // holding the entries they add to (see RedistributeTriangle). Collective.
+  std::vector<double> ReadTriangle(const std::string &path, std::streamoff pos,
+                                   const SignatureMap &map) const;
 
   // The records of a model file (see substructuring::ModelFile): HEAD [kModelVersion,
   // Solver.Order, nG, signature type], SIGS and LENC (substructuring::InterfaceRecords: the

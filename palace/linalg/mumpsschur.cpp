@@ -222,6 +222,17 @@ void MumpsSchurSolverT<T>::Init(const std::vector<HYPRE_BigInt> &schur_vars)
 }
 
 template <typename T>
+std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurBlocks(const BlockCyclicGrid &grid)
+{
+  MFEM_VERIFY(grid.Size() == n_schur && grid.NumProcessRows() == nprow &&
+                  grid.NumProcessCols() == npcol && grid.BlockSize() == mb,
+              "MumpsSchurSolver: the grid is not that of its Schur complement!");
+  std::vector<T> S;
+  S.swap(schur);
+  return S;
+}
+
+template <typename T>
 std::vector<T> MumpsSchurSolverT<T>::ReleaseSchurRows()
 {
   // S is 2D block cyclic (local parts column-major) on the grid of the first nprow npcol

@@ -78,11 +78,11 @@ public:
   template <typename T>
   std::vector<T> ScatterFromRoot(const std::vector<T> &full, bool row_major = false) const;
 
-  // Adds an n x n matrix given by rows, each process's nrows of them from row row0
-  // (row-major), to the local part of this process (local), exchanging at most chunk
-  // entries per process at a time. Collective.
-  void AddFromRows(const std::vector<double> &rows, int row0, int nrows,
-                   std::vector<double> &local, int chunk = 1 << 24) const;
+  // Adds the columns [col0, col0 + ncols) of an n x n matrix, given by rows, each process's
+  // nrows of them from row row0 (nrows x ncols, row-major), to the local part of this
+  // process (local), exchanging at most chunk entries per process at a time. Collective.
+  void AddFromRows(const std::vector<double> &rows, int row0, int nrows, int col0,
+                   int ncols, std::vector<double> &local, int chunk = 1 << 24) const;
 
 private:
   MPI_Comm comm;

@@ -139,7 +139,8 @@ std::vector<T> BlockCyclicGrid::ScatterFromRoot(const std::vector<T> &full,
 }
 
 void BlockCyclicGrid::AddFromRows(const std::vector<double> &rows, int row0, int nrows,
-                                  std::vector<double> &local, int chunk) const
+                                  int col0, int ncols, std::vector<double> &local,
+                                  int chunk) const
 {
   // Each process sends the entries of its rows to the processes of the grid which hold
   // them, in chunks of columns. The sender and the receiver of the entries of a pair of
@@ -169,9 +170,9 @@ void BlockCyclicGrid::AddFromRows(const std::vector<double> &rows, int row0, int
   const std::size_t lld = LeadingDim();
   std::vector<int> scnt(nranks), sdsp(nranks), rcnt(nranks), rdsp(nranks), pos;
   std::vector<double> send, recv;
-  for (int c0 = 0; c0 < n; c0 += cols)
+  for (int c0 = col0; c0 < col0 + ncols; c0 += cols)
   {
-    const int c1 = std::min(n, c0 + cols);
+    const int c1 = std::min(col0 + ncols, c0 + cols);
     std::ranges::fill(scnt, 0);
     for (int r = 0; r < nrows; r++)
     {
@@ -202,10 +203,10 @@ void BlockCyclicGrid::AddFromRows(const std::vector<double> &rows, int row0, int
     pos = sdsp;
     for (int r = 0; r < nrows; r++)
     {
-      const double *row = &rows[static_cast<std::size_t>(r) * n];
+      const double *row = rows.data() + static_cast<std::size_t>(r) * ncols;
       for (int c = c0; c < c1; c++)
       {
-        send[pos[Owner(row0 + r, c)]++] = row[c];
+        send[pos[Owner(row0 + r, c)]++] = row[c - col0];
       }
     }
     MPI_Alltoallv(send.data(), scnt.data(), sdsp.data(), MPI_DOUBLE, recv.data(),

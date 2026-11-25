@@ -91,13 +91,16 @@ TEST_CASE("Block cyclic grids hold each entry once", "[blockcyclic][Serial][Para
 TEST_CASE("Block cyclic grids add a matrix given by rows",
           "[blockcyclic][Serial][Parallel]")
 {
-  // The rows of each process (the last holds none), added to the local parts of grids of
-  // one process to all, in chunks of a few entries or of all.
+  // The rows of each process (the last holds none) of all columns, or of a panel of them,
+  // added to the local parts of grids of one process to all, in chunks of a few entries or
+  // of all.
   MPI_Comm comm = Mpi::World();
   const int nranks = Mpi::Size(comm), rank = Mpi::Rank(comm);
   const int n = GENERATE(1, 17, 100);
   const int nproc = GENERATE_COPY(Catch::Generators::range(1, nranks + 1));
   const int chunk = GENERATE(7, 1 << 24);
+  const bool panel = GENERATE(false, true);
+  const int col0 = panel ? n / 3 : 0, ncols = panel ? n - n / 3 - (n > 2) : n;
   BlockCyclicGrid grid(comm, n, nproc, 4);
   std::vector<int> start(nranks + 1, 0);
   for (int r = 0; r < nranks; r++)
@@ -111,23 +114,25 @@ TEST_CASE("Block cyclic grids add a matrix given by rows",
   }
   const int row0 = start[rank], nrows = start[rank + 1] - start[rank];
   auto f = [](int i, int j) { return 1000.0 * i + j; };
-  std::vector<double> rows(static_cast<std::size_t>(nrows) * n);
+  std::vector<double> rows(static_cast<std::size_t>(nrows) * ncols);
   for (int r = 0; r < nrows; r++)
   {
-    for (int j = 0; j < n; j++)
+    for (int j = 0; j < ncols; j++)
     {
-      rows[static_cast<std::size_t>(r) * n + j] = f(row0 + r, j);
+      rows[static_cast<std::size_t>(r) * ncols + j] = f(row0 + r, col0 + j);
     }
   }
   std::vector<double> local(grid.LocalSize(), 1.0);
-  grid.AddFromRows(rows, row0, nrows, local, chunk);
+  grid.AddFromRows(rows, row0, nrows, col0, ncols, local, chunk);
   long long wrong = 0;
   for (int jl = 0; jl < grid.LocalCols(); jl++)
   {
     for (int il = 0; il < grid.LocalRows(); il++)
     {
+      const int g = grid.GlobalRow(il), h = grid.GlobalCol(jl);
+      const bool in = (h >= col0 && h < col0 + ncols);
       wrong += (local[il + static_cast<std::size_t>(grid.LeadingDim()) * jl] !=
-                1.0 + f(grid.GlobalRow(il), grid.GlobalCol(jl)));
+                1.0 + (in ? f(g, h) : 0.0));
     }
   }
   Mpi::GlobalSum(1, &wrong, comm);

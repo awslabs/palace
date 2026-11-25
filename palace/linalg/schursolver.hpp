@@ -7,6 +7,7 @@
 #include <type_traits>
 #include <vector>
 #include <mfem.hpp>
+#include "linalg/blockcyclic.hpp"
 #include "linalg/vector.hpp"
 #include "utils/communication.hpp"
 
@@ -134,6 +135,13 @@ public:
   // The dense Schur complement on rank 0 (n_schur x n_schur, column-major, symmetric up to
   // rounding), handed over instead of its rows (collective).
   virtual std::vector<T> ReleaseSchur() = 0;
+
+  // The local part on a grid of the Schur complement, handed over instead of its rows
+  // (collective): by default, that of rank 0 scattered to the grid.
+  virtual std::vector<T> ReleaseSchurBlocks(const BlockCyclicGrid &grid)
+  {
+    return grid.ScatterFromRoot(ReleaseSchur());
+  }
 
   // Factor the entries in Values() (collective).
   virtual void Refactor() = 0;

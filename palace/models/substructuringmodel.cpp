@@ -47,51 +47,33 @@ void SubstructuringSolver::Impl::AppendRecord(
   ModelFile::Append(path, parent_fes.GetComm(), tag, size, write);
 }
 
-void SubstructuringSolver::Impl::AppendRows(const std::string &path, std::uint32_t tag,
-                                            const std::vector<double> &rows) const
+void SubstructuringSolver::Impl::AppendTriangle(const std::string &path, std::uint32_t tag,
+                                                const std::vector<double> &local) const
 {
   MPI_Comm comm = parent_fes.GetComm();
-  const int nG = nG_global, rank = Mpi::Rank(comm);
-  std::vector<int> cnt, disp;
-  RowLayout(cnt, disp);
-  // The parts of the lower triangle of the ranks: row b from its diagonal, for their rows.
-  std::vector<long long> size(cnt.size(), 0);
-  for (std::size_t q = 0; q < cnt.size(); q++)
-  {
-    for (int b = disp[q]; b < disp[q] + cnt[q]; b++)
-    {
-      size[q] += nG - b;
-    }
-  }
-  std::vector<double> part;
-  part.reserve(static_cast<std::size_t>(size[rank]));
-  for (int i = 0; i < cnt[rank]; i++)
-  {
-    const auto *row = rows.data() + static_cast<std::size_t>(i) * nG;
-    part.insert(part.end(), row + disp[rank] + i, row + nG);
-  }
+  const int nG = nG_global;
+  const std::vector<double> share = ShareFromGrid(*gamma_grid, local);
+  const std::vector<long long> size = TriangleShareSizes(nG, comm);
   ModelFile::Append(
       path, comm, tag, static_cast<long long>(sizeof(double)) * TriangleSize(nG),
       [&](std::ostream &f)
       {
-        ToRoot<double>(comm, part, size, kIoChunk,
+        ToRoot<double>(comm, share, size, kIoChunk,
                        [&](const double *x, std::size_t n)
                        {
                          f.write(reinterpret_cast<const char *>(x),
                                  static_cast<std::streamsize>(sizeof(double) * n));
                        });
       },
-      [&]() { ToRoot<double>(comm, part, size, kIoChunk, {}); });
+      [&]() { ToRoot<double>(comm, share, size, kIoChunk, {}); });
 }
 
-std::vector<double> SubstructuringSolver::Impl::ReadRows(const std::string &path,
-                                                         std::streamoff pos,
-                                                         const SignatureMap &map) const
+std::vector<double> SubstructuringSolver::Impl::ReadTriangle(const std::string &path,
+                                                             std::streamoff pos,
+                                                             const SignatureMap &map) const
 {
   MPI_Comm comm = parent_fes.GetComm();
-  const int nG = nG_global, row0 = gamma_off;
-  std::vector<int> cnt, disp;
-  RowLayout(cnt, disp);
+  const int nG = nG_global;
   std::vector<std::vector<std::pair<int, double>>> to(nG);
   for (int g = 0; g < nG; g++)
   {
@@ -100,7 +82,8 @@ std::vector<double> SubstructuringSolver::Impl::ReadRows(const std::string &path
       to[a].emplace_back(g, c);
     }
   }
-  std::vector<double> rows(static_cast<std::size_t>(gamma_nloc) * nG, 0.0);
+  const BlockCyclicGrid &grid = *gamma_grid;
+  std::vector<double> local(grid.LocalSize(), 0.0);
   std::ifstream f(path, std::ios::binary);
   bool ok = f.good();
   RedistributeTriangle<double>(
@@ -112,18 +95,12 @@ std::vector<double> SubstructuringSolver::Impl::ReadRows(const std::string &path
                static_cast<std::streamsize>(sizeof(double) * m));
         ok = ok && f.good();
       },
-      to,
-      [&](int g, int)
-      {
-        return static_cast<int>(std::upper_bound(disp.begin(), disp.end(), g) -
-                                disp.begin()) -
-               1;
-      },
-      [&](int g, int h) { return static_cast<std::size_t>(g - row0) * nG + h; }, rows);
+      to, [&](int g, int h) { return grid.Owner(g, h); },
+      [&](int g, int h) { return grid.LocalIndex(g, h); }, local);
   int all = ok;
   Mpi::GlobalMin(1, &all, comm);
   MFEM_VERIFY(all, "Reading the substructuring model \"" << path << "\" failed!");
-  return rows;
+  return local;
 }
 
 void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
@@ -680,7 +657,7 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
     if (const auto *r = file.Find(tag))
     {
       complete(r->size == static_cast<long long>(sizeof(double)) * TriangleSize(nG));
-      (tag == kSKenTag ? SK_rows : SKin_rows) = ReadRows(path, r->pos, map);
+      (tag == kSKenTag ? SK_grid : SKin_grid) = ReadTriangle(path, r->pos, map);
       (tag == kSKenTag ? have_sk : have_skin) = true;
     }
   }
@@ -757,7 +734,7 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
       MatchSignatureBasis(InterfaceSignatures(sig_w), saved.sig, saved.width);
   {
     BlockTimer bt_io(Timer::IO);
-    S_rows = ReadRows(model_path, saved.S_pos, map);
+    S_grid = ReadTriangle(model_path, saved.S_pos, map);
   }
   {
     // The records after S_E (fingerprint, S^K, modes).
@@ -788,7 +765,7 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
                  { f.write(reinterpret_cast<const char *>(head), sizeof(head)); });
     substructuring::InterfaceRecords{nG, sig_w, sig, iodata.model.Lc}.Append(
         model_path, parent_fes.GetComm());
-    AppendRows(model_path, kSETag, S_rows);  // collective
+    AppendTriangle(model_path, kSETag, S_grid);  // collective
   }
   AppendEnvFingerprint(model_path);  // collective
   AppendEnvRecord(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
@@ -802,10 +779,10 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
   if (have_sk)
   {
     BlockTimer bt_io(Timer::IO);
-    AppendRows(model_path, kSKenTag, SK_rows);  // collective
+    AppendTriangle(model_path, kSKenTag, SK_grid);  // collective
     if (have_skin)
     {
-      AppendRows(model_path, kSKinTag, SKin_rows);
+      AppendTriangle(model_path, kSKinTag, SKin_grid);
     }
   }
   if (modes_ready)
