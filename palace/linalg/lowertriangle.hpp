@@ -4,7 +4,11 @@
 #ifndef PALACE_LINALG_LOWER_TRIANGLE_HPP
 #define PALACE_LINALG_LOWER_TRIANGLE_HPP
 
+#include <array>
 #include <complex>
+#include <cstddef>
+#include <functional>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 
@@ -61,6 +65,51 @@ void AddToPattern(const mfem::HypreParMatrix &X, double a, const std::vector<int
 void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
                   const std::vector<int> &row_ptr, const std::vector<int> &jcn,
                   std::vector<std::complex<double>> &val);
+
+// The lower triangle of a symmetric n x n matrix by columns, as the records of a
+// substructuring model hold it (column b holds the rows a >= b): its number of entries, and
+// the first entry of column b.
+constexpr long long TriangleSize(long long n)
+{
+  return n * (n + 1) / 2;
+}
+constexpr long long TriangleColumnStart(long long n, long long b)
+{
+  return b * n - b * (b - 1) / 2;
+}
+
+// The row a and column b of entry e of the triangle of an n x n matrix.
+std::array<long long, 2> TriangleEntry(long long n, long long e);
+
+// The share [e0, e1) of this process of the entries of the triangle of an n x n matrix, an
+// equal one of the processes of comm.
+std::array<long long, 2> TriangleShare(long long n, MPI_Comm comm);
+
+// The most entries of a triangle that a process handles at a time when it moves them.
+inline constexpr long long kTriangleChunk = 1LL << 18;
+
+// The triangle of an n x n matrix, each process of comm holding its share of it
+// (TriangleShare), added onto a target layout through a map of its DOFs: read(e, m, x)
+// fills x with the m entries from e of the share of this process, at most kTriangleChunk at
+// a time, and each entry S_ab adds c_ga c_hb S_ab to the entries (g, h) and, for a > b,
+// (h, g) of the target, for the (g, c_ga) of to[a] and the (h, c_hb) of to[b] (with to
+// empty, g = a and h = b with coefficients 1). The process owner(g, h) holds the target
+// entry (g, h), at index(g, h) of its local part y. Collective.
+template <typename T>
+void RedistributeTriangle(MPI_Comm comm, long long n,
+                          const std::function<void(long long, long long, T *)> &read,
+                          const std::vector<std::vector<std::pair<int, double>>> &to,
+                          const std::function<int(int, int)> &owner,
+                          const std::function<std::size_t(int, int)> &index,
+                          std::vector<T> &y);
+
+// To rank 0: the values x of every process (size[q] of process q) in rank order, which
+// write(x, n) takes n at a time at x on rank 0, in chunks of at most chunk values, so that
+// it holds one chunk of another process's at a time. It receives them all even if writing
+// fails, and the other processes only send theirs. Collective.
+template <typename T>
+void ToRoot(MPI_Comm comm, const std::vector<T> &x, const std::vector<long long> &size,
+            std::size_t chunk, const std::function<void(const T *, std::size_t)> &write);
 
 }  // namespace palace
 
