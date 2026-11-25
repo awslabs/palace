@@ -136,12 +136,11 @@ public:
 
 // Append decoupled dofs with the diagonal entry pad to the global vector v of a problem of
 // v.size() dofs, so that it has more dofs than processes: MFEM's partitioning then leaves
-// no process without a dof, which the eigenvalue solvers require on every process (an
-// empty process fails a verification, and the others wait in a collective). With
-// min_local > 1 it has twice min_local dofs per process, for a partitioning which is not
-// even: PARPACK requires its number of basis vectors ≤ the local size on every process.
-// The tests keep these dofs out of their solves: zero in a start vector, and far from the
-// target.
+// no process without a dof, which ARPACK requires (it raises an error on every process
+// otherwise). With min_local > 1 it has twice min_local dofs per process, for a
+// partitioning which is not even: PARPACK requires its number of basis vectors ≤ the local
+// size on every process. The tests keep these dofs out of their solves: zero in a start
+// vector, and far from the target.
 void AddDecoupledDofs(std::vector<double> &v, double pad, int min_local = 1)
 {
   const auto size = static_cast<std::size_t>(Mpi::Size(Mpi::World()));

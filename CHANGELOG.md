@@ -738,8 +738,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     AMS setup, as seen on 2 processes: with hypre built without GPU support, the debug
     device could protect a heap page of hypre with unrelated data on it.
     [PR 1266](https://github.com/awslabs/palace/pull/1266).
-  - *Palace* runs with more MPI processes than the mesh has elements; the ARPACK eigenvalue
-    solver still needs unknowns on every process.
+  - *Palace* runs with more MPI processes than the mesh has elements, with MFEM patches for
+    [mfem/mfem#5436](https://github.com/mfem/mfem/pull/5436) and
+    [mfem/mfem#5791](https://github.com/mfem/mfem/pull/5791); the ARPACK eigenvalue solver
+    still needs unknowns on every process.
     [PR 1276](https://github.com/awslabs/palace/pull/1276).
 
 #### Documentation
