@@ -31,22 +31,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     their interface once and saved, and later runs solve only the region, also after a
     redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
     6-2-0. [PR 995](https://github.com/awslabs/palace/pull/995).
-  - Added driven substructuring (`config["Solver"]["Substructuring"]` for driven problems):
-    uniform frequency sweeps condense the environment exactly at each frequency, with lumped
-    ports, wave ports and lossy boundaries and materials on either side, and an online sweep
-    at saved frequencies solves a redesigned region against the saved environment. Adaptive
-    sweeps condense it at frequencies chosen greedily for a rational model, checked for
-    passivity, which online sweeps evaluate anywhere in its band, with the region reduced by
-    the adaptive fast frequency sweep. The offline sweep also writes a mesh of the region,
-    on which online sweeps read and partition the region only. Runs on CPUs and GPUs, with
-    the factorizations on the CPU. Offline, the partial factorization of MUMPS or, without
-    it, of STRUMPACK gives the condensed environment (SuperLU_DIST, whose condensation goes
-    wrong through a resonance, is not used offline). Every sweep solves the region by
-    FGMRES, preconditioned by its Schur complement onto the interface with the condensed
-    environment added, factored as a dense matrix across the processes (ScaLAPACK), and
-    gives the outputs of the region, offline too. A sparse direct solver that
-    `config["Solver"]["Linear"]["Type"]` names factors both instead. Adds a driven example
-    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 6-2-1.
+  - Added substructuring for driven simulations: the environment is condensed onto the
+    interface at each frequency, exactly or as a rational model sampled by an adaptive
+    sweep, and saved, and later sweeps solve only the region, also after a redesign or
+    re-meshing of it. SchemaVer 6-2-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
 
 #### Interface Changes

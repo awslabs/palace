@@ -510,7 +510,7 @@ public:
 
   // Wave port overlaps of the field with the port mode (the S-parameter before its
   // incident part is removed) given in the same way; their power and voltage are not
-  // available (zero).
+  // available (NaN).
   void SetWavePortOverlaps(std::map<int, std::complex<double>> overlaps)
     requires(solver_t == ProblemType::DRIVEN)
   {
