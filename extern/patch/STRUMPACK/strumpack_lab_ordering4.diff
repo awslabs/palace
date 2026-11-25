@@ -1,0 +1,114 @@
+diff --git a/src/sparse/EliminationTreeMPIDist.cpp b/src/sparse/EliminationTreeMPIDist.cpp
+index 2d4e9d74..ac6632ed 100644
+--- a/src/sparse/EliminationTreeMPIDist.cpp
++++ b/src/sparse/EliminationTreeMPIDist.cpp
+@@ -29,6 +29,9 @@
+ #include <stack>
+ #include <cassert>
+ #include <tuple>
++#include <cstdlib>
++#include <iostream>
++#include <algorithm>
+ 
+ #include "EliminationTreeMPIDist.hpp"
+ #include "Redistribute.hpp"
+@@ -97,6 +100,62 @@ namespace strumpack {
+     find_row_owner(A);
+     Aprop_.setup(A, nd_, *this, opts.compression() != CompressionType::NONE);
+     MPIComm::control_stop("block_row_A_to_prop_A");
++    if (std::getenv("STRUMPACK_LAB_STATS")) {
++      // LAB (ordering4, not for a pull request): with the variable
++      // STRUMPACK_LAB_STATS set, one line per symbolic factorization
++      // with the rows every process solves alone and the rows of the
++      // right-hand side that change owner (and node, of
++      // STRUMPACK_LAB_NODE processes, default 192) in every solve
++      int node = 192;
++      if (auto e = std::getenv("STRUMPACK_LAB_NODE"))
++        node = std::max(1, std::atoi(e));
++      std::vector<long long> v(4, 0);
++      std::vector<char> dest(P_, 0);
++      for (auto o : row_owner_)
++        if (o != rank_) {
++          v[0]++;
++          dest[o] = 1;
++          if (o / node != rank_ / node) v[1]++;
++        }
++      for (int p=0; p<P_; p++)
++        if (dest[p]) {
++          v[2]++;
++          if (p / node != rank_ / node) v[3]++;
++        }
++      comm_.all_reduce(v, MPI_SUM);
++      if (comm_.is_root()) {
++        std::vector<std::pair<long long,int>> seq(P_);
++        long long total = 0;
++        for (int p=0; p<P_; p++) {
++          seq[p] = {(long long)(subtree_ranges_[p].second -
++                                subtree_ranges_[p].first), p};
++          total += seq[p].first;
++        }
++        std::sort(seq.begin(), seq.end());
++        const double mean = double(total) / P_;
++        std::cout << "#LAB4 rows=" << A.size() << " P=" << P_
++                  << " ordering=" << get_name(opts.reordering_method())
++                  << " mapping="
++                  << (prop_map_ == ProportionalMapping::FLOPS ? "flops" :
++                      prop_map_ == ProportionalMapping::FACTOR_MEMORY ?
++                      "factor" : "peak")
++                  << " seq_rows_total=" << total
++                  << " dist_rows=" << A.size() - total
++                  << " seq_mean=" << mean
++                  << " seq_max=" << seq[P_-1].first << "@" << seq[P_-1].second
++                  << " ratio=" << seq[P_-1].first / mean
++                  << " second=" << (P_ > 1 ? seq[P_-2].first : 0)
++                  << " third=" << (P_ > 2 ? seq[P_-3].first : 0)
++                  << " seq_min=" << seq[0].first
++                  << " moved_rows=" << v[0]
++                  << " moved_frac=" << double(v[0]) / A.size()
++                  << " node=" << node
++                  << " moved_rows_node=" << v[1]
++                  << " moved_node_frac=" << double(v[1]) / A.size()
++                  << " messages=" << v[2]
++                  << " messages_node=" << v[3] << std::endl;
++      }
++    }
+   }
+ 
+   template<typename scalar_t,typename integer_t> void
+diff --git a/src/sparse/ordering/MetisTreeReordering.hpp b/src/sparse/ordering/MetisTreeReordering.hpp
+index 7719fea6..e5883e64 100644
+--- a/src/sparse/ordering/MetisTreeReordering.hpp
++++ b/src/sparse/ordering/MetisTreeReordering.hpp
+@@ -31,6 +31,7 @@
+ 
+ #include <algorithm>
+ #include <cstdint>
++#include <cstdlib>
+ #include <functional>
+ #include <iostream>
+ #include <numeric>
+@@ -346,6 +347,15 @@ namespace strumpack {
+     if (rank < leaves) {
+       idx_t options[METIS_NOPTIONS];
+       METIS_SetDefaultOptions(options);
++      // LAB (ordering4, not for a pull request): with the variable
++      // STRUMPACK_LAB_UFACTOR set, the imbalance METIS allows for the
++      // separators of the distributed tree (its default: 200, each
++      // part up to 20% above half the vertices); the leaves keep the
++      // default. Without the variable nothing changes.
++      idx_t split_options[METIS_NOPTIONS];
++      METIS_SetDefaultOptions(split_options);
++      if (auto u = std::getenv("STRUMPACK_LAB_UFACTOR"))
++        split_options[METIS_OPTION_UFACTOR] = std::atoi(u);
+       // process p0 holds the subgraph of the processes [p0,p1), whose
+       // subtree starts with node
+       int p0 = 0, p1 = leaves, node = 0;
+@@ -354,7 +364,7 @@ namespace strumpack {
+         if (rank == p0) {
+           MetisTreeGraph<integer_t> other;
+           nodes.push_back(node + 2*(p1-p0) - 2);
+-          int e = g.split(options, ordered, other, sizes[nodes.back()]);
++          int e = g.split(split_options, ordered, other, sizes[nodes.back()]);
+           if (e != METIS_OK) ierr = e;
+           // Which part stays (see the top of this file). The solver
+           // gives the leaves [p0,pm) to the processes below process
