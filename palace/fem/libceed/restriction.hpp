@@ -28,6 +28,13 @@ struct ElementDofRemap
   CeedSize l_size = 0;
 };
 
+// Whether the DofTransformation that the space applies to the DOFs of local element e (the
+// 2x2 face transformations of H(curl) DOFs on triangular faces from order 2) is present and
+// not the identity. This asks the space's own table, which GetElementDofs uses, and not the
+// collection: ND_FECollection::DofTransformationForGeometry returns none for pyramids,
+// since MFEM's ND_FuentesPyramidElement does not return its DofTransformation.
+bool HasElementDofTransformation(const mfem::FiniteElementSpace &fespace, int e);
+
 void InitRestriction(const mfem::FiniteElementSpace &fespace,
                      const std::vector<int> &indices, bool use_bdr, bool is_interp,
                      bool is_interp_range, Ceed ceed, CeedElemRestriction *restr,
