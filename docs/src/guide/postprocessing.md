@@ -33,9 +33,10 @@ concrete value *Palace* actually used, so the file is a complete, self-contained
 the run. It passes schema validation and can be supplied directly to *Palace* to reproduce
 the same simulation deterministically. A small number of options whose default is delegated
 to an external library (for example the sparse direct solver `"ColumnOrdering"` and the GMRES
-`"PCSide"`) remain `"Default"`, since *Palace* does not select a concrete value for them. The
-same resolved configuration can be printed without running a simulation by passing
-`--dry-run`.
+`"PCSide"`) remain `"Default"`, since *Palace* does not select a concrete value for them, or,
+for the column ordering of STRUMPACK, selects an ordering which is not one of the values of
+the option. The same resolved configuration can be printed without running a simulation by
+passing `--dry-run`.
 
 The participation ratios for bulk dielectrics and interface dielectric layers can be
 computed for simulations involving the electric field. For model boundaries, the integrated

@@ -362,6 +362,14 @@ list(APPEND STRUMPACK_PATCH_FILES
 list(APPEND STRUMPACK_PATCH_FILES
   "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_pr173.diff"
 )
+# Add an ordering to the distributed solver (ReorderingStrategy::METIS_TREE), a METIS
+# nested dissection which is parallel over the separator tree: one process computes the
+# top separators, and the processes then order different parts of the graph of the matrix
+# at the same time. It needs METIS only. Source changes only, applied after the patches
+# above
+list(APPEND STRUMPACK_PATCH_FILES
+  "${CMAKE_SOURCE_DIR}/extern/patch/STRUMPACK/strumpack_metis_tree.diff"
+)
 
 include(ExternalProject)
 ExternalProject_Add(strumpack

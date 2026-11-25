@@ -193,7 +193,9 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
 #if defined(MFEM_USE_STRUMPACK)
       // Without selective inversion (products with inverted factors are less accurate than
       // triangular solves), and with the elimination tree mapped by factor size, which
-      // does not change the accuracy.
+      // does not change the accuracy. The column ordering is the configured one, with the
+      // default of the coarse solvers (see GetStrumpackDefaultReordering): the subdomain
+      // matrix is a matrix of the finest level and can be the largest one factored.
       pc = std::make_unique<StrumpackComplexSolver>(
           comm, linear.sym_factorization, SparseCompression::NONE, linear.strumpack_lr_tol,
           linear.strumpack_butterfly_l, linear.strumpack_lossy_precision,

@@ -203,10 +203,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # 668cd1b8 by the STRUMPACK maintainer, which fix the pivoting of the distributed BLR
     # fronts (to be removed with the next STRUMPACK release), of the source changes of
     # https://github.com/pghysels/STRUMPACK/pull/174, which add the option to store the
-    # permutation of the distributed solver once per node, and of the source changes of
+    # permutation of the distributed solver once per node, of the source changes of
     # https://github.com/pghysels/STRUMPACK/pull/173, which add the option to invert the
-    # triangular factors of the distributed fronts (selective inversion). Kept off the
-    # `with` blocks so the Palace variants are not folded into the patch condition.
+    # triangular factors of the distributed fronts (selective inversion), and of
+    # strumpack_metis_tree.diff, which adds a METIS nested dissection ordering that is
+    # parallel over the separator tree. Kept off the `with` blocks so the Palace variants
+    # are not folded into the patch condition.
     depends_on(
         "strumpack@8.1.0",
         when="@develop+strumpack",
@@ -263,6 +265,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "318f90fbd55f1ed6e192a0a8036047e3c9c6822a/extern/patch/STRUMPACK/"
                 "strumpack_pr173.diff",
                 sha256="b1c059fd008af16e53f036bdcc9ea14b3d33b79b3a05ad06f12175b46b2e6d06",
+                when="@8.1.0",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "e96b289e3903128b3ad074df4383c33abceacb64/extern/patch/STRUMPACK/"
+                "strumpack_metis_tree.diff",
+                sha256="fe88f65bc03f97756c0d9c37b5f05ea6e75dad941e70f6f57379c72a1dc32163",
                 when="@8.1.0",
             ),
         ],

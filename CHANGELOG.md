@@ -29,6 +29,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - When `Solver.Linear.ColumnOrdering` is `"Default"` (or omitted), the STRUMPACK solver
+    (`"Type": "STRUMPACK"`, or `"Default"` when it selects STRUMPACK) now orders the matrix
+    with a METIS nested dissection which is parallel over the separator tree, instead of
+    METIS on one process (see the performance improvements below), also in the direct solve
+    of PML regions. Results change within the solver tolerances. Set
+    `"ColumnOrdering": "METIS"` to keep the previous ordering. The mixed precision solver
+    (`"Type": "STRUMPACK-MP"`) and the wave port and boundary mode eigenvalue solves are
+    not changed: their default ordering is still METIS. SchemaVer 7-0-0
+    [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Eigenmode simulations now postprocess the converged modes, with a warning, when fewer than
     `Solver.Eigenmode.N` modes converge within `Solver.Eigenmode.MaxIts` iterations,
     instead of aborting without output.
@@ -36,6 +45,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - Added a STRUMPACK patch with a METIS nested dissection ordering which is parallel over
+    the separator tree, now the default column ordering of the STRUMPACK solver (not of
+    `"STRUMPACK-MP"`, which keeps METIS). With METIS, one process orders the graph of the
+    whole coarse matrix while all other processes wait. Now one process computes only the
+    top separators, and the processes then order different parts of the graph at the same
+    time. It needs METIS only, the factors have about the same size, and the permutation is
+    still stored once per node. [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#173](https://github.com/pghysels/STRUMPACK/pull/173), selective
     inversion: the solves with the fronts distributed over several processes use products

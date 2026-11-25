@@ -77,6 +77,42 @@ template void ConfigureStrumpackCompression(strumpack::SPOptions<double> &,
 template void ConfigureStrumpackCompression(strumpack::SPOptions<std::complex<double>> &,
                                             SparseCompression, double, int, int);
 
+template <typename ScalarType>
+void ConfigureStrumpackReordering(strumpack::SPOptions<ScalarType> &opts,
+                                  SymbolicFactorization reorder)
+{
+  switch (reorder)
+  {
+    case SymbolicFactorization::METIS:
+      opts.set_reordering_method(strumpack::ReorderingStrategy::METIS);
+      break;
+    case SymbolicFactorization::PARMETIS:
+      opts.set_reordering_method(strumpack::ReorderingStrategy::PARMETIS);
+      break;
+    case SymbolicFactorization::SCOTCH:
+      opts.set_reordering_method(strumpack::ReorderingStrategy::SCOTCH);
+      break;
+    case SymbolicFactorization::PTSCOTCH:
+      opts.set_reordering_method(strumpack::ReorderingStrategy::PTSCOTCH);
+      break;
+    case SymbolicFactorization::AMD:
+      opts.set_reordering_method(strumpack::ReorderingStrategy::AMD);
+      break;
+    case SymbolicFactorization::RCM:
+      opts.set_reordering_method(strumpack::ReorderingStrategy::RCM);
+      break;
+    case SymbolicFactorization::PORD:
+    case SymbolicFactorization::DEFAULT:
+      opts.set_reordering_method(GetStrumpackDefaultReordering());
+      break;
+  }
+}
+
+template void ConfigureStrumpackReordering(strumpack::SPOptions<double> &,
+                                           SymbolicFactorization);
+template void ConfigureStrumpackReordering(strumpack::SPOptions<std::complex<double>> &,
+                                           SymbolicFactorization);
+
 template <typename StrumpackSolverType>
 StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
     MPI_Comm comm, SymbolicFactorization reorder, SparseCompression compression,
@@ -90,32 +126,6 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   this->SetKrylovSolver(strumpack::KrylovSolver::DIRECT);  // Always as a preconditioner or
                                                            // direct solver
   this->SetMatching(strumpack::MatchingJob::NONE);
-  switch (reorder)
-  {
-    case SymbolicFactorization::METIS:
-      this->SetReorderingStrategy(strumpack::ReorderingStrategy::METIS);
-      // this->SetReorderingStrategy(strumpack::ReorderingStrategy::AND);
-      break;
-    case SymbolicFactorization::PARMETIS:
-      this->SetReorderingStrategy(strumpack::ReorderingStrategy::PARMETIS);
-      break;
-    case SymbolicFactorization::SCOTCH:
-      this->SetReorderingStrategy(strumpack::ReorderingStrategy::SCOTCH);
-      break;
-    case SymbolicFactorization::PTSCOTCH:
-      this->SetReorderingStrategy(strumpack::ReorderingStrategy::PTSCOTCH);
-      break;
-    case SymbolicFactorization::AMD:
-      this->SetReorderingStrategy(strumpack::ReorderingStrategy::AMD);
-      // this->SetReorderingStrategy(strumpack::ReorderingStrategy::MMD);
-      break;
-    case SymbolicFactorization::RCM:
-      this->SetReorderingStrategy(strumpack::ReorderingStrategy::RCM);
-    case SymbolicFactorization::PORD:
-    case SymbolicFactorization::DEFAULT:
-      // Should have good default.
-      break;
-  }
   this->SetReorderingReuse(
       reorder_reuse);  // If true repeated calls use same sparsity pattern
 
@@ -123,14 +133,17 @@ StrumpackSolverBase<StrumpackSolverType>::StrumpackSolverBase(
   ConfigureStrumpackCompression(this->solver_->options(), compression, lr_tol, butterfly_l,
                                 lossy_prec);
 
-  // Store the permutation once per node. The mixed precision solver computes the ordering
-  // in its single precision solver, which has its own options.
+  // Set the column ordering and store the permutation once per node. The mixed precision
+  // solver computes the ordering in its single precision solver, which has its own
+  // options: the column ordering is not set there, so that it is always the default of
+  // STRUMPACK, METIS.
   if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKMixedPrecisionSolver>)
   {
     EnableStrumpackSharedPermutation(this->solver_->solver().options());
   }
   else
   {
+    ConfigureStrumpackReordering(this->solver_->options(), reorder);
     EnableStrumpackSharedPermutation(this->solver_->options());
 
     // Map the elimination tree by factor size (the mixed precision solver keeps the
@@ -213,6 +226,20 @@ void StrumpackSolverBase<StrumpackSolverType>::SetReorderReuse(bool reorder_reus
 {
   StrumpackSolverType::SetReorderingReuse(
       reorder_reuse);  // If true repeated calls use same sparsity pattern
+}
+
+template <typename StrumpackSolverType>
+strumpack::ReorderingStrategy
+StrumpackSolverBase<StrumpackSolverType>::GetReorderingStrategy() const
+{
+  if constexpr (std::is_same_v<StrumpackSolverType, mfem::STRUMPACKMixedPrecisionSolver>)
+  {
+    return this->solver_->solver().options().reordering_method();
+  }
+  else
+  {
+    return this->solver_->options().reordering_method();
+  }
 }
 
 template class StrumpackSolverBase<mfem::STRUMPACKSolver>;

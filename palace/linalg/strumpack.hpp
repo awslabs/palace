@@ -21,15 +21,45 @@ void ConfigureStrumpackCompression(strumpack::SPOptions<ScalarType> &opts,
                                    SparseCompression compression, double lr_tol,
                                    int butterfly_l, int lossy_prec);
 
+// The column ordering of STRUMPACK for "ColumnOrdering": "Default", in the real-valued
+// solver and in the solver in complex arithmetic (the coarse solvers and the solver of the
+// PML regions): a METIS nested dissection which is parallel over the separator tree
+// (ReorderingStrategy::METIS_TREE). With METIS, the default of STRUMPACK, one process
+// orders the graph of the whole matrix while all other processes wait. With this ordering,
+// that process computes only the top separators, and the processes then order different
+// parts of the graph at the same time, for factors of about the same size. On one process,
+// or for a matrix of fewer than 4000 rows, it is the METIS ordering. The ordering is a
+// patch in the STRUMPACK builds of Palace (superbuild and Spack package), and STRUMPACK
+// defines no macro for it: with a STRUMPACK which lacks it, the default is METIS.
+template <typename Strategy = strumpack::ReorderingStrategy>
+constexpr Strategy GetStrumpackDefaultReordering()
+{
+  if constexpr (requires { Strategy::METIS_TREE; })
+  {
+    return Strategy::METIS_TREE;
+  }
+  else
+  {
+    return Strategy::METIS;
+  }
+}
+
+// Set the column ordering of STRUMPACK, for the real-valued solver and for the solver in
+// complex arithmetic (StrumpackComplexSolver). The mixed precision solver always uses
+// METIS.
+template <typename ScalarType>
+void ConfigureStrumpackReordering(strumpack::SPOptions<ScalarType> &opts,
+                                  SymbolicFactorization reorder);
+
 // Enable the STRUMPACK option which stores the fill-reducing permutation of the distributed
 // solver and its inverse (two integers per matrix row) once per node, in an MPI shared
 // memory window, instead of on every process. Palace enables it in all its STRUMPACK
 // solvers, in real and in complex arithmetic. STRUMPACK does this after a sequential
-// ordering (not ParMETIS or PT-Scotch) without compression, and falls back to a copy per
-// process, with a warning, if the window cannot be allocated (with Open MPI,
-// OMPI_MCA_osc=^sm,ucx makes every process keep its copy). The option is a patch in the
-// STRUMPACK builds of Palace (superbuild and Spack package), and STRUMPACK defines no macro
-// for it: this does nothing with a STRUMPACK which lacks it.
+// ordering or the default ordering above (not ParMETIS or PT-Scotch) without compression,
+// and falls back to a copy per process, with a warning, if the window cannot be allocated
+// (with Open MPI, OMPI_MCA_osc=^sm,ucx makes every process keep its copy). The option is a
+// patch in the STRUMPACK builds of Palace (superbuild and Spack package), and STRUMPACK
+// defines no macro for it: this does nothing with a STRUMPACK which lacks it.
 template <typename ScalarType>
 inline void EnableStrumpackSharedPermutation(strumpack::SPOptions<ScalarType> &opts)
 {
@@ -108,6 +138,10 @@ public:
   void SetOperator(const Operator &op) override;
 
   void SetReorderReuse(bool reorder_reuse);
+
+  // The ordering which STRUMPACK uses: for the mixed precision solver, that of its single
+  // precision solver, which computes the ordering (METIS for every value of the option).
+  strumpack::ReorderingStrategy GetReorderingStrategy() const;
 };
 
 using StrumpackSolver = StrumpackSolverBase<mfem::STRUMPACKSolver>;

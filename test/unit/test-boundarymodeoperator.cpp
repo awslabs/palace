@@ -23,6 +23,9 @@
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
+#include "linalg/ksp.hpp"
+#include "linalg/solver.hpp"
+#include "linalg/strumpack.hpp"
 #include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -205,9 +208,10 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
 // Solve for the fundamental mode of the rectangular waveguide cross-section (at 100 GHz,
 // where it is the only propagating mode) through the 2D BoundaryModeOperator path used by
 // the BoundaryMode driver, which uses p-multigrid preconditioning when mg_max_levels > 1.
-std::vector<std::complex<double>>
-SolveRectangularModesMultigrid(int mg_max_levels,
-                               const std::function<void(IoData &)> &configure_bcs)
+// The solver can be inspected before the solve.
+std::vector<std::complex<double>> SolveRectangularModesMultigrid(
+    int mg_max_levels, const std::function<void(IoData &)> &configure_bcs,
+    const std::function<void(const ModeEigenSolver &)> &inspect = {})
 {
   constexpr double width = 1000.0, height = 500.0, freq_ghz = 100.0, eig_tol = 1.0e-8;
   constexpr int order = 2, num_modes = 1;
@@ -256,6 +260,10 @@ SolveRectangularModesMultigrid(int mg_max_levels,
   ModeEigenSolver mode_solver(mode_op, dbc_tdof_list, num_modes, num_vec, eig_tol,
                               EigenvalueSolver::WhichType::LARGEST_REAL,
                               iodata.solver.linear, iodata.solver.boundary_mode.type, 0);
+  if (inspect)
+  {
+    inspect(mode_solver);
+  }
   const double omega =
       2.0 * M_PI * iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
   const double kn_target = omega * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon());
@@ -981,6 +989,56 @@ TEST_CASE("ModeEigenSolver p-multigrid preconditioning", "[boundarymodeoperator]
         });
   }
 }
+
+#if defined(MFEM_USE_STRUMPACK)
+namespace
+{
+
+// Gives access to the preconditioner of a ComplexKspSolver.
+struct KspPreconditionerAccess : public ComplexKspSolver
+{
+  static Solver<ComplexOperator> *Get(const ComplexKspSolver &ksp)
+  {
+    return (ksp.*&KspPreconditionerAccess::pc).get();
+  }
+};
+
+}  // namespace
+
+TEST_CASE("ModeEigenSolver STRUMPACK column ordering",
+          "[boundarymodeoperator][strumpack][Serial][Parallel]")
+{
+  // The sparse direct solver of the mode problems keeps the METIS ordering for
+  // "ColumnOrdering": "Default", for which the solver of the 3D problem uses another
+  // ordering (see GetStrumpackDefaultReordering), and the orderings the other values name.
+  using Strategy = strumpack::ReorderingStrategy;
+  const auto [reorder, expected] =
+      GENERATE(std::make_pair(SymbolicFactorization::DEFAULT, Strategy::METIS),
+               std::make_pair(SymbolicFactorization::METIS, Strategy::METIS),
+               std::make_pair(SymbolicFactorization::AMD, Strategy::AMD));
+  int num_checked = 0;
+  const auto kn = SolveRectangularModesMultigrid(
+      1,
+      [&](IoData &iodata)
+      {
+        iodata.solver.linear.type = LinearSolver::STRUMPACK;
+        iodata.solver.linear.sym_factorization = reorder;
+      },
+      [&](const ModeEigenSolver &mode_solver)
+      {
+        REQUIRE(mode_solver.GetLinearSolver());
+        auto *pc = dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(
+            KspPreconditionerAccess::Get(*mode_solver.GetLinearSolver()));
+        REQUIRE(pc);
+        const auto *strumpack = dynamic_cast<const StrumpackSolver *>(&pc->GetSolver());
+        REQUIRE(strumpack);
+        CHECK(strumpack->GetReorderingStrategy() == expected);
+        num_checked++;
+      });
+  CHECK(num_checked == 1);
+  CHECK(kn.size() >= 1);
+}
+#endif
 
 TEST_CASE("ModeEigenSolver preconditioners of lossy modes",
           "[boundarymodeoperator][Serial][Parallel]")
