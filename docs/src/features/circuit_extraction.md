@@ -397,9 +397,10 @@ The samples of each excitation index span, to a very good approximation, the qua
 to the combined drive of the ports under that index, even when the lowest sample is close to a
 mode. A port with an inductance which is the only one with an inductance under its excitation
 index therefore needs no anchor, while a port which shares its index with another port with an
-inductance, or is not excited, gets its own quasistatic response only from its anchor. Without it,
-the synthesized matrices underestimate the static inductance across the port, by part of the
-inductance carried by the modes above the sweep band. For a SQUID modeled as two arm ports, the
+inductance, or is not excited, gets its own quasistatic response only from its anchor, and
+*Palace* warns of such a port without one. Without it, the synthesized matrices underestimate the
+static inductance across the port, by part of the inductance carried by the modes above the sweep
+band. For a SQUID modeled as two arm ports, the
 quasistatic responses of the two arms differ by the loop mode of the SQUID, in which a current
 circulates through the two junction capacitances and the inductance of the loop between the
 returns of the junctions: anchoring one arm makes the static inductance across that arm exact, and

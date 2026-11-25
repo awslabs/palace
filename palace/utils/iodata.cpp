@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <numbers>
 #include <optional>
 #include <regex>
@@ -530,16 +531,50 @@ void IoData::CheckConfiguration()
       }
     }
   }
-  else if (!domains.pml.empty())
+  else
   {
     // The quasistatic anchor solves need the static limit of the model, which the stretch
     // of a PML region does not have.
+    if (!domains.pml.empty())
+    {
+      for (const auto &[idx, data] : boundaries.lumpedport)
+      {
+        MFEM_VERIFY(!data.synthesis_anchor,
+                    fmt::format("\"SynthesisAnchor\" of lumped port {:d} is not supported "
+                                "with PML regions!",
+                                idx));
+      }
+    }
+
+    // The samples of an excitation index span the quasistatic response to the combined
+    // drive of its ports, so that a port with an inductance needs an anchor for its own
+    // quasistatic response when it is not excited, or when another port with an inductance
+    // shares its excitation index.
+    auto Inductive = [](const config::LumpedPortData &data)
+    {
+      return data.active && data.include_in_synthesis && (data.L != 0.0 || data.Ls != 0.0);
+    };
+    std::map<int, int> num_inductive;
     for (const auto &[idx, data] : boundaries.lumpedport)
     {
-      MFEM_VERIFY(!data.synthesis_anchor,
-                  fmt::format("\"SynthesisAnchor\" of lumped port {:d} is not supported "
-                              "with PML regions!",
-                              idx));
+      if (Inductive(data) && data.excitation > 0)
+      {
+        num_inductive[data.excitation]++;
+      }
+    }
+    for (const auto &[idx, data] : boundaries.lumpedport)
+    {
+      if (Inductive(data) && !data.synthesis_anchor &&
+          (data.excitation == 0 || num_inductive[data.excitation] > 1))
+      {
+        Mpi::Warning("Lumped port {:d} has an inductance and {}, but no "
+                     "\"SynthesisAnchor\": the synthesized circuit may underestimate the "
+                     "static inductance across it!\n",
+                     idx,
+                     (data.excitation == 0) ? "is not excited"
+                                            : "shares its excitation index with another "
+                                              "port with an inductance");
+      }
     }
   }
 
