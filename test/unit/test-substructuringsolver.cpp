@@ -2416,11 +2416,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 TEST_CASE("SubstructuringSolver region factored with the environment operator",
           "[substructure][Serial][Parallel][Long]")
 {
-  // The region is factored with S_E as one sparse system, here with one excitation and an
-  // interface of over 1000 DOFs, the dense block of the factorization. Without a Dirichlet
-  // boundary, the region operator alone is singular, but not with S_E. The capacitance is
-  // that of a monolith, of the terminal at x = 1 against the grounded sides of the
-  // environment, with the region grounded at x = 0 or not.
+  // The region is solved by its Schur complement onto the interface with S_E, here with one
+  // excitation and an interface of over 1000 DOFs. Without a Dirichlet boundary, the
+  // region's Schur complement alone is singular, but not with S_E. The capacitance is that
+  // of a monolith, of the terminal at x = 1 against the grounded sides of the environment,
+  // with the region grounded at x = 0 or not.
   const bool grounded = GENERATE(true, false);
   CAPTURE(grounded);
   const std::vector<int> ground = grounded ? std::vector<int>{2, 4} : std::vector<int>{4};

@@ -18,6 +18,12 @@
 namespace palace
 {
 
+namespace config
+{
+struct BoundaryData;
+struct DomainData;
+}  // namespace config
+
 class FiniteElementSpace;
 
 // Abort unless every domain attribute of the mesh is in the region or the environment, and
@@ -57,6 +63,24 @@ InterfaceClasses ClassifyInterfaceTrueDofs(const mfem::Array<int> &region_marker
                                            const mfem::Array<int> &env_marker,
                                            const std::vector<char> &dirichlet,
                                            const std::vector<char> &cut);
+
+// The interface Γ of a substructured space, with the classes of its true DOFs (see
+// ClassifyInterfaceTrueDofs): its global order, by owner rank and then local index, in
+// which each rank's DOFs of Γ are its contiguous block [offset, offset + count), and the
+// global true DOF of each. Collective.
+struct SubstructureInterface : InterfaceClasses
+{
+  SubstructureInterface() = default;
+  SubstructureInterface(InterfaceClasses &&classes, HYPRE_BigInt tstart, MPI_Comm comm);
+
+  // The size of Γ, the block of this rank, and the counts and offsets of all ranks.
+  int size = 0, offset = 0, count = 0;
+  std::vector<int> counts, offsets;
+  // The index in Γ of each local true DOF (-1 off it), and the global true DOF of each
+  // index (replicated).
+  std::vector<int> index;
+  std::vector<HYPRE_BigInt> tdofs;
+};
 
 // Geometric signatures of a set of true DOFs, replicated on all ranks (n x width,
 // row-major, width = SignatureWidth(fespace)), identifying them independently of the DOF
@@ -170,6 +194,17 @@ std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
 // only, so that a field known in the region determines quantities on them. Collective.
 std::vector<int> BoundaryAttributesInRegion(const mfem::ParMesh &mesh,
                                             const std::vector<int> &region_attributes);
+
+// The postprocessing that the field of a substructured region gives, in place: the domain
+// energies of region domains, the probes in region elements, and the surface fluxes and
+// dielectric postprocessing on boundaries in the region (BoundaryAttributesInRegion) other
+// than env_bdr_attributes (on the mesh of the region, the boundaries of the environment
+// elements it holds). Returns the indices of those it leaves out, with the key of their
+// configuration. Collective.
+std::vector<std::pair<std::string, std::vector<int>>>
+RegionPostprocessing(const mfem::ParMesh &mesh, const std::vector<int> &region_attributes,
+                     const std::vector<int> &env_bdr_attributes,
+                     config::DomainData &domains, config::BoundaryData &boundaries);
 
 // The mesh of the region written next to a saved substructuring model: <model>_region.mesh.
 std::string RegionMeshPath(const std::string &model_path);

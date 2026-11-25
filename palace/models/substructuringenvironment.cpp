@@ -42,13 +42,13 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
     const double *vv = v.HostRead();
     for (int i = 0; i < nt; i++)
     {
-      if (is_gamma[i])
+      if (iface.gamma[i])
       {
-        out[static_cast<std::size_t>(gamma_global[i] - gamma_off) * K + k] = vv[i];
+        out[static_cast<std::size_t>(iface.index[i] - iface.offset) * K + k] = vv[i];
       }
     }
   };
-  SG_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
+  SG_rows.assign(static_cast<std::size_t>(iface.count) * K, 0.0);
   std::vector<mfem::Vector> KW(K, mfem::Vector(nt)), MD(K, mfem::Vector(nt)),
       D(K, mfem::Vector(nt));
   // By condensations: h_k = Z^T q_k for q_k = (A_env - D_env) W_k - b^E_k, and with S^Kin
@@ -91,9 +91,9 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
   std::vector<double> hrows;
   CondenseRows(V, hrows);
   const int nv = static_cast<int>(V.size());
-  SH_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
-  SHkin_rows.assign(kin ? static_cast<std::size_t>(gamma_nloc) * K : 0, 0.0);
-  for (int r = 0; r < gamma_nloc; r++)
+  SH_rows.assign(static_cast<std::size_t>(iface.count) * K, 0.0);
+  SHkin_rows.assign(kin ? static_cast<std::size_t>(iface.count) * K : 0, 0.0);
+  for (int r = 0; r < iface.count; r++)
   {
     for (int k = 0; k < K; k++)
     {
@@ -119,7 +119,7 @@ void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
       double *je = JE[k].HostWrite();
       for (int i = 0; i < nt; i++)
       {
-        je[i] = is_env_int[i] ? J[i] : 0.0;
+        je[i] = iface.env_int[i] ? J[i] : 0.0;
       }
     }
   }
@@ -227,12 +227,12 @@ void SubstructuringSolver::Impl::EnsureEnv()
   std::vector<char> keep(nt);
   for (int i = 0; i < nt; i++)
   {
-    keep[i] = is_env_int[i] || is_gamma[i];
+    keep[i] = iface.env_int[i] || iface.gamma[i];
   }
   SideSystem side({&Aenv()}, keep);
   const LinearSolver type = SchurSolverFor(iodata.solver.substructuring->direct_solver);
   env_factorization = SchurFactorizationName(type);
-  const auto gamma = side.Indices(InterfaceTrueDofs());
+  const auto gamma = side.Indices(iface.tdofs);
   MFEM_VERIFY(gamma_grid, "The environment is factored before the interface is numbered!");
   env_schur = MakeSchurFactorization<double>(
       type, iodata.solver.linear.sym_factorization, parent_fes.GetComm(), side.n_glob,
@@ -278,7 +278,7 @@ void SubstructuringSolver::Impl::RecoverEnvInterior(std::vector<mfem::Vector> &u
     double *uu = u[k].HostReadWrite();
     for (int i = 0; i < nt; i++)
     {
-      if (is_env_int[i])
+      if (iface.env_int[i])
       {
         uu[i] = r[i];
       }
@@ -346,7 +346,7 @@ void SubstructuringSolver::Impl::ComputeModes(const std::vector<int> &ids,
     const double *tt = t[k].HostRead();
     for (int i = 0; i < nt && !touches[k]; i++)
     {
-      touches[k] = (is_env_int[i] && tt[i] != 0.0);
+      touches[k] = (iface.env_int[i] && tt[i] != 0.0);
     }
   }
   if (K > 0)
@@ -374,16 +374,16 @@ void SubstructuringSolver::Impl::ComputeModes(const std::vector<int> &ids,
   }
   // g_k = (t_k - A_env w_k)|_Gamma and C_kl = x_k . t_l - t_k . w_l.
   mfem::Vector tmp(nt);
-  G_rows.assign(static_cast<std::size_t>(gamma_nloc) * K, 0.0);
+  G_rows.assign(static_cast<std::size_t>(iface.count) * K, 0.0);
   for (int k = 0; k < K; k++)
   {
     Aenv().Mult(w[k], tmp);
     const double *tk = t[k].HostRead(), *tt = tmp.HostRead();
     for (int i = 0; i < nt; i++)
     {
-      if (is_gamma[i])
+      if (iface.gamma[i])
       {
-        G_rows[static_cast<std::size_t>(gamma_global[i] - gamma_off) * K + k] =
+        G_rows[static_cast<std::size_t>(iface.index[i] - iface.offset) * K + k] =
             tk[i] - tt[i];
       }
     }
@@ -478,20 +478,6 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
   return ok;
 }
 
-void SubstructuringSolver::Impl::RowLayout(std::vector<int> &cnt,
-                                           std::vector<int> &disp) const
-{
-  MPI_Comm comm = parent_fes.GetComm();
-  const int nranks = Mpi::Size(comm);
-  cnt.assign(nranks, 0);
-  disp.assign(nranks, 0);
-  MPI_Allgather(&gamma_nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
-  for (int r = 1; r < nranks; r++)
-  {
-    disp[r] = disp[r - 1] + cnt[r - 1];
-  }
-}
-
 std::vector<double> SubstructuringSolver::Impl::GatherRows(const std::vector<double> &rows,
                                                            int w) const
 {
@@ -502,14 +488,13 @@ std::vector<double> SubstructuringSolver::Impl::GatherRows(const std::vector<dou
   {
     return full;
   }
-  std::vector<int> cnt, disp;
-  RowLayout(cnt, disp);
+  const std::vector<int> &cnt = iface.counts, &disp = iface.offsets;
   if (root)
   {
-    full.assign(static_cast<std::size_t>(nG_global) * w, 0.0);
+    full.assign(static_cast<std::size_t>(iface.size) * w, 0.0);
   }
   const RowType row(w);
-  MPI_Gatherv(rows.data(), gamma_nloc, row.type, root ? full.data() : nullptr, cnt.data(),
+  MPI_Gatherv(rows.data(), iface.count, row.type, root ? full.data() : nullptr, cnt.data(),
               disp.data(), row.type, 0, comm);
   return full;
 }
@@ -517,17 +502,16 @@ std::vector<double> SubstructuringSolver::Impl::GatherRows(const std::vector<dou
 void SubstructuringSolver::Impl::ScatterRows(const std::vector<double> &full, int w,
                                              std::vector<double> &rows) const
 {
-  rows.assign(static_cast<std::size_t>(gamma_nloc) * w, 0.0);
+  rows.assign(static_cast<std::size_t>(iface.count) * w, 0.0);
   if (w == 0)
   {
     return;
   }
-  std::vector<int> cnt, disp;
-  RowLayout(cnt, disp);
+  const std::vector<int> &cnt = iface.counts, &disp = iface.offsets;
   MPI_Comm comm = parent_fes.GetComm();
   const RowType row(w);
   MPI_Scatterv(Mpi::Rank(comm) == 0 ? full.data() : nullptr, cnt.data(), disp.data(),
-               row.type, rows.data(), gamma_nloc, row.type, 0, comm);
+               row.type, rows.data(), iface.count, row.type, 0, comm);
 }
 
 void SubstructuringSolver::Impl::ApplyAeeInvMulti(
@@ -545,7 +529,7 @@ void SubstructuringSolver::Impl::CondenseRows(const std::vector<const mfem::Vect
                                               std::vector<double> &rows) const
 {
   // The condensations (rank 0, nG x |V|, column-major), to the owners of their rows.
-  const int nG = nG_global, nv = static_cast<int>(V.size());
+  const int nG = iface.size, nv = static_cast<int>(V.size());
   std::vector<double> g, full;
   env_schur->Condense(V, g);
   if (Mpi::Root(parent_fes.GetComm()))
@@ -571,7 +555,7 @@ void SubstructuringSolver::Impl::MaskToEnvInterior(
     double *yy = y->HostReadWrite();
     for (int i = 0; i < nt; i++)
     {
-      if (!is_env_int[i])
+      if (!iface.env_int[i])
       {
         yy[i] = 0.0;
       }
@@ -581,14 +565,14 @@ void SubstructuringSolver::Impl::MaskToEnvInterior(
 
 void SubstructuringSolver::Impl::MaterializeWithEnergy()
 {
-  const int nG = nG_global, nloc = gamma_nloc, off = gamma_off;
+  const int nG = iface.size, nloc = iface.count, off = iface.offset;
   // Owned interface column -> local true DOF.
   std::vector<int> col_to_dof(nloc, -1);
   for (int i = 0; i < nt; i++)
   {
-    if (is_gamma[i])
+    if (iface.gamma[i])
     {
-      col_to_dof[gamma_global[i] - off] = i;
+      col_to_dof[iface.index[i] - off] = i;
     }
   }
   // S_E from the environment's factorization, on gamma_grid. The energy operator S^K = S_E
@@ -597,7 +581,7 @@ void SubstructuringSolver::Impl::MaterializeWithEnergy()
   // M_kin^E p, in batches of kMaterializeBlock lifts whose condensations (by rows) are
   // added to the grid; the thin coupling is G = A_env E_Gamma.
   S_grid = env_schur->ReleaseSchurBlocks(*gamma_grid);
-  std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_gamma);
+  std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(iface.gamma);
   std::unique_ptr<mfem::HypreParMatrix> G(mfem::ParMult(&Aenv(), E.get()));
   E.reset();
   const int B = kMaterializeBlock;

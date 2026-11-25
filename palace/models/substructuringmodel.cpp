@@ -51,7 +51,7 @@ void SubstructuringSolver::Impl::AppendTriangle(const std::string &path, std::ui
                                                 const std::vector<double> &local) const
 {
   MPI_Comm comm = parent_fes.GetComm();
-  const int nG = nG_global;
+  const int nG = iface.size;
   const std::vector<double> share = ShareFromGrid(*gamma_grid, local);
   const std::vector<long long> size = TriangleShareSizes(nG, comm);
   ModelFile::Append(
@@ -73,7 +73,7 @@ std::vector<double> SubstructuringSolver::Impl::ReadTriangle(const std::string &
                                                              const SignatureMap &map) const
 {
   MPI_Comm comm = parent_fes.GetComm();
-  const int nG = nG_global;
+  const int nG = iface.size;
   std::vector<std::vector<std::pair<int, double>>> to(nG);
   for (int g = 0; g < nG; g++)
   {
@@ -111,7 +111,7 @@ void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
   const std::vector<double> H_full = GatherRows(SH_rows, K);
   const std::vector<double> Hkin_full =
       have_skin ? GatherRows(SHkin_rows, K) : std::vector<double>();
-  const long long k = K, n = nG_global;
+  const long long k = K, n = iface.size;
   const long long size =
       static_cast<long long>(sizeof(int)) * (1 + k) +
       static_cast<long long>(sizeof(double)) *
@@ -252,7 +252,7 @@ SubstructuringSolver::Impl::EnvironmentFingerprint() const
   double loc[2] = {0.0, 0.0};
   for (int i = 0; i < nt; i++)
   {
-    loc[0] += (is_env_int[i] || is_gamma[i]) ? 1.0 : 0.0;
+    loc[0] += (iface.env_int[i] || iface.gamma[i]) ? 1.0 : 0.0;
     loc[1] += env_dbc[i] ? 1.0 : 0.0;
   }
   const mfem::Vector r2 = FingerprintField(2);
@@ -400,7 +400,7 @@ SubstructuringSolver::Impl::RegionFilmClosure(std::vector<char> &keep,
   std::vector<char> split(nt0, 0), gamma(nt0, 0);
   for (int t = 0; t < nt; t++)
   {
-    gamma[ParentTrueDof(t)] = gamma[ParentTrueDof(t)] || is_gamma[t];
+    gamma[ParentTrueDof(t)] = gamma[ParentTrueDof(t)] || iface.gamma[t];
   }
   const double *r = tr.HostRead();
   for (int t0 = 0; t0 < nt0; t0++)
@@ -616,7 +616,7 @@ void SubstructuringSolver::Impl::AppendModes(const std::string &path)
   BlockTimer bt(Timer::IO);
   const int K = static_cast<int>(mode_ids.size());
   const std::vector<double> G_full = GatherRows(G_rows, K);
-  const long long k = K, n = nG_global;
+  const long long k = K, n = iface.size;
   AppendRecord(path, kModesTag,
                static_cast<long long>(sizeof(int)) * (1 + k) +
                    static_cast<long long>(sizeof(double)) * (2 * k + n * k + k * k),
@@ -638,7 +638,7 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
 {
   MPI_Comm comm = parent_fes.GetComm();
   const bool root = Mpi::Root(comm);
-  const long long nG = nG_global;
+  const long long nG = iface.size;
   const auto &file = saved.file;
   auto complete = [&](bool ok)
   {
@@ -714,7 +714,7 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
 
 void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int sig_w)
 {
-  const int nG = nG_global;
+  const int nG = iface.size;
   MFEM_VERIFY(saved.nG == nG,
               "Saved substructuring model interface size ("
                   << saved.nG << ") does not match this run (" << nG
@@ -753,7 +753,7 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
 
 void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int sig_w)
 {
-  const int nG = nG_global;
+  const int nG = iface.size;
   const int sig_type = magnetostatic ? ((sig_w == 13) ? 3 : 2) : 1;
   const std::vector<double> sig =
       InterfaceSignatures(sig_w);  // collective: all ranks participate

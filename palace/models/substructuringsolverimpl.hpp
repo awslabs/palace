@@ -166,7 +166,10 @@ struct SubstructuringSolver::Impl
   // (magnetostatics).
   std::unique_ptr<mfem::HypreParMatrix> A_region_energy;
   mfem::HypreParMatrix *K_region_e = nullptr;
-  std::vector<char> is_gamma, is_env_int, is_region_free;
+  // The interface (the classes of the true DOFs and the global order of Gamma), and the
+  // region-free true DOFs (the region interior and Gamma).
+  SubstructureInterface iface;
+  std::vector<char> is_region_free;
   mfem::Array<int> dbc_tdofs;
   std::vector<char> env_dbc;  // the Dirichlet true DOFs of environment elements
   std::map<int, std::vector<int>> terminal_tdofs;  // terminal index -> its true DOFs
@@ -175,13 +178,8 @@ struct SubstructuringSolver::Impl
   // attributes of the mesh not in the region.
   std::vector<int> env_attributes;
 
-  // The global interface enumeration: each rank's interface DOFs are its own contiguous
-  // block [gamma_off, gamma_off + gamma_nloc) of it, in rank order. The interface operator
-  // S_E is on gamma_grid (its local part).
-  std::vector<int> gamma_global;  // owned parent true DOF -> global interface index, or -1
-  int nG_global = 0;
+  // The interface operator S_E on gamma_grid (its local part).
   std::vector<double> S_grid;
-  int gamma_off = 0, gamma_nloc = 0;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn;
 
   // Dirichlet-lift modes (electrostatics): the environment condensed onto Gamma + a set of
@@ -382,10 +380,6 @@ struct SubstructuringSolver::Impl
 
   void AppendSourceModes(const std::string &path);
 
-  // Global parent true DOFs of the interface, in global interface order (replicated).
-  // Collective.
-  std::vector<HYPRE_BigInt> InterfaceTrueDofs() const;
-
   // Whether the interface holds versions of DOFs split by two-sided films crossing Gamma.
   // Collective.
   bool InterfaceSplit() const;
@@ -435,10 +429,6 @@ struct SubstructuringSolver::Impl
   // lacks must have DOFs in it (one without is of the environment). Collective.
   bool ModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &xd,
                   std::vector<int> &col, std::vector<char> &need) const;
-
-  // Per-rank counts/displacements of the rows of an interface-row-distributed array
-  // (gamma_nloc each).
-  void RowLayout(std::vector<int> &cnt, std::vector<int> &disp) const;
 
   // Gather an interface-row-distributed array (width w) to rank 0 (full, global row order).
   std::vector<double> GatherRows(const std::vector<double> &rows, int w) const;
@@ -575,7 +565,7 @@ struct SubstructuringSolver::Impl
 
   // Selection matrix E (parent true DOFs x marked DOFs): E(i, k) = 1 for the k-th marked
   // DOF, numbered globally rank by rank in local order (for the interface, as
-  // gamma_global). Each rank's marked DOFs are its own contiguous block, so the matrix is
+  // iface.index). Each rank's marked DOFs are its own contiguous block, so the matrix is
   // local.
   std::unique_ptr<mfem::HypreParMatrix>
   AssembleSelection(const std::vector<char> &mark) const;
@@ -607,10 +597,6 @@ struct SubstructuringSolver::Impl
 
   // Zero the entries outside the environment interior.
   void MaskToEnvInterior(const std::vector<mfem::Vector *> &Y) const;
-
-  // Number the interface true DOFs globally, in rank order, and size the rows of S_E.
-  // Collective.
-  void EnumerateInterface();
 
   // Load S_E and the sections of the saved model onto this interface (the head was read
   // and checked by the constructor). Collective.

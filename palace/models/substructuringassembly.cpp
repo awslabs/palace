@@ -419,7 +419,7 @@ mfem::Vector SubstructuringSolver::Impl::EnvSource(const Source &src,
     const double *J = src.J->HostRead();
     for (int i = 0; i < nt; i++)
     {
-      if (is_env_int[i])
+      if (iface.env_int[i])
       {
         bb[i] += J[i];
       }
@@ -462,30 +462,12 @@ mfem::Vector SubstructuringSolver::Impl::RegionSource(const Source &src) const
   return b;
 }
 
-std::vector<HYPRE_BigInt> SubstructuringSolver::Impl::InterfaceTrueDofs() const
-{
-  const HYPRE_BigInt tstart = SolutionSpace().GetTrueDofOffsets()[0];
-  std::vector<HYPRE_BigInt> mine(gamma_nloc), g2t(nG_global);
-  for (int i = 0; i < nt; i++)
-  {
-    if (is_gamma[i])
-    {
-      mine[gamma_global[i] - gamma_off] = tstart + i;
-    }
-  }
-  std::vector<int> cnt, disp;
-  RowLayout(cnt, disp);
-  MPI_Allgatherv(mine.data(), gamma_nloc, HYPRE_MPI_BIG_INT, g2t.data(), cnt.data(),
-                 disp.data(), HYPRE_MPI_BIG_INT, parent_fes.GetComm());
-  return g2t;
-}
-
 bool SubstructuringSolver::Impl::InterfaceSplit() const
 {
   int split = 0;
   for (int t = 0; broken && t < nt && !split; t++)
   {
-    split = is_gamma[t] && broken->GetNumVersions(ParentTrueDof(t)) > 1;
+    split = iface.gamma[t] && broken->GetNumVersions(ParentTrueDof(t)) > 1;
   }
   Mpi::GlobalMax(1, &split, parent.GetComm());
   return split > 0;
@@ -495,29 +477,28 @@ std::vector<double> SubstructuringSolver::Impl::InterfaceSignatures(int width) c
 {
   if (!broken)
   {
-    return TrueDofSignatures(parent_fes, gamma_global, nG_global);
+    return TrueDofSignatures(parent_fes, iface.index, iface.size);
   }
   // The row of an interface DOF is that of its parent DOF, stored at the interface index
   // of the first of its versions on Gamma.
   MPI_Comm comm = parent_fes.GetComm();
   const int w0 = SignatureWidth(parent_fes);
-  std::vector<int> index(parent_fes.GetTrueVSize(), -1), mine(gamma_nloc), row(nG_global);
+  std::vector<int> index(parent_fes.GetTrueVSize(), -1), mine(iface.count), row(iface.size);
   for (int t = 0; t < nt; t++)
   {
-    if (is_gamma[t])
+    if (iface.gamma[t])
     {
       int &i = index[ParentTrueDof(t)];
-      i = (i < 0) ? gamma_global[t] : i;
-      mine[gamma_global[t] - gamma_off] = i;
+      i = (i < 0) ? iface.index[t] : i;
+      mine[iface.index[t] - iface.offset] = i;
     }
   }
-  std::vector<int> cnt, disp;
-  RowLayout(cnt, disp);
-  MPI_Allgatherv(mine.data(), gamma_nloc, MPI_INT, row.data(), cnt.data(), disp.data(),
+  const std::vector<int> &cnt = iface.counts, &disp = iface.offsets;
+  MPI_Allgatherv(mine.data(), iface.count, MPI_INT, row.data(), cnt.data(), disp.data(),
                  MPI_INT, comm);
-  const std::vector<double> sig0 = TrueDofSignatures(parent_fes, index, nG_global);
-  std::vector<double> sig(static_cast<std::size_t>(nG_global) * width, 0.0);
-  for (int g = 0; g < nG_global; g++)
+  const std::vector<double> sig0 = TrueDofSignatures(parent_fes, index, iface.size);
+  std::vector<double> sig(static_cast<std::size_t>(iface.size) * width, 0.0);
+  for (int g = 0; g < iface.size; g++)
   {
     std::copy_n(&sig0[static_cast<std::size_t>(row[g]) * w0], w0,
                 &sig[static_cast<std::size_t>(g) * width]);
@@ -611,13 +592,13 @@ std::vector<double> SubstructuringSolver::Impl::InterfaceSignatures(int width) c
     P.AbsMultTranspose(1.0, WL[k], 0.0, W[k]);
     w[k] = W[k].HostRead();
   }
-  std::vector<double> q(nG_global, 0.0);
+  std::vector<double> q(iface.size, 0.0);
   int missing = 0;
   for (int t = 0; t < nt; t++)
   {
-    if (is_gamma[t] && broken->GetNumVersions(ParentTrueDof(t)) > 1)
+    if (iface.gamma[t] && broken->GetNumVersions(ParentTrueDof(t)) > 1)
     {
-      const std::size_t g = gamma_global[t];
+      const std::size_t g = iface.index[t];
       for (int b = 0; b < 3; b++)
       {
         q[g] += sig[g * width + b] * w[b][t];
@@ -625,14 +606,14 @@ std::vector<double> SubstructuringSolver::Impl::InterfaceSignatures(int width) c
       missing += (w[0][t] == 0.0 && w[1][t] == 0.0 && w[2][t] == 0.0);
     }
   }
-  MPI_Allreduce(MPI_IN_PLACE, q.data(), nG_global, MPI_DOUBLE, MPI_SUM, comm);
+  MPI_Allreduce(MPI_IN_PLACE, q.data(), iface.size, MPI_DOUBLE, MPI_SUM, comm);
   Mpi::GlobalSum(1, &missing, comm);
   MFEM_VERIFY(missing == 0, "Substructuring found "
                                 << missing
                                 << " interface DOF(s) on \"TwoSided\" superconductor "
                                    "films without a boundary face of the region on their "
                                    "side!");
-  for (int g = 0; g < nG_global; g++)
+  for (int g = 0; g < iface.size; g++)
   {
     sig[static_cast<std::size_t>(g) * width + w0] = q[g];
   }
@@ -695,40 +676,6 @@ SubstructuringSolver::Impl::AssembleSelection(const std::vector<char> &mark) con
   return std::make_unique<mfem::HypreParMatrix>(
       comm, nt, SolutionSpace().GlobalTrueVSize(), static_cast<HYPRE_BigInt>(nglob),
       I.data(), J.data(), V.data(), SolutionSpace().GetTrueDofOffsets(), cols.data());
-}
-
-void SubstructuringSolver::Impl::EnumerateInterface()
-{
-  MPI_Comm comm = parent_fes.GetComm();
-  int nloc = 0;
-  for (int i = 0; i < nt; i++)
-  {
-    if (is_gamma[i])
-    {
-      nloc++;
-    }
-  }
-  int off = 0;
-  MPI_Exscan(&nloc, &off, 1, MPI_INT, MPI_SUM, comm);
-  off = Mpi::Root(comm) ? 0 : off;
-  nG_global = 0;
-  MPI_Allreduce(&nloc, &nG_global, 1, MPI_INT, MPI_SUM, comm);
-  gamma_global.assign(nt, -1);
-  {
-    int c = off;
-    for (int i = 0; i < nt; i++)
-    {
-      if (is_gamma[i])
-      {
-        gamma_global[i] = c++;
-      }
-    }
-  }
-
-  gamma_off = off;
-  gamma_nloc = nloc;
-  // The condensation fills S_grid: free that of a previous interface first.
-  std::vector<double>().swap(S_grid);
 }
 
 }  // namespace palace

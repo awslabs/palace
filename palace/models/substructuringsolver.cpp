@@ -435,14 +435,13 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     }
   }
 
-  auto classes = ClassifyInterfaceTrueDofs(rm, em, dir_mark, cut);
-  is_gamma = std::move(classes.gamma);
-  is_env_int = std::move(classes.env_int);
+  iface = SubstructureInterface(ClassifyInterfaceTrueDofs(rm, em, dir_mark, cut),
+                                SolutionSpace().GetTrueDofOffsets()[0], parent.GetComm());
   is_region_free.assign(nt, 0);
   env_dbc.assign(nt, 0);
   for (int i = 0; i < nt; i++)
   {
-    is_region_free[i] = classes.region_int[i] || is_gamma[i];  // with the interface
+    is_region_free[i] = iface.region_int[i] || iface.gamma[i];  // with the interface
     env_dbc[i] = dir_mark[i] && em[i];
   }
   for (int i = 0; i < nt; i++)
@@ -455,7 +454,7 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
     {
       rc_idx.Append(i);
     }
-    if (is_gamma[i])
+    if (iface.gamma[i])
     {
       gamma_idx.Append(i);
     }
@@ -508,7 +507,7 @@ void SubstructuringSolver::Impl::EnsureRegionSolver()
       iodata.solver.linear.sym_factorization, side.n_glob, n_rf,
       SchurFactorization<double>::Coo{std::move(side.irn), std::move(side.jcn),
                                       std::move(side.parts[0])},
-      side.Indices(InterfaceTrueDofs()), std::move(rows),
+      side.Indices(iface.tdofs), std::move(rows),
       [this](std::vector<double> &C)
       {
         MFEM_VERIFY(C.size() == S_grid.size(),
@@ -731,70 +730,20 @@ bool SubstructuringSolver::Postprocesses(const IoData &iodata)
 IoData SubstructuringSolver::RegionPostprocessing(const IoData &iodata) const
 {
   IoData post(iodata);
-  const auto &region = iodata.solver.substructuring->region_attributes;
-  const auto &mesh = impl->parent;
-  auto contains = [](const std::vector<int> &v, int a)
-  { return std::ranges::find(v, a) != v.end(); };
-  // Erase the entries that the field of the region does not give, returning their indices.
-  auto keep = [](auto &entries, auto &&in_region)
+  const auto left_out = palace::RegionPostprocessing(
+      impl->parent, iodata.solver.substructuring->region_attributes,
+      impl->region_only ? impl->saved.environment.bdr_attributes : std::vector<int>{},
+      post.domains, post.boundaries);
+  std::vector<std::string> what;
+  for (const auto &[key, idx] : left_out)
   {
-    std::vector<int> left_out;
-    for (auto it = entries.begin(); it != entries.end();)
-    {
-      if (in_region(it->first, it->second))
-      {
-        ++it;
-      }
-      else
-      {
-        left_out.push_back(it->first);
-        it = entries.erase(it);
-      }
-    }
-    return left_out;
-  };
-  const auto energy = keep(post.domains.postpro.energy,
-                           [&](int, const auto &data)
-                           {
-                             return std::ranges::all_of(data.attributes, [&](int a)
-                                                        { return contains(region, a); });
-                           });
-  // A probe is interpolated in the element it is found in, which for a probe on Γ can be
-  // one of the environment.
-  const auto probes_in_region =
-      fem::ProbesInDomains(post.domains.postpro.probe, mesh, region);
-  const auto probe = keep(post.domains.postpro.probe, [&](int idx, const auto &)
-                          { return contains(probes_in_region, idx); });
-  auto surfaces = BoundaryAttributesInRegion(mesh, region);
-  if (impl->region_only)
-  {
-    std::erase_if(surfaces, [&](int a)
-                  { return contains(impl->saved.environment.bdr_attributes, a); });
+    what.push_back(fmt::format("\"{}\" {}", key, fmt::join(idx, ", ")));
   }
-  auto on_surfaces = [&](int, const auto &data)
-  {
-    return !data.attributes.empty() &&
-           std::ranges::all_of(data.attributes,
-                               [&](int a) { return contains(surfaces, a); });
-  };
-  const auto flux = keep(post.boundaries.postpro.flux, on_surfaces);
-  const auto dielectric = keep(post.boundaries.postpro.dielectric, on_surfaces);
-  std::vector<std::string> left_out;
-  for (const auto &[idx, key] : {std::pair{&energy, "Energy"},
-                                 {&probe, "Probe"},
-                                 {&flux, "SurfaceFlux"},
-                                 {&dielectric, "Dielectric"}})
-  {
-    if (!idx->empty())
-    {
-      left_out.push_back(fmt::format("\"{}\" {}", key, fmt::join(*idx, ", ")));
-    }
-  }
-  if (!left_out.empty())
+  if (!what.empty())
   {
     Mpi::Warning("Substructuring postprocesses the field of the region only, without the "
                  "postprocessing outside it: {}!\n",
-                 fmt::join(left_out, "; "));
+                 fmt::join(what, "; "));
   }
   return post;
 }
@@ -831,9 +780,8 @@ SubstructuringSolver::~SubstructuringSolver() = default;
 
 void SubstructuringSolver::CondenseEnvironment()
 {
-  impl->EnumerateInterface();
   MPI_Comm comm = impl->parent_fes.GetComm();
-  const int nG = impl->nG_global;
+  const int nG = impl->iface.size;
   impl->gamma_grid = std::make_unique<BlockCyclicGrid>(comm, nG);
 
   // Interface true-DOF geometric signature (replicated), to re-order a saved S_E onto the
@@ -900,16 +848,16 @@ void SubstructuringSolver::CondenseEnvironment()
   }
   const BlockCyclicGrid &grid = *impl->gamma_grid;
   impl->mat_dtn = std::make_unique<substructuring::MaterializedDtN>(grid, impl->S_grid,
-                                                                    impl->gamma_global);
+                                                                    impl->iface.index);
   if (impl->have_sk)
   {
     impl->mat_dtn_K = std::make_unique<substructuring::MaterializedDtN>(grid, impl->SK_grid,
-                                                                        impl->gamma_global);
+                                                                        impl->iface.index);
   }
   if (impl->have_skin)
   {
     impl->mat_dtn_Kin = std::make_unique<substructuring::MaterializedDtN>(
-        grid, impl->SKin_grid, impl->gamma_global);
+        grid, impl->SKin_grid, impl->iface.index);
   }
 
   std::string region_solver = SchurFactorizationName(
@@ -938,8 +886,8 @@ void SubstructuringSolver::CondenseEnvironment()
   long long counts[2] = {0, 0};  // region and environment interiors
   for (int i = 0; i < impl->nt; i++)
   {
-    counts[0] += impl->is_region_free[i] && !impl->is_gamma[i];
-    counts[1] += impl->is_env_int[i];
+    counts[0] += impl->is_region_free[i] && !impl->iface.gamma[i];
+    counts[1] += impl->iface.env_int[i];
   }
   MPI_Allreduce(MPI_IN_PLACE, counts, 2, MPI_LONG_LONG, MPI_SUM, comm);
   Mpi::Print(comm,
@@ -997,7 +945,7 @@ SubstructuringSolver::SolveDirichletBatch(const std::vector<Vector> &dbcs)
     const double *tt = t[k].HostRead();
     for (int i = 0; i < nt && !touches[k]; i++)
     {
-      if (impl->is_env_int[i] && tt[i] != 0.0)
+      if (impl->iface.env_int[i] && tt[i] != 0.0)
       {
         touches[k] = 1;
       }
@@ -1089,7 +1037,7 @@ std::vector<Vector> SubstructuringSolver::SolveSourceBatch(const std::vector<Vec
     double *fe = fE[k].HostWrite();
     for (int i = 0; i < nt; i++)
     {
-      fe[i] = impl->is_env_int[i] ? ff[i] : 0.0;
+      fe[i] = impl->iface.env_int[i] ? ff[i] : 0.0;
     }
     w[k] = 0.0;
     X[k] = &fE[k];
@@ -1111,7 +1059,8 @@ std::vector<Vector> SubstructuringSolver::SolveSourceBatch(const std::vector<Vec
     double *bb = b.HostWrite();
     for (int i = 0; i < nt; i++)
     {
-      bb[i] = (impl->is_region_free[i] ? ff[i] : 0.0) - (impl->is_gamma[i] ? aw[i] : 0.0);
+      bb[i] =
+          (impl->is_region_free[i] ? ff[i] : 0.0) - (impl->iface.gamma[i] ? aw[i] : 0.0);
     }
     b.GetSubVector(impl->rf_idx, x[k]);
   }
@@ -1370,7 +1319,7 @@ mfem::DenseMatrix SubstructuringSolver::SourceEnergyMatrix(
   }
   const int K = static_cast<int>(impl->src_ids.size());
   auto row = [&](int i)
-  { return static_cast<std::size_t>(impl->gamma_global[i] - impl->gamma_off) * K; };
+  { return static_cast<std::size_t>(impl->iface.index[i] - impl->iface.offset) * K; };
   // Modes of request j (zero without an environment part).
   auto g_of = [&](int i, int j)
   { return col[j] < 0 ? 0.0 : impl->SG_rows[row(i) + col[j]]; };
@@ -1635,7 +1584,7 @@ mfem::DenseMatrix SubstructuringSolver::EnergyMatrixDbc(const std::vector<int> &
   }
   const int K = static_cast<int>(impl->mode_ids.size());
   auto row = [&](int i)
-  { return static_cast<std::size_t>(impl->gamma_global[i] - impl->gamma_off) * K; };
+  { return static_cast<std::size_t>(impl->iface.index[i] - impl->iface.offset) * K; };
   // Modes of lift j (zero without an environment part).
   auto g_of = [&](int i, int j)
   { return col[j] < 0 ? 0.0 : impl->G_rows[row(i) + col[j]]; };
