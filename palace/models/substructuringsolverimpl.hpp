@@ -208,7 +208,7 @@ struct SubstructuringSolver::Impl
   std::vector<double> SKin_grid;
   bool have_skin = false;
   std::unique_ptr<substructuring::MaterializedDtN> mat_dtn_Kin;
-  bool env_built = false;  // environment interior solver set up
+  bool env_condenses = false;  // env_schur has Gamma as its Schur variables
 
   Impl(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
 
@@ -395,10 +395,12 @@ struct SubstructuringSolver::Impl
   // mesh of the region has these faces. Collective.
   std::vector<double> InterfaceSignatures(int width) const;
 
-  // Factor the environment's side (its interior and Gamma) for its Schur complement onto
-  // Gamma on first use, which then gives every environment interior solve (an online run
-  // with a saved model needs it only for environment fields). Collective.
-  void EnsureEnv();
+  // Factor the environment on first use, for its interior solves (A_EE, Gamma held at 0)
+  // and, with condense, for its Schur complement S_E and condensations onto Gamma: its
+  // side, the interior and then Gamma as the Schur variables. Without condense, the
+  // interior alone, as an online run needs for environment fields; a later condense factors
+  // the side again with Gamma. Collective.
+  void EnsureEnv(bool condense = false);
 
   // Recover the environment interior of full fields (region + Dirichlet parts set),
   // batched: u_E = A_EE^-1 (f - A_env u)|_E, with the environment sources f (if any).

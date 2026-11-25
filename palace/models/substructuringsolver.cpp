@@ -820,7 +820,7 @@ void SubstructuringSolver::CondenseEnvironment()
   const bool with_sk = impl->EnergyDiffers() && !model_path.empty();
   if (!loaded)
   {
-    impl->EnsureEnv();
+    impl->EnsureEnv(true);
     if (with_sk)
     {
       impl->MaterializeWithEnergy();
@@ -1799,7 +1799,7 @@ Vector SubstructuringSolver::TerminalLift(int terminal_index) const
 
 bool SubstructuringSolver::EnvironmentFactored() const
 {
-  return impl->env_built;
+  return impl->env_schur != nullptr;
 }
 
 std::vector<int> SubstructuringSolver::TerminalIndices() const

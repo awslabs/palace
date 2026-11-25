@@ -35,7 +35,7 @@ public:
 void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
                                                     const std::vector<Source> &src)
 {
-  EnsureEnv();
+  EnsureEnv(true);
   MPI_Comm comm = parent_fes.GetComm();
   const int K = static_cast<int>(ids.size());
   src_ids = ids;
@@ -233,34 +233,36 @@ bool SubstructuringSolver::Impl::SourceModesMatch(const std::vector<int> &ids,
   return ok;
 }
 
-void SubstructuringSolver::Impl::EnsureEnv()
+void SubstructuringSolver::Impl::EnsureEnv(bool condense)
 {
   MFEM_VERIFY(!region_only,
               "Substructuring on the mesh of the region cannot solve the environment (an "
               "excitation not in the saved model, or general Dirichlet data): run on the "
               "full mesh!");
-  if (env_built)
+  if (env_schur && (env_condenses || !condense))
   {
     return;
   }
   BlockTimer bt(Timer::KSP_SETUP);
-  // The environment's side, its interior and Gamma, with Gamma as the Schur variables.
+  // The environment's side: its interior and, to condense onto it, Gamma as the Schur
+  // variables.
   std::vector<char> keep(nt);
   for (int i = 0; i < nt; i++)
   {
-    keep[i] = iface.env_int[i] || iface.gamma[i];
+    keep[i] = iface.env_int[i] || (condense && iface.gamma[i]);
   }
   SideSystem side({&Aenv()}, keep);
   const LinearSolver type = SchurSolverFor(iodata.solver.substructuring->direct_solver);
   env_factorization = SchurFactorizationName(type);
-  const auto gamma = side.Indices(iface.tdofs);
+  const auto gamma = condense ? side.Indices(iface.tdofs) : std::vector<HYPRE_BigInt>{};
   MFEM_VERIFY(gamma_grid, "The environment is factored before the interface is numbered!");
+  env_schur.reset();
   env_schur = MakeSchurFactorization<double>(
       type, iodata.solver.linear.sym_factorization, parent_fes.GetComm(), side.n_glob,
       static_cast<int>(side.rows.size()),
       {std::move(side.irn), std::move(side.jcn), std::move(side.parts[0])}, gamma,
-      side.rows, true, false, gamma_grid.get());
-  env_built = true;
+      side.rows, true, false, condense ? gamma_grid.get() : nullptr);
+  env_condenses = condense;
 }
 
 void SubstructuringSolver::Impl::RecoverEnvInterior(std::vector<mfem::Vector> &u,
@@ -540,7 +542,7 @@ void SubstructuringSolver::Impl::ApplyAeeInvMulti(
 {
   MFEM_ASSERT(X.size() == Y.size(), "ApplyAeeInvMulti size mismatch!");
   BlockTimer bt(Timer::KSP);
-  MFEM_VERIFY(env_built, "Environment solver used before EnsureEnv()!");
+  MFEM_VERIFY(env_schur, "Environment solver used before EnsureEnv()!");
   // The internal solve: Gamma held at 0, and 0 off the environment's side.
   env_schur->SolveInternal(X, Y);
 }
@@ -548,6 +550,7 @@ void SubstructuringSolver::Impl::ApplyAeeInvMulti(
 void SubstructuringSolver::Impl::CondenseRows(const std::vector<const mfem::Vector *> &V,
                                               std::vector<double> &rows) const
 {
+  MFEM_ASSERT(env_condenses, "The environment does not condense onto Gamma!");
   // The condensations (rank 0, nG x |V|, column-major), to the owners of their rows.
   const int nG = iface.size, nv = static_cast<int>(V.size());
   std::vector<double> g, full;
