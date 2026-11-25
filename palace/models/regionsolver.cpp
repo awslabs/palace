@@ -109,12 +109,15 @@ void DrivenRegionSolver::SetOperator(const ComplexOperator &op)
 {
   height = op.Height();
   width = op.Width();
+  const auto *P = dynamic_cast<const RegionPreconditionerMatrix *>(&op);
+  MFEM_VERIFY(P, "The region solver factors the preconditioner matrix of the region (see "
+                 "SpaceOperator::GetPreconditionerMatrix)!");
   auto assembled = [](const Operator *part) -> const mfem::HypreParMatrix *
   { return part ? &dynamic_cast<const ParOperator &>(*part).ParallelAssemble() : nullptr; };
-  const auto *Ar = assembled(op.Real()), *Ai = assembled(op.Imag());
+  const auto *Ar = assembled(P->Real()), *Ai = assembled(P->Imag());
   // S_E(ω) on the grid, at the frequency of the matrix.
-  auto add = [this](std::vector<std::complex<double>> &C)
-  { env.AddSchurBlocks(env.PreconditionerFrequency(), C); };
+  auto add = [this, omega = P->Frequency()](std::vector<std::complex<double>> &C)
+  { env.AddSchurBlocks(omega, C); };
   if (region)
   {
     // The new values in the same pattern.

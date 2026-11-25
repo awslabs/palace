@@ -47,6 +47,55 @@ struct SolverData;
 enum class ProblemType : char;
 
 //
+// The preconditioner matrix of the region of a driven substructuring at a frequency ω,
+// which leaves the environment's S_E(ω) out (see SpaceOperator::GetPreconditionerMatrix):
+// the region solver adds S_E at the frequency the matrix carries (see DrivenRegionSolver).
+//
+class RegionPreconditionerMatrix : public ComplexOperator
+{
+private:
+  std::unique_ptr<ComplexOperator> B;
+  const double omega;
+
+public:
+  RegionPreconditionerMatrix(std::unique_ptr<ComplexOperator> &&matrix, double frequency)
+    : ComplexOperator(matrix->Height(), matrix->Width()), B(std::move(matrix)),
+      omega(frequency)
+  {
+  }
+
+  double Frequency() const { return omega; }
+
+  const Operator *Real() const override { return B->Real(); }
+  const Operator *Imag() const override { return B->Imag(); }
+  void AssembleDiagonal(ComplexVector &diag) const override { B->AssembleDiagonal(diag); }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override { B->Mult(x, y); }
+  void MultTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    B->MultTranspose(x, y);
+  }
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    B->MultHermitianTranspose(x, y);
+  }
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override
+  {
+    B->AddMult(x, y, a);
+  }
+  void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                        const std::complex<double> a = 1.0) const override
+  {
+    B->AddMultTranspose(x, y, a);
+  }
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a = 1.0) const override
+  {
+    B->AddMultHermitianTranspose(x, y, a);
+  }
+};
+
+//
 // A class handling spatial discretization of the governing equations.
 //
 class SpaceOperator
@@ -593,7 +642,8 @@ public:
   // included, cached wave-port EVP), std::complex<double> the complex-ω analytic
   // continuation (eigenmode nonlinear solve: no Floquet term, uncached wave-port EVP). The
   // choice cannot be inferred from Im(a3) == 0 because the HYBRID eigenmode seed needs the
-  // complex stamping at real frequencies.
+  // complex stamping at real frequencies. For the region of a driven substructuring, at a
+  // real ω = a3, its single level is a RegionPreconditionerMatrix.
   template <typename OperType, typename ScalarType, typename A3Type>
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, A3Type a3);

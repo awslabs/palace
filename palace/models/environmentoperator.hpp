@@ -99,12 +99,6 @@ public:
   const std::vector<int> &InterfaceCounts() const { return gamma_cnt; }
   const std::vector<int> &InterfaceOffsets() const { return gamma_disp; }
 
-  // The frequency of the last preconditioner matrix of the region, which leaves S_E out
-  // (see SpaceOperator::GetPreconditionerMatrix): the RegionSolver factoring it adds S_E at
-  // that frequency.
-  void SetPreconditionerFrequency(double omega) { pc_omega = omega; }
-  double PreconditionerFrequency() const { return pc_omega; }
-
   // RHS += R_Γᵀ g_E(ω) of an excitation; false if it has no sources in the environment.
   bool AddExcitation(int excitation_idx, double omega, ComplexVector &RHS);
 
@@ -187,7 +181,6 @@ private:
   // The grid of the dense matrices on Γ, and the global rows and columns of the local part.
   std::optional<BlockCyclicGrid> grid;
   std::vector<int> grid_rows, grid_cols;
-  double pc_omega = std::numeric_limits<double>::quiet_NaN();
 
   // A record from its flat entries on root (in the saved basis, see
   // DrivenSubstructureModel::Flatten), or record j of the model file, whose S_E each

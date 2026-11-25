@@ -2663,9 +2663,10 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
       {
         if (environment)
         {
-          // The region's single level leaves S_E(ω) out: the RegionSolver adds it to the
+          // The region's single level leaves S_E(ω) out: the region solver adds it to the
           // region's Schur complement onto Γ at the frequency of the matrix.
-          environment->SetPreconditionerFrequency(a3);
+          B->AddOperator(std::make_unique<RegionPreconditionerMatrix>(std::move(B_l), a3));
+          continue;
         }
       }
       if (aux)
