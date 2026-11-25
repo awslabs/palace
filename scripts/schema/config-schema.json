@@ -2812,7 +2812,7 @@
         },
         {
           "const": "OneSided",
-          "description": "Pre-smooth only, at twice the smoothing order (with the default, of each level), apart from the auxiliary space correction of distributive relaxation, which follows the coarse-grid correction. The preconditioner is not symmetric, so this requires the GMRES or FGMRES Krylov solver."
+          "description": "Pre-smooth only, at twice the smoothing order (see [`\"MGSmoothOrder\"`](@ref config-solver-linear-mgsmoothorder)), apart from the auxiliary space correction of distributive relaxation, which follows the coarse-grid correction. The preconditioner is not symmetric, so this requires the GMRES or FGMRES Krylov solver."
         },
         {
           "const": "Auto",
@@ -3546,7 +3546,7 @@
         },
         "MGSmoothOrder": {
           "type": "integer",
-          "description": "Polynomial smoothing order for geometric multigrid, of the pre- and post-smoothers of symmetric V-cycles. One-sided V-cycles ([`\"MGCycleType\"`](@ref config-solver-linear-mgcycletype)) smooth once per level at twice this order, for the same smoothing work per V-cycle, and with the default, at twice the default of each level, `max(4 \u00d7 p_l, 8)` for its finite element order `p_l`. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`.",
+          "description": "Polynomial smoothing order for geometric multigrid, of the pre- and post-smoothers of symmetric V-cycles. One-sided V-cycles ([`\"MGCycleType\"`](@ref config-solver-linear-mgcycletype)) smooth once per level, for about the same smoothing work per V-cycle: at twice this order on every level or, with the default, at twice the default of each level, `max(4 \u00d7 p_l, 8)` for its finite element order `p_l`. If omitted, Palace uses `max(2 \u00d7 solution order, 4)`.",
           "exclusiveMinimum": 0
         },
         "MGSmoothEigScaleMax": {

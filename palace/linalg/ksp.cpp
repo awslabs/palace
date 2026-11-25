@@ -411,15 +411,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
     // This will construct the multigrid hierarchy using pc as the coarse solver
     // (ownership of pc is transferred to the GeometricMultigridSolver). When a special
     // auxiliary space smoother for pre-/post-smoothing is not desired, the auxiliary
-    // space is a nullptr here. One-sided V-cycles smooth each level at an order from its
-    // finite element order.
-    std::vector<int> level_orders(fespaces.GetNumLevels());
-    for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
-    {
-      level_orders[l] = fespaces.GetFESpaceAtLevel(l).GetMaxElementOrder();
-    }
-    const auto one_sided_orders =
-        GetOneSidedSmoothOrders(level_orders, linear.mg_smooth_order);
+    // space is a nullptr here.
+    const auto one_sided_orders = GetOneSidedSmoothOrders(fespaces, linear.mg_smooth_order);
     auto gmg = [&]()
     {
       if (linear.mg_smooth_aux)

@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/fespace.hpp"
 #include "linalg/chebyshev.hpp"
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
@@ -28,6 +29,17 @@ std::vector<int> GetOneSidedSmoothOrders(const std::vector<int> &level_orders,
     }
   }
   return orders;
+}
+
+std::vector<int> GetOneSidedSmoothOrders(const FiniteElementSpaceHierarchy &fespaces,
+                                         int smooth_order)
+{
+  std::vector<int> level_orders(fespaces.GetNumLevels());
+  for (std::size_t l = 0; l < fespaces.GetNumLevels(); l++)
+  {
+    level_orders[l] = fespaces.GetFESpaceAtLevel(l).GetMaxElementOrder();
+  }
+  return GetOneSidedSmoothOrders(level_orders, smooth_order);
 }
 
 template <OperatorType OperType>

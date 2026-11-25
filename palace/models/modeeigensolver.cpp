@@ -712,7 +712,8 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
       comm, MakeCoarseSolver(nd_pc_type), nd_P, &nd_G, linear.mg_cycle_it,
       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
       linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
-      linear.mg_cycle == MultigridCycle::ONE_SIDED);
+      linear.mg_cycle == MultigridCycle::ONE_SIDED,
+      GetOneSidedSmoothOrders(bmo->GetNDSpaceHierarchy(), linear.mg_smooth_order));
   nd_gmg->EnableTimer();
 
   // H1 block: p-multigrid with Chebyshev smoothing.
@@ -721,7 +722,8 @@ void ModeEigenSolver::SetUpMultigridLinearSolver(MPI_Comm comm)
       comm, MakeCoarseSolver(h1_pc_type), h1_P, nullptr, linear.mg_cycle_it,
       linear.mg_smooth_it, linear.mg_smooth_order, linear.mg_smooth_sf_max,
       linear.mg_smooth_sf_min, linear.mg_smooth_cheby_4th,
-      linear.mg_cycle == MultigridCycle::ONE_SIDED);
+      linear.mg_cycle == MultigridCycle::ONE_SIDED,
+      GetOneSidedSmoothOrders(bmo->GetH1SpaceHierarchy(), linear.mg_smooth_order));
   h1_gmg->EnableTimer();
 
   // Combine into block-diagonal preconditioner.

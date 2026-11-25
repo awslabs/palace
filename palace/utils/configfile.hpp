@@ -1365,7 +1365,8 @@ public:
   int mg_smooth_it = 1;
 
   // Order of polynomial smoothing for geometric multigrid, of the pre- and post-smoothers
-  // of symmetric V-cycles. One-sided V-cycles smooth once at twice this order.
+  // of symmetric V-cycles. One-sided V-cycles smooth once per level at twice this order,
+  // or with the default at twice the default of each level (see GetOneSidedSmoothOrders).
   int mg_smooth_order = -1;
 
   // Safety factors for eigenvalue estimates associated with Chebyshev smoothing for

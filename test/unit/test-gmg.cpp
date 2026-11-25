@@ -131,8 +131,9 @@ double RelativeDifference(MPI_Comm comm, const VecType &x, const VecType &y)
 
 TEST_CASE("Geometric multigrid one-sided V-cycle smoothing orders", "[gmg][Serial]")
 {
-  // With the default smoothing order of symmetric V-cycles, max(2 p, 4) for the finest order
-  // p, one-sided V-cycles smooth each level at twice its own default order, max(4 p_l, 8).
+  // With the default smoothing order of symmetric V-cycles, max(2 p, 4) for the finest
+  // order p, one-sided V-cycles smooth each level at twice its own default order, max(4
+  // p_l, 8).
   using V = std::vector<int>;
   CHECK(GetOneSidedSmoothOrders({1, 2, 4}, 8) == V{8, 8, 16});
   CHECK(GetOneSidedSmoothOrders({1, 2, 3}, 6) == V{8, 8, 12});
@@ -142,6 +143,20 @@ TEST_CASE("Geometric multigrid one-sided V-cycle smoothing orders", "[gmg][Seria
   // With another smoothing order, twice it on every level.
   CHECK(GetOneSidedSmoothOrders({1, 2, 4}, 6) == V{12, 12, 12});
   CHECK(GetOneSidedSmoothOrders({1, 2, 4}, 16) == V{32, 32, 32});
+
+  // From a space hierarchy: the levels of the electrostatic problem at order 3 have lower
+  // orders below the finest one.
+  ElectrostaticProblem problem(MultigridCycle::ONE_SIDED);
+  const auto &spaces = problem.laplace_op->GetH1Spaces();
+  V level_orders;
+  for (std::size_t l = 0; l < spaces.GetNumLevels(); l++)
+  {
+    level_orders.push_back(spaces.GetFESpaceAtLevel(l).GetMaxElementOrder());
+  }
+  REQUIRE(level_orders.back() == 3);
+  REQUIRE(level_orders.front() < 3);
+  CHECK(GetOneSidedSmoothOrders(spaces, 6) == GetOneSidedSmoothOrders(level_orders, 6));
+  CHECK(GetOneSidedSmoothOrders(spaces, 6).back() == 12);
 }
 
 TEST_CASE("Geometric multigrid one-sided V-cycles", "[gmg][Serial][Parallel][GPU]")

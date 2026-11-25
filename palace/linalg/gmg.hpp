@@ -22,11 +22,8 @@ class HypreParMatrix;
 namespace palace
 {
 
-//
-// Geometric multigrid preconditioner using a given coarse solver for the provided
-// hierarchy of finite element spaces. Optionally can be configured to use auxiliary space
-// smoothing at each level, and one-sided V-cycles.
-//
+class FiniteElementSpaceHierarchy;
+
 // The smoothing orders of the levels of one-sided V-cycles, from the finite element order
 // p_l of each level and the smoothing order of symmetric V-cycles, which is the same on
 // every level: twice the default order of each level, max(4 p_l, 8), when the order of
@@ -37,6 +34,15 @@ namespace palace
 std::vector<int> GetOneSidedSmoothOrders(const std::vector<int> &level_orders,
                                          int smooth_order);
 
+// The same, from the finite element order of each level of a space hierarchy.
+std::vector<int> GetOneSidedSmoothOrders(const FiniteElementSpaceHierarchy &fespaces,
+                                         int smooth_order);
+
+//
+// Geometric multigrid preconditioner using a given coarse solver for the provided
+// hierarchy of finite element spaces. Optionally can be configured to use auxiliary space
+// smoothing at each level, and one-sided V-cycles.
+//
 template <OperatorType OperType>
 class GeometricMultigridSolver : public Solver<OperType>
 {
