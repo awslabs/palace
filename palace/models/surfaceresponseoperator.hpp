@@ -237,6 +237,7 @@ private:
 
   friend class SurfaceResponseOperator;
   friend struct ResponseMemoryCensus;
+  friend struct SurfaceResponsePreflightGeometry;
 
 public:
   // Lane fix-response-memory (decision 1446, C6 / DESIGN A1.0 R-1): the placed-patch
@@ -2500,6 +2501,9 @@ struct SurfaceResponsePreflightOutcome
   // Under "UnmatchedPolicy": "Error" (the preflight treats Error as Warn and went on; on
   // the default PatchConstruction Features this is an incomplete manifest).
   bool unmatched_policy_refusal = false;
+  // CUT-PLAN step 4b (ruling R4): this pass's identification for the census operator (the
+  // three-dimensional Features path with a match; else null: the operator builds its own).
+  std::shared_ptr<const SurfaceResponseGeometry> response_geometry;
 };
 
 // CUT-PLAN step 4b (lane v1step4b; ruling R1): the line of a PreflightOnly run that builds

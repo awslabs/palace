@@ -633,3 +633,164 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
            "(RawFallback: no patch applied)\n");
 #endif
 }
+
+// CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling R4): on the three-dimensional
+// Features path the census operator reads the manifest pass's identification instead of
+// computing it again. The census is bit-equal with and without the sharing
+// (PALACE_PREFLIGHT_SHARED_IDENTIFICATION=0) and equal to the solve form's level 1; after
+// an edge-tube refinement of the first mesh the operator identifies that mesh itself.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "PreflightOnly's census on the manifest's identification equals the "
+                 "census of its own identification",
+                 "[surfaceresponseoperator][preflightonly][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  std::string problem;
+  bool edge_tubes = false;
+  std::tie(problem, edge_tubes) =
+      GENERATE(table<std::string, bool>({{"Electrostatic", false},
+                                         {"Electrostatic", true},
+                                         {"Eigenmode", false},
+                                         {"Driven", false},
+                                         {"Driven", true}}));
+  INFO("problem " << problem << ", edge tubes " << edge_tubes);
+  MPI_Comm comm = Mpi::World();
+  const bool electrostatic = problem == "Electrostatic";
+  const std::string stem = "preflight-shared-" + problem + (edge_tubes ? "-tubes" : "");
+  const fs::path mesh_path = temp.temp_dir / (stem + ".mesh");
+  const fs::path sa_library = temp.temp_dir / (stem + "-sa.json");
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+    json library = json::parse(ReadBytes(convex_library_3d_path));
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream(sa_library) << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = electrostatic ? ConvexIslandConfig(test::CrackPolicy::Default)
+                              : ConvexMaxwellIslandConfig(test::CrackPolicy::Default);
+  config["Problem"]["Type"] = problem;
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  const json::json_pointer correction_key(electrostatic
+                                              ? "/Solver/Electrostatic/ResponseCorrection"
+                                              : "/Solver/SurfaceResponseCorrection");
+  auto &correction = config[correction_key];
+  correction.erase("PatchConstruction");
+  correction.erase("Developer");
+  correction["Library"] = sa_library.string();
+  correction["CorrectionMode"] = "PostprocessOnly";
+  correction["PatchEnergy"] = true;
+  if (edge_tubes)
+  {
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeRefinement"] = {
+        {"Radius", 0.2}, {"ElementsPerRadius", 2}};
+  }
+  if (problem == "Eigenmode")
+  {
+    config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
+  }
+  if (problem == "Driven")
+  {
+    config["Solver"].erase("Eigenmode");
+    config["Boundaries"]["Ground"]["Attributes"] = {2, 3, 4, 5, 6, 9};
+    config["Boundaries"]["LumpedPort"] = {{{"Index", 1},
+                                           {"Attributes", {1}},
+                                           {"R", 50.0},
+                                           {"Direction", "+X"},
+                                           {"Excitation", 1}}};
+    config["Solver"]["Driven"] = {{"Samples", {{{"Type", "Point"}, {"Freq", {0.04}}}}}};
+  }
+  // mode: "solve", "shared" (the default), "own" (the sharing switched off).
+  auto Run = [&](const std::string &mode)
+  {
+    json run = config;
+    const fs::path output = temp.temp_dir / (stem + "-" + mode);
+    run["Problem"]["Output"] = output.string();
+    run[correction_key]["PreflightOnly"] = mode != "solve";
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    ScopedEnvironmentVariable share("PALACE_PREFLIGHT_SHARED_IDENTIFICATION",
+                                    mode == "own" ? "0" : nullptr);
+    const auto log = test::CaptureStdout(
+        [&]
+        {
+          if (mode == "solve")
+          {
+            palace::Run(iodata, comm, utils::ConfigureOmp());
+          }
+          else
+          {
+            CHECK(RunSurfaceResponsePreflight(iodata, comm, utils::ConfigureOmp()) == 0);
+          }
+        });
+    Mpi::Barrier(comm);
+    return std::pair{output, log};
+  };
+  const auto [solve, solve_log] = Run("solve");
+  const auto [shared, shared_log] = Run("shared");
+  const auto [own, own_log] = Run("own");
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  // The census lines of a log (the knots line and the PREFLIGHT line).
+  auto CensusLines = [](const std::string &log)
+  {
+    std::vector<std::string> lines;
+    std::istringstream stream(log);
+    std::string line;
+    while (std::getline(stream, line))
+    {
+      if (line.rfind(" Resolution census: ", 0) == 0 ||
+          line.rfind("Resolution census PREFLIGHT", 0) == 0)
+      {
+        lines.push_back(line);
+      }
+    }
+    return lines;
+  };
+  auto Count = [](const std::string &log, const std::string &text)
+  {
+    std::size_t count = 0;
+    for (auto at = log.find(text); at != std::string::npos; at = log.find(text, at + 1))
+    {
+      count++;
+    }
+    return count;
+  };
+  // One identification with the sharing, two without it or after an edge-tube refinement.
+  CHECK(Count(shared_log, "Geometry identification: ") == (edge_tubes ? 2 : 1));
+  CHECK(Count(own_log, "Geometry identification: ") == 2);
+  REQUIRE(CensusLines(shared_log).size() == 2);
+  CHECK(CensusLines(shared_log) == CensusLines(own_log));
+  CHECK(CensusLines(shared_log) == CensusLines(solve_log));
+  const std::string patches = "surface-response-resolution-patches.csv";
+  REQUIRE(fs::is_regular_file(shared / patches));
+  CHECK(ReadBytes(shared / patches) == ReadBytes(own / patches));
+  CHECK(ReadBytes(shared / patches) == ReadBytes(solve / patches));
+  CHECK(ReadBytes(shared / kSurfaceParticipationFile) ==
+        ReadBytes(own / kSurfaceParticipationFile));
+  auto Block = [](const fs::path &dir)
+  {
+    return json::parse(ReadBytes(dir / "palace.json"))
+        .at("SurfaceResponse")
+        .at("Resolution");
+  };
+  CHECK(Block(shared) == Block(own));
+  for (const char *member : kPreSolveResolutionMembers)
+  {
+    INFO("SurfaceResponse.Resolution." << member);
+    CHECK(Block(shared).at(member) == Block(solve).at(member));
+  }
+#endif
+}

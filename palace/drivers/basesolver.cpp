@@ -1199,14 +1199,29 @@ void BaseSolver::SaveSurfaceResponseMetadata(const std::string &key,
   }
 }
 
-PreflightCensusOutcome
-BaseSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh,
-                                      bool /*fail_closed*/) const
+PreflightCensusOutcome BaseSolver::PreflightResolutionCensus(
+    std::vector<std::unique_ptr<Mesh>> &mesh, bool /*fail_closed*/,
+    const std::shared_ptr<const SurfaceResponseGeometry> & /*identified*/) const
 {
   Mpi::Print(mesh.back()->GetComm(),
              "\nResolution census: not evaluated in PreflightOnly for this problem type "
              "(PreflightOnly evaluates it for Electrostatic, Eigenmode and Driven)\n");
   return {};
+}
+
+void BaseSolver::PrepareCensusFirstLevelMesh(
+    std::vector<std::unique_ptr<Mesh>> &mesh,
+    const std::shared_ptr<const SurfaceResponseGeometry> &identified,
+    std::shared_ptr<const SurfaceResponseGeometry> &response_geometry) const
+{
+  const Mesh *identified_mesh = mesh.back().get();
+  const long int identified_sequence = identified_mesh->Get().GetSequence();
+  PrepareFirstLevelMesh(mesh);
+  if (identified && mesh.back().get() == identified_mesh &&
+      mesh.back()->Get().GetSequence() == identified_sequence)
+  {
+    response_geometry = identified;
+  }
 }
 
 bool BaseSolver::PreflightCensusStopsFailClosed(const SurfaceResponseOperator &response,

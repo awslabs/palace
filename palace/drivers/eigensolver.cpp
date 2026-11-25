@@ -305,11 +305,11 @@ void EigenSolver::UpdateAfterMeshChange(Mesh &mesh) const
   prev_eigenvectors->Update();
 }
 
-PreflightCensusOutcome
-EigenSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh,
-                                       bool fail_closed) const
+PreflightCensusOutcome EigenSolver::PreflightResolutionCensus(
+    std::vector<std::unique_ptr<Mesh>> &mesh, bool fail_closed,
+    const std::shared_ptr<const SurfaceResponseGeometry> &identified) const
 {
-  PrepareFirstLevelMesh(mesh);
+  PrepareCensusFirstLevelMesh(mesh, identified, response_geometry);
   return PreflightMaxwellResolutionCensus(mesh, &response_geometry, fail_closed);
 }
 

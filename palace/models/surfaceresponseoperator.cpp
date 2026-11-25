@@ -24360,6 +24360,19 @@ static std::optional<std::string> WriteImpedanceRuleCandidateRequirements(
   return candidate_path;
 }
 
+// CUT-PLAN step 4b (lane v1step4b; ruling R4): the preflight's identification as the
+// SurfaceResponseGeometry a census operator reads (defined after its Impl).
+struct SurfaceResponsePreflightGeometry
+{
+  // A copy of `result` (an automatic three-dimensional identification) with this rank's
+  // local patches (round robin, the C6 residence); `diagnostics` the Maxwell ones (else
+  // null). `result` is unchanged on return (its patch list is moved out while the rest is
+  // copied, then back).
+  static std::shared_ptr<const SurfaceResponseGeometry>
+  Make(ResponseCorrectionData &result, const AutomaticResponseDiagnostics *diagnostics,
+       const nlohmann::json &statistics, bool impedance_rule_apply, MPI_Comm comm);
+};
+
 SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &iodata,
                                                                  const Mesh &mesh,
                                                                  const std::string &path)
@@ -24380,6 +24393,19 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   const bool maxwell = iodata.problem.type != ProblemType::ELECTROSTATIC;
   ResponseCorrectionData patches;
   std::optional<FilmRuleResolution> apply_film;
+  // CUT-PLAN step 4b (lane v1step4b; ruling R4): the identification of this pass is handed
+  // to PreflightOnly's census operator (the AMR cache it reads after its first iteration)
+  // on the three-dimensional Features path, where it is the one a solve-form run computes
+  // (DESIGN-NOTE A3 of the lane); PALACE_PREFLIGHT_SHARED_IDENTIFICATION=0 switches it off.
+  const auto share_environment =
+      CollectiveGetenv(parallel_mesh.GetComm(), "PALACE_PREFLIGHT_SHARED_IDENTIFICATION");
+  const bool share_identification =
+      parallel_mesh.Dimension() == 3 &&
+      request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES &&
+      !(share_environment && *share_environment == "0") &&
+      !(!maxwell &&
+        CollectiveGetenv(parallel_mesh.GetComm(), "PALACE_RESPONSE_GEOMETRY_CACHE"));
+  AutomaticResponseDiagnostics share_diagnostics;
   if (parallel_mesh.Dimension() == 2 && parallel_mesh.SpaceDimension() == 2)
   {
     BuildAutomaticResponseData2D(iodata, parallel_mesh, mat_op, request, maxwell, nullptr,
@@ -24402,9 +24428,10 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
         Mpi::Print(parallel_mesh.GetComm(), "{}\n", line);
       }
     }
-    patches = BuildAutomaticResponseData3D(iodata, parallel_mesh, mat_op, request, maxwell,
-                                           nullptr, &requirements, &statistics,
-                                           apply_film ? &*apply_film : nullptr);
+    patches = BuildAutomaticResponseData3D(
+        iodata, parallel_mesh, mat_op, request, maxwell,
+        share_identification && maxwell ? &share_diagnostics : nullptr, &requirements,
+        &statistics, apply_film ? &*apply_film : nullptr);
   }
   else
   {
@@ -24421,7 +24448,20 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
                                                           : "PatchConstruction Legacy"));
   }
 
-  requirements.SetStatistics(BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics));
+  const auto statistics_record =
+      BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics);
+  requirements.SetStatistics(statistics_record);
+  // The shared identification (ruling R4): this pass's result before the dry run below
+  // changes it, the ranks keeping their local patches (the C6 residence) until the census
+  // operator restores them; none when nothing is matched (a solve form records
+  // NoMatchedFeature there, this pass does not).
+  std::shared_ptr<const SurfaceResponseGeometry> shared_geometry;
+  if (share_identification && !patches.models.empty() && !patches.patches.empty())
+  {
+    shared_geometry = SurfaceResponsePreflightGeometry::Make(
+        patches, maxwell ? &share_diagnostics : nullptr, statistics_record,
+        apply_film.has_value(), parallel_mesh.GetComm());
+  }
   const auto patches_path =
       (std::filesystem::path(path).parent_path() / "surface-response-patches.csv").string();
   auto manifest = requirements.Build();
@@ -24981,6 +25021,7 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   }
   SurfaceResponsePreflightOutcome outcome;
   outcome.written.push_back(path);
+  outcome.response_geometry = std::move(shared_geometry);
   {
     // CUT-PLAN step 4b (lane v1step4b; ruling R1): the solve-form refusals this pass saw,
     // the root's (every rank ends the preflight alike).
@@ -25093,6 +25134,38 @@ struct SurfaceResponseGeometry::Impl
   // is a derived record of this configuration, not a change to it.
   mutable std::optional<DomainBoundaryContainmentCache> containment;
 };
+
+std::shared_ptr<const SurfaceResponseGeometry> SurfaceResponsePreflightGeometry::Make(
+    ResponseCorrectionData &result, const AutomaticResponseDiagnostics *diagnostics,
+    const nlohmann::json &statistics, bool impedance_rule_apply, MPI_Comm comm)
+{
+  auto impl = std::make_shared<SurfaceResponseGeometry::Impl>();
+  // Everything but the patch list, then this rank's patches only (no replicated copy).
+  ResponseCorrectionData &config = impl->config;
+  auto &patches = result.patches;
+  auto all_patches = std::move(patches);
+  config = result;
+  patches = std::move(all_patches);
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    if (static_cast<int>(patch_idx % Mpi::Size(comm)) == Mpi::Rank(comm))
+    {
+      config.patches.push_back(patches[patch_idx]);
+    }
+  }
+  impl->global_patch_count = patches.size();
+  impl->patches_local = true;
+  if (diagnostics)
+  {
+    impl->diagnostics = *diagnostics;
+  }
+  impl->statistics = statistics;
+  impl->maxwell = diagnostics != nullptr;
+  impl->dimension = 3;
+  impl->impedance_rule_apply = impedance_rule_apply;
+  return std::shared_ptr<const SurfaceResponseGeometry>(
+      new SurfaceResponseGeometry(std::move(impl)));
+}
 
 // Lane fix-response-memory round 2 (decision 1469 (1) (i)): THE MEMORY CENSUS. Under
 // PALACE_RESPONSE_MEMORY_CENSUS=1 the heap bytes of every member of the response
