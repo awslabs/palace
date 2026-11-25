@@ -170,8 +170,11 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
     const bool no_sheet = apply && data.Rs == 0.0 && data.Cs == 0.0 && data.Ls == 0.0;
     const bool inductive = data.Rs == 0.0 && data.Cs == 0.0 && (!apply || inductance > 0.0);
     const bool in_range = !apply || inductance <= resolution.max_inductance;
+    // The configured Ls is printed exactly ("{}": the shortest text that reads back as the
+    // same double), so that a sheet one unit in the last place above the bound does not
+    // read as the bound; Rs and Cs keep six digits.
     const std::string law =
-        fmt::format("Impedance Rs {:.6g} Ls {:.6g} Cs {:.6g}", data.Rs * impedance_scale,
+        fmt::format("Impedance Rs {:.6g} Ls {} Cs {:.6g}", data.Rs * impedance_scale,
                     inductance, data.Cs * capacitance_scale);
     for (const int attribute : data.attributes)
     {
@@ -318,7 +321,7 @@ FilmRuleResolution ResolveImpedanceMetalFilm(
     std::vector<std::string> met;
     for (const double inductance : resolution.served_inductances)
     {
-      met.push_back(fmt::format("{:.6g}", inductance));
+      met.push_back(fmt::format("{}", inductance));  // exact, as in the law text
     }
     resolution.lines.push_back(fmt::format(
         "Impedance-metal rule (APPLY): treated as the library's perfect-conductor film (an "

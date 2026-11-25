@@ -292,6 +292,17 @@ TEST_CASE("Impedance-metal rule Apply film resolution, Ls range check and refusa
       // The recorded Ls values are the configured numbers.
       CHECK(film.attributes.at(2).inductance == bound);
       CHECK(film.served_inductances == std::vector<double>{below, bound});
+      // The configured Ls is printed exactly (review v1lsdefault m3): the sheet one ulp
+      // above the bound does not read as the bound in its not-served line, and the served
+      // Ls list tells one ulp below from the bound.
+      REQUIRE(fmt::format("{}", above) == "9.000000000000001e-14");
+      REQUIRE(fmt::format("{}", below) == "8.999999999999998e-14");
+      CHECK(HasLine(film, "not served (Impedance Rs 0 Ls 9.000000000000001e-14 Cs 0, "
+                          "uncracked (one sheet of total Ls): ABOVE the Ls range <= 9e-14 "
+                          "H/sq): attributes [4]"));
+      CHECK_FALSE(HasLine(film, "Ls 9e-14 Cs 0, uncracked (one sheet of total Ls): ABOVE"));
+      CHECK_THAT(film.lines.front(),
+                 ContainsSubstring("served Ls met: 8.999999999999998e-14, 9e-14 H/sq"));
     }
   }
 
