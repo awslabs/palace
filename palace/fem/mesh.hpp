@@ -4,9 +4,11 @@
 #ifndef PALACE_FEM_MESH_HPP
 #define PALACE_FEM_MESH_HPP
 
+#include <array>
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
 #include <mfem.hpp>
@@ -36,14 +38,16 @@ struct CeedGeomFactorData
 
   // Domain or boundary indices from the mesh used to construct Ceed objects with these
   // geometry factors, in the original mesh order. active_indices contains positions in
-  // indices for the shared lossy-domain or active-boundary subset, in the same order (empty
-  // when no subset is configured, full-sized when every element is active).
+  // indices for the shared active-domain or active-boundary subset, in the same order
+  // (empty when no subset is configured, full-sized when every element is active).
   std::vector<int> indices, active_indices;
 
   // Mesh geometry factor data: {attr, w * |J|, adj(J)^T / |J|}. Jacobian matrix is
-  // space_dim x dim, stored column-major by component. The vector uses the libCEED
-  // backend's strided layout (CEED_STRIDES_BACKEND) and is only accessed through the
-  // restrictions below.
+  // space_dim x dim, stored column-major by component. For 3D domain elements, this is
+  // followed by the physical coordinates x of the quadrature points for the geometry
+  // factor data restricted to elements of given attributes (see
+  // Mesh::GetCeedGeomFactorData). The vector uses the libCEED backend's strided layout
+  // (CEED_STRIDES_BACKEND) and is only accessed through the restrictions below.
   CeedVector geom_data;
 
   // Element restrictions for all geometry factors and the shared subset. Both address the
@@ -86,9 +90,9 @@ private:
   std::unordered_map<int, std::unordered_map<int, int>> loc_bdr_attr;
   bool ceed_from_self = false;  // True after RebuildCeedAttributes()
 
-  // Process-local libCEED attributes in the two shared element sets: lossy domain elements
-  // and active boundary elements.
-  std::vector<int> lossy_attr, active_bdr_attr;
+  // Process-local libCEED attributes in the two shared element sets: active domain elements
+  // (see SpaceOperator::SetUpCeedElementSets) and active boundary elements.
+  std::vector<int> active_attr, active_bdr_attr;
 
   // Mesh data structures for assembling libCEED operators on a (mixed) mesh:
   //   - Mesh element indices for threads and element geometry types.
@@ -113,6 +117,21 @@ private:
     bool root_valid = false;
   };
   mutable std::map<std::vector<int>, CrackSidesEntry> crack_sides;
+
+  // Geometry factor data of the domain elements with given (global) domain attributes,
+  // with the physical coordinates of the quadrature points for 3D elements. Built on demand
+  // for each Ceed context.
+  mutable std::map<
+      std::vector<int>,
+      std::unordered_map<Ceed,
+                         std::optional<ceed::GeometryObjectMap<ceed::CeedGeomFactorData>>>>
+      geom_data_attr;
+
+  // Element sizes of the PML blocks (by their attributes), which pml::Layer uses in place
+  // of measuring them on the mesh. Adaptive mesh refinement sets those of the initial mesh,
+  // which Update keeps, so that the automatic conductivity of the PML does not change with
+  // the refinement.
+  std::map<std::vector<int>, std::array<double, 6>> pml_element_size;
 
 public:
   template <typename... T>
@@ -143,6 +162,18 @@ public:
 
   const auto &GetCeedAttributes() const { return loc_attr; }
   const auto &GetCeedBdrAttributes() const { return loc_bdr_attr; }
+
+  // Element sizes of a PML block with the given (sorted) attributes, if set.
+  void SetPMLElementSize(const std::vector<int> &attributes,
+                         const std::array<double, 6> &element_size)
+  {
+    pml_element_size[attributes] = element_size;
+  }
+  const std::array<double, 6> *GetPMLElementSize(const std::vector<int> &attributes) const
+  {
+    const auto it = pml_element_size.find(attributes);
+    return (it != pml_element_size.end()) ? &it->second : nullptr;
+  }
 
   // Convert a list of global attributes to the corresponding process-local libCEED ones.
   template <typename T>
@@ -218,16 +249,25 @@ public:
   const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
   GetCeedGeomFactorData(Ceed ceed) const;
 
-  // Configure the process-local libCEED attributes in the shared lossy-domain and
+  // Geometry factor data of the domain elements with the given (global, sorted) domain
+  // attributes only, for integrators restricted to these elements (see
+  // BilinearForm::AddDomainIntegratorOnAttributes). For 3D elements, it also stores the
+  // physical coordinates of the quadrature points, for QFunctions with spatially varying
+  // coefficients (such as the PML material tensors). The shared element subsets do not
+  // apply to this data (its active subset is empty).
+  const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
+  GetCeedGeomFactorData(Ceed ceed, const std::vector<int> &attr_list) const;
+
+  // Configure the process-local libCEED attributes in the shared active-domain and
   // active-boundary element sets. The sets must be configured before geometry data is
   // requested; reconfiguring with the same sets afterwards is a no-op (mesh levels retained
   // across adaptive refinement iterations are reconfigured by every new SpaceOperator).
-  void SetCeedActiveAttributes(std::vector<int> lossy_attr_,
+  void SetCeedActiveAttributes(std::vector<int> active_attr_,
                                std::vector<int> active_bdr_attr_);
 
   const std::vector<int> &GetCeedActiveAttributes(bool use_bdr) const
   {
-    return use_bdr ? active_bdr_attr : lossy_attr;
+    return use_bdr ? active_bdr_attr : active_attr;
   }
 
   void ResetCeedObjects();

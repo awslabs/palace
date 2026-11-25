@@ -171,6 +171,10 @@ TEST_CASE("STRUMPACK complex arithmetic solver", "[strumpack][Serial][Parallel]"
                                         SparseCompression::NONE, 0.0, 0, 0, true, 0),
       true, true, false, true);
   TestComplexDirectSolver(solver, ref, 1.0e-11, unsymmetric);
+
+  // The solver object maps the elimination tree to the processes by factor size.
+  CHECK(solver.GetSolver().options().proportional_mapping() ==
+        strumpack::ProportionalMapping::FACTOR_MEMORY);
 }
 
 TEST_CASE("STRUMPACK complex arithmetic solver with compression",
@@ -345,13 +349,16 @@ TEST_CASE("SuperLU complex arithmetic solver", "[superlu][Serial][Parallel]")
 {
   // Complex symmetric and unsymmetric matrices, with and without the reuse of the row and
   // column permutations, on a 2D and on a 3D process grid (which has a depth above one
-  // from 8 processes).
+  // from 8 processes), and with the accuracy check of the factorizations (robust pivoting,
+  // on a 2D process grid).
   MPI_Comm comm = Mpi::World();
   const bool unsymmetric = GENERATE(false, true);
   const bool reorder_reuse = GENERATE(true, false);
   const bool use_3d = GENERATE(false, true);
-  SuperLUComplexSolver solver(comm, SymbolicFactorization::DEFAULT, use_3d, false,
-                              reorder_reuse, 0);
+  const bool robust_pivoting = GENERATE(false, true);
+  SuperLUComplexSolver solver(comm, SymbolicFactorization::DEFAULT,
+                              use_3d && !robust_pivoting, false, reorder_reuse, 0,
+                              robust_pivoting);
   MfemWrapperSolver<ComplexOperator> ref(
       std::make_unique<SuperLUSolver>(comm, SymbolicFactorization::DEFAULT, use_3d, true,
                                       0),

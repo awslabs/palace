@@ -164,9 +164,12 @@ public:
   std::complex<double> ComputeDtNCorrectionCoeff(const FloquetOrder &order,
                                                  bool is_te) const;
 
-  // S-parameter for all propagating orders at the current frequency.
-  // If subtract_incident is true, subtracts the incident field contribution from the
-  // driving port's (0,0) modes (total → scattered field conversion).
+  // S-parameter for all orders which carry power at the current frequency, relative to the
+  // unit-power incident wave of the excitation. If subtract_incident is true (the driving
+  // port), subtracts the incident field contribution from the (0,0) modes (total →
+  // scattered field conversion), which requires that the incident (0,0) mode carries
+  // power. A port which is not driven needs no incident wave, and its specular order may be
+  // below cutoff.
   // Returns S-parameters in the TE/TM linear basis (always).
   // Circular rotation, if needed, is applied by the caller.
   std::map<std::tuple<int, int, bool>, std::complex<double>>
@@ -235,7 +238,7 @@ private:
   MPI_Comm comm;
 
   // Compute the effective DtN eigenvalue and unit-power normalization for the incident
-  // polarization. Used by both AddExcitationVector and GetAllSParameters.
+  // polarization, for AddExcitationVector and for GetAllSParameters at the driving port.
   struct IncidentNormalization
   {
     std::complex<double> gamma_00;      // Propagation constant of the (0,0) mode
