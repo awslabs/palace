@@ -1351,9 +1351,10 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
   // then positive definite), the response at every other imaginary frequency is a lower
   // bound which each added vector raises toward the full one. This is useful above the
   // sweep band, where the samples do not resolve the response.
-  Mpi::Print("\nComputing anchor solves for {:d} lumped ports at {:d} screening "
+  Mpi::Print("\nComputing anchor solves for {:d} lumped port{} at {:d} screening "
              "frequenc{} (ν² screening)\n",
-             NumSynthesisAnchorPorts(), nu.size(), (nu.size() > 1) ? "ies" : "y");
+             NumSynthesisAnchorPorts(), (NumSynthesisAnchorPorts() > 1) ? "s" : "",
+             nu.size(), (nu.size() > 1) ? "ies" : "y");
 
   ComplexVector rhs, u;
   rhs.SetSize(space_op.GetNDSpace().GetTrueVSize());

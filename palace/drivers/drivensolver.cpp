@@ -355,7 +355,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
       {
         nu_GHz.push_back(nu_k * unit_GHz);
       }
-      Mpi::Print(" Anchor screening frequenc{}: ν = {:.3e} GHz\n",
+      Mpi::Print(" Anchor screening frequenc{}: ν/2π = {:.3e} GHz\n",
                  (nu.size() > 1) ? "ies" : "y", fmt::join(nu_GHz, ", "));
       if (nu.front() >= omega_sample.front())
       {

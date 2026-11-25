@@ -1635,7 +1635,7 @@
         },
         "SynthesisAnchor": {
           "type": "boolean",
-          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)): the screened quasistatic response to a current into this port, ``(K_0 + \\nu^2 M)\\,x = b_p`` with ``K_0`` the static (DC) system stiffness, is added to the reduced-order basis as the column `anchor_<index>_re` of the exported circuit matrices. Requires a nonzero `\"L\"` or `\"Ls\"`, with `\"Active\"` and `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu``, or several of them, is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
+          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)): the screened quasistatic response to a current into this port, ``(K_0 + \\nu^2 M) x = b_p`` with ``K_0`` the static (DC) system stiffness, is added to the reduced-order basis as the column `anchor_<index>_re` of the exported circuit matrices. Requires a nonzero `\"L\"` or `\"Ls\"`, with `\"Active\"` and `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu``, or several of them, is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
           "default": false,
           "x-palace-advanced": true
         }
@@ -1739,7 +1739,7 @@
         },
         "SynthesisAnchor": {
           "type": "boolean",
-          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)): the screened quasistatic response to a current into this port, ``(K_0 + \\nu^2 M)\\,x = b_p`` with ``K_0`` the static (DC) system stiffness, is added to the reduced-order basis as the column `anchor_<index>_re` of the exported circuit matrices. Requires a nonzero `\"L\"` or `\"Ls\"`, with `\"Active\"` and `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu``, or several of them, is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
+          "description": "Adds a quasistatic anchor solve for this lumped port when adaptive driven circuit synthesis is enabled ([AdaptiveCircuitSynthesis](@ref config-solver-driven-adaptivecircuitsynthesis)): the screened quasistatic response to a current into this port, ``(K_0 + \\nu^2 M) x = b_p`` with ``K_0`` the static (DC) system stiffness, is added to the reduced-order basis as the column `anchor_<index>_re` of the exported circuit matrices. Requires a nonzero `\"L\"` or `\"Ls\"`, with `\"Active\"` and `\"IncludeInSynthesis\"` not `false`. The screening frequency ``\\nu``, or several of them, is set by [AdaptiveCircuitSynthesisAnchorFreq](@ref config-solver-driven-adaptivecircuitsynthesisanchorfreq).",
           "default": false,
           "x-palace-advanced": true
         }
@@ -3174,7 +3174,7 @@
               "uniqueItems": true
             }
           ],
-          "description": "Screening frequency ``\\nu / 2\\pi``, GHz, or a list of them, of the anchor solves of adaptive driven circuit synthesis (see [SynthesisAnchor](@ref config-boundaries-lumpedport) on `LumpedPort`), ``(K_0 + \\nu^2 M)\\,x = b_p``. The lowest, which should be well below the sweep band, but at least a thousandth of its lowest frequency, gives the quasistatic anchor `anchor_<index>_re`, and each other frequency adds the screened response of the port at that imaginary frequency, of the lossless DC-limit model, as the column `anchor_<index>_nu<k>_re` (``k = 1, 2, \\ldots``), which the synthesized circuit then reproduces exactly. `0` (default) selects one tenth of the lowest sweep frequency.",
+          "description": "Screening frequency ``\\nu / 2\\pi``, GHz, or a list of them, of the anchor solves of adaptive driven circuit synthesis (see [SynthesisAnchor](@ref config-boundaries-lumpedport) on `LumpedPort`), ``(K_0 + \\nu^2 M) x = b_p``. The lowest, which should be well below the sweep band, but at least a thousandth of its lowest frequency, gives the quasistatic anchor `anchor_<index>_re`, and each other frequency adds the screened response of the port at that imaginary frequency, of the lossless DC-limit model, as the column `anchor_<index>_nu<k>_re` (``k = 1, 2, \\ldots``), which the synthesized circuit then reproduces exactly. `0` (default) selects one tenth of the lowest sweep frequency.",
           "default": 0.0,
           "x-palace-advanced": true
         }
