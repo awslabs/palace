@@ -1070,6 +1070,20 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
   return aggregate;
 }
 
+void ElectrostaticSolver::PreflightResolutionCensus(
+    std::vector<std::unique_ptr<Mesh>> &mesh) const
+{
+  PrepareFirstLevelMesh(mesh);
+  BlockTimer bt0(Timer::CONSTRUCT);
+  LaplaceOperator laplace_op(iodata, mesh);
+  auto response = SurfaceResponseOperator::ConstructElectrostatic(iodata, laplace_op,
+                                                                  &response_geometry);
+  response->SetPatchRecordResidency(
+      SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+  WritePreflightResolutionCensus(*response, laplace_op.GlobalTrueVSize(),
+                                 laplace_op.GetComm());
+}
+
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {

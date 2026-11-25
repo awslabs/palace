@@ -3769,9 +3769,14 @@ Under AMR the census follows the refined mesh: the patches are identified once, 
 first mesh, and the census and the corrected values of each level are those of that
 level's mesh. Because a knot on a face shared by several elements takes the LARGEST owner,
 refinement on one side of a face only does not lower that knot's size: the census can read
-coarser than the finer side, never finer (the conservative side). `PreflightOnly` builds no
-response operator, so it evaluates no census: it prints
-`Resolution census: not evaluated in PreflightOnly; every corrected run prints it before its first solve`.
+coarser than the finer side, never finer (the conservative side). `PreflightOnly` evaluates
+the census of the first mesh without a solve: it builds the FE space and the response
+operator as a corrected run does before its first solve (no matrix assembly, no solve) and
+prints the same knots and PREFLIGHT lines, writes the same
+`surface-response-resolution-patches.csv` (with `"PatchEnergy": true`) and the same
+`SurfaceResponse.Resolution` block of `palace.json` (`Knots`, `Preflight` and the bars;
+`"Cells": 0`, `"NoCellsReason": "PreflightOnly: no solve"`). The energy-weighted census
+(`surface-response-resolution.csv`, the banner) needs the solved field and is not written.
 
 ### The per-iteration table of the response correction
 
@@ -3888,6 +3893,18 @@ above). The log prints the eigenmode joins and the values (the `Type` rows and t
 and scope with the ranges of the raw and the corrected values), and `palace.json` records
 `SurfaceResponse.ParticipationTable` (the file, the levels, the rows and the verdict data
 with their source).
+
+A `PreflightOnly` run solves nothing, so it computes no value and no verdict of this rule:
+its `surface-participation.csv` holds one row set of iteration 1 (the first solve's
+unknowns), `point` and `exc` 0, one row per target interface and its `Type` totals, in
+which every number is `nan`, `resolution` reads `PREFLIGHT <word>` (the `Type`'s all-planes
+word of the census PREFLIGHT line, by cell length against the census bars; a `region` row
+`PREFLIGHT NOT-EVALUATED`), `coverage`, `regime`, `confidence` and `convergence` read
+`NOT-COMPUTED`, `flags` reads `PREFLIGHT-ONLY` and `reason` says why
+(`PREFLIGHT-ONLY: geometric census by cell length against the census bars; no solve; values not computed; the table's resolution verdict (energy-weighted; bars of the rule) needs a solve`);
+`SurfaceResponse.ParticipationTable` records `"PreflightOnly": true`. The PREFLIGHT word
+and the table's resolution word are different readings (length against energy weights,
+the census bars against the rule's bars) and may differ on the same mesh.
 
 ## Electrostatic Simulations
 
