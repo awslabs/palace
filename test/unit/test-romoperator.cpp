@@ -5683,7 +5683,8 @@ TEST_CASE("RomOperator-Synthesis-AnchorWithPMLRejected", "[romoperator][Serial]"
 // "AdaptiveCircuitSynthesisAnchorFreq" is a screening frequency or a list of them, parsed
 // in ascending order, with 0 for the default frequency, one tenth of the lowest sweep
 // frequency, which drops a repeat of it. An empty list, a negative frequency and a
-// repeated one are rejected, by the schema and by the parser.
+// repeated one are rejected, by the schema and by the parser, and a lowest frequency below
+// a thousandth of the lowest sweep frequency by the parser.
 TEST_CASE("RomOperator-Synthesis-AnchorFreqList", "[romoperator][Serial]")
 {
   auto MakeConfig = [](const json &anchor_freq)
@@ -5729,6 +5730,15 @@ TEST_CASE("RomOperator-Synthesis-AnchorFreqList", "[romoperator][Serial]")
     IoData iodata(MakeConfig(json::array({0.0, 0.2})), false);
     CHECK(iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq ==
           std::vector<double>{0.2});
+  }
+  {
+    // At least a thousandth of the lowest sweep frequency, 2 GHz.
+    IoData iodata(MakeConfig(json::array({0.002, 3.0})), false);
+    CHECK(iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq ==
+          std::vector<double>{0.002, 3.0});
+    CHECK_THROWS_WITH(
+        (IoData{MakeConfig(json::array({0.0019, 3.0})), false}),
+        Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesisAnchorFreq"));
   }
   for (const auto &anchor_freq :
        {json::array(), json::array({-1.0}), json::array({30.0, 0.0, 30.0})})

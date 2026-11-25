@@ -1919,6 +1919,15 @@ DrivenSolverData::DrivenSolverData(const json &driven)
     f = (f == 0.0) ? sample_f.front() / 10.0 : f;
   }
   deduplicate(adaptive_circuit_synthesis_anchor_freq);
+
+  // Far below the sweep band, the screened system of the anchor solves is nearly singular
+  // (on the gradients, which the stiffness does not see), while the static error of the
+  // anchors, O(ν⁴), is already negligible.
+  MFEM_VERIFY(!adaptive_circuit_synthesis ||
+                  adaptive_circuit_synthesis_anchor_freq.front() >=
+                      1.0e-3 * sample_f.front(),
+              "The lowest \"AdaptiveCircuitSynthesisAnchorFreq\" must be at least a "
+              "thousandth of the lowest sweep frequency!");
 }
 
 EigenSolverData::EigenSolverData(const json &eigenmode)
