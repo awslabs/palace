@@ -29,8 +29,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added interface capacitance matrices to adaptive driven circuit synthesis. For each
     interface of `config["Boundaries"]["Postprocessing"]["Dielectric"]`,
     `rom-interface-<index>-C.csv` holds its electric energy form in the reduced basis,
-    normalized like `rom-C-re.csv`, so that `yᴴ C_Γ y / yᴴ C y` is the surface participation
-    ratio of a field with synthesized coordinates `y`.
+    normalized like `rom-C-re.csv`, so that `yᴴ C_Γ y / yᴴ Re{C} y` is the surface
+    participation ratio of a field with synthesized coordinates `y`.
     [PR 1156](https://github.com/awslabs/palace/pull/1156).
 
 #### Interface Changes

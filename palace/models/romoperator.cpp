@@ -3536,9 +3536,11 @@ void RomOperator::PrintPROMMatrices(
   // Interface capacitance matrices, C_Γ = 2 u_F D (Vᵀ B V) D for the interface energy form
   // B, with the port-row scaling D and capacitance unit u_F of the synthesized capacitance
   // matrix C = u_F D Mr D: for the synthesized coordinates y of a real field, ½ yᵀ C_Γ y is
-  // its interface energy just as ½ yᵀ C y is its electric energy (¼ yᴴ C_Γ y and ¼ yᴴ C y,
-  // the time averages, for a peak phasor y), so yᴴ C_Γ y / yᴴ C y is its surface
-  // participation ratio. Auxiliary states have zero rows and columns.
+  // its interface energy just as ½ yᵀ Re{C} y is its electric energy (¼ yᴴ C_Γ y and
+  // ¼ yᴴ Re{C} y, the time averages, for a peak phasor y), so yᴴ C_Γ y / yᴴ Re{C} y is its
+  // surface participation ratio, and the loss of the interface enters the circuit as
+  // C − i tan δ_Γ C_Γ, as that of a material with Im{ε} = −ε tan δ. Auxiliary states have
+  // zero rows and columns.
   std::map<int, Eigen::MatrixXd> interface_C;
   if (!interface_forms.empty())
   {

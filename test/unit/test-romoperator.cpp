@@ -2769,9 +2769,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 // The exported interface capacitance matrices rom-interface-<index>-C.csv are the
 // interface dielectric energy forms projected onto the PROM basis with the normalization of
-// rom-C-re.csv: for the synthesized coordinates y of any field, yᴴ C_Γ y / yᴴ C y is the
-// surface participation ratio U / (¼ uᴴ M u) of the prolonged field u, a peak phasor with
-// the time-averaged interface energy U.
+// rom-C-re.csv: for the synthesized coordinates y of any field, yᴴ C_Γ y / yᴴ Re{C} y is
+// the surface participation ratio U / (¼ uᴴ M u) of the prolonged field u, a peak phasor
+// with the time-averaged interface energy U.
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "RomOperator-Synthesis-InterfaceCapacitanceMatrices",
                  "[romoperator][postoperator][Serial][Parallel]")
