@@ -1200,7 +1200,8 @@ void BaseSolver::SaveSurfaceResponseMetadata(const std::string &key,
 }
 
 PreflightCensusOutcome
-BaseSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const
+BaseSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh,
+                                      bool /*fail_closed*/) const
 {
   Mpi::Print(mesh.back()->GetComm(),
              "\nResolution census: not evaluated in PreflightOnly for this problem type "
@@ -1208,9 +1209,28 @@ BaseSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) 
   return {};
 }
 
+bool BaseSolver::PreflightCensusStopsFailClosed(const SurfaceResponseOperator &response,
+                                                bool fail_closed, MPI_Comm comm) const
+{
+  // The ledger is replicated on every rank (every rank decides alike).
+  const auto &fallbacks = response.GetGeometryFallbacks();
+  if (!fail_closed || fallbacks.empty())
+  {
+    return false;
+  }
+  Mpi::Print(
+      comm,
+      "\nResolution census: not evaluated: GeometryFailurePolicy \"FailClosed\" with "
+      "{:d} geometry fallback(s) recorded by the response operator's construction "
+      "(a solve-form run stops there); \"RecordRaw\" gives it\n",
+      fallbacks.size());
+  return true;
+}
+
 PreflightCensusOutcome BaseSolver::PreflightMaxwellResolutionCensus(
     const std::vector<std::unique_ptr<Mesh>> &mesh,
-    std::shared_ptr<const SurfaceResponseGeometry> *response_geometry) const
+    std::shared_ptr<const SurfaceResponseGeometry> *response_geometry,
+    bool fail_closed) const
 {
   BlockTimer bt(Timer::CONSTRUCT);
   SpaceOperator space_op(iodata, mesh);
@@ -1218,10 +1238,20 @@ PreflightCensusOutcome BaseSolver::PreflightMaxwellResolutionCensus(
       std::make_unique<SurfaceResponseOperator>(iodata, space_op, response_geometry);
   response->SetPatchRecordResidency(
       SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
-  // The PostOperator's check of a corrected Maxwell run (before its first solve).
-  MFEM_VERIFY(response->IsRawFallback() || response->HasSurfaceResponse(),
-              "Maxwell surface response correction requires fabricated and thin "
-              "surface response matrices in the selected coupon models!");
+  if (PreflightCensusStopsFailClosed(*response, fail_closed, space_op.GetComm()))
+  {
+    return {};
+  }
+  // The PostOperator's check of a corrected Maxwell run (before its first solve): a solve
+  // form stops there (ruling R1, P7).
+  if (!response->IsRawFallback() && !response->HasSurfaceResponse())
+  {
+    Mpi::Print(space_op.GetComm(),
+               "\nResolution census: not evaluated: the selected coupon models carry no "
+               "fabricated and thin surface response matrices (a solve-form run stops "
+               "there)\n");
+    return {};
+  }
   return WritePreflightResolutionCensus(*response, space_op.GlobalTrueVSize(),
                                         space_op.GetComm());
 }

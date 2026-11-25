@@ -65,13 +65,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     verdict data. SchemaVer 6-1-1
   - A `"PreflightOnly"` run of a surface-response-corrected electrostatic, eigenmode or
     driven configuration evaluates the resolution census of the first mesh without a solve
-    (no matrix is assembled): the knots and PREFLIGHT lines, `SurfaceResponse.Resolution`
-    of `palace.json` and, with `"PatchEnergy"`, `surface-response-resolution-patches.csv`,
-    as a corrected run writes them before its first solve, and one row set of
-    `surface-participation.csv` whose resolution reads `PREFLIGHT <word>` and whose values
-    are `nan` (not computed); a preflight that fails closed by its default
-    `GeometryFailurePolicy` builds the census, as a solve-form run does, before its exit
-    status 3. Corrected solve runs are unchanged.
+    (no system matrix is assembled and nothing is solved; a wave port's boundary-mode
+    matrices are built with the space operator): the knots and PREFLIGHT lines,
+    `SurfaceResponse.Resolution` of `palace.json` and, with `"PatchEnergy"`,
+    `surface-response-resolution-patches.csv`, as a corrected run writes them before its
+    first solve, and one row set of `surface-participation.csv` whose resolution reads
+    `PREFLIGHT <word>` and whose values are `nan` (not computed); a preflight that fails
+    closed by its default `GeometryFailurePolicy` prints that summary and then builds the
+    census, as a solve-form run does, before its exit status 3. Where a solve-form run
+    stops before its census (`"UnmatchedPolicy": "Error"` with missing requirements, a
+    library it refuses, an explicit `"GeometryFailurePolicy": "FailClosed"` with a
+    fallback) no census is built, one line says why, and the exit status is the one the
+    preflight had before. Corrected solve runs are unchanged.
   - Added the configuration keys of the surface-response correction and of the features
     below to the schema, all optional (a configuration accepted before is accepted with the
     same meaning): `Solver.SurfaceResponseCorrection`; `Solver.Electrostatic`

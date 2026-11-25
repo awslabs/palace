@@ -2018,6 +2018,9 @@ struct ProcessLibrary
   int version = 0;
   int trace_lift_version = 0;
   bool exhaustive_spatial_closure = false;
+  // CUT-PLAN step 4b (lane v1step4b; ruling R1): the checks a solve-form read refuses and
+  // this read (allow_empty_models / geometry_only: the preflight's) let pass.
+  std::vector<std::string> solve_form_refusals;
   std::string name;
   double matching_radius = 0.0;
   // The matching radius in metres (the "R (m)" of a spatial coupon's surface response
@@ -3237,6 +3240,10 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
               "Fabrication-process response-library Models must be an array!");
   MFEM_VERIFY(allow_empty_models || !models.empty(),
               "Fabrication-process response library must contain at least one model!");
+  if (models.empty())
+  {
+    library.solve_form_refusals.push_back("the process library has no model");
+  }
   // R-5 (fix round P2; OI-LIBRARY-INHERITED-PENDING-MODEL; USER 1230 Q8 REJECT, supervisor
   // 1260): a model whose explicit "QualificationStatus" is not "Qualified" is REFUSED at
   // load unless the library's top-level "AllowPendingModels" lists it by Name with the
@@ -3568,6 +3575,12 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                         !model.support_points.empty(),
                     "New SpatialEdgeCluster models require explicit SupportPoints "
                     "matching-volume metadata!");
+        if (library.trace_lift_version >= 2 && model.support_points.empty())
+        {
+          library.solve_form_refusals.push_back(
+              "SpatialEdgeCluster model \"" + model.name +
+              "\" has no SupportPoints (TraceLiftVersion 2 or newer)");
+        }
       }
     }
     const bool corner = model.topology == LibraryTopology::CONVEX_CORNER ||
@@ -4067,6 +4080,11 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                       << "\" was generated without the corrected trace/conductor "
                          "boundary lift. Regenerate the library with TraceLiftVersion "
                          "equal to 2 or newer!");
+      if (library.trace_lift_version < 2)
+      {
+        library.solve_form_refusals.push_back("multiconductor model \"" + model.name +
+                                              "\" below TraceLiftVersion 2");
+      }
     }
     else
     {
@@ -7433,6 +7451,10 @@ private:
   nlohmann::json mean_keyed_not_eligible = nlohmann::json::array();
   nlohmann::json geometric_near_pairs = nlohmann::json::array();
   bool identification_active = false;
+  // CUT-PLAN step 4b (lane v1step4b; ruling R1): the solve-form refusals this preflight
+  // passed (never written to the manifest; SurfaceResponsePreflightOutcome carries them).
+  std::vector<std::string> census_refusals;
+  bool unmatched_policy_refusal = false;
   std::string library_path;
   std::string library_name;
   // R-5: the library's AllowPendingModels leaf (empty when none) and, per admitted model,
@@ -7584,6 +7606,21 @@ public:
   }
 
   void SetStatistics(nlohmann::json value) { statistics = std::move(value); }
+
+  // CUT-PLAN step 4b (lane v1step4b; ruling R1): a site where a solve-form run (no
+  // requirements) aborts and this preflight goes on: whatever its UnmatchedPolicy (the
+  // reason, once per distinct reason), or under "UnmatchedPolicy": "Error" only.
+  void NoteCensusRefusal(const std::string &reason)
+  {
+    if (std::find(census_refusals.begin(), census_refusals.end(), reason) ==
+        census_refusals.end())
+    {
+      census_refusals.push_back(reason);
+    }
+  }
+  void NoteUnmatchedPolicyRefusal() { unmatched_policy_refusal = true; }
+  const std::vector<std::string> &CensusRefusals() const { return census_refusals; }
+  bool UnmatchedPolicyRefusal() const { return unmatched_policy_refusal; }
 
   // Switch the legacy Add() calls to the comparison table; the Requirements array is then
   // derived from the identification features through AddFeatureRecord().
@@ -8055,6 +8092,18 @@ public:
   }
 };
 
+// CUT-PLAN step 4b (lane v1step4b; ruling R1): a site where a solve-form run (no
+// requirements) aborts under "UnmatchedPolicy": "Error" while the preflight goes on.
+void NoteUnmatchedPolicyRefusal(AutomaticResponseRequirements *requirements,
+                                const ResponseCorrectionData &request)
+{
+  if (requirements &&
+      request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
+  {
+    requirements->NoteUnmatchedPolicyRefusal();
+  }
+}
+
 ResponseCorrectionData BuildAutomaticResponseData2D(
     const IoData &iodata, const mfem::ParMesh &mesh, const MaterialOperator &mat_op,
     const ResponseCorrectionData &request, bool pec_attribute_conductors = false,
@@ -8078,6 +8127,10 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
+    for (const auto &reason : library.solve_form_refusals)
+    {
+      requirements->NoteCensusRefusal(reason);
+    }
   }
   if (diagnostics)
   {
@@ -8195,6 +8248,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       {
         MFEM_ABORT(reason);
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       Mpi::Warning("{}; correction is disabled for this interface group!\n", reason);
       unmatched_clusters++;
       continue;
@@ -8631,6 +8685,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       {
         MFEM_ABORT("Automatic fabrication-process response matching failed!");
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       continue;
     }
 
@@ -8704,6 +8759,10 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   MFEM_VERIFY(requirements || (!result.models.empty() && !result.patches.empty()),
               "Fabrication-process response matching produced no usable correction "
               "patches!");
+  if (requirements && (result.models.empty() || result.patches.empty()))
+  {
+    requirements->NoteCensusRefusal("matching produced no usable correction patch");
+  }
   Mpi::Print("\nAutomatic fabrication-process response matching:\n"
              " Library: {}\n"
              " Matched edge sites: {:d}\n"
@@ -16151,6 +16210,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
+    for (const auto &reason : library.solve_form_refusals)
+    {
+      requirements->NoteCensusRefusal(reason);
+    }
   }
   const bool exhaustive_spatial_closure =
       library.exhaustive_spatial_closure ||
@@ -17620,6 +17683,12 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                  "without probe snaps - the trace data of model(s) {} is not readable "
                  "(a discovery placeholder); a solve refuses them\n",
                  static_cast<int>(summary.probe_snaps_not_computed), names);
+      if (requirements)
+      {
+        requirements->NoteCensusRefusal(
+            "placed patches of model(s) " + names +
+            " whose trace data is not readable (a discovery placeholder)");
+      }
     }
     if (summary.first_order_missing_features > 0)
     {
@@ -17672,6 +17741,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                    << summary.inconsistent_features.size()
                    << " pair feature(s) are inconsistent (UnmatchedPolicy = Error)!");
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
     }
     if (!requirements)
     {
@@ -18313,6 +18383,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         MFEM_ABORT("A three-dimensional target edge is within 2R of a physical metal "
                    "edge with a different interface mapping!");
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       Mpi::Warning(
           "Omitting {} of {} three-dimensional target edge segments which are within 2R "
           "of a physical metal edge with a different interface mapping.\n",
@@ -18599,6 +18670,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             "and interface mapping. Generate one unified spatial "
                             "cluster!");
             }
+            requirements->NoteCensusRefusal(
+                "overlapping spatial matching volumes without one support owner");
             overlapping_models.push_back(claimed.model);
             auto MergeSites = [&](const std::vector<SpatialEdgeSite3D> &additional)
             {
@@ -18842,6 +18915,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         MFEM_ABORT(message);
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       unsupported_segments.insert(first);
       unsupported_segments.insert(second);
     };
@@ -20255,6 +20329,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     {
       group_matched = false;
     }
+    if (group_has_unmatched_rounded_corner)
+    {
+      NoteUnmatchedPolicyRefusal(requirements, request);
+    }
 
     std::vector<EdgePair3D> pairs;
     std::vector<std::vector<std::pair<double, double>>> paired_intervals(segments.size());
@@ -20951,6 +21029,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         MFEM_ABORT("Automatic fabrication-process response matching failed!");
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       continue;
     }
     if (!requirements &&
@@ -20967,6 +21046,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                  << nonparallel_omitted_segments.size()
                  << " non-parallel segment(s) have no library model (UnmatchedPolicy = "
                     "Error)!");
+    }
+    if (omitted_parallel_cluster_spans + omitted_pair_intervals +
+            omitted_isolated_intervals +
+            static_cast<int>(nonparallel_omitted_segments.size()) >
+        0)
+    {
+      NoteUnmatchedPolicyRefusal(requirements, request);
     }
 
     if (diagnostics)
@@ -24895,6 +24981,27 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   }
   SurfaceResponsePreflightOutcome outcome;
   outcome.written.push_back(path);
+  {
+    // CUT-PLAN step 4b (lane v1step4b; ruling R1): the solve-form refusals this pass saw,
+    // the root's (every rank ends the preflight alike).
+    const MPI_Comm comm = parallel_mesh.GetComm();
+    std::string refusals;
+    for (const auto &reason : requirements.CensusRefusals())
+    {
+      refusals += reason + '\n';
+    }
+    int flags[2] = {static_cast<int>(refusals.size()),
+                    requirements.UnmatchedPolicyRefusal() ? 1 : 0};
+    Mpi::Broadcast(2, flags, 0, comm);
+    refusals.resize(static_cast<std::size_t>(flags[0]));
+    Mpi::Broadcast(flags[0], refusals.data(), 0, comm);
+    for (std::size_t begin = 0, end; begin < refusals.size(); begin = end + 1)
+    {
+      end = refusals.find('\n', begin);
+      outcome.census_refusals.push_back(refusals.substr(begin, end - begin));
+    }
+    outcome.unmatched_policy_refusal = flags[1] != 0;
+  }
   if (parallel_mesh.Dimension() == 3)
   {
     outcome.written.push_back(patches_path);
@@ -24923,6 +25030,29 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
             .FailClosedSummary();
   }
   return outcome;
+}
+
+std::string
+SurfaceResponsePreflightCensusRefusal(const SurfaceResponsePreflightOutcome &outcome,
+                                      const ResponseCorrectionData &request)
+{
+  if (!outcome.census_refusals.empty())
+  {
+    std::string reasons;
+    for (const auto &reason : outcome.census_refusals)
+    {
+      reasons += (reasons.empty() ? "" : "; ") + reason;
+    }
+    return "Resolution census: not evaluated: " + reasons +
+           " (a solve-form run stops there)";
+  }
+  if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR &&
+      outcome.unmatched_policy_refusal)
+  {
+    return "Resolution census: not evaluated: UnmatchedPolicy \"Error\" with missing "
+           "requirements (a solve-form run stops there); \"Warn\" gives it";
+  }
+  return {};
 }
 
 // The first construction's domain-boundary containment result, kept with the automatic

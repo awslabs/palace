@@ -3,6 +3,7 @@
 
 #include "fixtures.hpp"
 #include "surfaceresponse-fixtures.hpp"
+#include "test-helpers.hpp"
 
 #include <filesystem>
 #include <fstream>
@@ -189,7 +190,9 @@ TEST_CASE_METHOD(
       GENERATE(table<std::string, bool>({{"Electrostatic", false},
                                          {"Electrostatic", true},
                                          {"Eigenmode", false},
-                                         {"Driven", false}}));
+                                         {"Eigenmode", true},
+                                         {"Driven", false},
+                                         {"Driven", true}}));
   INFO("problem " << problem << ", edge tubes " << edge_tubes);
   MPI_Comm comm = Mpi::World();
   const std::string stem = "preflight-census-" + problem + (edge_tubes ? "-tubes" : "");
@@ -465,5 +468,168 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK_FALSE(Response(closed).contains("ParticipationTable"));
   CHECK_FALSE(fs::exists(closed / patches));
   CHECK_FALSE(fs::exists(closed / kSurfaceParticipationFile));
+#endif
+}
+
+// CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling R1): where a solve-form run
+// stops before its census, PreflightOnly builds none, prints one line and ends with the
+// exit status the preflight had before the census existed (0 here). The convex island,
+// PatchConstruction Features (the default): (a) a library without its corner model (the
+// corners Missing) under "UnmatchedPolicy": "Error" (a solve form aborts; "Warn" and the
+// key absent build the census); (b) a library with no model (the solve form's reader
+// refuses it); (c) an explicit "GeometryFailurePolicy": "FailClosed" on a library that
+// matches nothing (the solve form's NoMatchedFeature, recorded at the operator's
+// construction only, ends it there; RecordRaw gives the raw-fallback line).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "PreflightOnly builds no resolution census where a solve-form run stops "
+                 "before it",
+                 "[surfaceresponseoperator][preflightonly][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  const std::string problem = GENERATE("Electrostatic", "Eigenmode");
+  INFO("problem " << problem);
+  MPI_Comm comm = Mpi::World();
+  const bool electrostatic = problem == "Electrostatic";
+  const std::string stem = "preflight-refusal-" + problem;
+  const fs::path mesh_path = temp.temp_dir / (stem + ".mesh");
+  const fs::path no_corner = temp.temp_dir / (stem + "-no-corner.json");
+  const fs::path no_model = temp.temp_dir / (stem + "-no-model.json");
+  const fs::path no_match = temp.temp_dir / (stem + "-no-match.json");
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+    const json library = json::parse(ReadBytes(convex_library_3d_path));
+    CHECK(library.at("Models").size() == 2);
+    json sa = library;
+    for (auto &model : sa["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};  // the island's one target
+    }
+    json edge_only = sa, empty = sa, concave_only = sa;
+    edge_only["Models"].erase(1);  // convex-corner-90
+    empty["Models"] = json::array();
+    concave_only["Models"].erase(0);
+    concave_only["Models"][0]["Topology"] = "ConcaveCorner";
+    std::ofstream(no_corner) << edge_only.dump(2) << "\n";
+    std::ofstream(no_model) << empty.dump(2) << "\n";
+    std::ofstream(no_match) << concave_only.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = electrostatic ? ConvexIslandConfig(test::CrackPolicy::Default)
+                              : ConvexMaxwellIslandConfig(test::CrackPolicy::Default);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  if (!electrostatic)
+  {
+    config["Solver"]["Eigenmode"] = {{"Target", 0.05}, {"N", 2}};
+  }
+  const json::json_pointer correction_key(electrostatic
+                                              ? "/Solver/Electrostatic/ResponseCorrection"
+                                              : "/Solver/SurfaceResponseCorrection");
+  config[correction_key].erase("PatchConstruction");
+  config[correction_key].erase("Developer");
+  config[correction_key]["CorrectionMode"] = "PostprocessOnly";
+  config[correction_key]["PatchEnergy"] = true;
+  config[correction_key]["PreflightOnly"] = true;
+  struct Result
+  {
+    fs::path dir;
+    int status = -1;
+    std::string log;
+  };
+  // unmatched / geometry: "" = the key absent.
+  auto Run = [&](const fs::path &library, const std::string &unmatched,
+                 const std::string &geometry)
+  {
+    json run = config;
+    Result result;
+    result.dir = temp.temp_dir / (stem + "-" + library.stem().string() + "-u" + unmatched +
+                                  "-g" + geometry);
+    run["Problem"]["Output"] = result.dir.string();
+    auto &request = run[correction_key];
+    request["Library"] = library.string();
+    request.erase("UnmatchedPolicy");
+    if (!unmatched.empty())
+    {
+      request["UnmatchedPolicy"] = unmatched;
+    }
+    if (!geometry.empty())
+    {
+      request["GeometryFailurePolicy"] = geometry;
+    }
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    result.log = test::CaptureStdout(
+        [&]
+        {
+          result.status = RunSurfaceResponsePreflight(iodata, comm, utils::ConfigureOmp());
+        });
+    Mpi::Barrier(comm);
+    return result;
+  };
+  auto Response = [](const fs::path &dir)
+  {
+    return json::parse(ReadBytes(dir / "palace.json"))
+        .value("SurfaceResponse", json::object());
+  };
+  const std::string patches = "surface-response-resolution-patches.csv";
+  auto NoCensus = [&](const Result &result, const std::string &line)
+  {
+    INFO("run " << result.dir.filename().string());
+    CHECK(result.status == 0);
+    if (!Mpi::Root(comm))
+    {
+      return;
+    }
+    CHECK(fs::is_regular_file(result.dir / "surface-response-requirements.json"));
+    CHECK_THAT(result.log, ContainsSubstring(line));
+    CHECK_FALSE(Response(result.dir).contains("Resolution"));
+    CHECK_FALSE(Response(result.dir).contains("ParticipationTable"));
+    CHECK_FALSE(fs::exists(result.dir / patches));
+    CHECK_FALSE(fs::exists(result.dir / kSurfaceParticipationFile));
+  };
+  // (a) UnmatchedPolicy Error with missing requirements: no census; Warn and absent: the
+  // census.
+  const auto error = Run(no_corner, "Error", "");
+  NoCensus(error,
+           "\nResolution census: not evaluated: UnmatchedPolicy \"Error\" with missing "
+           "requirements (a solve-form run stops there); \"Warn\" gives it\n");
+  if (Mpi::Root(comm))
+  {
+    const json manifest =
+        json::parse(ReadBytes(error.dir / "surface-response-requirements.json"));
+    CHECK(manifest.at("Complete") == false);
+  }
+  for (const std::string unmatched : {"Warn", ""})
+  {
+    const auto census = Run(no_corner, unmatched, "");
+    INFO("UnmatchedPolicy \"" << unmatched << "\"");
+    CHECK(census.status == 0);
+    if (Mpi::Root(comm))
+    {
+      CHECK_THAT(census.log, !ContainsSubstring("Resolution census: not evaluated"));
+      const json resolution = Response(census.dir).at("Resolution");
+      CHECK(resolution.at("Knots").at("Located").get<long long int>() > 0);
+      CHECK(resolution.at("NoCellsReason") == "PreflightOnly: no solve");
+      CHECK(fs::is_regular_file(census.dir / patches));
+    }
+  }
+  // (b) A library with no model: no census whatever the policy.
+  NoCensus(Run(no_model, "", ""),
+           "\nResolution census: not evaluated: the process library has no model (a "
+           "solve-form run stops there)\n");
+  // (c) An explicit FailClosed on a library that matches nothing; RecordRaw.
+  NoCensus(Run(no_match, "", "FailClosed"),
+           "geometry fallback(s) recorded by the response operator's construction (a "
+           "solve-form run stops there); \"RecordRaw\" gives it\n");
+  NoCensus(Run(no_match, "", "RecordRaw"),
+           "\nResolution census: not evaluated: the correction falls back to the raw run "
+           "(RawFallback: no patch applied)\n");
 #endif
 }
