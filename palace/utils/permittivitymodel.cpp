@@ -40,35 +40,31 @@ std::complex<double> TermSusceptibility(const config::PermittivityTermData &term
                                         std::complex<double> s)
 {
   return std::visit(
-      Overloaded{[s](const config::DrudeData &t) -> std::complex<double>
-                 { return t.omega_p * t.omega_p / (s * (s + t.gamma)); },
-                 [s](const config::DebyeData &t) -> std::complex<double>
-                 { return t.delta / (1.0 + s * t.tau); },
-                 [s](const config::LorentzData &t) -> std::complex<double>
-                 {
-                   const double w0_2 = t.omega_0 * t.omega_0;
-                   return t.delta * w0_2 / (s * s + t.gamma * s + w0_2);
-                 },
-                 [s](const config::PermittivityPoleData &t) -> std::complex<double>
-                 {
-                   std::complex<double> chi = t.residue / (s - t.pole);
-                   if (t.pole.imag() > 0.0)
-                   {
-                     chi += std::conj(t.residue) / (s - std::conj(t.pole));
-                   }
-                   return chi;
-                 },
-                 [s](const config::DjordjevicSarkarData &t) -> std::complex<double>
-                 {
-                   MFEM_VERIFY(s != -t.omega_lower && s != -t.omega_upper,
-                               "DjordjevicSarkar permittivity evaluation is singular at a "
-                               "frequency bound!");
-                   return t.strength * std::log((s + t.omega_upper) / (s + t.omega_lower));
-                 },
-                 [s](const config::MattisBardeenData &t) -> std::complex<double>
-                 { return ConductorSusceptibility(t, s); },
-                 [s](const config::TabulatedConductivityData &t) -> std::complex<double>
-                 { return ConductorSusceptibility(t, s); }},
+      Overloaded{
+          [s](const config::DrudeData &t) -> std::complex<double>
+          { return t.omega_p * t.omega_p / (s * (s + t.gamma)); },
+          [s](const config::DebyeData &t) -> std::complex<double>
+          { return t.delta / (1.0 + s * t.tau); },
+          [s](const config::LorentzData &t) -> std::complex<double>
+          {
+            const double w0_2 = t.omega_0 * t.omega_0;
+            return t.delta * w0_2 / (s * s + t.gamma * s + w0_2);
+          },
+          [s](const config::PermittivityPoleData &t) -> std::complex<double>
+          {
+            std::complex<double> chi = t.residue / (s - t.pole);
+            if (t.pole.imag() > 0.0)
+            {
+              chi += std::conj(t.residue) / (s - std::conj(t.pole));
+            }
+            return chi;
+          },
+          [s](const config::DjordjevicSarkarData &t) -> std::complex<double>
+          { return t.strength * std::log((s + t.omega_upper) / (s + t.omega_lower)); },
+          [s](const config::MattisBardeenData &t) -> std::complex<double>
+          { return ConductorSusceptibility(t, s); },
+          [s](const config::TabulatedConductivityData &t) -> std::complex<double>
+          { return ConductorSusceptibility(t, s); }},
       term);
 }
 

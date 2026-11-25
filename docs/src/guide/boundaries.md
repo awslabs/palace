@@ -485,8 +485,8 @@ A finite conductivity boundary condition can be specified using the
 [`"Conductivity"`](../config/reference.md#config-boundaries-conductivity) boundary
 keyword. This boundary condition models the effect of a boundary with non-infinite
 conductivity (an imperfect conductor) for conductors with thickness much larger than the
-skin depth. It is available only for frequency domain driven and eigenmode simulations. For more
-information see the
+skin depth. It is available for frequency domain driven, eigenmode, and boundary mode
+simulations. For more information see the
 [Other boundary conditions](../reference.md#Other-boundary-conditions) section of the
 reference.
 
@@ -501,12 +501,11 @@ for the thickness correction.
 The conductor can also be given a relative permittivity,
 [`"Permittivity"`](../config/reference.md#config-boundaries-conductivity), a number or the
 object form of a [frequency-dependent permittivity](model.md#Frequency-dependent-permittivity),
-which adds its displacement and polarization currents to the conductivity: the surface
-impedance is ``Z_s = i\omega\mu/k``, or ``Z_s \coth(kh/2)`` for a thickness ``h``, with
-``k^2 = i\omega\mu(\sigma + i\omega\epsilon_0\epsilon(\omega))``. With a `"MattisBardeen"`
-or `"TabulatedConductivity"` term, this models superconducting films without resolving the
-penetration depth in the mesh, when the film is wide compared to its thickness; these terms
-are supported for driven and boundary mode simulations.
+which adds its displacement and polarization currents to the conductivity in the surface
+impedance. With a `"MattisBardeen"` or `"TabulatedConductivity"` term, this models
+superconducting films without resolving the penetration depth in the mesh, when the film is
+wide compared to its thickness; these terms are supported for driven and boundary mode
+simulations.
 
 ## Interior boundaries
 

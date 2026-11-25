@@ -627,7 +627,14 @@ MaterialOperator::EvaluateNonRationalPermittivityA2(std::size_t material_idx,
                                                     std::complex<double> s) const
 {
   const auto &terms = frequency_dependent_materials.at(material_idx).nonrational_terms;
-  return terms.empty() ? 0.0 : s * s * permittivity::Susceptibility(terms, s);
+  for (const auto &term : terms)
+  {
+    const auto *t = std::get_if<config::DjordjevicSarkarData>(&term);
+    MFEM_VERIFY(!t || (s != -t->omega_lower && s != -t->omega_upper),
+                "DjordjevicSarkar permittivity evaluation is singular at a frequency "
+                "bound!");
+  }
+  return s * s * permittivity::Susceptibility(terms, s);
 }
 
 std::vector<std::complex<double>>

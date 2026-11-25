@@ -100,7 +100,7 @@ double PCHIPSlope(std::size_t n, std::size_t i, const X &x, const Y &y)
   {
     // Three-point end slope, limited to preserve the shape.
     const std::size_t k = (i == 0) ? 0 : n - 2, l = (i == 0) ? 1 : n - 3;
-    const double h0 = std::abs(x(k + 1) - x(k)), h1 = std::abs(x(l + 1) - x(l));
+    const double h0 = x(k + 1) - x(k), h1 = x(l + 1) - x(l);
     const double del0 = delta(k), del1 = delta(l);
     const double s = ((2.0 * h0 + h1) * del0 - h0 * del1) / (h0 + h1);
     if (s * del0 <= 0.0)

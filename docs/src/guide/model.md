@@ -115,17 +115,14 @@ and `DampingFrequency` give ``\gamma = 2\pi f``, so a damping specified as an in
     term is ``\mathrm{Strength}\,\ln((s+\omega_\mathrm{hi})/(s+\omega_\mathrm{lo}))``, with
     the natural logarithm, so a static increment ``\Delta\epsilon`` corresponds to
     ``\mathrm{Strength} = \Delta\epsilon/\ln(\omega_\mathrm{hi}/\omega_\mathrm{lo})``.
-  - `MattisBardeen`: a superconductor in the local (dirty) limit, with positive
-    `NormalConductivity` in S/m, nonnegative `Temperature` in K, and either the `Gap`
-    ``\Delta(T)`` in eV or the `CriticalTemperature` in K, from which the weak-coupling BCS
-    theory gives ``\Delta(T)``. This term is ``\chi(s) = \sigma(\omega)/(\epsilon_0 s)``
-    with the complex conductivity ``\sigma = \sigma_1 - i\sigma_2`` of Mattis and
-    Bardeen.
-  - `TabulatedConductivity`: a complex conductivity ``\sigma = \sigma_1 - i\sigma_2``,
-    with `Sigma1` (nonnegative) and `Sigma2` in S/m at strictly increasing `Frequency`
-    points in GHz, interpolated with monotone cubic splines of ``\sigma_1`` and
-    ``\omega\sigma_2`` in ``\log\omega``. This term is
-    ``\chi(s) = \sigma(\omega)/(\epsilon_0 s)``.
+  - `MattisBardeen`: the complex conductivity of Mattis and Bardeen of a superconductor in
+    the local (dirty) limit, with positive `NormalConductivity` in S/m, nonnegative
+    `Temperature` in K, and either the `Gap` ``\Delta(T)`` in eV or the
+    `CriticalTemperature` in K, from which the weak-coupling BCS theory gives
+    ``\Delta(T)``.
+  - `TabulatedConductivity`: a complex conductivity with `Sigma1` (nonnegative) and
+    `Sigma2` in S/m at strictly increasing `Frequency` points in GHz, interpolated with
+    monotone cubic splines of ``\sigma_1`` and ``\omega\sigma_2`` in ``\log\omega``.
 
 The `PoleResidue` rates are in rad/s, unlike the GHz and ns of the typed terms. For example,
 the Debye term ``\Delta\epsilon/(1+s\tau)`` is ``r/(s-p)`` with ``p = -1/\tau`` and
@@ -177,8 +174,9 @@ configuration; this is not a statement that the material has gain, and it does n
 the field solve.
 
 The conductor terms, `MattisBardeen` and `TabulatedConductivity`, describe a
-superconductor or another conductor by its complex conductivity, usually with a
-`HighFrequencyLimit` of 1. They are defined at real frequencies only: they are supported
+superconductor or another conductor by its complex conductivity
+``\sigma(\omega) = \sigma_1 - i\sigma_2``, ``\chi(s) = \sigma(\omega)/(\epsilon_0 s)``,
+usually with a `HighFrequencyLimit` of 1. They are defined at real frequencies only: they are supported
 for driven simulations, including wave ports, adaptive frequency sweeps, and circuit
 synthesis, and for boundary-mode simulations, but not for eigenmode simulations, and the
 simulated frequencies must lie within a table. Their stored energy is the kinetic energy of

@@ -28,15 +28,15 @@ private:
   // Reference to material property data (not owned).
   const MaterialOperator &mat_op;
 
-  // Surface properties for finite conductivity boundary attributes: conductor conductivity,
-  // optional permittivity (ε∞ and frequency-dependent terms), permeability, and
-  // (optionally) thickness. The attributes are split into those on
+  // Surface properties for finite conductivity boundary attributes: conductor conductivity
+  // and permeability, and (optionally) thickness. The attributes are split into those on
   // the exterior of the domain (or on a cracked interior boundary), where the boundary
   // condition applies to one side, and those on an interior boundary (a conducting sheet
   // with two surfaces), where the surface admittance of both surfaces is applied. A
   // boundary with "External" and a finite thickness is split into two groups when it has
   // both kinds of attributes, since the thickness correction for exterior surfaces does not
-  // apply to the interior ones.
+  // apply to the interior ones. The optional permittivity of the conductor is ε∞ = eps with
+  // the frequency-dependent terms.
   struct ConductivityData
   {
     double sigma, eps, mu, h;

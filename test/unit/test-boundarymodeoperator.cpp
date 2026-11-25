@@ -435,15 +435,6 @@ double ExactLondonSlabIndex(double h, double d, double lambda, double k0, bool p
   return 0.5 * (lo + hi);
 }
 
-// Mattis-Bardeen Nb at 4.2 K, with σₙ = 1.605e7 S/m and Δ = 1.343 meV (SI angular rates).
-config::MattisBardeenData NiobiumMattisBardeen()
-{
-  constexpr double ev_to_angular = electromagnetics::e_ / electromagnetics::hbar_;
-  constexpr double kelvin_to_angular = electromagnetics::kB_ / electromagnetics::hbar_;
-  return {1.605e7 / electromagnetics::epsilon0_, ev_to_angular * 1.343e-3,
-          kelvin_to_angular * 4.2};
-}
-
 // Root of F(n) by secant iterations from n0.
 template <typename Function>
 std::complex<double> SecantRoot(const Function &F, std::complex<double> n0)
@@ -1570,40 +1561,22 @@ TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Paralle
   }
 }
 
-TEST_CASE("ModeEigenSolver Mattis-Bardeen slab", "[boundarymodeoperator][Serial][Parallel]")
+TEST_CASE("ModeEigenSolver Mattis-Bardeen slab and film",
+          "[boundarymodeoperator][Serial][Parallel]")
 {
   // TM0 mode of the London slab guide with a Mattis-Bardeen Nb slab at 4.2 K, below and
-  // above its gap frequency (650 GHz), compared to the exact dispersion relation.
+  // above its gap frequency (650 GHz), against the exact dispersion relation, and of the
+  // slab as a one-sided film ("External") of thickness d at y = h, with the surface
+  // impedance Z_s = (i k0/k) coth(k d), k^2 = i k0 sigma - k0^2: the exact index solves
+  // p tanh(p h) = -i k0 Z_s. The film differs from the slab by the tangential wave number,
+  // which the surface impedance neglects.
   constexpr double h = 0.5, d = 0.2;
-  const auto mb = NiobiumMattisBardeen();
+  constexpr double ev_to_angular = electromagnetics::e_ / electromagnetics::hbar_;
+  constexpr double kelvin_to_angular = electromagnetics::kB_ / electromagnetics::hbar_;
+  const config::MattisBardeenData mb{1.605e7 / electromagnetics::epsilon0_,
+                                     ev_to_angular * 1.343e-3, kelvin_to_angular * 4.2};
   config::MaterialData slab;
   slab.permittivity_terms = {mb};
-  for (double freq_ghz : {100.0, 600.0, 1000.0})
-  {
-    // Nondimensional σ for lengths in um, with c = 1.
-    const double omega = 2.0 * std::numbers::pi * freq_ghz * 1.0e9;
-    const double k0 = omega / electromagnetics::c0_ * 1.0e-6;
-    const auto sigma =
-        conductivity::Conductivity(mb, omega) / electromagnetics::c0_ * 1.0e-6;
-    const double lambda = 1.0 / std::sqrt(-k0 * sigma.imag());
-    const auto n_exact = ExactConductingSlabIndex(
-        h, d, sigma, k0, false, ExactLondonSlabIndex(h, d, lambda, k0, false));
-    const auto n_eff =
-        SolveSlabMode(1.0, h, d, lambda, slab, false, false, freq_ghz, n_exact.real(), 3);
-    CAPTURE(freq_ghz, n_exact, n_eff);
-    CHECK_THAT(n_eff.real(), WithinRel(n_exact.real(), 1.0e-8));
-    CHECK_THAT(n_eff.imag(), WithinRel(n_exact.imag(), 1.0e-6));
-  }
-}
-
-TEST_CASE("ModeEigenSolver Mattis-Bardeen film", "[boundarymodeoperator][Serial][Parallel]")
-{
-  // The Nb slab of the previous test as a one-sided film ("External") of thickness d at
-  // y = h, with the surface impedance Z_s = (i k0/k) coth(k d), k^2 = i k0 sigma - k0^2:
-  // the exact TM0 index solves p tanh(p h) = -i k0 Z_s. It differs from that of the slab by
-  // the tangential wave number, which the surface impedance neglects.
-  constexpr double h = 0.5, d = 0.2;
-  const auto mb = NiobiumMattisBardeen();
   config::ConductivityData film;
   film.epsilon_r = 1.0;
   film.permittivity_terms = {mb};
@@ -1611,6 +1584,7 @@ TEST_CASE("ModeEigenSolver Mattis-Bardeen film", "[boundarymodeoperator][Serial]
   film.external = true;
   for (double freq_ghz : {100.0, 600.0, 1000.0})
   {
+    // Nondimensional σ for lengths in um, with c = 1.
     const double omega = 2.0 * std::numbers::pi * freq_ghz * 1.0e9;
     const double k0 = omega / electromagnetics::c0_ * 1.0e-6;
     const auto sigma =
@@ -1620,19 +1594,23 @@ TEST_CASE("ModeEigenSolver Mattis-Bardeen film", "[boundarymodeoperator][Serial]
         h, d, sigma, k0, false, ExactLondonSlabIndex(h, d, lambda, k0, false));
     const auto k = std::sqrt(1i * k0 * sigma - k0 * k0);
     const auto Zs = 1i * k0 / (k * std::tanh(k * d));
-    const auto n_exact = SecantRoot(
+    const auto n_film = SecantRoot(
         [&](std::complex<double> n)
         {
           const auto p = k0 * std::sqrt(n * n - 1.0);
           return p * std::tanh(p * h) + 1i * k0 * Zs;
         },
         n_slab);
-    const auto n_eff = SolveSlabMode(1.0, h, d, lambda, {}, false, false, freq_ghz,
-                                     n_exact.real(), 3, 8, &film);
-    CAPTURE(freq_ghz, n_exact, n_slab, n_eff);
-    CHECK_THAT(n_eff.real(), WithinRel(n_exact.real(), 1.0e-8));
-    CHECK_THAT(n_eff.imag(), WithinRel(n_exact.imag(), 1.0e-6));
-    CHECK_THAT(n_eff.real(), WithinRel(n_slab.real(), 1.0e-4));
+    const auto n_eff_slab =
+        SolveSlabMode(1.0, h, d, lambda, slab, false, false, freq_ghz, n_slab.real(), 3);
+    const auto n_eff_film = SolveSlabMode(1.0, h, d, lambda, {}, false, false, freq_ghz,
+                                          n_film.real(), 3, 8, &film);
+    CAPTURE(freq_ghz, n_slab, n_eff_slab, n_film, n_eff_film);
+    CHECK_THAT(n_eff_slab.real(), WithinRel(n_slab.real(), 1.0e-8));
+    CHECK_THAT(n_eff_slab.imag(), WithinRel(n_slab.imag(), 1.0e-6));
+    CHECK_THAT(n_eff_film.real(), WithinRel(n_film.real(), 1.0e-8));
+    CHECK_THAT(n_eff_film.imag(), WithinRel(n_film.imag(), 1.0e-6));
+    CHECK_THAT(n_eff_film.real(), WithinRel(n_slab.real(), 1.0e-4));
   }
 }
 
