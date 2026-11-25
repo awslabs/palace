@@ -920,16 +920,16 @@ int QuasiNewtonSolver::Solve()
       {
         update = (res > preconditioner_tol) || (res * (res / res_check) > rtol);
         // A window of preconditioner_lag iterations stalls if it reduces the residual by
-        // less than 10%. Until num_requested eigenvalues are found, only the windows above
-        // preconditioner_tol count, which start with an updated preconditioner. Then the
-        // windows at any residual count, for the attempts from the nearer initial guesses:
-        // below preconditioner_tol, the preconditioner is updated after such a window.
-        const bool stalled =
-            (res > 0.9 * res_check) && (refine_nearer || res > preconditioner_tol);
-        stalled_windows = stalled ? stalled_windows + 1 : 0;
+        // less than 10% (below preconditioner_tol, the preconditioner is updated after such
+        // a window). Only the attempts from the nearer initial guesses, once num_requested
+        // eigenvalues are found, are ended when they stall: until then, an attempt which
+        // stalls for a while can still converge to an eigenvalue the next ones would miss.
+        stalled_windows =
+            (refine_nearer && res > 0.9 * res_check) ? stalled_windows + 1 : 0;
         res_check = res;
       }
-      // An attempt which stalls in two windows in a row is ended.
+      // An attempt from a nearer initial guess which stalls in two windows in a row is
+      // ended.
       if (stalled_windows >= 2)
       {
         if (print > 0)
@@ -937,10 +937,6 @@ int QuasiNewtonSolver::Solve()
           Mpi::Print(GetComm(),
                      "Eigenvalue {:d}, Quasi-Newton stalled after {:d} iterations, {}.\n",
                      k, it + 1, next_attempt);
-        }
-        if (!refine_nearer)
-        {
-          restart = same_attempt ? max_restart + 1 : restart + 1;
         }
         break;
       }

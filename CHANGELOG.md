@@ -59,8 +59,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     returning unconverged eigenpairs when eigenvectors of distinct eigenvalues are linearly
     dependent, and modes farther from the target than those of its other initial guesses:
     once `"N"` modes are found, each guess left nearer the target, in frequency and in the
-    complex plane, is refined once, so nearer, possibly more damped, modes can be returned
-    at some extra cost. A stalled attempt now ends. SchemaVer 6-1-2
+    complex plane, is refined once, until it stalls, so nearer, possibly more damped, modes
+    can be returned at some extra cost. SchemaVer 6-1-2
     [PR 1299](https://github.com/awslabs/palace/pull/1299).
 
 #### Documentation
