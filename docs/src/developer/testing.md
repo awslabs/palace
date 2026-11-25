@@ -603,9 +603,14 @@ to match, so the accounting comes from a single source.
 #### Overrides
 
 Regression input fixtures and references are normal test data under
-`PALACE_TEST_DATA_DIR/regression` and are read-only. The only directory override
-is `--regression-run-dir`, which changes where live outputs are staged; by
-default this is `std::filesystem::temp_directory_path() / "palace-regression"`.
+`PALACE_TEST_DATA_DIR/regression` and are read-only. Each case stages its inputs
+and outputs in a subdirectory of a run root, such as `cpw/lumped_eigen`. By
+default, each run of `palace-unit-tests` gets a new run root
+`std::filesystem::temp_directory_path() / "palace-regression-XXXXXX"`, so
+concurrent runs never share a stage. It is removed at the end of the run if all
+tests pass; otherwise it is kept, and its path is printed. The only directory
+override is `--regression-run-dir`, which sets a fixed run root, where each case
+wipes its stage when it starts and keeps it afterwards.
 
 Per-case solver knobs:
 

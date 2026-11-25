@@ -21,6 +21,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "driver.hpp"
+#include "fixtures.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
@@ -39,6 +40,11 @@ namespace
 std::string g_regression_run_dir_override;
 std::string g_solver_override;
 std::string g_eigensolver_override;
+
+// Run root of this run without an override, created by the first case. Being unique,
+// concurrent runs of a case (ctest -j over several builds, several users) never wipe each
+// other's stages.
+std::filesystem::path g_regression_temp_run_dir;
 
 // Recursively collect CSV and non-CSV metadata filenames relative to
 // `root`. Folders named in `skip_dirs` are recorded at their top level
@@ -367,8 +373,8 @@ public:
   {
     std::error_code ec;
     std::filesystem::current_path(prev_, ec);  // never throw from dtor
-    // The stage is left on disk for post-mortem inspection; the next
-    // invocation of this case wipes and recreates it.
+    // The stage is left on disk for post-mortem inspection: see
+    // FinalizeRegressionRunDir.
   }
   const std::filesystem::path &path() const { return stage_; }
   ScopedExampleStage(const ScopedExampleStage &) = delete;
@@ -431,7 +437,28 @@ std::filesystem::path GetRegressionRunDir()
   {
     return g_regression_run_dir_override;
   }
-  return std::filesystem::temp_directory_path() / "palace-regression";
+  if (g_regression_temp_run_dir.empty())
+  {
+    g_regression_temp_run_dir = MakeSharedTempDir("palace-regression-");
+  }
+  return g_regression_temp_run_dir;
+}
+
+void FinalizeRegressionRunDir(bool passed)
+{
+  if (g_regression_temp_run_dir.empty() || !Mpi::Root(Mpi::World()))
+  {
+    return;
+  }
+  if (passed)
+  {
+    std::error_code ec;
+    std::filesystem::remove_all(g_regression_temp_run_dir, ec);
+  }
+  else
+  {
+    Mpi::Print("Regression outputs kept in {}\n", g_regression_temp_run_dir.string());
+  }
 }
 
 namespace

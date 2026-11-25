@@ -54,8 +54,8 @@ int main(int argc, char *argv[])
 
   // Regression-suite overrides. The input fixtures and reference CSVs are
   // normal test data rooted at PALACE_TEST_DATA_DIR; only the staging root
-  // and solver choices are configurable at run time. Empty run dir = use the
-  // temporary-directory default.
+  // and solver choices are configurable at run time. Empty run dir = a new
+  // temporary directory for this run.
   std::string regression_run_dir;               // --regression-run-dir
   std::string palace_linear_solver{"Default"};  // --palace-linear-solver
   std::string palace_eigensolver{"Default"};    // --palace-eigensolver
@@ -69,8 +69,9 @@ int main(int argc, char *argv[])
              Opt(regression_run_dir, "path")["--regression-run-dir"](
                  "Staging root under which each [Regression] case gets its own "
                  "subdirectory (inputs symlinked from examples/, outputs written "
-                 "there). Default: std::filesystem::temp_directory_path() / "
-                 "\"palace-regression\"") |
+                 "and kept there). Default: a new directory "
+                 "std::filesystem::temp_directory_path() / "
+                 "\"palace-regression-XXXXXX\", removed if all tests pass") |
              Opt(palace_linear_solver, "type")["--palace-linear-solver"](
                  "Override Solver.Linear.Type for [Regression] cases (e.g. "
                  "SuperLU, STRUMPACK)") |
@@ -188,8 +189,8 @@ int main(int argc, char *argv[])
   session.useConfigData(cfg);
 
   // Forward regression-harness overrides into the helpers. Solver
-  // strings default to "Default"; the run dir uses the temporary-directory
-  // default when empty.
+  // strings default to "Default"; the run dir uses a new temporary
+  // directory when empty.
   palace::test::SetRegressionRunDirOverride(regression_run_dir);
   palace::test::SetSolverOverride(palace_linear_solver);
   palace::test::SetEigenSolverOverride(palace_eigensolver);
@@ -218,6 +219,7 @@ int main(int argc, char *argv[])
   }
 
   result = session.run();
+  palace::test::FinalizeRegressionRunDir(result == 0);
   ceed::Finalize();
 
   // Finalize SLEPc/PETSc.

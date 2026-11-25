@@ -41,13 +41,13 @@ PerRankTempDir::~PerRankTempDir()
   fs::remove_all(temp_dir);
 }
 
-SharedTempDir::SharedTempDir()
+fs::path MakeSharedTempDir(const std::string &prefix)
 {
   // Rank 0 creates the directory and broadcasts its path.
   std::string path;
   if (Mpi::Root(Mpi::World()))
   {
-    path = MakeUniqueTempDir("palace_test_").string();
+    path = MakeUniqueTempDir(prefix).string();
   }
   int len = static_cast<int>(path.size());
   Mpi::Broadcast(1, &len, 0, Mpi::World());
@@ -60,7 +60,12 @@ SharedTempDir::SharedTempDir()
   {
     throw std::runtime_error("Failed to create a temporary directory!");
   }
-  temp_dir = path;
+  return path;
+}
+
+SharedTempDir::SharedTempDir()
+{
+  temp_dir = MakeSharedTempDir("palace_test_");
   Mpi::Barrier(Mpi::World());
 }
 

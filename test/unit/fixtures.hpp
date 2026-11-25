@@ -5,11 +5,16 @@
 #define PALACE_FIXTURES_HPP
 
 #include <filesystem>
+#include <string>
 
 namespace palace::test
 {
 
 namespace fs = std::filesystem;
+
+// New uniquely named temporary directory <prefix>XXXXXX, created by rank 0 and shared by
+// all ranks of MPI_COMM_WORLD. Throws on all ranks if it cannot be created.
+fs::path MakeSharedTempDir(const std::string &prefix);
 
 // Fixture that creates a per-rank temporary directory for each test and cleans it up
 // automatically.
