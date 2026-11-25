@@ -388,6 +388,20 @@ void ConcretizeBoundaries(const config::BoundaryData &boundaries,
     }
   }
 
+  // Superconductor: JSON array of objects, C++ vector (positional); CheckConfiguration
+  // appends the films of the flux loops after the declared entries. Of the alternative
+  // (PenetrationDepth, Thickness) and KineticInductance forms, only the one given is
+  // written: a 0.0 for the other would read as a value.
+  if (j_boundaries.contains("Superconductor"))
+  {
+    auto &j_sc = j_boundaries["Superconductor"];
+    const std::size_t n = std::min(j_sc.size(), boundaries.superconductor.size());
+    for (std::size_t i = 0; i < n; ++i)
+    {
+      Concretize(j_sc[i], "TwoSided", boundaries.superconductor[i].two_sided);
+    }
+  }
+
   // LumpedPort: JSON array with Index, C++ map keyed by Index.
   if (j_boundaries.contains("LumpedPort"))
   {
