@@ -98,7 +98,8 @@ template class RegionSolver<std::complex<double>>;
 DrivenRegionSolver::DrivenRegionSolver(const IoData &iodata, SpaceOperator &space_op,
                                        EnvironmentOperator &env)
   : space_op(space_op), env(env),
-    type(SchurSolverFor(iodata.solver.substructuring->direct_solver)),
+    type(SchurSolverFor(iodata.solver.substructuring->direct_solver, SchurKind::REGION,
+                        env.Grid().Size())),
     ordering(iodata.solver.linear.sym_factorization)
 {
 }
@@ -191,8 +192,9 @@ std::unique_ptr<ComplexKspSolver> MakeDrivenKspSolver(const IoData &iodata,
     // FGMRES, whose solution combines the preconditioned vectors of its residual: near a
     // resonance of the region, where the region solver is nearly singular, GMRES applies it
     // to a combination of its basis, which loses digits. It then takes a few iterations
-    // with MUMPS's Schur complement, but tens with SuperLU_DIST's, so it has an iteration
-    // limit of its own, kRegionMaxIts or "MaxIts" if larger (its restart is "MaxSize").
+    // with MUMPS's Schur complement, about ten with STRUMPACK's and tens with
+    // SuperLU_DIST's, so it has an iteration limit of its own, kRegionMaxIts or "MaxIts" if
+    // larger (its restart is "MaxSize").
     config::LinearSolverData linear = iodata.solver.linear;
     linear.krylov_solver = KrylovSolver::FGMRES;
     linear.pc_side = PreconditionerSide::DEFAULT;

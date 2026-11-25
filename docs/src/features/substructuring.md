@@ -292,12 +292,13 @@ voltage of a lumped port, would depend on both sides.
     SuperLU_DIST, whose condensation goes wrong through a resonance, is not used offline. FGMRES
     solves the region, preconditioned by the region's own Schur complement onto the interface with
     the environment's added, a dense matrix factored across the processes by ScaLAPACK (which MUMPS
-    and STRUMPACK build with; without it, on one process). The region's Schur complement is MUMPS's,
-    distributed, or, without it, STRUMPACK's, gathered on one process (or, without them, from
-    SuperLU_DIST's solves). Near a resonance of the region with the interface held fixed, where this
-    preconditioner is nearly singular, FGMRES takes more iterations, a few with MUMPS's Schur
-    complement of the region and tens with SuperLU_DIST's, within a limit of its own (500, or
-    `"MaxIts"` if larger; it is used whatever
+    and STRUMPACK build with; without it, on one process). The region's Schur complement is
+    STRUMPACK's, gathered on one process, up to 10,000 interface unknowns (with its Schur complement
+    interface), and otherwise MUMPS's, distributed, or, without it, STRUMPACK's (or, without them,
+    from SuperLU_DIST's solves). Near a resonance of the region with the interface held fixed, where
+    this preconditioner is nearly singular, FGMRES takes more iterations, a few with MUMPS's Schur
+    complement of the region, about ten with STRUMPACK's and tens with SuperLU_DIST's, within a
+    limit of its own (500, or `"MaxIts"` if larger; it is used whatever
     [`config["Solver"]["Linear"]["KSPType"]`](../config/reference.md#config-solver-linear-ksptype)
     names, as GMRES loses digits there). A sparse direct solver that
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names

@@ -464,7 +464,7 @@ void DrivenSubstructure::Factor(Side &side, double omega)
     gamma_grid = std::make_unique<BlockCyclicGrid>(comm, iface.size, Mpi::Size(comm));
     const int n_loc = static_cast<int>(side.rows.size());
     side.schur = MakeSchurFactorization<std::complex<double>>(
-        SchurSolverFor(solver), ordering, comm, side.n_sys, n_loc,
+        SchurSolverFor(solver, SchurKind::ENVIRONMENT), ordering, comm, side.n_sys, n_loc,
         {std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)},
         side.gamma_sys, side.rows, false, true, gamma_grid.get());
     return;
