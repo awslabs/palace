@@ -1070,7 +1070,7 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
   return aggregate;
 }
 
-void ElectrostaticSolver::PreflightResolutionCensus(
+PreflightCensusOutcome ElectrostaticSolver::PreflightResolutionCensus(
     std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   PrepareFirstLevelMesh(mesh);
@@ -1080,8 +1080,8 @@ void ElectrostaticSolver::PreflightResolutionCensus(
                                                                   &response_geometry);
   response->SetPatchRecordResidency(
       SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
-  WritePreflightResolutionCensus(*response, laplace_op.GlobalTrueVSize(),
-                                 laplace_op.GetComm());
+  return WritePreflightResolutionCensus(*response, laplace_op.GlobalTrueVSize(),
+                                        laplace_op.GetComm());
 }
 
 std::pair<ErrorIndicator, long long int>

@@ -352,6 +352,8 @@ struct SurfaceResponseFiles
   // hardening-2 (iii): a listed gap next to a differently listed one at a one-slot corner
   // coupon).
   static std::unique_ptr<mfem::ParMesh> MakeDiagonalIslandMesh();
+  // The serial mesh MakeDiagonalIslandMesh distributes (written to a file by driver cases).
+  static mfem::Mesh MakeSerialDiagonalIslandMesh();
   // The neighboring-island mesh (two 0.5 x 0.5 islands, attributes 9 / 10, on the plane
   // y = 0.5 of a 2 x 1 x 2 box; MakeIslandMesh(neighboring_island = true)) rotated by
   // `angle_degrees` about the plane normal y through the box centre (1, y, 1): the islands'

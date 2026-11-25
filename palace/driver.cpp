@@ -174,6 +174,17 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
       (fs::path(iodata.problem.output) / "surface-response-requirements.json").string());
   if (!outcome.fail_closed_summary.empty())
   {
+    // CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling (b) of 2026-11-25): with
+    // GeometryFailurePolicy absent, the preflight fails closed by default while a
+    // solve-form run records raw (its own default) and reaches its census: the census is
+    // built as that run builds it before the preflight ends. An explicit FailClosed (a
+    // solve form aborts too) builds none.
+    const auto &request = iodata.problem.type == ProblemType::ELECTROSTATIC
+                              ? iodata.solver.electrostatic.response_correction
+                              : iodata.solver.surface_response_correction;
+    const bool explicit_policy = request && request->geometry_failure_policy.has_value();
+    const auto census = explicit_policy ? PreflightCensusOutcome{}
+                                        : solver->PreflightResolutionCensus(mesh);
     std::string written;
     for (const auto &file : outcome.written)
     {
@@ -185,6 +196,21 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
         "written: {} (written in full); exit status {:d}\n",
         outcome.fail_closed_summary, written,
         kSurfaceResponsePreflightFailClosedExitStatus);
+    if (census.evaluated)
+    {
+      Mpi::Print(
+          comm,
+          "The resolution census above was built as a solve-form run builds it "
+          "(GeometryFailurePolicy RecordRaw, the default of a solve: raw recorded for "
+          "the failed geometry, {:d} feature(s))\n",
+          census.fallback_features);
+    }
+    else if (explicit_policy)
+    {
+      Mpi::Print(comm, "Resolution census: not evaluated (GeometryFailurePolicy "
+                       "\"FailClosed\" is set); \"GeometryFailurePolicy\": \"RecordRaw\" "
+                       "gives it\n");
+    }
     return kSurfaceResponsePreflightFailClosedExitStatus;
   }
   // CUT-PLAN step 4b (lane v1step4b): the resolution census of the first mesh, as a

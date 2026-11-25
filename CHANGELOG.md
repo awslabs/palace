@@ -69,7 +69,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     of `palace.json` and, with `"PatchEnergy"`, `surface-response-resolution-patches.csv`,
     as a corrected run writes them before its first solve, and one row set of
     `surface-participation.csv` whose resolution reads `PREFLIGHT <word>` and whose values
-    are `nan` (not computed). Corrected solve runs are unchanged.
+    are `nan` (not computed); a preflight that fails closed by its default
+    `GeometryFailurePolicy` builds the census, as a solve-form run does, before its exit
+    status 3. Corrected solve runs are unchanged.
   - Added the configuration keys of the surface-response correction and of the features
     below to the schema, all optional (a configuration accepted before is accepted with the
     same meaning): `Solver.SurfaceResponseCorrection`; `Solver.Electrostatic`

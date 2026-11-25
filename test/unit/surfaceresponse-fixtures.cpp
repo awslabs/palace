@@ -1486,6 +1486,12 @@ SurfaceResponseFiles::MakeIslandMesh(bool rounded, bool tetrahedral, bool apertu
 
 std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeDiagonalIslandMesh()
 {
+  mfem::Mesh serial = MakeSerialDiagonalIslandMesh();
+  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+}
+
+mfem::Mesh SurfaceResponseFiles::MakeSerialDiagonalIslandMesh()
+{
   mfem::Mesh serial = MakeSerialIslandMesh();
   for (int be = 0; be < serial.GetNBE(); be++)
   {
@@ -1509,7 +1515,7 @@ std::unique_ptr<mfem::ParMesh> SurfaceResponseFiles::MakeDiagonalIslandMesh()
     }
   }
   serial.SetAttributes();
-  return std::make_unique<mfem::ParMesh>(Mpi::World(), serial);
+  return serial;
 }
 
 std::unique_ptr<mfem::ParMesh>
