@@ -95,11 +95,36 @@ uses the computed field energies, the capacitance can also be calculated by dire
 integrating the charge on a boundary surface and dividing by the excitation voltage. The
 configuration file for this example contains this information under
 [`config["Boundaries"]["Postprocessing"]["SurfaceFlux"]`](../config/reference.md#config-boundaries-postprocessing-surfaceflux).
-The resulting capacitances are written to `postpro/terminal-C.csv`:
+The resulting charges are written to `postpro/surface-F.csv`:
 
 ```@example include_example
-include_example_file("spheres", "terminal-C.csv") # hide
+include_example_file("spheres", "surface-F.csv") # hide
 ```
+
+These are the charges at the excitation voltage of each terminal, about 19.41 V (see
+[Electrostatic problems](../guide/problem.md#Electrostatic-problems)), which is written to
+`postpro/terminal-V.csv`:
+
+```@example include_example
+include_example_file("spheres", "terminal-V.csv") # hide
+```
+
+Dividing the charges by this voltage gives the capacitance matrix
+
+```@example
+using DelimitedFiles: readdlm #hide
+using Printf #hide
+path = joinpath(@__DIR__, "..", "..", "..", "test", "data", "regression", "ref", "spheres") #hide
+surface_F = readdlm(joinpath(path, "surface-F.csv"), ',', Float64, skipstart=1) #hide
+terminal_V = readdlm(joinpath(path, "terminal-V.csv"), ',', Float64, skipstart=1) #hide
+C = surface_F[:, 2:3] ./ terminal_V[:, 2] #hide
+println("        i,                C[i][1] (F),                C[i][2] (F)") #hide
+for i = 1:size(C, 1) #hide
+    @printf(" %.2e,        %+.12e,        %+.12e\n", surface_F[i, 1], C[i, 1], C[i, 2]) #hide
+end #hide
+```
+
+which is close to the matrix computed from the field energies above.
 
 Finally, the `postpro/paraview` directory contains files for visualizing the computed field
 solutions with ParaView. Below we present the electrostatic potential fields for each
