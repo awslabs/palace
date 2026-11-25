@@ -115,6 +115,14 @@ and `DampingFrequency` give ``\gamma = 2\pi f``, so a damping specified as an in
     term is ``\mathrm{Strength}\,\ln((s+\omega_\mathrm{hi})/(s+\omega_\mathrm{lo}))``, with
     the natural logarithm, so a static increment ``\Delta\epsilon`` corresponds to
     ``\mathrm{Strength} = \Delta\epsilon/\ln(\omega_\mathrm{hi}/\omega_\mathrm{lo})``.
+  - `MattisBardeen`: the complex conductivity of Mattis and Bardeen of a superconductor in
+    the local (dirty) limit, with positive `NormalConductivity` in S/m, nonnegative
+    `Temperature` in K, and either the `Gap` ``\Delta(T)`` in eV or the
+    `CriticalTemperature` in K, from which the weak-coupling BCS theory gives
+    ``\Delta(T)``.
+  - `TabulatedConductivity`: a complex conductivity with `Sigma1` (nonnegative) and
+    `Sigma2` in S/m at strictly increasing `Frequency` points in GHz, interpolated with
+    monotone cubic splines of ``\sigma_1`` and ``\omega\sigma_2`` in ``\log\omega``.
 
 The `PoleResidue` rates are in rad/s, unlike the GHz and ns of the typed terms. For example,
 the Debye term ``\Delta\epsilon/(1+s\tau)`` is ``r/(s-p)`` with ``p = -1/\tau`` and
@@ -165,6 +173,17 @@ needed. *Palace* warns about each material with no stored energy when it reads t
 configuration; this is not a statement that the material has gain, and it does not change
 the field solve.
 
+The conductor terms, `MattisBardeen` and `TabulatedConductivity`, describe a
+superconductor or another conductor by its complex conductivity
+``\sigma(\omega) = \sigma_1 - i\sigma_2``, ``\chi(s) = \sigma(\omega)/(\epsilon_0 s)``,
+usually with a `HighFrequencyLimit` of 1. They are defined at real frequencies only: they are supported
+for driven simulations, including wave ports, adaptive frequency sweeps, and circuit
+synthesis, and for boundary-mode simulations, but not for eigenmode simulations, and the
+simulated frequencies must lie within a table. Their stored energy is the kinetic energy of
+the carriers, ``-\epsilon_0^{-1}\,d\sigma_2/d\omega`` as a susceptibility, which is exact
+for a London superconductor and approximate above the gap of a Mattis-Bardeen
+superconductor, where the loss is large.
+
 The object form requires scalar permittivity and cannot be combined with `LossTan`;
 ordinary `Conductivity` remains additive. The high-frequency value uses the ordinary
 permittivity mass matrix. Exact zero poles use the ordinary conductivity coefficient, and
@@ -172,7 +191,7 @@ all nonlinear terms on a material share one unit vector-mass operator.
 
 Transient problems are not supported with this material model. Electrostatic problems use
 the static permittivity ``\epsilon(0)``, so they reject a pole at zero frequency (a `Drude`
-term or a `PoleResidue` term with a zero pole), and magnetostatic
+or conductor term, or a `PoleResidue` term with a zero pole), and magnetostatic
 problems do not use the permittivity. Numeric wave ports, boundary-mode problems, Floquet
 ports, and Absorbing boundaries next to the material use ``\epsilon(i\omega)`` at each
 frequency. The eigenmode divergence-free projection is disabled: its fixed
@@ -185,16 +204,16 @@ which does not guarantee the modes nearest the target or all the requested modes
 [Eigenmode problems](problem.md#Eigenmode-problems).
 In adaptive circuit synthesis, the pole terms of the volume permittivity are realized
 exactly by auxiliary states, in the reduced-basis directions that the synthesis rank
-cutoff retains. `DjordjevicSarkar` terms are fit over the frequency sweep, and so are
-wave ports and `Absorbing` boundaries next to the material: the complete complex
-wave-port propagation constant, and the absorbing-boundary scalars of the wave
+cutoff retains. `DjordjevicSarkar` and conductor terms are fit over the frequency sweep,
+and so are wave ports and `Absorbing` boundaries next to the material: the complete
+complex wave-port propagation constant, and the absorbing-boundary scalars of the wave
 permittivity (``\epsilon(i\omega)`` with the material `Conductivity` included). These
 responses are in general not rational, and near a material resonance the fits may not
 meet `AdaptiveTol`. *Palace* prints each fit residual and warns when it exceeds the
 effective synthesis fit tolerance. Only the rational volume terms are realized exactly;
-the material-dependent port and absorbing-boundary responses and native
-`DjordjevicSarkar` response are fits. Their real-band fit control does not certify
-complex-plane or resonance accuracy.
+the material-dependent port and absorbing-boundary responses and the native
+`DjordjevicSarkar` and conductor responses are fits. Their real-band fit control does not
+certify complex-plane or resonance accuracy.
 
 ### Energy and postprocessing
 

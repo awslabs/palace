@@ -18,11 +18,13 @@
 #include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/units.hpp"
 
 namespace palace
 {
 using namespace Catch::Matchers;
+using namespace std::complex_literals;
 
 namespace
 {
@@ -211,6 +213,78 @@ TEST_CASE("SurfaceConductivityOperator interior sheets",
     // The thickness correction makes a difference.
     CHECK(std::abs(ref_2h[0] - ref_h[0]) > 1.0e-6 * ref_h[0]);
   }
+}
+
+TEST_CASE("SurfaceConductivityOperator conductor permittivity",
+          "[surfaceimpedanceoperator][Serial][Parallel]")
+{
+  // The surface admittance iω/Z = (k/μ) tanh(kh/2), k² = iωμ(σ + iω(ε∞ + χ(iω))), of the
+  // exterior attribute 1: the finite-thickness formula of a constant conductivity, and the
+  // films of a Drude metal and of a Mattis-Bardeen superconductor.
+  auto serial_mesh = MakeInteriorBoundaryMesh();
+  if (Mpi::Size(Mpi::World()) > serial_mesh.GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
+  Mesh palace_mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), serial_mesh));
+  config::MaterialData material;
+  material.attributes = {1};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({material}, periodic, ProblemType::DRIVEN, palace_mesh);
+  const Units units(1.0, 1.0);
+  constexpr double mu = 1.5, sigma = 5.0;
+  auto Admittance = [&](const config::ConductivityData &data, std::complex<double> omega)
+  {
+    const SurfaceConductivityOperator op({data}, ProblemType::DRIVEN, units, mat_op,
+                                         palace_mesh.Get());
+    return op.EvaluateScalar(0, omega);
+  };
+  const double h = GENERATE(0.0, 0.3);
+  CAPTURE(h);
+  config::ConductivityData data;
+  data.attributes = {1};
+  data.mu_r = mu;
+  data.h = h;
+
+  // HFSS finite-thickness formula, with skin depth δ and ν = h/δ.
+  data.sigma = sigma;
+  for (std::complex<double> omega : {std::complex<double>(1.5, 0.0), {1.5, 0.2}})
+  {
+    const auto delta = std::sqrt(2.0 / (mu * sigma * omega)), nu = h / delta;
+    const auto Z =
+        (h > 0.0) ? ((std::sinh(nu) + std::sin(nu)) + 1i * (std::sinh(nu) - std::sin(nu))) /
+                        ((std::cosh(nu) - std::cos(nu)) * sigma * delta)
+                  : (1.0 + 1i) / (sigma * delta);
+    CHECK(std::abs(Admittance(data, omega) - 1i * omega / Z) <
+          1.0e-12 * std::abs(1i * omega / Z));
+  }
+
+  // Films with a frequency-dependent permittivity, also at a complex frequency for the
+  // Drude metal, and at a real one for the superconductor.
+  auto Film = [&](const config::PermittivityTermData &term, std::complex<double> omega)
+  {
+    const std::complex<double> s = 1i * omega;
+    const auto chi = permittivity::Susceptibility({term}, s);
+    const auto k = std::sqrt(s * mu * (s * (1.0 + chi)));
+    return (h > 0.0) ? k / mu * std::tanh(0.5 * k * h) : k / mu;
+  };
+  data.sigma = 0.0;
+  data.epsilon_r = 1.0;
+  const config::DrudeData drude{30.0, 0.5};
+  data.permittivity_terms = {drude};
+  for (std::complex<double> omega : {std::complex<double>(1.5, 0.0), {1.5, 0.2}})
+  {
+    const auto ref = Film(drude, omega);
+    CHECK(std::abs(Admittance(data, omega) - ref) < 1.0e-12 * std::abs(ref));
+  }
+  const config::MattisBardeenData mb{50.0, 2.0, 0.5};
+  data.permittivity_terms = {mb};
+  for (double omega : {0.5, 3.0, 6.0})
+  {
+    const auto ref = Film(mb, omega);
+    CHECK(std::abs(Admittance(data, omega) - ref) < 1.0e-12 * std::abs(ref));
+  }
+  CHECK_THROWS(Admittance(data, {3.0, 0.2}));
 }
 
 TEST_CASE("SurfaceImpedanceOperator", "[surfaceimpedanceoperator][Serial][Parallel]")

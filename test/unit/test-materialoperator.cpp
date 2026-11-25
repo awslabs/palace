@@ -983,8 +983,8 @@ TEST_CASE("SpaceOperator named Drude matches canonical pole-residue action",
         {{"HighFrequencyLimit", 2.08},
          {"Terms",
           {{{"Type", "Drude"}, {"PlasmaFrequency", fp}, {"CollisionFrequency", fg}}}}}}});
-  const double wp = 2.0 * std::numbers::pi * 1.0e9 * fp;
-  const double gamma = 2.0 * std::numbers::pi * 1.0e9 * fg;
+  constexpr double wp = 2.0 * std::numbers::pi * 1.0e9 * fp;
+  constexpr double gamma = 2.0 * std::numbers::pi * 1.0e9 * fg;
   config::MaterialData canonical_material;
   canonical_material.attributes = {1};
   canonical_material.epsilon_r = config::SymmetricMatrixData<3>(2.08);

@@ -7,6 +7,7 @@
 #include <complex>
 #include <vector>
 #include <mfem.hpp>
+#include "utils/configfile.hpp"
 
 namespace palace
 {
@@ -15,13 +16,6 @@ class IoData;
 class MaterialOperator;
 class MaterialPropertyCoefficient;
 class Units;
-
-namespace config
-{
-
-struct ConductivityData;
-
-}  // namespace config
 
 enum class ProblemType : char;
 
@@ -41,10 +35,12 @@ private:
   // with two surfaces), where the surface admittance of both surfaces is applied. A
   // boundary with "External" and a finite thickness is split into two groups when it has
   // both kinds of attributes, since the thickness correction for exterior surfaces does not
-  // apply to the interior ones.
+  // apply to the interior ones. The optional permittivity of the conductor is ε∞ = eps with
+  // the frequency-dependent terms.
   struct ConductivityData
   {
-    double sigma, mu, h;
+    double sigma, eps, mu, h;
+    std::vector<config::PermittivityTermData> terms;
     mfem::Array<int> attr_list, ext_attr_list, int_attr_list;
   };
   std::vector<ConductivityData> boundaries;
@@ -73,16 +69,18 @@ public:
   // own frequency-dependent surface admittance i·ω/Z(ω)).
   std::size_t Size() const { return boundaries.size(); }
 
-  // Whether group `g` is active (nonzero conductivity).
+  // Whether group `g` is active (nonzero conductivity or permittivity).
   bool IsActive(std::size_t g) const
   {
-    return g < boundaries.size() && std::abs(boundaries[g].sigma) > 0.0;
+    return g < boundaries.size() && (boundaries[g].sigma > 0.0 || boundaries[g].eps > 0.0);
   }
 
+  // Whether a group has a conductor permittivity term, defined at real frequencies only.
+  bool HasRealFrequencyTerms() const;
+
   // Per-group surface-admittance scalar i·ω/Z_g(ω), evaluated at (possibly complex) ω. Z
-  // is the skin-depth surface impedance with the optional finite-thickness HFSS
-  // correction. The skin-depth √ and the cosh/cos/sinh/sin thickness terms accept complex
-  // ω directly (analytic continuation ω = -i·λ).
+  // is the surface impedance of the conductor with the optional finite-thickness
+  // correction, analytic in ω (conductor permittivity terms at real ω only).
   std::complex<double> EvaluateScalar(std::size_t group_idx,
                                       std::complex<double> omega) const;
 

@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-1-1",
+  "$id": "urn:palace:schema:6-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -826,6 +826,12 @@
               },
               {
                 "$ref": "#/$defs/PermittivityDjordjevicSarkar"
+              },
+              {
+                "$ref": "#/$defs/PermittivityMattisBardeen"
+              },
+              {
+                "$ref": "#/$defs/PermittivityTabulatedConductivity"
               }
             ]
           },
@@ -960,6 +966,93 @@
           "type": "number",
           "exclusiveMinimum": 0.0,
           "description": "Upper frequency bound in GHz; must exceed LowerFrequency."
+        }
+      }
+    },
+    "PermittivityMattisBardeen": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "NormalConductivity",
+        "Temperature"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "Gap"
+          ]
+        },
+        {
+          "required": [
+            "CriticalTemperature"
+          ]
+        }
+      ],
+      "properties": {
+        "Type": {
+          "const": "MattisBardeen"
+        },
+        "NormalConductivity": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Normal-state conductivity of the superconductor, S/m."
+        },
+        "Temperature": {
+          "type": "number",
+          "minimum": 0.0,
+          "description": "Temperature, K."
+        },
+        "Gap": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Superconducting gap `Δ(T)` at the temperature, eV. Exclusive with `\"CriticalTemperature\"`."
+        },
+        "CriticalTemperature": {
+          "type": "number",
+          "exclusiveMinimum": 0.0,
+          "description": "Critical temperature, K, from which the gap follows from the weak-coupling BCS theory. Exclusive with `\"Gap\"`."
+        }
+      }
+    },
+    "PermittivityTabulatedConductivity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "Type",
+        "Frequency",
+        "Sigma1",
+        "Sigma2"
+      ],
+      "properties": {
+        "Type": {
+          "const": "TabulatedConductivity"
+        },
+        "Frequency": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0.0
+          },
+          "description": "Strictly increasing frequencies, GHz. The simulated frequencies must lie within the table."
+        },
+        "Sigma1": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "number",
+            "minimum": 0.0
+          },
+          "description": "Real part `σ₁` of the conductivity `σ = σ₁ - iσ₂` at each frequency, S/m."
+        },
+        "Sigma2": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "number"
+          },
+          "description": "Negative imaginary part `σ₂` of the conductivity at each frequency, S/m (positive for an inductive response)."
         }
       }
     },
@@ -1507,8 +1600,24 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "Attributes",
-        "Conductivity"
+        "Attributes"
+      ],
+      "oneOf": [
+        {
+          "required": [
+            "Conductivity"
+          ]
+        },
+        {
+          "required": [
+            "Permittivity"
+          ],
+          "not": {
+            "required": [
+              "Conductivity"
+            ]
+          }
+        }
       ],
       "properties": {
         "Attributes": {
@@ -1517,7 +1626,19 @@
         },
         "Conductivity": {
           "type": "number",
-          "description": "Electrical conductivity for this boundary, S/m."
+          "description": "Electrical conductivity for this boundary, S/m. Required unless `\"Permittivity\"` is given."
+        },
+        "Permittivity": {
+          "oneOf": [
+            {
+              "type": "number",
+              "exclusiveMinimum": 0.0
+            },
+            {
+              "$ref": "#/$defs/PermittivityModel"
+            }
+          ],
+          "description": "Optional relative permittivity of the conductor, for the displacement and polarization currents in its surface impedance, `σ(ω) + iωε₀ε(ω)` in place of `σ`: a number, or the object form of a frequency-dependent permittivity, as for domain materials (for example a `\"MattisBardeen\"` term for a superconducting film)."
         },
         "Permeability": {
           "type": "number",

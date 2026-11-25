@@ -1024,7 +1024,19 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
         {{"Type", "DjordjevicSarkar"},
          {"Strength", 0.0575258},
          {"LowerFrequency", 9.07157e-5},
-         {"UpperFrequency", 159.154956}}};
+         {"UpperFrequency", 159.154956}},
+        {{"Type", "MattisBardeen"},
+         {"NormalConductivity", 1.605e7},
+         {"Temperature", 4.2},
+         {"Gap", 1.343e-3}},
+        {{"Type", "MattisBardeen"},
+         {"NormalConductivity", 1.605e7},
+         {"Temperature", 4.2},
+         {"CriticalTemperature", 9.2}},
+        {{"Type", "TabulatedConductivity"},
+         {"Frequency", {1.0, 2.0}},
+         {"Sigma1", {1.0e3, 2.0e3}},
+         {"Sigma2", {1.0e5, 5.0e4}}}};
     for (const auto &term : valid_terms)
     {
       CHECK(ValidateMaterial({{"HighFrequencyLimit", 2.08}, {"Terms", {term}}}).empty());
@@ -1048,6 +1060,19 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
     CheckInvalid({{"HighFrequencyLimit", 2.0},
                   {"Terms", {{{"Type", "Debye"}, {"RelaxationTime", 0.02}}}}});
 
+    // A Mattis-Bardeen term has one of Gap and CriticalTemperature, and a tabulated
+    // conductivity a nonnegative Sigma1.
+    json both = valid_terms[5];
+    both["CriticalTemperature"] = 9.2;
+    json neither = valid_terms[5];
+    neither.erase("Gap");
+    json gain = valid_terms[7];
+    gain["Sigma1"] = {-1.0e3, 2.0e3};
+    for (const auto &term : {both, neither, gain})
+    {
+      CheckInvalid({{"HighFrequencyLimit", 1.0}, {"Terms", {term}}});
+    }
+
     // A typed term with a nonpositive strength, or a nonpositive high-frequency value, is
     // not passive (it has gain or a negative stored energy at every frequency).
     for (const double value : {0.0, -0.5})
@@ -1064,6 +1089,36 @@ TEST_CASE("Schema Validator Smoke Tests", "[schema][Serial]")
         CheckInvalid({{"HighFrequencyLimit", 2.08}, {"Terms", {term}}});
       }
     }
+  }
+
+  SECTION("Conductivity boundary requires Conductivity or Permittivity")
+  {
+    auto ValidateBoundary = [](const json &boundary)
+    {
+      json config;
+      config["Problem"] = {{"Type", "Driven"}};
+      config["Model"] = {{"Mesh", "test.msh"}};
+      config["Domains"]["Materials"] = {{{"Attributes", {1}}}};
+      config["Boundaries"]["Conductivity"] = json::array({boundary});
+      config["Solver"]["Driven"]["Samples"] = {
+          {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}}};
+      return ValidateConfig(config);
+    };
+    const json mb = {{"Type", "MattisBardeen"},
+                     {"NormalConductivity", 1.605e7},
+                     {"Temperature", 4.2},
+                     {"Gap", 1.343e-3}};
+    CHECK(ValidateBoundary({{"Attributes", {1}}, {"Conductivity", 5.8e7}}).empty());
+    CHECK(ValidateBoundary(
+              {{"Attributes", {1}}, {"Conductivity", 5.8e7}, {"Permittivity", 2.0}})
+              .empty());
+    CHECK(
+        ValidateBoundary({{"Attributes", {1}},
+                          {"Permittivity", {{"HighFrequencyLimit", 1.0}, {"Terms", {mb}}}},
+                          {"Thickness", 0.2}})
+            .empty());
+    CHECK_FALSE(ValidateBoundary({{"Attributes", {1}}, {"Thickness", 0.2}}).empty());
+    CHECK_FALSE(ValidateBoundary({{"Attributes", {1}}, {"Permittivity", 0.0}}).empty());
   }
 
   SECTION("Excitation integer minimum - LumpedPort")

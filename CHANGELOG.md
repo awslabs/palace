@@ -26,6 +26,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     preconditioner solves the PML regions with a sparse direct solver, and `eig.csv` reports
     the fraction of the energy of each mode in the PML regions. SchemaVer 6-1-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Added `MattisBardeen` and `TabulatedConductivity` terms to frequency-dependent
+    `Permittivity` objects, which describe superconductors and other conductors by their
+    complex conductivity `σ(ω) = σ₁ - iσ₂`: the Mattis-Bardeen theory in the local limit,
+    with the weak-coupling BCS gap at the temperature, or tabulated `σ₁` and `σ₂`. They are
+    supported for driven simulations, with wave ports, adaptive frequency sweeps, and
+    circuit synthesis, and for boundary mode simulations; their stored energy is the
+    kinetic energy of the carriers. Finite conductivity boundaries take an optional
+    `"Permittivity"` of the conductor, a number or a frequency-dependent permittivity, so
+    that superconducting films can be modeled by their surface impedance. SchemaVer 6-2-0
+    [PR 1309](https://github.com/awslabs/palace/pull/1309).
 
 #### Interface Changes
 
@@ -68,12 +78,21 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1293](https://github.com/awslabs/palace/pull/1293).
   - `--dry-run` with more than one process no longer hangs when the configuration file
     fails the schema validation. [PR 1260](https://github.com/awslabs/palace/pull/1260).
+  - Fixed the domain energies of boundary mode simulations, which omitted the out-of-plane
+    electric field and the in-plane magnetic flux density: the magnetic energy of a
+    quasi-TEM mode was nearly zero, and the electric energy of a mode with a longitudinal
+    field was incomplete (a TM mode of a hollow guide lost 36% to 41% of it).
+    [PR 1308](https://github.com/awslabs/palace/pull/1308).
 
 #### Documentation
 
   - Added the microstrip patch antenna example and a PML section to the dipole antenna
     example, and described the PML in the boundary conditions guide.
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Added the superconducting line example, which reproduces the propagation of
+    picosecond pulses on a Nb microstrip with the Mattis-Bardeen conductivity of the films,
+    meshed or as surface impedance boundaries.
+    [PR 1309](https://github.com/awslabs/palace/pull/1309).
 
 ## [0.20.0] - 2026-11-23
 

@@ -2234,8 +2234,9 @@ void RomOperator::AddFrequencyDependentPermittivitySynthesis(
   // s - p on its diagonal and couplings s·q_j·u_j, q_j² = -r·λ_j (BuildAugmentedPencil).
   // Splitting it instead into r·(s + p) + r·p²/(s - p) cancels catastrophically for a pole
   // far from the band, and the truncation of weak directions would then remove only the
-  // proper part. A Djordjevic-Sarkar term is fit, with its polynomial part restricted to
-  // the directions of its aux block for the same reason.
+  // proper part. The non-rational terms (Djordjevic-Sarkar and conductor terms) are fit,
+  // with their polynomial part restricted to the directions of their aux block for the same
+  // reason.
   const auto &mat_op = space_op.GetMaterialOp();
   constexpr std::complex<double> i(0.0, 1.0);
   WavePortAuxBlock exact;
@@ -2247,14 +2248,14 @@ void RomOperator::AddFrequencyDependentPermittivitySynthesis(
     exact.poles.push_back(term.pole);
     exact.residues.push_back(term.residue);
   }
-  if (mat_op.HasDjordjevicSarkarPermittivity(material_idx))
+  if (mat_op.HasNonRationalPermittivity(material_idx))
   {
     MFEM_VERIFY(sweep_omega_max > sweep_omega_min,
-                "Circuit synthesis of a DjordjevicSarkar permittivity requires a nonzero "
-                "frequency band!");
+                "Circuit synthesis of a non-rational permittivity (DjordjevicSarkar, "
+                "MattisBardeen, TabulatedConductivity) requires a nonzero frequency band!");
     auto f = [&mat_op, material_idx, i](std::complex<double> omega)
-    { return mat_op.EvaluateDjordjevicSarkarPermittivityA2(material_idx, i * omega) / i; };
-    const auto ds = FitScalarDispersion(label + "_djordjevic_sarkar", Mp_r, f,
+    { return mat_op.EvaluateNonRationalPermittivityA2(material_idx, i * omega) / i; };
+    const auto ds = FitScalarDispersion(label + "_nonrational", Mp_r, f,
                                         /*allow_augment=*/true);
     Eigen::MatrixXcd Mp_kept = Mp_r;
     if (ds.aux)
@@ -2934,8 +2935,8 @@ RomOperator::CalculateNormalizedPROMMatrices(const Units &units) const
   }
 
   // Frequency-dependent permittivity, one material at a time. Outside the band guard: the
-  // pole terms are realized exactly without sampling, and a Djordjevic-Sarkar term without
-  // a band is an error rather than silently omitted.
+  // pole terms are realized exactly without sampling, and a non-rational term without a
+  // band is an error rather than silently omitted.
   for (const auto &term : bdr_terms)
   {
     if (term.kind == BoundaryTermKind::Permittivity)
@@ -4142,6 +4143,20 @@ void RomOperator::ComputeEigenvalueEstimateErrors(
     return;
   }
   MPI_Comm comm = space_op.GetComm();
+  if (space_op.GetMaterialOp().HasRealFrequencyPermittivity() ||
+      space_op.GetSurfaceTerms().GetSurfaceConductivityOp().HasRealFrequencyTerms())
+  {
+    // The operator of a conductor permittivity term has no value at a complex frequency.
+    for (auto &est : estimates)
+    {
+      est.errors_available = false;
+      est.error_abs = est.error_bkwd = std::numeric_limits<double>::quiet_NaN();
+    }
+    Mpi::Warning(comm, "Errors of synthesized-system eigenvalue estimates not evaluated "
+                       "(NaN), as MattisBardeen and TabulatedConductivity permittivity "
+                       "terms are defined at real frequencies only!\n");
+    return;
+  }
   const std::size_t n_basis = V.size();
 
   // The synthesized matrices are the reduced pencil conjugated by the diagonal port

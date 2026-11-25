@@ -28,6 +28,12 @@ namespace palace::permittivity
 // the state for which the identity holds for every E, so the stored energy is that of the
 // physical model, and positive parameters make W and D nonnegative.
 //
+// A conductor term (MattisBardeen, TabulatedConductivity) is the current J = σ(ω)E of its
+// carriers, χ(s) = σ(ω)/(ε₀s), defined at real frequencies only. Its stored energy is the
+// kinetic energy of the carriers in Brillouin's form, d(ω Re χ)/dω = −(dσ₂/dω)/ε₀, exact
+// for a London superconductor and approximate where the loss is large (above the gap of a
+// Mattis-Bardeen superconductor).
+//
 // A PoleResidue term specifies a susceptibility, not a model of the polarization: the same
 // χ(s) has many realizations with different stored energies, and termwise energies depend
 // on how χ(s) is split into poles (a passive fit can have a negative residue). A material
@@ -45,9 +51,14 @@ namespace palace::permittivity
 std::vector<config::PermittivityPoleData>
 PoleTerms(const std::vector<config::PermittivityTermData> &terms);
 
-// The Djordjevic-Sarkar terms.
-std::vector<config::DjordjevicSarkarData>
-DjordjevicSarkarTerms(const std::vector<config::PermittivityTermData> &terms);
+// The terms without a pole-residue form, for the solver: Djordjevic-Sarkar and the
+// conductor terms.
+std::vector<config::PermittivityTermData>
+NonRationalTerms(const std::vector<config::PermittivityTermData> &terms);
+
+// Whether a term is defined at real frequencies only (a conductor term), so that it cannot
+// be evaluated at a complex frequency.
+bool IsRealFrequencyTerm(const config::PermittivityTermData &term);
 
 // Susceptibility χ(s) = Σₖ χₖ(s) at complex s.
 std::complex<double> Susceptibility(const std::vector<config::PermittivityTermData> &terms,

@@ -425,8 +425,28 @@ public:
   double omega_upper = 0.0;
 };
 
-using PermittivityTermData = std::variant<DrudeData, DebyeData, LorentzData,
-                                          PermittivityPoleData, DjordjevicSarkarData>;
+struct MattisBardeenData
+{
+public:
+  // Superconductor in the dirty limit: χ(s) = σ(ω)/(ε₀s), with σ(ω) = σₙ r(ħω/Δ, kB T/Δ)
+  // of Mattis and Bardeen. Normal-state conductivity σₙ/ε₀, gap Δ/ħ, and temperature
+  // kB T/ħ, as angular rates.
+  double sigma_n = 0.0;
+  double omega_gap = 0.0;
+  double omega_T = 0.0;
+};
+
+struct TabulatedConductivityData
+{
+public:
+  // Conductor with tabulated σ(ω) = σ₁ - iσ₂: χ(s) = σ(ω)/(ε₀s). Strictly increasing
+  // angular frequencies ω, and σ₁/ε₀ and σ₂/ε₀ as angular rates.
+  std::vector<double> omega = {}, sigma1 = {}, sigma2 = {};
+};
+
+using PermittivityTermData =
+    std::variant<DrudeData, DebyeData, LorentzData, PermittivityPoleData,
+                 DjordjevicSarkarData, MattisBardeenData, TabulatedConductivityData>;
 
 struct MaterialData
 {
@@ -589,6 +609,12 @@ struct ConductivityData
 public:
   // Electrical conductivity of the conductor [S/m].
   double sigma = 0.0;
+
+  // Optional relative permittivity of the conductor, for the displacement and polarization
+  // currents in its surface impedance: the high-frequency limit ε∞ (zero if not given) and
+  // additive frequency-dependent terms, as for MaterialData.
+  double epsilon_r = 0.0;
+  std::vector<PermittivityTermData> permittivity_terms = {};
 
   // Conductor relative permeability.
   double mu_r = 1.0;

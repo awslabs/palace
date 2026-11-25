@@ -22,7 +22,9 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "embedded_schema.hpp"
 #include "linalg/ksp.hpp"
+#include "utils/conductivitymodel.hpp"
 #include "utils/configfile.hpp"
+#include "utils/constants.hpp"
 #include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
@@ -97,9 +99,11 @@ std::vector<std::string> SchemaCoverageGaps(const std::string &pointer,
       arms.push_back(resolve_ref(arm));
     }
   }
-  else
+  // Arms of only required constraints (one of two keys) validate the object, not split it.
+  if (std::ranges::none_of(arms,
+                           [](const json &arm) { return arm.contains("properties"); }))
   {
-    arms.push_back(resolved);
+    arms = {resolved};
   }
   REQUIRE(!arms.empty());
 
@@ -1884,7 +1888,60 @@ TEST_CASE("Config material permittivity models", "[config][Serial]")
     CHECK(poles[3].residue.imag() == Catch::Approx(-0.5 * 0.8 * w0 * w0 / wd));
     CHECK(poles[4].pole == std::complex<double>{-2.0e12, 5.0e12});
     CHECK(poles[4].residue == std::complex<double>{1.2e12, -0.4e12});
-    CHECK(permittivity::DjordjevicSarkarTerms(data.permittivity_terms).size() == 1);
+    CHECK(permittivity::NonRationalTerms(data.permittivity_terms).size() == 1);
+  }
+
+  SECTION("Conductor terms are angular rates")
+  {
+    const json gap = {{"Type", "MattisBardeen"},
+                      {"NormalConductivity", 1.605e7},
+                      {"Temperature", 4.2},
+                      {"Gap", 1.343e-3}};
+    json bcs = gap;
+    bcs.erase("Gap");
+    bcs["CriticalTemperature"] = 9.2;
+    const json table = {{"Type", "TabulatedConductivity"},
+                        {"Frequency", {1.0, 2.0}},
+                        {"Sigma1", {1.0e3, 2.0e3}},
+                        {"Sigma2", {1.0e5, 5.0e4}}};
+    auto Material = [](const json &terms)
+    {
+      return config::MaterialData(
+          {{"Attributes", {1}},
+           {"Permittivity", {{"HighFrequencyLimit", 1.0}, {"Terms", terms}}}});
+    };
+    const auto data = Material(json::array({gap, bcs, table}));
+    REQUIRE(data.permittivity_terms.size() == 3);
+    constexpr double ev = electromagnetics::e_ / electromagnetics::hbar_;
+    constexpr double kelvin = electromagnetics::kB_ / electromagnetics::hbar_;
+    const auto &mb = std::get<config::MattisBardeenData>(data.permittivity_terms[0]);
+    CHECK(mb.sigma_n == Catch::Approx(1.605e7 / electromagnetics::epsilon0_));
+    CHECK(mb.omega_gap == Catch::Approx(1.343e-3 * ev));
+    CHECK(mb.omega_T == Catch::Approx(4.2 * kelvin));
+    const auto &mb_bcs = std::get<config::MattisBardeenData>(data.permittivity_terms[1]);
+    CHECK(mb_bcs.omega_gap == Catch::Approx(conductivity::BCS_GAP_RATIO * 9.2 * kelvin *
+                                            conductivity::BCSGapRatio(4.2 / 9.2)));
+    const auto &tab =
+        std::get<config::TabulatedConductivityData>(data.permittivity_terms[2]);
+    constexpr double scale = 2.0 * std::numbers::pi * 1.0e9;
+    CHECK(tab.omega == std::vector<double>{scale, 2.0 * scale});
+    CHECK(tab.sigma1[1] == Catch::Approx(2.0e3 / electromagnetics::epsilon0_));
+    CHECK(tab.sigma2[0] == Catch::Approx(1.0e5 / electromagnetics::epsilon0_));
+    CHECK(permittivity::NonRationalTerms(data.permittivity_terms).size() == 3);
+
+    // One of Gap and CriticalTemperature, above the temperature.
+    json both = gap;
+    both["CriticalTemperature"] = 9.2;
+    CHECK_THROWS_WITH(Material(json::array({both})),
+                      Catch::Matchers::ContainsSubstring("one of"));
+    json neither = gap;
+    neither.erase("Gap");
+    CHECK_THROWS_WITH(Material(json::array({neither})),
+                      Catch::Matchers::ContainsSubstring("one of"));
+    json hot = bcs;
+    hot["Temperature"] = 10.0;
+    CHECK_THROWS_WITH(Material(json::array({hot})),
+                      Catch::Matchers::ContainsSubstring("below the CriticalTemperature"));
   }
 
   SECTION("Overdamped Lorentz stays one oscillator with two real poles")
@@ -1975,6 +2032,47 @@ TEST_CASE("Config material permittivity models", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config conductivity boundary permittivity", "[config][Serial]")
+{
+  // The conductor of a finite conductivity boundary can have a permittivity, a number or
+  // the object form of a frequency-dependent permittivity, in place of or added to its
+  // conductivity.
+  const json mb = {{"Type", "MattisBardeen"},
+                   {"NormalConductivity", 1.605e7},
+                   {"Temperature", 4.2},
+                   {"Gap", 1.343e-3}};
+  const config::ConductivityData film(
+      {{"Attributes", {1}},
+       {"Permittivity", {{"HighFrequencyLimit", 1.0}, {"Terms", json::array({mb})}}},
+       {"Thickness", 0.2}});
+  CHECK(film.sigma == 0.0);
+  CHECK(film.epsilon_r == 1.0);
+  REQUIRE(film.permittivity_terms.size() == 1);
+  CHECK(std::holds_alternative<config::MattisBardeenData>(film.permittivity_terms[0]));
+  const config::ConductivityData metal(
+      {{"Attributes", {1}}, {"Conductivity", 5.8e7}, {"Permittivity", 2.0}});
+  CHECK(metal.sigma == 5.8e7);
+  CHECK(metal.epsilon_r == 2.0);
+  CHECK(metal.permittivity_terms.empty());
+  CHECK_THROWS_WITH(
+      config::ConductivityData({{"Attributes", {1}}, {"Thickness", 0.2}}),
+      Catch::Matchers::ContainsSubstring("requires \"Conductivity\" or \"Permittivity\""));
+
+  // A superconducting film is rejected for eigenmode simulations.
+  json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                 {"Model", {{"Mesh", "test.msh"}}},
+                 {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                 {"Boundaries",
+                  {{"Conductivity",
+                    {{{"Attributes", {1}},
+                      {"Permittivity",
+                       {{"HighFrequencyLimit", 1.0}, {"Terms", json::array({mb})}}}}}}}},
+                 {"Solver", {{"Eigenmode", {{"Target", 1.0}}}}}};
+  CHECK_THROWS_WITH(IoData(config, false),
+                    Catch::Matchers::ContainsSubstring(
+                        "TabulatedConductivity permittivity terms are only supported"));
+}
+
 TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Serial]")
 {
   auto MakeConfig = []
@@ -2033,6 +2131,33 @@ TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Ser
       config["Problem"]["Type"] = type;
       CHECK_NOTHROW(IoData(config, false));
     }
+  }
+  SECTION("Conductor terms are defined at real frequencies within their table")
+  {
+    auto config = MakeConfig();
+    config["Domains"]["Materials"][0]["Permittivity"] = {
+        {"HighFrequencyLimit", 1.0},
+        {"Terms",
+         {{{"Type", "TabulatedConductivity"},
+           {"Frequency", {0.5, 2.0}},
+           {"Sigma1", {1.0e3, 1.0e3}},
+           {"Sigma2", {1.0e5, 2.5e4}}}}}};
+    CHECK_NOTHROW(IoData(config, false));
+    auto mode = config;
+    mode["Problem"]["Type"] = "BoundaryMode";
+    mode["Solver"]["BoundaryMode"] = {{"Freq", 1.5}};
+    CHECK_NOTHROW(IoData(mode, false));
+    auto eigen = config;
+    eigen["Problem"]["Type"] = "Eigenmode";
+    eigen["Solver"]["Eigenmode"] = {{"Target", 1.0}};
+    CHECK_THROWS_WITH(IoData(eigen, false),
+                      Catch::Matchers::ContainsSubstring(
+                          "TabulatedConductivity permittivity terms are only supported"));
+    auto outside = config;
+    outside["Solver"]["Driven"]["Samples"] = {
+        {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}};
+    CHECK_THROWS_WITH(IoData(outside, false), Catch::Matchers::ContainsSubstring(
+                                                  "outside a TabulatedConductivity"));
   }
   SECTION("Only problems which use the permittivity warn about its defects")
   {
@@ -2789,9 +2914,10 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     INFO("Boundaries.Absorbing missing keys: " << json(abs_gaps).dump());
     CHECK(abs_gaps.empty());
 
-    auto cond_gaps =
-        SchemaCoverageGaps("/properties/Boundaries/properties/Conductivity/items",
-                           config["Boundaries"]["Conductivity"][0]);
+    // Permittivity is opt-in: it adds the displacement and polarization currents.
+    auto cond_gaps = SchemaCoverageGaps(
+        "/properties/Boundaries/properties/Conductivity/items",
+        config["Boundaries"]["Conductivity"][0], /*skip=*/{"Permittivity"});
     INFO("Boundaries.Conductivity[] missing keys: " << json(cond_gaps).dump());
     CHECK(cond_gaps.empty());
 

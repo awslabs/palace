@@ -32,6 +32,7 @@
 #include "models/waveportoperator.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
+#include "utils/conductivitymodel.hpp"
 #include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
@@ -41,6 +42,7 @@
 namespace palace
 {
 using namespace Catch::Matchers;
+using namespace std::complex_literals;
 
 namespace
 {
@@ -433,14 +435,52 @@ double ExactLondonSlabIndex(double h, double d, double lambda, double k0, bool p
   return 0.5 * (lo + hi);
 }
 
+// Root of F(n) by secant iterations from n0.
+template <typename Function>
+std::complex<double> SecantRoot(const Function &F, std::complex<double> n0)
+{
+  std::complex<double> n1 = n0, n2 = n0 * (1.0 + 1.0e-6), F1 = F(n1), F2 = F(n2);
+  for (int it = 0; it < 100 && std::abs(n2 - n1) > 1.0e-15 * std::abs(n2); it++)
+  {
+    const auto n3 = n2 - F2 * (n2 - n1) / (F2 - F1);
+    n1 = n2;
+    F1 = F2;
+    n2 = n3;
+    F2 = F(n2);
+  }
+  return n2;
+}
+
+// Exact mode index as for ExactLondonSlabIndex, for a slab of nondimensional complex
+// conductivity sigma: eps = 1 - i sigma / k0 and q^2 = p^2 + i k0 sigma, which is the
+// London slab for sigma = -i / (k0 lambda^2).
+std::complex<double> ExactConductingSlabIndex(double h, double d,
+                                              std::complex<double> sigma, double k0,
+                                              bool pec_back, std::complex<double> n0)
+{
+  const std::complex<double> eps = 1.0 - 1i * sigma / k0;
+  return SecantRoot(
+      [&](std::complex<double> n)
+      {
+        const auto p = k0 * std::sqrt(n * n - 1.0);
+        const auto q = std::sqrt(p * p + 1i * k0 * sigma);
+        const auto g = pec_back ? std::tanh(q * d) : 1.0 / std::tanh(q * d);
+        return p * std::tanh(p * h) + q * g / eps;
+      },
+      n0);
+}
+
 // Propagation constant normalized by the free-space wavenumber (n_eff) of a mode of a 2D
 // cross-section of width w, in um: a PEC plate at y = 0 (attribute 1), a vacuum gap of
-// height h, and a London superconductor slab of thickness d with penetration depth lambda
-// above it, whose back face y = h + d (attribute 2) is PEC or left free (PMC). The sides x
-// = 0, w (attribute 3) are PEC or free.
-double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec_back,
-                           bool pec_sides, double freq_ghz, double n_target, int order,
-                           int ny_gap = 8)
+// height h, and a superconductor slab of thickness d above it, resolved for penetration
+// depth lambda, whose back face y = h + d (attribute 2) is PEC or left free (PMC). The
+// sides x = 0, w (attribute 3) are PEC or free. With a film, the slab is replaced by the
+// conductivity boundary y = h (attribute 2).
+std::complex<double> SolveSlabMode(double w, double h, double d, double lambda,
+                                   const config::MaterialData &slab, bool pec_back,
+                                   bool pec_sides, double freq_ghz, double n_target,
+                                   int order, int ny_gap = 8,
+                                   const config::ConductivityData *film = nullptr)
 {
   MPI_Comm comm = Mpi::World();
   Units units(1.0e-6, 1.0e-6);
@@ -448,9 +488,16 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
   iodata.model.Lc = 1.0;
   auto &vacuum = iodata.domains.materials.emplace_back();
   vacuum.attributes = {1};
-  auto &london = iodata.domains.materials.emplace_back();
-  london.attributes = {2};
-  london.lambda_L = lambda;
+  if (film)
+  {
+    iodata.boundaries.conductivity = {*film};
+    iodata.boundaries.conductivity.back().attributes = {2};
+  }
+  else
+  {
+    iodata.domains.materials.push_back(slab);
+    iodata.domains.materials.back().attributes = {2};
+  }
   iodata.boundaries.pec.attributes = {1};
   if (pec_back)
   {
@@ -470,7 +517,7 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
   // Structured quadrilaterals: 2 across the width, ny_gap across the gap, and enough across
   // the slab to resolve the penetration depth.
   constexpr int nx = 2;
-  const int ny_slab = std::max(8, static_cast<int>(std::ceil(8.0 * d / lambda)));
+  const int ny_slab = film ? 0 : std::max(8, static_cast<int>(std::ceil(8.0 * d / lambda)));
   std::vector<double> y;
   for (int j = 0; j <= ny_gap; j++)
   {
@@ -551,9 +598,20 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
   const double kn_target = omega * n_target;
   auto result = mode_solver.Solve(omega, -kn_target * kn_target);
   REQUIRE(result.num_converged >= 1);
-  const auto kn = mode_solver.GetPropagationConstant(0);
-  CHECK(std::abs(kn.imag()) < 1.0e-6 * std::abs(kn.real()));
-  return kn.real() / omega;
+  return mode_solver.GetPropagationConstant(0) / omega;
+}
+
+// SolveSlabMode for a London slab of penetration depth lambda (lossless).
+double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec_back,
+                           bool pec_sides, double freq_ghz, double n_target, int order,
+                           int ny_gap = 8)
+{
+  config::MaterialData london;
+  london.lambda_L = lambda;
+  const auto n_eff = SolveSlabMode(w, h, d, lambda, london, pec_back, pec_sides, freq_ghz,
+                                   n_target, order, ny_gap);
+  CHECK(std::abs(n_eff.imag()) < 1.0e-6 * std::abs(n_eff.real()));
+  return n_eff.real();
 }
 
 // Effective index n_eff = kn / k0 (Im{n_eff} < 0) of the TM0 mode of a parallel plate line
@@ -1500,6 +1558,59 @@ TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Paralle
         SolveLondonSlabMode(50.0, h, d, lambda, false, true, freq_ghz, n_exact, 3, 32);
     CAPTURE(n_exact, n_pec, n_eff);
     CHECK_THAT(n_eff - n_pec, WithinRel(n_exact - n_pec, 1.0e-5));
+  }
+}
+
+TEST_CASE("ModeEigenSolver Mattis-Bardeen slab and film",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // TM0 mode of the London slab guide with a Mattis-Bardeen Nb slab at 4.2 K, below and
+  // above its gap frequency (650 GHz), against the exact dispersion relation, and of the
+  // slab as a one-sided film ("External") of thickness d at y = h, with the surface
+  // impedance Z_s = (i k0/k) coth(k d), k^2 = i k0 sigma - k0^2: the exact index solves
+  // p tanh(p h) = -i k0 Z_s. The film differs from the slab by the tangential wave number,
+  // which the surface impedance neglects.
+  constexpr double h = 0.5, d = 0.2;
+  constexpr double ev_to_angular = electromagnetics::e_ / electromagnetics::hbar_;
+  constexpr double kelvin_to_angular = electromagnetics::kB_ / electromagnetics::hbar_;
+  const config::MattisBardeenData mb{1.605e7 / electromagnetics::epsilon0_,
+                                     ev_to_angular * 1.343e-3, kelvin_to_angular * 4.2};
+  config::MaterialData slab;
+  slab.permittivity_terms = {mb};
+  config::ConductivityData film;
+  film.epsilon_r = 1.0;
+  film.permittivity_terms = {mb};
+  film.h = d;
+  film.external = true;
+  for (double freq_ghz : {100.0, 600.0, 1000.0})
+  {
+    // Nondimensional σ for lengths in um, with c = 1.
+    const double omega = 2.0 * std::numbers::pi * freq_ghz * 1.0e9;
+    const double k0 = omega / electromagnetics::c0_ * 1.0e-6;
+    const auto sigma =
+        conductivity::Conductivity(mb, omega) / electromagnetics::c0_ * 1.0e-6;
+    const double lambda = 1.0 / std::sqrt(-k0 * sigma.imag());
+    const auto n_slab = ExactConductingSlabIndex(
+        h, d, sigma, k0, false, ExactLondonSlabIndex(h, d, lambda, k0, false));
+    const auto k = std::sqrt(1i * k0 * sigma - k0 * k0);
+    const auto Zs = 1i * k0 / (k * std::tanh(k * d));
+    const auto n_film = SecantRoot(
+        [&](std::complex<double> n)
+        {
+          const auto p = k0 * std::sqrt(n * n - 1.0);
+          return p * std::tanh(p * h) + 1i * k0 * Zs;
+        },
+        n_slab);
+    const auto n_eff_slab =
+        SolveSlabMode(1.0, h, d, lambda, slab, false, false, freq_ghz, n_slab.real(), 3);
+    const auto n_eff_film = SolveSlabMode(1.0, h, d, lambda, {}, false, false, freq_ghz,
+                                          n_film.real(), 3, 8, &film);
+    CAPTURE(freq_ghz, n_slab, n_eff_slab, n_film, n_eff_film);
+    CHECK_THAT(n_eff_slab.real(), WithinRel(n_slab.real(), 1.0e-8));
+    CHECK_THAT(n_eff_slab.imag(), WithinRel(n_slab.imag(), 1.0e-6));
+    CHECK_THAT(n_eff_film.real(), WithinRel(n_film.real(), 1.0e-8));
+    CHECK_THAT(n_eff_film.imag(), WithinRel(n_film.imag(), 1.0e-6));
+    CHECK_THAT(n_eff_film.real(), WithinRel(n_slab.real(), 1.0e-4));
   }
 }
 

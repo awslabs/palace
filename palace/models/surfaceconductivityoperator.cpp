@@ -10,6 +10,7 @@
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/prettyprint.hpp"
 
 namespace palace
@@ -65,8 +66,8 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
   boundaries.reserve(conductivity.size());
   for (const auto &data : conductivity)
   {
-    MFEM_VERIFY(data.sigma > 0.0 && data.mu_r > 0.0,
-                "Conductivity boundary has no conductivity or no "
+    MFEM_VERIFY((data.sigma > 0.0 || data.epsilon_r > 0.0) && data.mu_r > 0.0,
+                "Conductivity boundary has no conductivity or permittivity, or no "
                 "permeability defined!");
     MFEM_VERIFY(data.h >= 0.0, "Conductivity boundary should have non-negative thickness!");
     mfem::Array<int> attr_list, ext_attr_list, int_attr_list;
@@ -104,6 +105,8 @@ void SurfaceConductivityOperator::SetUpBoundaryProperties(
     {
       auto &bdr = boundaries.emplace_back();
       bdr.sigma = data.sigma;
+      bdr.eps = data.epsilon_r;
+      bdr.terms = data.permittivity_terms;
       bdr.mu = data.mu_r;
       bdr.h = h;
       bdr.attr_list = attrs;
@@ -163,6 +166,11 @@ void SurfaceConductivityOperator::PrintBoundaryInfo(const Units &units,
     {
       Mpi::Print(" {:d}: σ = {:.3e} S/m", attr,
                  units.Dimensionalize<Units::ValueType::CONDUCTIVITY>(bdr.sigma));
+      if (bdr.eps > 0.0)
+      {
+        Mpi::Print(", ε = {:.3e}{}", bdr.eps,
+                   bdr.terms.empty() ? "" : " (frequency-dependent)");
+      }
       if (bdr.h > 0.0)
       {
         Mpi::Print(", h = {:.3e} m", units.Dimensionalize<Units::ValueType::LENGTH>(bdr.h));
@@ -185,41 +193,34 @@ mfem::Array<int> SurfaceConductivityOperator::GetAttrList() const
   return attr_list;
 }
 
+bool SurfaceConductivityOperator::HasRealFrequencyTerms() const
+{
+  return std::ranges::any_of(
+      boundaries, [](const auto &bdr)
+      { return std::ranges::any_of(bdr.terms, permittivity::IsRealFrequencyTerm); });
+}
+
 std::complex<double>
 SurfaceConductivityOperator::EvaluateScalar(std::size_t group_idx,
                                             std::complex<double> omega) const
 {
-  // If the provided conductor thickness is empty (zero), prescribe a surface impedance
-  // (1+i)/σδ, where δ is the skin depth. If it is nonzero, use a finite thickness
-  // modification which correctly produces the DC limit when h << δ. See the Ansys HFSS
-  // user manual section titled "Surface Impedance Boundary Condition for Metal Traces of
-  // Finite Thickness." The skin depth δ = √(2/(μσω)) and the cosh/cos/sinh/sin thickness
-  // terms are evaluated with std::complex, so this is the analytic continuation of the
-  // real-ω formula: for upper-half-plane λ → ω = -i·λ in the right half-plane, the
-  // principal branch of std::sqrt keeps Re(δ) > 0 (physical decaying sheet). For real ω
-  // (imag = 0) it reduces bit-for-bit to the original real-ω expression.
+  // Surface impedance Z = iωμ/k of the conductor, k² = iωμσ(ω) with Re k > 0: (1 + i)/(σδ)
+  // for a constant conductivity with skin depth δ, and Z coth(kh/2) for a thickness h
+  // (Ansys HFSS user manual, "Surface Impedance Boundary Condition for Metal Traces of
+  // Finite Thickness"). σ(ω) includes the displacement and polarization currents
+  // iω(ε∞ + χ(iω)) of a given permittivity. The BC coefficient iω/Z = (k/μ) tanh(kh/2) is
+  // analytic in ω, so a complex ω continues its real-ω value.
   MFEM_ASSERT(group_idx < boundaries.size(),
               "SurfaceConductivityOperator::EvaluateScalar: group_idx out of range!");
   const auto &bdr = boundaries[group_idx];
-  const std::complex<double> delta = std::sqrt(2.0 / (bdr.mu * bdr.sigma * omega));
-  const std::complex<double> base = 1.0 / (bdr.sigma * delta);
-  // Half-space limit: Z = (1 + i)·base.
-  std::complex<double> Z = std::complex<double>(1.0, 1.0) * base;
-  if (bdr.h > 0.0)
+  const std::complex<double> s = 1i * omega;
+  std::complex<double> sigma = bdr.sigma;
+  if (bdr.eps > 0.0)
   {
-    // Finite-thickness HFSS correction. The real-ω implementation scales Re(Z) and Im(Z)
-    // by (sinh ν ± sin ν)/(cosh ν − cos ν) separately; the equivalent complex form is
-    //   Z = base·[(sinh ν + sin ν) + i·(sinh ν − sin ν)] / (cosh ν − cos ν),
-    // with ν = h/δ. cosh, cos, sinh, sin of complex ν are entire functions (no new branch
-    // points), and at real ω this matches the original two-ratio expression exactly.
-    const std::complex<double> nu = bdr.h / delta;
-    const std::complex<double> den = std::cosh(nu) - std::cos(nu);
-    const std::complex<double> shp = std::sinh(nu) + std::sin(nu);
-    const std::complex<double> shm = std::sinh(nu) - std::sin(nu);
-    Z = base * (shp + std::complex<double>(0.0, 1.0) * shm) / den;
+    sigma += s * (bdr.eps + permittivity::Susceptibility(bdr.terms, s));
   }
-  // The BC term has coefficient iω/Z (like for standard lumped surface impedance).
-  return 1i * omega / Z;
+  const std::complex<double> k = std::sqrt(s * bdr.mu * sigma);
+  return (bdr.h > 0.0) ? k / bdr.mu * std::tanh(0.5 * k * bdr.h) : k / bdr.mu;
 }
 
 void SurfaceConductivityOperator::AddBoundaryMassBdrCoefficients(

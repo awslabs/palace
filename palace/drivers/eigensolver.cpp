@@ -229,7 +229,7 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     for (std::size_t m = 0; m < mat_op.NumFrequencyDependentPermittivityMaterials(); m++)
     {
       if (mat_op.HasFrequencyDependentPermittivitySupport(m) &&
-          mat_op.HasDjordjevicSarkarPermittivity(m))
+          mat_op.HasNonRationalPermittivity(m))
       {
         poles_only = false;
       }
