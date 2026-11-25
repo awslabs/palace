@@ -78,6 +78,14 @@ internal::DrivenSystemOperator internal::BuildDrivenSystemOperator(
   return system_op;
 }
 
+PreflightCensusOutcome DrivenSolver::PreflightResolutionCensus(
+    std::vector<std::unique_ptr<Mesh>> &mesh, bool fail_closed,
+    const std::shared_ptr<const SurfaceResponseGeometry> &identified) const
+{
+  PrepareCensusFirstLevelMesh(mesh, identified, response_geometry);
+  return PreflightMaxwellResolutionCensus(mesh, &response_geometry, fail_closed);
+}
+
 std::pair<ErrorIndicator, long long int>
 DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {

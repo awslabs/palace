@@ -1070,6 +1070,25 @@ ElectrostaticSolver::EstimateArchivedFields(LaplaceOperator &laplace_op, const O
   return aggregate;
 }
 
+PreflightCensusOutcome ElectrostaticSolver::PreflightResolutionCensus(
+    std::vector<std::unique_ptr<Mesh>> &mesh, bool fail_closed,
+    const std::shared_ptr<const SurfaceResponseGeometry> &identified) const
+{
+  PrepareCensusFirstLevelMesh(mesh, identified, response_geometry);
+  BlockTimer bt0(Timer::CONSTRUCT);
+  LaplaceOperator laplace_op(iodata, mesh);
+  auto response = SurfaceResponseOperator::ConstructElectrostatic(iodata, laplace_op,
+                                                                  &response_geometry);
+  response->SetPatchRecordResidency(
+      SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+  if (PreflightCensusStopsFailClosed(*response, fail_closed, laplace_op.GetComm()))
+  {
+    return {};
+  }
+  return WritePreflightResolutionCensus(*response, laplace_op.GlobalTrueVSize(),
+                                        laplace_op.GetComm());
+}
+
 std::pair<ErrorIndicator, long long int>
 ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {

@@ -112,6 +112,11 @@ public:
   EigenSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
               const char *git_tag = nullptr);
   ~EigenSolver() override;
+
+  // CUT-PLAN step 4b (lane v1step4b): PreflightMaxwellResolutionCensus on the first mesh.
+  PreflightCensusOutcome PreflightResolutionCensus(
+      std::vector<std::unique_ptr<Mesh>> &mesh, bool fail_closed,
+      const std::shared_ptr<const SurfaceResponseGeometry> &identified) const override;
 };
 
 }  // namespace palace

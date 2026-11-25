@@ -31,6 +31,7 @@ class Mesh;
 class Timer;
 class PortExcitations;
 class SurfacePostOperator;
+class SurfaceResponseGeometry;
 class SurfaceResponseOperator;
 
 namespace config
@@ -41,6 +42,16 @@ struct RefinementData;
 //
 // Base driver class for all simulation types.
 //
+// CUT-PLAN step 4b (lane v1step4b): what PreflightResolutionCensus did: whether it
+// evaluated the census (false: the problem type has none, or the correction falls back to
+// the raw run) and the features of its operator's recorded geometry fallbacks (raw recorded
+// for them).
+struct PreflightCensusOutcome
+{
+  bool evaluated = false;
+  std::size_t fallback_features = 0;
+};
+
 class BaseSolver
 {
 protected:
@@ -80,6 +91,45 @@ protected:
   mutable std::unique_ptr<SurfaceParticipationTable> surface_participation;
   void FinishSurfaceParticipationLevel(long long int ntdof, MPI_Comm comm) const;
 
+  // The first-level mesh of SolveEstimateMarkRefine (the a priori sequence flattened under
+  // AMR or edge-tube refinement, then the configured correction tubes refined); returns
+  // whether the run is adaptive. CUT-PLAN step 4b (lane v1step4b): PreflightOnly's census
+  // reads the same mesh.
+  bool PrepareFirstLevelMesh(std::vector<std::unique_ptr<Mesh>> &mesh) const;
+
+  // CUT-PLAN step 4b (ruling R4): PrepareFirstLevelMesh for PreflightOnly's census, then
+  // `response_geometry` = `identified` (the preflight manifest's identification of
+  // mesh.back()) when the first-level mesh is that mesh unchanged (no edge-tube or AMR
+  // step refined it); else the census operator identifies the first-level mesh itself.
+  void PrepareCensusFirstLevelMesh(
+      std::vector<std::unique_ptr<Mesh>> &mesh,
+      const std::shared_ptr<const SurfaceResponseGeometry> &identified,
+      std::shared_ptr<const SurfaceResponseGeometry> &response_geometry) const;
+
+  // CUT-PLAN step 4b (lane v1step4b): the tail of PreflightResolutionCensus after the
+  // response operator's construction on the first mesh (`unknowns` the first solve's true
+  // dofs): the census Types and the PREFLIGHT line, surface-response-resolution-patches.csv
+  // (PatchEnergy), the Resolution block of palace.json and the level-1 PREFLIGHT rows of
+  // surface-participation.csv. Collective.
+  PreflightCensusOutcome WritePreflightResolutionCensus(SurfaceResponseOperator &response,
+                                                        long long int unknowns,
+                                                        MPI_Comm comm) const;
+
+  // CUT-PLAN step 4b (ruling R1, G3): `fail_closed` = the configuration sets
+  // GeometryFailurePolicy FailClosed and the caller built the census operator under
+  // RecordRaw (the same branches; only the deferred abort differs). True, with one line,
+  // when that operator recorded a geometry fallback: a solve-form run stops at its deferred
+  // FailClosed abort there, so no census is written. Collective.
+  bool PreflightCensusStopsFailClosed(const SurfaceResponseOperator &response,
+                                      bool fail_closed, MPI_Comm comm) const;
+
+  // PreflightResolutionCensus of the eigenmode and driven solvers: the space operator (no
+  // system matrix) and the Maxwell response operator as their PostOperator builds it.
+  PreflightCensusOutcome PreflightMaxwellResolutionCensus(
+      const std::vector<std::unique_ptr<Mesh>> &mesh,
+      std::shared_ptr<const SurfaceResponseGeometry> *response_geometry,
+      bool fail_closed) const;
+
   // Previous adaptation iteration's total London kinetic energy S(A_t − a_h), for detecting
   // an anomalous spike; negative until the first London solve sets it.
   mutable double prev_london_kinetic_ = -1.0;
@@ -101,6 +151,24 @@ public:
   // nondimensionalization.
   virtual void Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
                           MPI_Comm comm) const;
+
+  // CUT-PLAN step 4b (lane v1step4b): PreflightOnly's resolution census. On the mesh the
+  // first solve would read, builds the FE space and the response operator as the solve form
+  // does before its first solve (no system matrix is assembled and nothing is solved; a
+  // wave port's boundary-mode matrices are built with the space operator) and writes what
+  // that solve form computes there (WritePreflightResolutionCensus; `fail_closed` as in
+  // PreflightCensusStopsFailClosed; `identified` as in PrepareCensusFirstLevelMesh).
+  // Electrostatic, eigenmode and driven; any other problem type prints one line.
+  // Collective.
+  virtual PreflightCensusOutcome PreflightResolutionCensus(
+      std::vector<std::unique_ptr<Mesh>> &mesh, bool fail_closed,
+      const std::shared_ptr<const SurfaceResponseGeometry> &identified) const;
+
+  // CUT-PLAN step 4b (the supervisor's ruling (B)): a PreflightOnly census not evaluated,
+  // whatever the reason: `line` printed after an empty line and kept in palace.json as
+  // SurfaceResponse.ResolutionCensusNotEvaluated (the one field of every such census).
+  // Every rank calls it (the root prints and writes).
+  void ReportResolutionCensusNotEvaluated(MPI_Comm comm, const std::string &line) const;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.

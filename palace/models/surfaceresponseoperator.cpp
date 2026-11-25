@@ -2018,6 +2018,9 @@ struct ProcessLibrary
   int version = 0;
   int trace_lift_version = 0;
   bool exhaustive_spatial_closure = false;
+  // CUT-PLAN step 4b (lane v1step4b; ruling R1): the checks a solve-form read refuses and
+  // this read (allow_empty_models / geometry_only: the preflight's) let pass.
+  std::vector<std::string> solve_form_refusals;
   std::string name;
   double matching_radius = 0.0;
   // The matching radius in metres (the "R (m)" of a spatial coupon's surface response
@@ -3237,6 +3240,10 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
               "Fabrication-process response-library Models must be an array!");
   MFEM_VERIFY(allow_empty_models || !models.empty(),
               "Fabrication-process response library must contain at least one model!");
+  if (models.empty())
+  {
+    library.solve_form_refusals.push_back("the process library has no model");
+  }
   // R-5 (fix round P2; OI-LIBRARY-INHERITED-PENDING-MODEL; USER 1230 Q8 REJECT, supervisor
   // 1260): a model whose explicit "QualificationStatus" is not "Qualified" is REFUSED at
   // load unless the library's top-level "AllowPendingModels" lists it by Name with the
@@ -3568,6 +3575,12 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                         !model.support_points.empty(),
                     "New SpatialEdgeCluster models require explicit SupportPoints "
                     "matching-volume metadata!");
+        if (library.trace_lift_version >= 2 && model.support_points.empty())
+        {
+          library.solve_form_refusals.push_back(
+              "SpatialEdgeCluster model \"" + model.name +
+              "\" has no SupportPoints (TraceLiftVersion 2 or newer)");
+        }
       }
     }
     const bool corner = model.topology == LibraryTopology::CONVEX_CORNER ||
@@ -4067,6 +4080,11 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
                       << "\" was generated without the corrected trace/conductor "
                          "boundary lift. Regenerate the library with TraceLiftVersion "
                          "equal to 2 or newer!");
+      if (library.trace_lift_version < 2)
+      {
+        library.solve_form_refusals.push_back("multiconductor model \"" + model.name +
+                                              "\" below TraceLiftVersion 2");
+      }
     }
     else
     {
@@ -7433,6 +7451,10 @@ private:
   nlohmann::json mean_keyed_not_eligible = nlohmann::json::array();
   nlohmann::json geometric_near_pairs = nlohmann::json::array();
   bool identification_active = false;
+  // CUT-PLAN step 4b (lane v1step4b; ruling R1): the solve-form refusals this preflight
+  // passed (never written to the manifest; SurfaceResponsePreflightOutcome carries them).
+  std::vector<std::string> census_refusals;
+  bool unmatched_policy_refusal = false;
   std::string library_path;
   std::string library_name;
   // R-5: the library's AllowPendingModels leaf (empty when none) and, per admitted model,
@@ -7584,6 +7606,21 @@ public:
   }
 
   void SetStatistics(nlohmann::json value) { statistics = std::move(value); }
+
+  // CUT-PLAN step 4b (lane v1step4b; ruling R1): a site where a solve-form run (no
+  // requirements) aborts and this preflight goes on: whatever its UnmatchedPolicy (the
+  // reason, once per distinct reason), or under "UnmatchedPolicy": "Error" only.
+  void NoteCensusRefusal(const std::string &reason)
+  {
+    if (std::find(census_refusals.begin(), census_refusals.end(), reason) ==
+        census_refusals.end())
+    {
+      census_refusals.push_back(reason);
+    }
+  }
+  void NoteUnmatchedPolicyRefusal() { unmatched_policy_refusal = true; }
+  const std::vector<std::string> &CensusRefusals() const { return census_refusals; }
+  bool UnmatchedPolicyRefusal() const { return unmatched_policy_refusal; }
 
   // Switch the legacy Add() calls to the comparison table; the Requirements array is then
   // derived from the identification features through AddFeatureRecord().
@@ -8055,6 +8092,18 @@ public:
   }
 };
 
+// CUT-PLAN step 4b (lane v1step4b; ruling R1): a site where a solve-form run (no
+// requirements) aborts under "UnmatchedPolicy": "Error" while the preflight goes on.
+void NoteUnmatchedPolicyRefusal(AutomaticResponseRequirements *requirements,
+                                const ResponseCorrectionData &request)
+{
+  if (requirements &&
+      request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR)
+  {
+    requirements->NoteUnmatchedPolicyRefusal();
+  }
+}
+
 ResponseCorrectionData BuildAutomaticResponseData2D(
     const IoData &iodata, const mfem::ParMesh &mesh, const MaterialOperator &mat_op,
     const ResponseCorrectionData &request, bool pec_attribute_conductors = false,
@@ -8078,6 +8127,10 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
+    for (const auto &reason : library.solve_form_refusals)
+    {
+      requirements->NoteCensusRefusal(reason);
+    }
   }
   if (diagnostics)
   {
@@ -8195,6 +8248,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       {
         MFEM_ABORT(reason);
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       Mpi::Warning("{}; correction is disabled for this interface group!\n", reason);
       unmatched_clusters++;
       continue;
@@ -8631,6 +8685,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
       {
         MFEM_ABORT("Automatic fabrication-process response matching failed!");
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       continue;
     }
 
@@ -8704,6 +8759,10 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
   MFEM_VERIFY(requirements || (!result.models.empty() && !result.patches.empty()),
               "Fabrication-process response matching produced no usable correction "
               "patches!");
+  if (requirements && (result.models.empty() || result.patches.empty()))
+  {
+    requirements->NoteCensusRefusal("matching produced no usable correction patch");
+  }
   Mpi::Print("\nAutomatic fabrication-process response matching:\n"
              " Library: {}\n"
              " Matched edge sites: {:d}\n"
@@ -16151,6 +16210,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   if (requirements)
   {
     requirements->SetLibrary(request.library, library, coordinate_scale);
+    for (const auto &reason : library.solve_form_refusals)
+    {
+      requirements->NoteCensusRefusal(reason);
+    }
   }
   const bool exhaustive_spatial_closure =
       library.exhaustive_spatial_closure ||
@@ -17620,6 +17683,12 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                  "without probe snaps - the trace data of model(s) {} is not readable "
                  "(a discovery placeholder); a solve refuses them\n",
                  static_cast<int>(summary.probe_snaps_not_computed), names);
+      if (requirements)
+      {
+        requirements->NoteCensusRefusal(
+            "placed patches of model(s) " + names +
+            " whose trace data is not readable (a discovery placeholder)");
+      }
     }
     if (summary.first_order_missing_features > 0)
     {
@@ -17672,6 +17741,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                    << summary.inconsistent_features.size()
                    << " pair feature(s) are inconsistent (UnmatchedPolicy = Error)!");
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
     }
     if (!requirements)
     {
@@ -18313,6 +18383,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         MFEM_ABORT("A three-dimensional target edge is within 2R of a physical metal "
                    "edge with a different interface mapping!");
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       Mpi::Warning(
           "Omitting {} of {} three-dimensional target edge segments which are within 2R "
           "of a physical metal edge with a different interface mapping.\n",
@@ -18599,6 +18670,8 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                             "and interface mapping. Generate one unified spatial "
                             "cluster!");
             }
+            requirements->NoteCensusRefusal(
+                "overlapping spatial matching volumes without one support owner");
             overlapping_models.push_back(claimed.model);
             auto MergeSites = [&](const std::vector<SpatialEdgeSite3D> &additional)
             {
@@ -18842,6 +18915,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         MFEM_ABORT(message);
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       unsupported_segments.insert(first);
       unsupported_segments.insert(second);
     };
@@ -20255,6 +20329,10 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
     {
       group_matched = false;
     }
+    if (group_has_unmatched_rounded_corner)
+    {
+      NoteUnmatchedPolicyRefusal(requirements, request);
+    }
 
     std::vector<EdgePair3D> pairs;
     std::vector<std::vector<std::pair<double, double>>> paired_intervals(segments.size());
@@ -20951,6 +21029,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
       {
         MFEM_ABORT("Automatic fabrication-process response matching failed!");
       }
+      NoteUnmatchedPolicyRefusal(requirements, request);
       continue;
     }
     if (!requirements &&
@@ -20967,6 +21046,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                  << nonparallel_omitted_segments.size()
                  << " non-parallel segment(s) have no library model (UnmatchedPolicy = "
                     "Error)!");
+    }
+    if (omitted_parallel_cluster_spans + omitted_pair_intervals +
+            omitted_isolated_intervals +
+            static_cast<int>(nonparallel_omitted_segments.size()) >
+        0)
+    {
+      NoteUnmatchedPolicyRefusal(requirements, request);
     }
 
     if (diagnostics)
@@ -21438,11 +21524,17 @@ TraceMeshData ModelTraceMesh(
   return ReadTraceMesh(model_config.trace_vertices, model_config.trace_triangles);
 }
 
+// The message of a response matrix file ReadTable cannot read (shared with PreflightOnly's
+// prediction, DomainResponseMatrixRefusal).
+std::string UnreadableResponseMatrixMessage(const std::string &path)
+{
+  return "Unable to read response matrix file \"" + path + "\"!";
+}
+
 Table ReadTable(const std::string &path)
 {
   TableWithCSVFile input(path, true);
-  MFEM_VERIFY(!input.table.empty(),
-              "Unable to read response matrix file \"" << path << "\"!");
+  MFEM_VERIFY(!input.table.empty(), UnreadableResponseMatrixMessage(path));
   return std::move(input.table);
 }
 
@@ -21518,34 +21610,59 @@ mfem::DenseMatrix BuildDenseMatrix(const std::vector<MatrixEntry> &entries, int 
   return matrix;
 }
 
-mfem::DenseMatrix PositiveSemidefiniteInverseProduct(const mfem::DenseMatrix &matrix,
-                                                     const mfem::DenseMatrix &rhs)
+// The test of PositiveSemidefiniteInverseProduct on the fabricated domain matrix it
+// inverts, shared with PreflightOnly's prediction (DomainResponseMatrixRefusal; CUT-PLAN
+// step 4b, the supervisor's ruling (B)): one criterion, one tolerance, one message.
+constexpr const char *kNegativeEnergyModeRefusal =
+    "Fabricated response matrix has a negative-energy mode beyond roundoff!";
+
+bool NegativeEnergyModeBeyondRoundoff(const Eigen::VectorXd &eigenvalues)
 {
-  MFEM_VERIFY(matrix.Height() == matrix.Width() && rhs.Height() == matrix.Height(),
-              "Incompatible response matrices for quotient-space inverse!");
+  const double scale = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
+  const double negative_tolerance =
+      kResponseMatrixNegativeEigenvalueToleranceRelative * scale;
+  return !(eigenvalues.minCoeff() >= -negative_tolerance);
+}
+
+// The eigensystem of a symmetric response matrix (PositiveSemidefiniteInverseProduct's, and
+// so the prediction's eigenvalues are the operator's bit for bit).
+Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd>
+ResponseMatrixEigensystem(const mfem::DenseMatrix &matrix)
+{
   const int size = matrix.Height();
-  Eigen::MatrixXd A(size, size), B(size, rhs.Width());
+  Eigen::MatrixXd A(size, size);
   for (int i = 0; i < size; i++)
   {
     for (int j = 0; j < size; j++)
     {
       A(i, j) = matrix(i, j);
     }
+  }
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(A);
+  MFEM_VERIFY(eigensystem.info() == Eigen::Success,
+              "Failed to diagonalize a response matrix on its active quotient space!");
+  return eigensystem;
+}
+
+mfem::DenseMatrix PositiveSemidefiniteInverseProduct(const mfem::DenseMatrix &matrix,
+                                                     const mfem::DenseMatrix &rhs)
+{
+  MFEM_VERIFY(matrix.Height() == matrix.Width() && rhs.Height() == matrix.Height(),
+              "Incompatible response matrices for quotient-space inverse!");
+  const int size = matrix.Height();
+  Eigen::MatrixXd B(size, rhs.Width());
+  for (int i = 0; i < size; i++)
+  {
     for (int j = 0; j < rhs.Width(); j++)
     {
       B(i, j) = rhs(i, j);
     }
   }
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eigensystem(A);
-  MFEM_VERIFY(eigensystem.info() == Eigen::Success,
-              "Failed to diagonalize a response matrix on its active quotient space!");
+  const auto eigensystem = ResponseMatrixEigensystem(matrix);
   const auto eigenvalues = eigensystem.eigenvalues();
   const double scale = std::max(eigenvalues.cwiseAbs().maxCoeff(), 1.0e-300);
-  const double negative_tolerance =
-      kResponseMatrixNegativeEigenvalueToleranceRelative * scale;
   const double active_tolerance = 1.0e-12 * scale;
-  MFEM_VERIFY(eigenvalues.minCoeff() >= -negative_tolerance,
-              "Fabricated response matrix has a negative-energy mode beyond roundoff!");
+  MFEM_VERIFY(!NegativeEnergyModeBeyondRoundoff(eigenvalues), kNegativeEnergyModeRefusal);
   Eigen::VectorXd inverse = Eigen::VectorXd::Zero(size);
   int numerical_rank = 0;
   for (int i = 0; i < size; i++)
@@ -21668,19 +21785,64 @@ mfem::DenseMatrix BlendedDomainResponseMatrix(
   return result;
 }
 
+// The scale of a model's domain matrices in solver units. The CSV stores coupon energy Q in
+// joules for basis traces measured in volts. Internally, 1/2 xᵀ C x must equal the
+// nondimensional energy defect, so C = 2 V_scale² / E_scale Q.
+double DomainResponseMatrixScale(const Units &units)
+{
+  const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
+  const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
+  return 2.0 * voltage_scale * voltage_scale / energy_scale;
+}
+
+// The knots of a basis of `expected_size` that are not zero-trace, in order.
+std::vector<int> FreeTraceIndices(int expected_size,
+                                  const std::vector<int> &zero_trace_indices)
+{
+  std::vector<bool> constrained(expected_size, false);
+  for (const int index : zero_trace_indices)
+  {
+    MFEM_VERIFY(index >= 0 && index < expected_size && !constrained[index],
+                "Invalid or duplicate zero-trace response basis index!");
+    constrained[index] = true;
+  }
+  std::vector<int> free_indices;
+  free_indices.reserve(expected_size - zero_trace_indices.size());
+  for (int i = 0; i < expected_size; i++)
+  {
+    if (!constrained[i])
+    {
+      free_indices.push_back(i);
+    }
+  }
+  MFEM_VERIFY(!free_indices.empty(),
+              "Fixed-flux response requires at least one free trace basis function!");
+  return free_indices;
+}
+
+// The block of `matrix` on the knots `indices`.
+mfem::DenseMatrix ResponseMatrixBlock(const mfem::DenseMatrix &matrix,
+                                      const std::vector<int> &indices)
+{
+  const int size = static_cast<int>(indices.size());
+  mfem::DenseMatrix block(size);
+  for (int i = 0; i < size; i++)
+  {
+    for (int j = 0; j < size; j++)
+    {
+      block(i, j) = matrix(indices[i], indices[j]);
+    }
+  }
+  return block;
+}
+
 DomainResponseMatrices ComputeDomainResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const std::vector<int> &zero_trace_indices, const Units &units)
 {
   auto fabricated = BlendedDomainResponseMatrix(config, true, expected_size);
   auto thin = BlendedDomainResponseMatrix(config, false, expected_size);
-
-  // The CSV stores coupon energy Q in joules for basis traces measured in volts.
-  // Internally, 1/2 xᵀ C x must equal the nondimensional energy defect, so
-  // C = 2 V_scale² / E_scale Q.
-  const double voltage_scale = units.GetScaleFactor<Units::ValueType::VOLTAGE>();
-  const double energy_scale = units.GetScaleFactor<Units::ValueType::ENERGY>();
-  const double scale = 2.0 * voltage_scale * voltage_scale / energy_scale;
+  const double scale = DomainResponseMatrixScale(units);
   fabricated *= scale;
   thin *= scale;
 
@@ -21694,37 +21856,12 @@ DomainResponseMatrices ComputeDomainResponseMatrices(
   }
   else
   {
-    std::vector<bool> constrained(expected_size, false);
-    for (const int index : zero_trace_indices)
-    {
-      MFEM_VERIFY(index >= 0 && index < expected_size && !constrained[index],
-                  "Invalid or duplicate zero-trace response basis index!");
-      constrained[index] = true;
-    }
-    std::vector<int> free_indices;
-    free_indices.reserve(expected_size - zero_trace_indices.size());
-    for (int i = 0; i < expected_size; i++)
-    {
-      if (!constrained[i])
-      {
-        free_indices.push_back(i);
-      }
-    }
-    MFEM_VERIFY(!free_indices.empty(),
-                "Fixed-flux response requires at least one free trace basis function!");
-
+    const std::vector<int> free_indices =
+        FreeTraceIndices(expected_size, zero_trace_indices);
     const int free_size = static_cast<int>(free_indices.size());
-    mfem::DenseMatrix fabricated_free(free_size), thin_free(free_size);
-    for (int i = 0; i < free_size; i++)
-    {
-      for (int j = 0; j < free_size; j++)
-      {
-        fabricated_free(i, j) = fabricated(free_indices[i], free_indices[j]);
-        thin_free(i, j) = thin(free_indices[i], free_indices[j]);
-      }
-    }
     mfem::DenseMatrix fixed_flux_free =
-        PositiveSemidefiniteInverseProduct(fabricated_free, thin_free);
+        PositiveSemidefiniteInverseProduct(ResponseMatrixBlock(fabricated, free_indices),
+                                           ResponseMatrixBlock(thin, free_indices));
     for (int i = 0; i < free_size; i++)
     {
       for (int j = 0; j < free_size; j++)
@@ -21743,6 +21880,49 @@ DomainResponseMatrices ComputeDomainResponseMatrices(
   // space pseudoinverses are required.
   return {std::move(fabricated), std::move(thin), std::move(defect),
           std::move(fixed_flux_transform), std::move(fixed_flux_defect)};
+}
+
+// CUT-PLAN step 4b (the supervisor's ruling (B), lane v1step4b): PreflightOnly's prediction
+// of the operator's matrix step on one model (ComputeDomainResponseMatrices, which the root
+// runs for every model of its model loop): the refusal, empty when the step accepts the
+// model. A domain matrix file that does not open (the step reads the fabricated and thin
+// ones first) is named before any read, with ReadTable's message; then the step's own
+// fabricated matrix on the free knots, its eigensystem and its test.
+std::string DomainResponseMatrixRefusal(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
+    const Units &units)
+{
+  std::vector<std::string> files;
+  if (config.blend.empty())
+  {
+    files = {config.fabricated_matrix, config.thin_matrix};
+  }
+  for (const auto &source : config.blend)
+  {
+    files.push_back(source.fabricated_matrix);
+    files.push_back(source.thin_matrix);
+  }
+  for (const auto &file : files)
+  {
+    if (!std::ifstream(file))
+    {
+      return UnreadableResponseMatrixMessage(file);
+    }
+  }
+  const int expected_size =
+      static_cast<int>(ModelBasisPoints(config).size()) + config.conductor_state_count;
+  auto fabricated = BlendedDomainResponseMatrix(config, true, expected_size);
+  fabricated *= DomainResponseMatrixScale(units);
+  const auto tested =
+      config.zero_trace_indices.empty()
+          ? fabricated
+          : ResponseMatrixBlock(fabricated,
+                                FreeTraceIndices(expected_size, config.zero_trace_indices));
+  if (NegativeEnergyModeBeyondRoundoff(ResponseMatrixEigensystem(tested).eigenvalues()))
+  {
+    return kNegativeEnergyModeRefusal;
+  }
+  return {};
 }
 
 // The derived-matrix cache (decision 734 F1; GetDerivedResponseMatrixCacheCounters in the
@@ -24274,6 +24454,19 @@ static std::optional<std::string> WriteImpedanceRuleCandidateRequirements(
   return candidate_path;
 }
 
+// CUT-PLAN step 4b (lane v1step4b; ruling R4): the preflight's identification as the
+// SurfaceResponseGeometry a census operator reads (defined after its Impl).
+struct SurfaceResponsePreflightGeometry
+{
+  // A copy of `result` (an automatic three-dimensional identification) with this rank's
+  // local patches (round robin, the C6 residence); `diagnostics` the Maxwell ones (else
+  // null). `result` is unchanged on return (its patch list is moved out while the rest is
+  // copied, then back).
+  static std::shared_ptr<const SurfaceResponseGeometry>
+  Make(ResponseCorrectionData &result, const AutomaticResponseDiagnostics *diagnostics,
+       const nlohmann::json &statistics, bool impedance_rule_apply, MPI_Comm comm);
+};
+
 SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &iodata,
                                                                  const Mesh &mesh,
                                                                  const std::string &path)
@@ -24294,10 +24487,27 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   const bool maxwell = iodata.problem.type != ProblemType::ELECTROSTATIC;
   ResponseCorrectionData patches;
   std::optional<FilmRuleResolution> apply_film;
+  // CUT-PLAN step 4b (lane v1step4b; ruling R4): the identification of this pass is handed
+  // to PreflightOnly's census operator (the AMR cache it reads after its first iteration)
+  // on the three-dimensional Features path, where it is the one a solve-form run computes
+  // (DESIGN-NOTE A3 of the lane); PALACE_PREFLIGHT_SHARED_IDENTIFICATION=0 switches it off.
+  const auto share_environment =
+      CollectiveGetenv(parallel_mesh.GetComm(), "PALACE_PREFLIGHT_SHARED_IDENTIFICATION");
+  const bool share_identification =
+      parallel_mesh.Dimension() == 3 &&
+      request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES &&
+      !(share_environment && *share_environment == "0") &&
+      !(!maxwell &&
+        CollectiveGetenv(parallel_mesh.GetComm(), "PALACE_RESPONSE_GEOMETRY_CACHE"));
+  AutomaticResponseDiagnostics share_diagnostics;
+  // The two-dimensional identification, kept for the prediction of the operator's matrix
+  // step below (ruling (B)).
+  ResponseCorrectionData identification_2d;
   if (parallel_mesh.Dimension() == 2 && parallel_mesh.SpaceDimension() == 2)
   {
-    BuildAutomaticResponseData2D(iodata, parallel_mesh, mat_op, request, maxwell, nullptr,
-                                 &requirements, &statistics);
+    identification_2d =
+        BuildAutomaticResponseData2D(iodata, parallel_mesh, mat_op, request, maxwell,
+                                     nullptr, &requirements, &statistics);
   }
   else if (parallel_mesh.Dimension() == 3 && parallel_mesh.SpaceDimension() == 3)
   {
@@ -24315,9 +24525,10 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
         Mpi::Print(parallel_mesh.GetComm(), "{}\n", line);
       }
     }
-    patches = BuildAutomaticResponseData3D(iodata, parallel_mesh, mat_op, request, maxwell,
-                                           nullptr, &requirements, &statistics,
-                                           apply_film ? &*apply_film : nullptr);
+    patches = BuildAutomaticResponseData3D(
+        iodata, parallel_mesh, mat_op, request, maxwell,
+        share_identification && maxwell ? &share_diagnostics : nullptr, &requirements,
+        &statistics, apply_film ? &*apply_film : nullptr);
   }
   else
   {
@@ -24338,7 +24549,20 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
                                                           : "PatchConstruction Legacy"));
   }
 
-  requirements.SetStatistics(BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics));
+  const auto statistics_record =
+      BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics);
+  requirements.SetStatistics(statistics_record);
+  // The shared identification (ruling R4): this pass's result before the dry run below
+  // changes it, the ranks keeping their local patches (the C6 residence) until the census
+  // operator restores them; none when nothing is matched (a solve form records
+  // NoMatchedFeature there, this pass does not).
+  std::shared_ptr<const SurfaceResponseGeometry> shared_geometry;
+  if (share_identification && !patches.models.empty() && !patches.patches.empty())
+  {
+    shared_geometry = SurfaceResponsePreflightGeometry::Make(
+        patches, maxwell ? &share_diagnostics : nullptr, statistics_record,
+        apply_film.has_value(), parallel_mesh.GetComm());
+  }
   const auto patches_path =
       (std::filesystem::path(path).parent_path() / "surface-response-patches.csv").string();
   auto manifest = requirements.Build();
@@ -24898,6 +25122,38 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   }
   SurfaceResponsePreflightOutcome outcome;
   outcome.written.push_back(path);
+  outcome.response_geometry = std::move(shared_geometry);
+  // CUT-PLAN step 4b (the supervisor's ruling (B)): the model list of the census operator
+  // where this pass's is it (two dimensions; three on the Features path), for the
+  // prediction of its matrix step on the census path (the root predicts).
+  if (Mpi::Root(parallel_mesh.GetComm()) &&
+      (parallel_mesh.Dimension() == 2 ||
+       request.patch_construction == ResponseCorrectionData::PatchConstruction::FEATURES))
+  {
+    outcome.census_models =
+        parallel_mesh.Dimension() == 2 ? identification_2d.models : patches.models;
+  }
+  {
+    // CUT-PLAN step 4b (lane v1step4b; ruling R1): the solve-form refusals this pass saw,
+    // the root's (every rank ends the preflight alike).
+    const MPI_Comm comm = parallel_mesh.GetComm();
+    std::string refusals;
+    for (const auto &reason : requirements.CensusRefusals())
+    {
+      refusals += reason + '\n';
+    }
+    int flags[2] = {static_cast<int>(refusals.size()),
+                    requirements.UnmatchedPolicyRefusal() ? 1 : 0};
+    Mpi::Broadcast(2, flags, 0, comm);
+    refusals.resize(static_cast<std::size_t>(flags[0]));
+    Mpi::Broadcast(flags[0], refusals.data(), 0, comm);
+    for (std::size_t begin = 0, end; begin < refusals.size(); begin = end + 1)
+    {
+      end = refusals.find('\n', begin);
+      outcome.census_refusals.push_back(refusals.substr(begin, end - begin));
+    }
+    outcome.unmatched_policy_refusal = flags[1] != 0;
+  }
   if (parallel_mesh.Dimension() == 3)
   {
     outcome.written.push_back(patches_path);
@@ -24926,6 +25182,56 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
             .FailClosedSummary();
   }
   return outcome;
+}
+
+std::string
+SurfaceResponsePreflightCensusRefusal(const SurfaceResponsePreflightOutcome &outcome,
+                                      const ResponseCorrectionData &request)
+{
+  if (!outcome.census_refusals.empty())
+  {
+    std::string reasons;
+    for (const auto &reason : outcome.census_refusals)
+    {
+      reasons += (reasons.empty() ? "" : "; ") + reason;
+    }
+    return "Resolution census: not evaluated: " + reasons +
+           " (a solve-form run stops there)";
+  }
+  if (request.unmatched_policy == ResponseCorrectionData::UnmatchedPolicy::ERROR &&
+      outcome.unmatched_policy_refusal)
+  {
+    return "Resolution census: not evaluated: UnmatchedPolicy \"Error\" with missing "
+           "requirements (a solve-form run stops there); \"Warn\" gives it";
+  }
+  return {};
+}
+
+std::string
+SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outcome,
+                                     const Units &units, MPI_Comm comm)
+{
+  std::string line;
+  if (Mpi::Root(comm))
+  {
+    for (const auto &model : outcome.census_models)
+    {
+      const auto refusal = DomainResponseMatrixRefusal(model, units);
+      if (!refusal.empty())
+      {
+        line = fmt::format(
+            "Resolution census: not evaluated: response model \"{}\": {} (a solve-form run "
+            "stops there)",
+            model.name.empty() ? fmt::format("model-{}", model.idx) : model.name, refusal);
+        break;
+      }
+    }
+  }
+  int size = static_cast<int>(line.size());
+  Mpi::Broadcast(1, &size, 0, comm);
+  line.resize(static_cast<std::size_t>(size));
+  Mpi::Broadcast(size, line.data(), 0, comm);
+  return line;
 }
 
 // The first construction's domain-boundary containment result, kept with the automatic
@@ -24966,6 +25272,38 @@ struct SurfaceResponseGeometry::Impl
   // is a derived record of this configuration, not a change to it.
   mutable std::optional<DomainBoundaryContainmentCache> containment;
 };
+
+std::shared_ptr<const SurfaceResponseGeometry> SurfaceResponsePreflightGeometry::Make(
+    ResponseCorrectionData &result, const AutomaticResponseDiagnostics *diagnostics,
+    const nlohmann::json &statistics, bool impedance_rule_apply, MPI_Comm comm)
+{
+  auto impl = std::make_shared<SurfaceResponseGeometry::Impl>();
+  // Everything but the patch list, then this rank's patches only (no replicated copy).
+  ResponseCorrectionData &config = impl->config;
+  auto &patches = result.patches;
+  auto all_patches = std::move(patches);
+  config = result;
+  patches = std::move(all_patches);
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    if (static_cast<int>(patch_idx % Mpi::Size(comm)) == Mpi::Rank(comm))
+    {
+      config.patches.push_back(patches[patch_idx]);
+    }
+  }
+  impl->global_patch_count = patches.size();
+  impl->patches_local = true;
+  if (diagnostics)
+  {
+    impl->diagnostics = *diagnostics;
+  }
+  impl->statistics = statistics;
+  impl->maxwell = diagnostics != nullptr;
+  impl->dimension = 3;
+  impl->impedance_rule_apply = impedance_rule_apply;
+  return std::shared_ptr<const SurfaceResponseGeometry>(
+      new SurfaceResponseGeometry(std::move(impl)));
+}
 
 // Lane fix-response-memory round 2 (decision 1469 (1) (i)): THE MEMORY CENSUS. Under
 // PALACE_RESPONSE_MEMORY_CENSUS=1 the heap bytes of every member of the response

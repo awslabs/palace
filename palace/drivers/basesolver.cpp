@@ -5,6 +5,8 @@
 
 #include <array>
 #include <cmath>
+#include <map>
+#include <set>
 #include <utility>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
@@ -17,12 +19,15 @@
 #include "models/domainpostoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
+#include "models/surfaceresponseresolution.hpp"
 #include "utils/communication.hpp"
 #include "utils/dorfler.hpp"
 #include "utils/edgedistance.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -443,7 +448,7 @@ bool BaseSolver::ContinueAdaptation(int it, long long int ntdof, double err) con
          !(refinement.max_size > 0 && ntdof > refinement.max_size) && err >= refinement.tol;
 }
 
-void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
+bool BaseSolver::PrepareFirstLevelMesh(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = [&]()
@@ -467,11 +472,18 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                "final mesh in the sequence of a priori refinements\n");
     mesh.erase(mesh.begin(), mesh.end() - 1);
   }
-  MPI_Comm comm = mesh.back()->GetComm();
 
   // Resolve every configured correction tube before the first field solve, independent of
   // the relative field energy around each edge.
   RefineEdgeTubes(iodata, *mesh.back());
+  return use_amr;
+}
+
+void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
+{
+  const auto &refinement = iodata.model.refinement;
+  const bool use_amr = PrepareFirstLevelMesh(mesh);
+  MPI_Comm comm = mesh.back()->GetComm();
 
   // CUT-PLAN step 4 (lane v1table): the per-iteration table of a corrected run.
   surface_participation = NewSurfaceParticipationTable(iodata, post_dir);
@@ -1185,6 +1197,160 @@ void BaseSolver::SaveSurfaceResponseMetadata(const std::string &key,
     meta["SurfaceResponse"][key] = value;
     WriteMetadata(post_dir, meta);
   }
+}
+
+PreflightCensusOutcome BaseSolver::PreflightResolutionCensus(
+    std::vector<std::unique_ptr<Mesh>> &mesh, bool /*fail_closed*/,
+    const std::shared_ptr<const SurfaceResponseGeometry> & /*identified*/) const
+{
+  ReportResolutionCensusNotEvaluated(
+      mesh.back()->GetComm(),
+      "Resolution census: not evaluated in PreflightOnly for this problem type "
+      "(PreflightOnly evaluates it for Electrostatic, Eigenmode and Driven)");
+  return {};
+}
+
+void BaseSolver::ReportResolutionCensusNotEvaluated(MPI_Comm comm,
+                                                    const std::string &line) const
+{
+  Mpi::Print(comm, "\n{}\n", line);
+  SaveSurfaceResponseMetadata("ResolutionCensusNotEvaluated", line);
+}
+
+void BaseSolver::PrepareCensusFirstLevelMesh(
+    std::vector<std::unique_ptr<Mesh>> &mesh,
+    const std::shared_ptr<const SurfaceResponseGeometry> &identified,
+    std::shared_ptr<const SurfaceResponseGeometry> &response_geometry) const
+{
+  const Mesh *identified_mesh = mesh.back().get();
+  const long int identified_sequence = identified_mesh->Get().GetSequence();
+  PrepareFirstLevelMesh(mesh);
+  if (identified && mesh.back().get() == identified_mesh &&
+      mesh.back()->Get().GetSequence() == identified_sequence)
+  {
+    response_geometry = identified;
+  }
+}
+
+bool BaseSolver::PreflightCensusStopsFailClosed(const SurfaceResponseOperator &response,
+                                                bool fail_closed, MPI_Comm comm) const
+{
+  // The ledger is replicated on every rank (every rank decides alike).
+  const auto &fallbacks = response.GetGeometryFallbacks();
+  if (!fail_closed || fallbacks.empty())
+  {
+    return false;
+  }
+  ReportResolutionCensusNotEvaluated(
+      comm,
+      fmt::format(
+          "Resolution census: not evaluated: GeometryFailurePolicy \"FailClosed\" with "
+          "{:d} geometry fallback(s) recorded by the response operator's construction "
+          "(a solve-form run stops there); \"RecordRaw\" gives it",
+          fallbacks.size()));
+  return true;
+}
+
+PreflightCensusOutcome BaseSolver::PreflightMaxwellResolutionCensus(
+    const std::vector<std::unique_ptr<Mesh>> &mesh,
+    std::shared_ptr<const SurfaceResponseGeometry> *response_geometry,
+    bool fail_closed) const
+{
+  BlockTimer bt(Timer::CONSTRUCT);
+  SpaceOperator space_op(iodata, mesh);
+  auto response =
+      std::make_unique<SurfaceResponseOperator>(iodata, space_op, response_geometry);
+  response->SetPatchRecordResidency(
+      SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+  if (PreflightCensusStopsFailClosed(*response, fail_closed, space_op.GetComm()))
+  {
+    return {};
+  }
+  // The PostOperator's check of a corrected Maxwell run (before its first solve): a solve
+  // form stops there (ruling R1, P7).
+  if (!response->IsRawFallback() && !response->HasSurfaceResponse())
+  {
+    ReportResolutionCensusNotEvaluated(
+        space_op.GetComm(),
+        "Resolution census: not evaluated: the selected coupon models carry no "
+        "fabricated and thin surface response matrices (a solve-form run stops there)");
+    return {};
+  }
+  return WritePreflightResolutionCensus(*response, space_op.GlobalTrueVSize(),
+                                        space_op.GetComm());
+}
+
+PreflightCensusOutcome
+BaseSolver::WritePreflightResolutionCensus(SurfaceResponseOperator &response,
+                                           long long int unknowns, MPI_Comm comm) const
+{
+  if (response.IsRawFallback())
+  {
+    // The solve form makes no census on a whole-run raw fallback either.
+    ReportResolutionCensusNotEvaluated(
+        comm, "Resolution census: not evaluated: the correction falls back to the raw run "
+              "(RawFallback: no patch applied)");
+    return {};
+  }
+  // The census Types of the solve form (PostOperator::GetInterfaceTypes over the coverage
+  // interfaces: each entry's Type, read here from the configuration it copies).
+  const auto &dielectric = iodata.boundaries.postpro.dielectric;
+  std::map<int, std::string> types;
+  std::set<int> regions;
+  for (const int interface : response.GetCoverageInterfaces())
+  {
+    const auto entry = dielectric.find(interface);
+    if (entry != dielectric.end())
+    {
+      types[interface] = ToString(entry->second.type);
+      if (entry->second.region)
+      {
+        regions.insert(interface);
+      }
+    }
+  }
+  response.ConfigureResolutionTypes(types);
+  const auto &request = iodata.problem.type == ProblemType::ELECTROSTATIC
+                            ? iodata.solver.electrostatic.response_correction
+                            : iodata.solver.surface_response_correction;
+  if (request && request->patch_energy)
+  {
+    // The solve form's per-patch census table (PatchEnergy only; collective).
+    const auto path = response.CollectiveDiagnosticsPath(
+        post_dir, "surface-response-resolution-patches.csv");
+    response.WriteResolutionPatchTable(path.string());
+  }
+  auto &record = response.GetResolutionRunRecord();
+  record.no_cells_reason = "PreflightOnly: no solve";
+  auto block = ResolutionRunMetadata(record, 1, 1);
+  block["Final"] = true;
+  SaveSurfaceResponseMetadata("Resolution", block);
+  // CUT-PLAN step 4b with step 3 (Ls sheets served by default): the impedance-metal rule's
+  // record of the solve form (its mode, regime and served-Ls lines), which that run writes
+  // beside its first coverage block from this operator alone.
+  if (const auto *film = response.GetImpedanceApplyRule())
+  {
+    SaveSurfaceResponseMetadata("ImpedanceMetalRule",
+                                ImpedanceApplyRecord(*film,
+                                                     response.GetImpedanceLawFeatures(),
+                                                     iodata.units, false));
+  }
+  surface_participation = NewSurfaceParticipationTable(iodata, post_dir);
+  if (surface_participation)
+  {
+    surface_participation->WritePreflightLevel(
+        PreflightParticipationRows(types, regions, record.preflight), unknowns, comm);
+    SaveSurfaceResponseMetadata("ParticipationTable", surface_participation->Metadata());
+  }
+  PreflightCensusOutcome outcome;
+  outcome.evaluated = true;
+  std::set<int> fallback_features;
+  for (const auto &fallback : response.GetGeometryFallbacks())
+  {
+    fallback_features.insert(fallback.features.begin(), fallback.features.end());
+  }
+  outcome.fallback_features = fallback_features.size();
+  return outcome;
 }
 
 void BaseSolver::SaveMaxSizeStopMetadata(const nlohmann::json &record) const

@@ -2714,7 +2714,9 @@ aggregates equivalent neighborhoods and reports their topology, interface slots,
 boundary law, count, total edge length, geometric signature, and exact, interpolated, or
 missing library selection. Its `Complete` field is true only when no requirement is
 missing. During preflight only, `UnmatchedPolicy: "Error"` is treated as `"Warn"` so all
-missing requirements can be reported in one pass.
+missing requirements can be reported in one pass; a `PreflightOnly` run with
+`"UnmatchedPolicy": "Error"` and missing requirements then builds no resolution census (a
+solve-form run stops there) and says so in one line: `"Warn"` gives it.
 
 The same preflight can be requested from the configuration, for front ends that start
 Palace without command-line options (a cluster run service runs `palace config.json`):
@@ -3769,9 +3771,49 @@ Under AMR the census follows the refined mesh: the patches are identified once, 
 first mesh, and the census and the corrected values of each level are those of that
 level's mesh. Because a knot on a face shared by several elements takes the LARGEST owner,
 refinement on one side of a face only does not lower that knot's size: the census can read
-coarser than the finer side, never finer (the conservative side). `PreflightOnly` builds no
-response operator, so it evaluates no census: it prints
-`Resolution census: not evaluated in PreflightOnly; every corrected run prints it before its first solve`.
+coarser than the finer side, never finer (the conservative side). `PreflightOnly` evaluates
+the census of the first mesh without a solve: it builds the FE space and the response
+operator as a corrected run does before its first solve (no system matrix is assembled and
+nothing is solved; a wave port's boundary-mode matrices are built with the space operator)
+and prints the same knots and PREFLIGHT lines, writes the same
+`surface-response-resolution-patches.csv` (with `"PatchEnergy": true`) and the same
+`SurfaceResponse.Resolution` block of `palace.json` (`Knots`, `Preflight` and the bars;
+`"Cells": 0`, `"NoCellsReason": "PreflightOnly: no solve"`) and, where the impedance-metal
+rule acts, the same `SurfaceResponse.ImpedanceMetalRule` record (its regime and served-`Ls`
+lines). The energy-weighted census (`surface-response-resolution.csv`, the banner) needs the
+solved field and is not written. On a designers' chip (31,759 features, 1.6 million
+patches, 115 million unknowns, one node of 192 cores) the census was printed about 114
+minutes after the start (measured before the matrix-step prediction, which adds one
+eigendecomposition per model on the root; not re-measured), against 72 to 76 minutes for a
+solve-form run to reach the same census: the manifest pass comes first (about 100 minutes,
+36 of them its knife-edge census, a preflight-only diagnostic), and the census operator
+reuses that pass's identification (about 12 minutes more).
+A preflight that ends by its default `GeometryFailurePolicy` (`FailClosed` with the key
+absent; exit status 3) prints its summary line as before, then builds this census as a
+solve-form run builds it under its own default `RecordRaw` (raw recorded for the failed
+geometry; a line after the census names how many features), and then ends with exit status
+3; with `"GeometryFailurePolicy": "FailClosed"` set (a solve-form run aborts too) no census
+is built and the log names `"RecordRaw"` as the value that gives it, also when only the
+response operator's construction records a fallback. Wherever a solve-form run stops before
+its census (`"UnmatchedPolicy": "Error"` with missing requirements, a library its reader
+refuses, a placed discovery placeholder, a response model whose fabricated domain matrix its
+matrix step refuses (a negative-energy mode beyond roundoff, by the operator's own test) or
+whose domain matrix file cannot be opened), `PreflightOnly` builds no census, prints one
+line
+`Resolution census: not evaluated: <why> (a solve-form run stops there)`
+and ends with the exit status it had before the census existed (0, or 3 after a
+`FailClosed` summary). Every census that is not evaluated (these reasons, an explicit
+`"GeometryFailurePolicy": "FailClosed"`, a whole-run raw fallback, a problem type without a
+census) is named by its one line, and the same line is
+`SurfaceResponse.ResolutionCensusNotEvaluated` of `palace.json` (absent when the census is
+built). On `"PatchConstruction": "Legacy"` (a developer option) the requirements
+manifest's `Complete` is the features comparison's: the `"UnmatchedPolicy": "Error"` line
+can be printed where `Complete` is true (the legacy builder cannot serve a feature, and a
+solve-form run stops there). A library file the operator's model loop refuses (a
+surface-matrix or basis-point file that cannot be read, interface mappings without surface
+matrices, a domain matrix that does not fit its basis points) stops `PreflightOnly` after
+the manifest is written, with the solve form's message and a non-zero exit status, where a
+preflight without the census ended with 0; every solve-form run refuses such a library.
 
 ### The per-iteration table of the response correction
 
@@ -3888,6 +3930,20 @@ above). The log prints the eigenmode joins and the values (the `Type` rows and t
 and scope with the ranges of the raw and the corrected values), and `palace.json` records
 `SurfaceResponse.ParticipationTable` (the file, the levels, the rows and the verdict data
 with their source).
+
+A `PreflightOnly` run solves nothing, so it computes no value and no verdict of this rule:
+its `surface-participation.csv` holds one row set of iteration 1 (the first solve's
+unknowns), `point` and `exc` 0, one row per target interface and its `Type` totals, in
+which every number is `nan`, `resolution` reads `PREFLIGHT <word>` (the `Type`'s all-planes
+word of the census PREFLIGHT line, by cell length against the census bars; a `region` row
+`PREFLIGHT NOT-EVALUATED`), `coverage`, `regime`, `confidence` and `convergence` read
+`NOT-COMPUTED`, `flags` reads `PREFLIGHT-ONLY` (no `Ls` sheet word: those words qualify a
+value) and `reason` says why
+(`PREFLIGHT-ONLY: geometric census by cell length against the census bars; no solve; values not computed; the table's resolution verdict (energy-weighted; bars of the rule) needs a solve`);
+`SurfaceResponse.ParticipationTable` records `"PreflightOnly": true`. The PREFLIGHT word
+and the table's resolution word are different readings (length against energy weights,
+the census bars against the rule's bars) and may differ on the same mesh. A run whose
+targets are all Regions has no word in the table: read the PREFLIGHT line.
 
 ## Electrostatic Simulations
 

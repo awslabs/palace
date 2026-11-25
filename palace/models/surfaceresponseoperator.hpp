@@ -237,6 +237,7 @@ private:
 
   friend class SurfaceResponseOperator;
   friend struct ResponseMemoryCensus;
+  friend struct SurfaceResponsePreflightGeometry;
 
 public:
   // Lane fix-response-memory (decision 1446, C6 / DESIGN A1.0 R-1): the placed-patch
@@ -2493,7 +2494,39 @@ struct SurfaceResponsePreflightOutcome
   std::string fail_closed_summary;
   // The files written (the manifest, then the patch dry run in 3D).
   std::vector<std::string> written;
+  // CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling R1): the sites of this pass
+  // where a solve-form run stops, for the census PreflightOnly builds after it. Whatever
+  // its UnmatchedPolicy (each a reason, in the order of the sites):
+  std::vector<std::string> census_refusals;
+  // Under "UnmatchedPolicy": "Error" (the preflight treats Error as Warn and went on; on
+  // the default PatchConstruction Features this is an incomplete manifest).
+  bool unmatched_policy_refusal = false;
+  // CUT-PLAN step 4b (ruling R4): this pass's identification for the census operator (the
+  // three-dimensional Features path with a match; else null: the operator builds its own).
+  std::shared_ptr<const SurfaceResponseGeometry> response_geometry;
+  // CUT-PLAN step 4b (the supervisor's ruling (B)): the models the census operator's model
+  // loop builds, in its order (this pass's identification in two dimensions and on the
+  // three-dimensional Features path; the root's only), for
+  // SurfaceResponsePreflightModelRefusal.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionModelData> census_models;
 };
+
+// CUT-PLAN step 4b (lane v1step4b; ruling R1): the line of a PreflightOnly run that builds
+// no resolution census because a solve-form run stops before it (outcome.census_refusals
+// first, then UnmatchedPolicy "Error" with outcome.unmatched_policy_refusal); empty when
+// the census is built.
+std::string SurfaceResponsePreflightCensusRefusal(
+    const SurfaceResponsePreflightOutcome &outcome,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request);
+
+// CUT-PLAN step 4b (the supervisor's ruling (B)): the line of a PreflightOnly run that
+// builds no resolution census because the operator's matrix step refuses one of
+// outcome.census_models (the first, as that step stops at it), predicted on the root by the
+// step's own test on the matrices it reads; empty when it accepts every model. Called where
+// the census would be built (a read it stops on stops the census operator too). Collective.
+std::string
+SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outcome,
+                                     const Units &units, MPI_Comm comm);
 
 // Classify the configured automatic surface-response neighborhoods without assembling a
 // finite-element operator or solving a field problem. The deterministic JSON manifest
