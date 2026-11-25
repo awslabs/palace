@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 #include "utils/communication.hpp"
 
@@ -15,10 +16,17 @@ namespace palace::test
 namespace
 {
 
-// New uniquely named temporary directory (empty path on failure).
+// New uniquely named temporary directory (empty path on failure, never throws: it may run
+// on the root only, before a broadcast).
 fs::path MakeUniqueTempDir(const std::string &prefix)
 {
-  std::string tmpl = (fs::temp_directory_path() / (prefix + "XXXXXX")).string();
+  std::error_code ec;
+  const fs::path tmp = fs::temp_directory_path(ec);
+  if (ec)
+  {
+    return {};
+  }
+  std::string tmpl = (tmp / (prefix + "XXXXXX")).string();
   std::vector<char> buf(tmpl.begin(), tmpl.end());
   buf.push_back('\0');
   return mkdtemp(buf.data()) ? fs::path(buf.data()) : fs::path();

@@ -433,31 +433,26 @@ void SetEigenSolverOverride(std::string value)
 
 std::filesystem::path GetRegressionRunDir()
 {
+  // Absolute, since each case changes into its stage.
   if (!g_regression_run_dir_override.empty())
   {
-    return g_regression_run_dir_override;
+    return std::filesystem::absolute(g_regression_run_dir_override);
   }
   if (g_regression_temp_run_dir.empty())
   {
-    g_regression_temp_run_dir = MakeSharedTempDir("palace-regression-");
+    g_regression_temp_run_dir =
+        std::filesystem::absolute(MakeSharedTempDir("palace-regression-"));
+    Mpi::Print("Staging the regression cases in {}\n", g_regression_temp_run_dir.string());
   }
   return g_regression_temp_run_dir;
 }
 
 void FinalizeRegressionRunDir(bool passed)
 {
-  if (g_regression_temp_run_dir.empty() || !Mpi::Root(Mpi::World()))
-  {
-    return;
-  }
-  if (passed)
+  if (passed && !g_regression_temp_run_dir.empty() && Mpi::Root(Mpi::World()))
   {
     std::error_code ec;
     std::filesystem::remove_all(g_regression_temp_run_dir, ec);
-  }
-  else
-  {
-    Mpi::Print("Regression outputs kept in {}\n", g_regression_temp_run_dir.string());
   }
 }
 

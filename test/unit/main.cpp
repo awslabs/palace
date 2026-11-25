@@ -68,8 +68,8 @@ int main(int argc, char *argv[])
                  "backend")["--backend"]("libCEED backend (default: \"/cpu/self\")") |
              Opt(regression_run_dir, "path")["--regression-run-dir"](
                  "Staging root under which each [Regression] case gets its own "
-                 "subdirectory (inputs symlinked from examples/, outputs written "
-                 "and kept there). Default: a new directory "
+                 "subdirectory (inputs symlinked from the regression test data, "
+                 "outputs written and kept there). Default: a new directory "
                  "std::filesystem::temp_directory_path() / "
                  "\"palace-regression-XXXXXX\", removed if all tests pass") |
              Opt(palace_linear_solver, "type")["--palace-linear-solver"](
