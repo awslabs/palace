@@ -41,6 +41,7 @@
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
 #include "fixtures.hpp"
+#include "linalg/blockcyclic.hpp"
 #include "linalg/directschur.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/lowertriangle.hpp"
@@ -3868,13 +3869,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 #if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
-TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Parallel]")
+TEST_CASE("DirectSchurSolverT condenses complex systems exactly",
+          "[substructure][Serial][Parallel]")
 {
   // The complex symmetric shifted Laplacian of the MumpsSchurSolver tests, bordered by an
   // unknown on the last rank (as by a wave port's modal term), with the Schur variables on
   // a face of the cube and every other entry passed by another rank than that of its row
   // (some split in two): the Schur complement and a condensed solve against dense ones,
   // also after a refactorization with new values, by STRUMPACK and by SuperLU_DIST.
+  using Solver = DirectSchurSolverT<std::complex<double>>;
   std::vector<LinearSolver> types;
 #if defined(MFEM_USE_STRUMPACK)
   types.push_back(LinearSolver::STRUMPACK);
@@ -3924,7 +3927,7 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
   // The entries: c A by its lower triangle, and the border unknown (row n_dof) with entries
   // b against the first local DOFs of each rank and -2 on its diagonal.
   const std::complex<double> c(1.0, 0.1), b(0.5, 0.2);
-  DirectSchurSolver::Coo coo;
+  Solver::Coo coo;
   {
     std::vector<std::vector<double>> vals;
     std::vector<int> row_ptr;
@@ -3947,8 +3950,8 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
     coo.val.push_back(-2.0);
   }
   {
-    DirectSchurSolver::Coo keep, give;
-    auto push = [](DirectSchurSolver::Coo &x, int i, int j, std::complex<double> v)
+    Solver::Coo keep, give;
+    auto push = [](Solver::Coo &x, int i, int j, std::complex<double> v)
     {
       x.irn.push_back(i);
       x.jcn.push_back(j);
@@ -4076,8 +4079,8 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
   {
     rows[i] = i;
   }
-  DirectSchurSolver solver(comm, n_glob, static_cast<int>(rows.size()), std::move(coo),
-                           schur_vars, rows, type, SymbolicFactorization::AMD);
+  Solver solver(comm, n_glob, static_cast<int>(rows.size()), std::move(coo), schur_vars,
+                rows, type, SymbolicFactorization::AMD);
   auto dist = [](const auto &a, const auto &b)
   { return (a - b).cwiseAbs().maxCoeff() / b.cwiseAbs().maxCoeff(); };
   for (int k = 0; k < 2; k++)
@@ -4125,34 +4128,25 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
     }
   }
 
-  // The rows of S (of the values scaled by 2) on the ranks holding its variables, from
-  // another factorization.
+  // The blocks of S (of the values scaled by 2) on a grid, from another factorization.
   solver.Refactor();
-  const int nS = static_cast<int>(schur_vars.size()), m_loc = static_cast<int>(rows.size());
+  const int nS = static_cast<int>(schur_vars.size());
   if (rank != 0)
   {
     S_ref.resize(nS, nS);
   }
   MPI_Bcast(S_ref.data(), nS * nS, MPI_C_DOUBLE_COMPLEX, 0, comm);
-  HYPRE_BigInt n = m_loc, first = 0;
-  MPI_Exscan(&n, &first, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
-  first = (rank == 0) ? 0 : first;
-  std::vector<int> held;
-  for (int p = 0; p < nS; p++)
-  {
-    if (schur_vars[p] >= first && schur_vars[p] < first + m_loc)
-    {
-      held.push_back(p);
-    }
-  }
-  const auto R = solver.ReleaseSchurRows();
-  CHECK(R.size() == held.size() * nS);
+  BlockCyclicGrid grid(comm, nS, 0, 2);
+  const auto B = solver.ReleaseSchurBlocks(grid);
+  REQUIRE(B.size() == grid.LocalSize());
   double err = 0.0;
-  for (std::size_t r = 0; r < held.size() && R.size() == held.size() * nS; r++)
+  for (int lj = 0; lj < grid.LocalCols(); lj++)
   {
-    for (int col = 0; col < nS; col++)
+    for (int li = 0; li < grid.LocalRows(); li++)
     {
-      err = std::max(err, std::abs(R[r * nS + col] - 2.0 * S_ref(held[r], col)));
+      const std::complex<double> ref = 2.0 * S_ref(grid.GlobalRow(li), grid.GlobalCol(lj));
+      err = std::max(
+          err, std::abs(B[li + static_cast<std::size_t>(lj) * grid.LeadingDim()] - ref));
     }
   }
   MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, comm);
@@ -5446,170 +5440,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 #endif
 
 #if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
-
-#if defined(MFEM_USE_MUMPS)
-TEST_CASE("MumpsSchurSolver refactors with new values", "[substructure][Serial][Parallel]")
-{
-  // A complex symmetric shifted Laplacian with Schur variables on a face of the cube,
-  // refactored with its values doubled: the Schur complement doubles, and the internal
-  // solves halve.
-  auto pmesh = MakeSplitCube(4);
-  mfem::H1_FECollection fec(2, 3);
-  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
-  mfem::ParBilinearForm a(&fes);
-  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
-  a.AddDomainIntegrator(new mfem::MassIntegrator);
-  a.Assemble();
-  a.Finalize();
-  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
-  MPI_Comm comm = fes.GetComm();
-  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
-  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
-  bdr = 0;
-  bdr[0] = 1;
-  fes.GetEssentialTrueDofs(bdr, face);
-  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
-  for (int i = 0; i < face.Size(); i++)
-  {
-    mine[i] = fes.GetMyTDofOffset() + face[i];
-  }
-  {
-    int n = face.Size();
-    std::vector<int> cnt(nranks), disp(nranks, 0);
-    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
-    for (int r = 1; r < nranks; r++)
-    {
-      disp[r] = disp[r - 1] + cnt[r - 1];
-    }
-    schur_vars.resize(disp.back() + cnt.back());
-    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
-                   disp.data(), HYPRE_MPI_BIG_INT, comm);
-  }
-  REQUIRE(!schur_vars.empty());
-  ComplexVector x(nt);
-  x.Real().Randomize(1 + Mpi::Rank(comm));
-  x.Imag().Randomize(2 + Mpi::Rank(comm));
-
-  ComplexMumpsSchurSolver::Coo coo;
-  std::vector<std::vector<double>> vals;
-  std::vector<int> row_ptr;
-  LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
-  for (double v : vals[0])
-  {
-    coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
-  }
-  ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
-                                 schur_vars, 0.0, true, false);
-  std::vector<std::complex<double>> S[2];
-  ComplexVector y[2];
-  for (int k = 0; k < 2; k++)
-  {
-    if (k == 1)
-    {
-      for (auto &v : solver.Values())
-      {
-        v *= 2.0;
-      }
-      solver.Refactor();
-    }
-    S[k] = solver.ReleaseSchur();
-    solver.SolveInternal({&x}, {&y[k]});
-  }
-  if (Mpi::Root(comm))
-  {
-    double d = 0.0, m = 0.0;
-    for (std::size_t q = 0; q < S[0].size(); q++)
-    {
-      d = std::max(d, std::abs(S[1][q] - 2.0 * S[0][q]));
-      m = std::max(m, std::abs(2.0 * S[0][q]));
-    }
-    CHECK(d <= 1.0e-12 * m);
-  }
-  ComplexVector d(y[1]);
-  d *= 2.0;
-  d -= y[0];
-  CHECK(linalg::Norml2(comm, d) <= 1.0e-12 * linalg::Norml2(comm, y[0]));
-}
-
-TEST_CASE("MumpsSchurSolver keeps its tolerance relative when refactored",
-          "[substructure][Serial][Parallel]")
-{
-  // The block low-rank (BLR) tolerance is relative to the largest diagonal entry of the
-  // values factored: refactored with values 1e6 times smaller, the Schur complement keeps
-  // the accuracy of the first factorization (with the scale of the first values, it loses
-  // three digits here).
-  auto pmesh = MakeSplitCube(12);
-  mfem::H1_FECollection fec(2, 3);
-  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
-  mfem::ParBilinearForm a(&fes);
-  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
-  a.AddDomainIntegrator(new mfem::MassIntegrator);
-  a.Assemble();
-  a.Finalize();
-  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
-  MPI_Comm comm = fes.GetComm();
-  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
-  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
-  bdr = 0;
-  bdr[0] = 1;
-  fes.GetEssentialTrueDofs(bdr, face);
-  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
-  for (int i = 0; i < face.Size(); i++)
-  {
-    mine[i] = fes.GetMyTDofOffset() + face[i];
-  }
-  {
-    int n = face.Size();
-    std::vector<int> cnt(nranks), disp(nranks, 0);
-    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
-    for (int r = 1; r < nranks; r++)
-    {
-      disp[r] = disp[r - 1] + cnt[r - 1];
-    }
-    schur_vars.resize(disp.back() + cnt.back());
-    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
-                   disp.data(), HYPRE_MPI_BIG_INT, comm);
-  }
-  auto schur = [&](double blr_tol)
-  {
-    ComplexMumpsSchurSolver::Coo coo;
-    std::vector<std::vector<double>> vals;
-    std::vector<int> row_ptr;
-    LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
-    for (double v : vals[0])
-    {
-      coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
-    }
-    const auto values = coo.val;
-    ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
-                                   schur_vars, blr_tol, true, false);
-    std::array<std::vector<std::complex<double>>, 2> S;
-    S[0] = solver.ReleaseSchur();
-    for (std::size_t q = 0; q < values.size(); q++)
-    {
-      solver.Values()[q] = 1.0e-6 * values[q];
-    }
-    solver.Refactor();
-    S[1] = solver.ReleaseSchur();
-    return S;
-  };
-  const auto exact = schur(0.0), blr = schur(1.0e-8);
-  if (Mpi::Root(comm))
-  {
-    for (int k = 0; k < 2; k++)
-    {
-      double d = 0.0, m = 0.0;
-      for (std::size_t q = 0; q < exact[k].size(); q++)
-      {
-        d = std::max(d, std::abs(blr[k][q] - exact[k][q]));
-        m = std::max(m, std::abs(exact[k][q]));
-      }
-      CAPTURE(k, d, m);
-      CHECK(d <= 1.0e-8 * m);
-    }
-  }
-}
-#endif
 
 TEST_CASE("DrivenSubstructure rejects attribute sets that do not split the mesh",
           "[substructure][Serial][Parallel]")

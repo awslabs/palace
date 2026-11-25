@@ -45,8 +45,8 @@ void ForEachLowerEntry(const mfem::HypreParMatrix &A, int i, F &&f)
   }
 }
 
-// The values on their owners of the local true DOFs of 1-based global columns: v[q] =
-// value[cols[q] - 1 - tstart] of the rank owning column cols[q]. Collective.
+}  // namespace
+
 std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
                                       const std::vector<HYPRE_BigInt> &value,
                                       const std::vector<int> &cols)
@@ -112,8 +112,6 @@ std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
   }
   return v;
 }
-
-}  // namespace
 
 void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
                           std::vector<int> &irn, std::vector<int> &jcn,
@@ -216,6 +214,50 @@ void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
   }
 }
 
+namespace
+{
+
+template <typename T>
+void AddToPatternT(const mfem::HypreParMatrix &X, T a, const std::vector<int> &row_ptr,
+                   const std::vector<int> &jcn, std::vector<T> &val)
+{
+  X.HostRead();
+  for (int i = 0; i < X.Height(); i++)
+  {
+    const auto first = jcn.begin() + row_ptr[i], last = jcn.begin() + row_ptr[i + 1];
+    ForEachLowerEntry(X, i,
+                      [&](HYPRE_BigInt, HYPRE_BigInt j, double x)
+                      {
+                        const auto it =
+                            std::lower_bound(first, last, static_cast<int>(j + 1));
+                        if (it != last && *it == j + 1)
+                        {
+                          val[it - jcn.begin()] += a * x;
+                        }
+                        else
+                        {
+                          MFEM_VERIFY(x == 0.0, "Entry outside of the sparsity pattern!");
+                        }
+                      });
+  }
+  X.HypreRead();
+}
+
+}  // namespace
+
+void AddToPattern(const mfem::HypreParMatrix &X, double a, const std::vector<int> &row_ptr,
+                  const std::vector<int> &jcn, std::vector<double> &val)
+{
+  AddToPatternT(X, a, row_ptr, jcn, val);
+}
+
+void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
+                  const std::vector<int> &row_ptr, const std::vector<int> &jcn,
+                  std::vector<std::complex<double>> &val)
+{
+  AddToPatternT(X, a, row_ptr, jcn, val);
+}
+
 SideSystem::SideSystem(const std::vector<const mfem::HypreParMatrix *> &parts_in,
                        const std::vector<char> &keep)
 {
@@ -259,6 +301,7 @@ SideSystem::SideSystem(const std::vector<const mfem::HypreParMatrix *> &parts_in
     {
       if (col_index[q] >= 0)
       {
+        kept.push_back(q);
         irn.push_back(static_cast<int>(index[i] + 1));
         jcn.push_back(static_cast<int>(col_index[q] + 1));
         for (std::size_t p = 0; p < parts.size(); p++)
@@ -271,6 +314,8 @@ SideSystem::SideSystem(const std::vector<const mfem::HypreParMatrix *> &parts_in
       }
     }
   }
+  row_ptr = std::move(t_ptr);
+  tdof_jcn = std::move(t_jcn);
 }
 
 std::vector<HYPRE_BigInt> SideSystem::Indices(const std::vector<HYPRE_BigInt> &tdofs) const
@@ -302,6 +347,29 @@ std::vector<T> SideSystem::Values(const std::vector<T> &coef) const
     }
   }
   return v;
+}
+
+template <typename T>
+void SideSystem::AddPartT(const mfem::HypreParMatrix &X, T a, std::vector<T> &val) const
+{
+  std::vector<T> full(tdof_jcn.size(), T(0.0));
+  AddToPatternT(X, a, row_ptr, tdof_jcn, full);
+  for (std::size_t k = 0; k < kept.size(); k++)
+  {
+    val[k] += full[kept[k]];
+  }
+}
+
+void SideSystem::AddPart(const mfem::HypreParMatrix &X, double a,
+                         std::vector<double> &val) const
+{
+  AddPartT(X, a, val);
+}
+
+void SideSystem::AddPart(const mfem::HypreParMatrix &X, std::complex<double> a,
+                         std::vector<std::complex<double>> &val) const
+{
+  AddPartT(X, a, val);
 }
 
 template std::vector<double> SideSystem::Values(const std::vector<double> &) const;

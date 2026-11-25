@@ -5,6 +5,7 @@
 #define PALACE_LINALG_LOWER_TRIANGLE_HPP
 
 #include <array>
+#include <complex>
 #include <cstddef>
 #include <functional>
 #include <utility>
@@ -26,6 +27,20 @@ void LowerTrianglePattern(const std::vector<const mfem::HypreParMatrix *> &A,
                           std::vector<std::vector<double>> &vals,
                           std::vector<int> &row_ptr);
 
+// The values on their owners of the local true DOFs of 1-based global columns: v[q] =
+// value[cols[q] - 1 - tstart] of the rank owning column cols[q]. Collective.
+std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
+                                      const std::vector<HYPRE_BigInt> &value,
+                                      const std::vector<int> &cols);
+
+// val += a X on a pattern from LowerTrianglePattern, for a matrix X with entries inside the
+// pattern (or zero).
+void AddToPattern(const mfem::HypreParMatrix &X, double a, const std::vector<int> &row_ptr,
+                  const std::vector<int> &jcn, std::vector<double> &val);
+void AddToPattern(const mfem::HypreParMatrix &X, std::complex<double> a,
+                  const std::vector<int> &row_ptr, const std::vector<int> &jcn,
+                  std::vector<std::complex<double>> &val);
+
 // The rows and columns of a symmetric operator of local true DOFs it keeps (the others
 // pinned), numbered by rank (the system): the lower-triangle pattern of the union of its
 // parts (same row distribution; null ones skipped) on the kept DOFs, as COO entries in
@@ -45,6 +60,12 @@ public:
   template <typename T>
   std::vector<T> Values(const std::vector<T> &coef) const;
 
+  // val += a X on the entries of the system, for a matrix X of the rows of the parts with
+  // entries inside the pattern of their union (or zero): a part with new values.
+  void AddPart(const mfem::HypreParMatrix &X, double a, std::vector<double> &val) const;
+  void AddPart(const mfem::HypreParMatrix &X, std::complex<double> a,
+               std::vector<std::complex<double>> &val) const;
+
   // The local true DOF of each local row of the system, and the global size of the system.
   std::vector<int> rows;
   HYPRE_BigInt n_glob = 0;
@@ -56,6 +77,12 @@ private:
   MPI_Comm comm;
   HYPRE_BigInt tstart = 0;
   std::vector<HYPRE_BigInt> index;  // the system index of each local true DOF (-1: pinned)
+  // The pattern of the union of the parts on the local true DOFs (see LowerTrianglePattern)
+  // and the place in it of each entry of the system.
+  std::vector<int> row_ptr, tdof_jcn, kept;
+
+  template <typename T>
+  void AddPartT(const mfem::HypreParMatrix &X, T a, std::vector<T> &val) const;
 };
 
 // The lower triangle of a symmetric n x n matrix by columns, as the records of a

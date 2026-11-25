@@ -18,12 +18,10 @@
 #include "fem/interpolator.hpp"
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
-#include "linalg/blockcyclic.hpp"
-#include "linalg/directschur.hpp"
 #include "linalg/lowertriangle.hpp"
-#include "linalg/mumpsschur.hpp"
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/schurfactory.hpp"
 #include "models/portexcitations.hpp"
 #include "models/romoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -47,12 +45,6 @@ namespace palace
 
 namespace
 {
-
-#if defined(MFEM_USE_MUMPS)
-// BLR tolerance of the factorizations, at round-off: MUMPS's BLR factorization is faster
-// than its full-rank one here, at no loss of accuracy.
-constexpr double kBlrTol = 1.0e-14;
-#endif
 
 using Factorization = SchurFactorization<std::complex<double>>;
 
@@ -89,48 +81,6 @@ std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool i
 }
 
 }  // namespace
-
-LinearSolver SchurSolverType(LinearSolver type)
-{
-  if (type == LinearSolver::STRUMPACK || type == LinearSolver::MUMPS ||
-      type == LinearSolver::SUPERLU)
-  {
-    return type;
-  }
-#if defined(MFEM_USE_MUMPS)
-  return LinearSolver::MUMPS;
-#elif defined(MFEM_USE_STRUMPACK)
-  return LinearSolver::STRUMPACK;
-#else
-  return LinearSolver::SUPERLU;
-#endif
-}
-
-std::unique_ptr<SchurFactorization<std::complex<double>>>
-MakeSchurFactorization(LinearSolver type, SymbolicFactorization ordering, MPI_Comm comm,
-                       HYPRE_BigInt n_glob,
-                       SchurFactorization<std::complex<double>>::Coo &&coo,
-                       const std::vector<HYPRE_BigInt> &schur_vars,
-                       const std::vector<int> &rows, const BlockCyclicGrid *grid)
-{
-  const int n_loc = static_cast<int>(rows.size());
-#if defined(MFEM_USE_MUMPS)
-  if (type == LinearSolver::MUMPS)
-  {
-    return grid ? std::make_unique<MumpsSchurSolverT<std::complex<double>>>(
-                      comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, true, false,
-                      rows, ordering, grid->BlockSize(), grid->NumProcessRows(),
-                      grid->NumProcessCols())
-                : std::make_unique<MumpsSchurSolverT<std::complex<double>>>(
-                      comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, true, false,
-                      rows, ordering);
-  }
-#else
-  MFEM_CONTRACT_VAR(grid);
-#endif
-  return std::make_unique<DirectSchurSolver>(comm, n_glob, n_loc, std::move(coo),
-                                             schur_vars, rows, type, ordering);
-}
 
 DrivenSubstructure::DrivenSubstructure(SpaceOperator &space_op,
                                        const std::vector<int> &region_attributes,
@@ -312,72 +262,6 @@ DrivenSubstructure::ExtraParts(const Side &side, double omega)
     }
   }
   return X;
-}
-
-std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
-                                      const std::vector<HYPRE_BigInt> &sys,
-                                      const std::vector<int> &cols)
-{
-  const int nranks = Mpi::Size(comm);
-  const HYPRE_BigInt tend = tstart + static_cast<HYPRE_BigInt>(sys.size());
-  std::vector<HYPRE_BigInt> starts(nranks);
-  MPI_Allgather(&tstart, 1, HYPRE_MPI_BIG_INT, starts.data(), 1, HYPRE_MPI_BIG_INT, comm);
-  auto owner = [&](HYPRE_BigInt j)
-  {
-    return static_cast<int>(std::upper_bound(starts.begin(), starts.end(), j) -
-                            starts.begin()) -
-           1;
-  };
-  std::vector<std::vector<HYPRE_BigInt>> req(nranks);
-  for (int c : cols)
-  {
-    const HYPRE_BigInt j = c - 1;
-    if (j < tstart || j >= tend)
-    {
-      req[owner(j)].push_back(j);
-    }
-  }
-  std::vector<int> scnt(nranks), sdisp(nranks, 0), rcnt(nranks), rdisp(nranks, 0);
-  std::vector<HYPRE_BigInt> sbuf;
-  for (int r = 0; r < nranks; r++)
-  {
-    std::sort(req[r].begin(), req[r].end());
-    req[r].erase(std::unique(req[r].begin(), req[r].end()), req[r].end());
-    scnt[r] = static_cast<int>(req[r].size());
-    sdisp[r] = static_cast<int>(sbuf.size());
-    sbuf.insert(sbuf.end(), req[r].begin(), req[r].end());
-  }
-  MPI_Alltoall(scnt.data(), 1, MPI_INT, rcnt.data(), 1, MPI_INT, comm);
-  for (int r = 1; r < nranks; r++)
-  {
-    rdisp[r] = rdisp[r - 1] + rcnt[r - 1];
-  }
-  std::vector<HYPRE_BigInt> rbuf(rdisp[nranks - 1] + rcnt[nranks - 1]);
-  MPI_Alltoallv(sbuf.data(), scnt.data(), sdisp.data(), HYPRE_MPI_BIG_INT, rbuf.data(),
-                rcnt.data(), rdisp.data(), HYPRE_MPI_BIG_INT, comm);
-  for (auto &j : rbuf)
-  {
-    j = sys[j - tstart];
-  }
-  std::vector<HYPRE_BigInt> ans(sbuf.size());
-  MPI_Alltoallv(rbuf.data(), rcnt.data(), rdisp.data(), HYPRE_MPI_BIG_INT, ans.data(),
-                scnt.data(), sdisp.data(), HYPRE_MPI_BIG_INT, comm);
-  std::vector<HYPRE_BigInt> v(cols.size());
-  for (std::size_t q = 0; q < cols.size(); q++)
-  {
-    const HYPRE_BigInt j = cols[q] - 1;
-    if (j >= tstart && j < tend)
-    {
-      v[q] = sys[j - tstart];
-    }
-    else
-    {
-      const int r = owner(j);
-      v[q] = ans[sdisp[r] +
-                 (std::lower_bound(req[r].begin(), req[r].end(), j) - req[r].begin())];
-    }
-  }
-  return v;
 }
 
 namespace
@@ -617,10 +501,11 @@ void DrivenSubstructure::Factor(Side &side, double omega)
 {
   if (!side.schur)
   {
-    side.schur = MakeSchurFactorization(
-        SchurSolverType(solver), ordering, space_op.GetComm(), side.n_sys,
+    const int n_loc = static_cast<int>(side.rows.size());
+    side.schur = MakeSchurFactorization<std::complex<double>>(
+        SchurSolverFor(solver), ordering, space_op.GetComm(), side.n_sys, n_loc,
         {std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)},
-        side.gamma_sys, side.rows);
+        side.gamma_sys, side.rows, false, true);
     return;
   }
 
@@ -728,8 +613,10 @@ void DrivenSubstructure::FactorCoupled(double omega,
     {
       Release(S_env);
     }
-    coupled = MakeSchurFactorization(CoupledSolver(solver), ordering, comm, region.n_sys,
-                                     std::move(coo), {}, region.rows);
+    const int n_loc = static_cast<int>(region.rows.size());
+    coupled = MakeSchurFactorization<std::complex<double>>(
+        CoupledSolver(solver), ordering, comm, region.n_sys, n_loc, std::move(coo), {},
+        region.rows, false, true);
   }
   else
   {

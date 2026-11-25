@@ -288,10 +288,10 @@ voltage of a lumped port, would depend on both sides.
     preconditioned by the region's own Schur complement onto the interface with the
     environment's added, a dense matrix factored across the processes by ScaLAPACK (which MUMPS
     and STRUMPACK build with; without it, on one process). The region's Schur complement is
-    STRUMPACK's, gathered on one process, for interfaces of up to 10,000 unknowns, else MUMPS's,
-    distributed (or, without them, from SuperLU_DIST's solves). Near a resonance of the region
-    with the interface held fixed, where this preconditioner is nearly singular, FGMRES takes a
-    few more iterations (it is used whatever
+    MUMPS's, distributed, or, without it, STRUMPACK's, gathered on one process (or, without
+    them, from SuperLU_DIST's solves). Near a resonance of the region with the interface held fixed,
+    where this preconditioner is nearly singular, FGMRES takes a few more iterations (it is used
+    whatever
     [`config["Solver"]["Linear"]["KSPType"]`](../config/reference.md#config-solver-linear-ksptype)
     names, as GMRES loses digits there). A sparse direct solver that
     [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names

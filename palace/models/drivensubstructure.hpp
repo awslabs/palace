@@ -31,7 +31,6 @@ struct DomainData;
 
 }  // namespace config
 
-class BlockCyclicGrid;
 class PortExcitations;
 class SpaceOperator;
 
@@ -412,31 +411,6 @@ std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, i
 
 // The index of x in y (relative tolerance tol), -1 if none.
 int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10);
-
-// The sparse direct solver of a Schur complement factorization: that given, if it is one,
-// else MUMPS, STRUMPACK or SuperLU_DIST, preferred in this order (MUMPS's Schur complement
-// is distributed, the others' gathered on rank 0).
-LinearSolver SchurSolverType(LinearSolver type);
-
-// The factorization of a complex symmetric system by type and fill-reducing ordering, with
-// its Schur complement onto schur_vars, from its local lower-triangle COO entries (1-based
-// system indices, the system rows numbered by rank) and rows (the local index in the
-// vectors of the solves of each local system row), refactorable: MUMPS's partial
-// factorization with BLR at round-off, its Schur complement distributed on grid (if given,
-// else on all the ranks), or DirectSchurSolver.
-std::unique_ptr<SchurFactorization<std::complex<double>>>
-MakeSchurFactorization(LinearSolver type, SymbolicFactorization ordering, MPI_Comm comm,
-                       HYPRE_BigInt n_glob,
-                       SchurFactorization<std::complex<double>>::Coo &&coo,
-                       const std::vector<HYPRE_BigInt> &schur_vars,
-                       const std::vector<int> &rows, const BlockCyclicGrid *grid = nullptr);
-
-// For each global column (1-based) of cols, the value of sys (one per local true DOF from
-// tstart) at that true DOF on its owner: a request to each owner for its distinct columns.
-// Collective.
-std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
-                                      const std::vector<HYPRE_BigInt> &sys,
-                                      const std::vector<int> &cols);
 
 // The tolerance of the source fingerprint of an excitation (see
 // DrivenSubstructureModel::SameSource): the modes of the environment's wave ports, and so
