@@ -626,7 +626,10 @@ SurfacePostOperator::GetInterfaceAmplitudeMaps(const InterfaceDielectricData &da
               "Interface dielectric energy matrices require a nonnegative thickness and "
               "permittivity!");
 
+  // At most two maps per boundary element, reserved: the moves of mfem::Array and
+  // mfem::DenseMatrix are not noexcept, so that a reallocation would copy the maps.
   std::vector<InterfaceAmplitudeMap> maps;
+  maps.reserve(2 * bdr_elems.size());
   num_amplitudes = 0;
   mfem::FaceElementTransformations FET;
   mfem::IsoparametricTransformation T1, T2, Tb;
