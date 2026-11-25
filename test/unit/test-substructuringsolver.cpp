@@ -4,12 +4,14 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iterator>
 #include <memory>
+#include <numbers>
 #include <numeric>
 #include <optional>
 #include <random>
@@ -40,11 +42,14 @@
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
 #include "fixtures.hpp"
+#include "linalg/blockcyclic.hpp"
 #include "linalg/directschur.hpp"
 #include "linalg/errorestimator.hpp"
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/schurfactory.hpp"
+#include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/drivensubstructure.hpp"
 #include "models/environmentoperator.hpp"
@@ -2488,11 +2493,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 TEST_CASE("SubstructuringSolver region factored with the environment operator",
           "[substructure][Serial][Parallel][Long]")
 {
-  // The region is factored with S_E as one sparse system, here with one excitation and an
-  // interface of over 1000 DOFs, the dense block of the factorization. Without a Dirichlet
-  // boundary, the region operator alone is singular, but not with S_E. The capacitance is
-  // that of a monolith, of the terminal at x = 1 against the grounded sides of the
-  // environment, with the region grounded at x = 0 or not.
+  // The region is solved by its Schur complement onto the interface with S_E, here with one
+  // excitation and an interface of over 1000 DOFs. Without a Dirichlet boundary, the
+  // region's Schur complement alone is singular, but not with S_E. The capacitance is that
+  // of a monolith, of the terminal at x = 1 against the grounded sides of the environment,
+  // with the region grounded at x = 0 or not.
   const bool grounded = GENERATE(true, false);
   CAPTURE(grounded);
   const std::vector<int> ground = grounded ? std::vector<int>{2, 4} : std::vector<int>{4};
@@ -2595,10 +2600,12 @@ TEST_CASE("SubstructuringSolver grounded PEC boundaries",
 TEST_CASE("SubstructuringSolver sparse direct solver choice",
           "[substructure][Serial][Parallel]")
 {
-  // Solver.Linear.Type names the sparse direct solver of the factorizations, else Palace
-  // prefers STRUMPACK, MUMPS, then SuperLU_DIST. The environment is condensed by the
-  // partial factorization of MUMPS, or else of STRUMPACK with its Schur complement
-  // interface, and otherwise by solves. The capacitance matrix does not depend on it.
+  // Solver.Linear.Type names the sparse direct solver of the factorizations for the Schur
+  // complements of the environment and of the region, else Palace prefers MUMPS,
+  // STRUMPACK, then SuperLU_DIST (the partial factorization of MUMPS, or of STRUMPACK with
+  // its Schur complement interface, and otherwise one solve per interface DOF), but
+  // STRUMPACK with its Schur complement interface for the Schur complement of a region of
+  // at most kRegionStrumpackSchur variables. The capacitance matrix does not depend on it.
   auto config = [](const std::string &type)
   {
     return json{{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -2630,7 +2637,8 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   types.push_back("SuperLU");
 #endif
 
-  // The solver of each choice, and its partial factorization of a small SPD matrix.
+  // The solver of each choice, and its factorization of a small SPD matrix for a Schur
+  // complement.
   mfem::Mesh serial = mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::QUADRILATERAL);
   mfem::ParMesh pmesh(Mpi::World(), serial);
   mfem::H1_FECollection fec(1, 2);
@@ -2649,36 +2657,41 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   {
     CAPTURE(type);
     IoData iodata(config(type), false);
-    const std::string direct = substructuring::DirectSolverName(iodata);
-    std::string partial;
-    const bool built = (substructuring::MakePartialFactorization(iodata, *A, schur_vars,
-                                                                 partial) != nullptr);
-    std::string direct_ref = (type == "SuperLU") ? "SuperLU_DIST" : type, partial_ref;
-#if defined(PALACE_WITH_STRUMPACK_SCHUR)
-    partial_ref = (type == "Default" || type == "STRUMPACK") ? "STRUMPACK" : "";
-#endif
-#if defined(MFEM_USE_MUMPS)
-    partial_ref = (type == "Default" || type == "MUMPS") ? "MUMPS" : partial_ref;
-#endif
+    const LinearSolver requested = iodata.solver.substructuring->direct_solver;
+    const LinearSolver schur_type = SchurSolverFor(requested, SchurKind::ENVIRONMENT);
+    std::string schur_ref = (type == "SuperLU") ? "SuperLU_DIST" : type;
     if (type == "Default")
     {
-      direct_ref = (types[0] == "SuperLU") ? "SuperLU_DIST" : types[0];
-    }
-    CHECK(direct == direct_ref);
-    const auto solver = substructuring::MakeDirectSolver(iodata, Mpi::World());
-    std::string made;
-#if defined(MFEM_USE_STRUMPACK)
-    made = dynamic_cast<StrumpackSolver *>(solver.get()) ? "STRUMPACK" : made;
-#endif
 #if defined(MFEM_USE_MUMPS)
-    made = dynamic_cast<substructuring::MumpsDirectSolver *>(solver.get()) ? "MUMPS" : made;
+      schur_ref = "MUMPS";
+#elif defined(MFEM_USE_STRUMPACK)
+      schur_ref = "STRUMPACK";
+#else
+      schur_ref = "SuperLU_DIST";
 #endif
-#if defined(MFEM_USE_SUPERLU)
-    made = dynamic_cast<SuperLUSolver *>(solver.get()) ? "SuperLU_DIST" : made;
+    }
+    CHECK(std::string(DirectSolverName(schur_type)) == schur_ref);
+    std::string region_ref = schur_ref;
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+    if (type == "Default")
+    {
+      region_ref = "STRUMPACK";
+    }
 #endif
-    CHECK(made == direct_ref);
-    CHECK(built == !partial_ref.empty());
-    CHECK(partial == partial_ref);
+    CHECK(std::string(DirectSolverName(SchurSolverFor(
+              requested, SchurKind::REGION, kRegionStrumpackSchur))) == region_ref);
+    CHECK(std::string(DirectSolverName(SchurSolverFor(
+              requested, SchurKind::REGION, kRegionStrumpackSchur + 1))) == schur_ref);
+    {
+      SideSystem side({A.get()}, std::vector<char>(A->Height(), 1));
+      const auto schur = MakeSchurFactorization<double>(
+          schur_type, SymbolicFactorization::DEFAULT, Mpi::World(), side.n_glob,
+          static_cast<int>(side.rows.size()),
+          {std::move(side.irn), std::move(side.jcn), std::move(side.parts[0])},
+          side.Indices(schur_vars), side.rows, true, false);
+      CHECK(schur->ReleaseSchur().size() ==
+            (Mpi::Root(Mpi::World()) ? schur_vars.size() * schur_vars.size() : 0));
+    }
   }
 
   // The capacitance of each choice, against a monolith: the grounded boundaries of the
@@ -3648,11 +3661,29 @@ TEST_CASE("Barycentric interpolation of a rational vector function",
   CHECK(a[2] == 1.0);
 }
 
-TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
+TEST_CASE("Passivity of a condensed environment", "[substructure][Serial][Parallel]")
 {
   // S = Re + i Im with Im = Q diag(d) Q^T (Q a rotation): the least eigenvalue of Im,
   // relative to ‖S‖_F, for any scaling of S, and the Cholesky test of passivity to a
-  // tolerance, about that eigenvalue.
+  // tolerance, about that eigenvalue, on grids of all the processes, from the share of each
+  // of the lower triangle of S.
+  MPI_Comm comm = Mpi::World();
+  auto share = [comm](const std::vector<std::complex<double>> &lower, int n)
+  {
+    const auto range = TriangleShare(n, comm);
+    return std::vector<std::complex<double>>(lower.begin() + range[0],
+                                             lower.begin() + range[1]);
+  };
+  auto passivity_of = [&](const std::vector<std::complex<double>> &lower, int n)
+  {
+    const BlockCyclicGrid grid(comm, n, Mpi::Size(comm), 1);
+    return DrivenSubstructureModel::Passivity(share(lower, n).data(), n, grid);
+  };
+  auto passive_to = [&](const std::vector<std::complex<double>> &lower, int n, double tol)
+  {
+    const BlockCyclicGrid grid(comm, n, Mpi::Size(comm), 1);
+    return DrivenSubstructureModel::Passive(share(lower, n).data(), n, tol, grid);
+  };
   const double c = std::cos(0.3), s = std::sin(0.3);
   auto lower = [&](double d0, double d1, double scale)
   {
@@ -3668,14 +3699,14 @@ TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
   for (double scale : {1.0, 1.0e-6})
   {
     const auto passive = lower(0.3, 0.1, scale), active = lower(0.3, -0.2, scale);
-    CHECK(DrivenSubstructureModel::Passivity(passive.data(), 2) ==
+    CHECK(passivity_of(passive, 2) ==
           Catch::Approx(0.1 * scale / norm(passive)).epsilon(1.0e-12));
-    CHECK(DrivenSubstructureModel::Passivity(active.data(), 2) ==
+    CHECK(passivity_of(active, 2) ==
           Catch::Approx(-0.2 * scale / norm(active)).epsilon(1.0e-12));
     const double violation = 0.2 * scale / norm(active);
-    CHECK(DrivenSubstructureModel::Passive(passive.data(), 2, 1.0e-12));
-    CHECK_FALSE(DrivenSubstructureModel::Passive(active.data(), 2, 0.5 * violation));
-    CHECK(DrivenSubstructureModel::Passive(active.data(), 2, 2.0 * violation));
+    CHECK(passive_to(passive, 2, 1.0e-12));
+    CHECK_FALSE(passive_to(active, 2, 0.5 * violation));
+    CHECK(passive_to(active, 2, 2.0 * violation));
   }
 
   // A least eigenvalue repeated four times, whose whole cluster the bisection of LAPACK
@@ -3690,8 +3721,7 @@ TEST_CASE("Passivity of a condensed environment", "[substructure][Serial]")
     }
   }
   const double fro = std::sqrt(4.0 * 1.25 + 2.0 * 2.0);
-  CHECK(DrivenSubstructureModel::Passivity(S.data(), n) ==
-        Catch::Approx(-0.5 / fro).epsilon(1.0e-12));
+  CHECK(passivity_of(S, n) == Catch::Approx(-0.5 / fro).epsilon(1.0e-12));
 }
 
 TEST_CASE("Saved driven excitations match across partitions", "[substructure][Serial]")
@@ -3755,10 +3785,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "A cut or corrupted driven model header is rejected",
                  "[substructure][Serial]")
 {
-  // The header is read part by part, each only if its record holds it: a header cut short,
-  // one whose sizes exceed its record (also a negative one), one without frequencies, and a
-  // model without the record of its environment, are incomplete; another format version is
-  // rejected, and a file of another kind is not a model.
+  // The header is read record by record, each checked to hold its field: a header cut
+  // short, an interface record whose size exceeds it (also a negative one), a header record
+  // of the wrong size, one without frequencies, and a model without the record of its
+  // environment, are incomplete; another format version is rejected, and a file of another
+  // kind is not a model.
   DrivenSubstructureModel m;
   m.nG = 2;
   m.sig_w = 1;
@@ -3790,18 +3821,32 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                     ContainsSubstring("is incomplete"));
   // The interface size (the first entry of the interface record) beyond the record or
-  // negative, and more frequencies (head entry 4) than the record holds.
-  for (const auto [tag, entry, value] :
-       {std::tuple{signatures, 0, 1000}, {signatures, 0, -5}, {header, 4, 7}})
+  // negative.
+  for (const int value : {1000, -5})
   {
     m.WriteHeader(path);
-    const auto pos = payload(tag);
+    const auto pos = payload(signatures);
     {
       std::fstream f(path, std::ios::binary | std::ios::in | std::ios::out);
-      f.seekp(pos + entry * static_cast<long long>(sizeof(int)));
+      f.seekp(pos);
       f.write(reinterpret_cast<const char *>(&value), sizeof(int));
     }
-    CAPTURE(entry, value);
+    CAPTURE(value);
+    CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
+                      ContainsSubstring("is incomplete"));
+  }
+  // A header record of the wrong size, which supersedes the one before it: the fingerprint
+  // centers, and the source fingerprints of the excitations.
+  for (const auto tag : {ModelFile::Tag("DFPC"), ModelFile::Tag("DSFP")})
+  {
+    m.WriteHeader(path);
+    const std::vector<double> x(5, 1.0);
+    ModelFile::Append(path, MPI_COMM_SELF, tag, sizeof(double) * x.size(),
+                      [&](std::ostream &f)
+                      {
+                        f.write(reinterpret_cast<const char *>(x.data()),
+                                static_cast<std::streamsize>(sizeof(double) * x.size()));
+                      });
     CHECK_THROWS_WITH(saved.ReadHeader(path, Mpi::World()),
                       ContainsSubstring("is incomplete"));
   }
@@ -3852,7 +3897,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   m.excitations = {1};
   m.exc_fp = {1.0, 0.0, 0.5, 0.0, 0.25, 0.0, -0.125};
   m.ports = {1};
-  m.region_bdr_attributes = {5, 7};
   m.environment.attributes = {2};
   m.environment.bdr_attributes = {3, 4};
   m.environment.moments = {{4.0, 1.0, 0.5, 0.25, 0.75, 0.3}};
@@ -3866,16 +3910,23 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   auto record = [](double s)
   {
     Model::Record r;
-    r.S = {s, 2.0 * s, 2.0 * s, 3.0 * s};
+    r.S = {s, 2.0 * s, 3.0 * s};  // the lower triangle, the share of one process
     r.g = {s, -s};
     r.h = {std::complex<double>(0.0, s), s};
     r.c = {s};
     return r;
   };
+  // A record in the order of the file: S by the columns of its lower triangle, then g, h
+  // and c.
+  auto flat = [](double s)
+  {
+    return std::vector<std::complex<double>>{
+        s, 2.0 * s, 3.0 * s, s, -s, std::complex<double>(0.0, s), s, s};
+  };
   const auto path = (temp_dir / "driven-model-restart.bin").string();
   m.WriteHeader(path);
-  m.AppendRecord(path, record(1.0));
-  m.AppendRecord(path, record(2.0));
+  m.AppendRecord(path, record(1.0), MPI_COMM_SELF);
+  m.AppendRecord(path, record(2.0), MPI_COMM_SELF);
   {
     std::ofstream f(path, std::ios::binary | std::ios::app);
     const double part[3] = {1.0, 2.0, 3.0};
@@ -3884,22 +3935,43 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(m.NumRecords(path) == 2);
   Model saved;
   saved.ReadHeader(path, Mpi::World());
-  CHECK(saved.region_bdr_attributes == m.region_bdr_attributes);
+  CHECK(saved.environment.bdr_attributes == m.environment.bdr_attributes);
   CHECK(saved.environment.bdr_moments == m.environment.bdr_moments);
   CHECK(saved.environment.config_hash == m.environment.config_hash);
   CHECK(m.SameHeader(saved, 1.0e-10));
+
+  // A reader skips the records it does not know, so that a field can be added without a
+  // new version: here one after the header. A header appended later supersedes the first.
+  {
+    using substructuring::ModelFile;
+    const auto extra_path = (temp_dir / "driven-model-extra.bin").string();
+    m.WriteHeader(extra_path);
+    const double x = 1.0;
+    ModelFile::Append(extra_path, MPI_COMM_SELF, ModelFile::Tag("DXTR"), sizeof(x),
+                      [&](std::ostream &f)
+                      { f.write(reinterpret_cast<const char *>(&x), sizeof(x)); });
+    Model extra;
+    extra.ReadHeader(extra_path, Mpi::World());
+    CHECK(m.SameHeader(extra, 1.0e-10));
+    auto later = m;
+    later.omega = {1.0, 2.0, 3.0, 4.0};
+    later.WriteHeader(extra_path, false);
+    extra.ReadHeader(extra_path, Mpi::World());
+    CHECK(extra.omega == later.omega);
+    CHECK(later.SameHeader(extra, 1.0e-10));
+  }
   m.TruncateRecords(path, 1);
   CHECK(m.NumRecords(path) == 1);
-  CHECK(m.ReadFlatRecord(path, 0) == m.Flatten(record(1.0)));
-  m.AppendRecord(path, record(4.0));
+  CHECK(m.ReadFlatRecord(path, 0) == flat(1.0));
+  m.AppendRecord(path, record(4.0), MPI_COMM_SELF);
   CHECK(m.NumRecords(path) == 2);
-  CHECK(m.ReadFlatRecord(path, 1) == m.Flatten(record(4.0)));
+  CHECK(m.ReadFlatRecord(path, 1) == flat(4.0));
 
   // The model of another sweep does not continue: other frequencies, interface, boundaries,
   // ports, environment (beyond the rounding of its moments) or sources (beyond their
   // tolerance).
   auto other = m;
-  other.region_bdr_attributes = {5};
+  other.environment.bdr_attributes = {3};
   CHECK_FALSE(other.SameHeader(saved, 1.0e-10));
   other = m;
   other.ports = {2};
@@ -3926,13 +3998,15 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 #if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
-TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Parallel]")
+TEST_CASE("DirectSchurSolverT condenses complex systems exactly",
+          "[substructure][Serial][Parallel]")
 {
   // The complex symmetric shifted Laplacian of the MumpsSchurSolver tests, bordered by an
   // unknown on the last rank (as by a wave port's modal term), with the Schur variables on
   // a face of the cube and every other entry passed by another rank than that of its row
   // (some split in two): the Schur complement and a condensed solve against dense ones,
   // also after a refactorization with new values, by STRUMPACK and by SuperLU_DIST.
+  using Solver = DirectSchurSolverT<std::complex<double>>;
   std::vector<LinearSolver> types;
 #if defined(MFEM_USE_STRUMPACK)
   types.push_back(LinearSolver::STRUMPACK);
@@ -3982,7 +4056,7 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
   // The entries: c A by its lower triangle, and the border unknown (row n_dof) with entries
   // b against the first local DOFs of each rank and -2 on its diagonal.
   const std::complex<double> c(1.0, 0.1), b(0.5, 0.2);
-  DirectSchurSolver::Coo coo;
+  Solver::Coo coo;
   {
     std::vector<std::vector<double>> vals;
     std::vector<int> row_ptr;
@@ -4005,8 +4079,8 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
     coo.val.push_back(-2.0);
   }
   {
-    DirectSchurSolver::Coo keep, give;
-    auto push = [](DirectSchurSolver::Coo &x, int i, int j, std::complex<double> v)
+    Solver::Coo keep, give;
+    auto push = [](Solver::Coo &x, int i, int j, std::complex<double> v)
     {
       x.irn.push_back(i);
       x.jcn.push_back(j);
@@ -4134,8 +4208,8 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
   {
     rows[i] = i;
   }
-  DirectSchurSolver solver(comm, n_glob, static_cast<int>(rows.size()), std::move(coo),
-                           schur_vars, rows, type, SymbolicFactorization::AMD);
+  Solver solver(comm, n_glob, static_cast<int>(rows.size()), std::move(coo), schur_vars,
+                rows, type, SymbolicFactorization::AMD);
   auto dist = [](const auto &a, const auto &b)
   { return (a - b).cwiseAbs().maxCoeff() / b.cwiseAbs().maxCoeff(); };
   for (int k = 0; k < 2; k++)
@@ -4183,34 +4257,25 @@ TEST_CASE("DirectSchurSolver condenses exactly", "[substructure][Serial][Paralle
     }
   }
 
-  // The rows of S (of the values scaled by 2) on the ranks holding its variables, from
-  // another factorization.
+  // The blocks of S (of the values scaled by 2) on a grid, from another factorization.
   solver.Refactor();
-  const int nS = static_cast<int>(schur_vars.size()), m_loc = static_cast<int>(rows.size());
+  const int nS = static_cast<int>(schur_vars.size());
   if (rank != 0)
   {
     S_ref.resize(nS, nS);
   }
   MPI_Bcast(S_ref.data(), nS * nS, MPI_C_DOUBLE_COMPLEX, 0, comm);
-  HYPRE_BigInt n = m_loc, first = 0;
-  MPI_Exscan(&n, &first, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
-  first = (rank == 0) ? 0 : first;
-  std::vector<int> held;
-  for (int p = 0; p < nS; p++)
-  {
-    if (schur_vars[p] >= first && schur_vars[p] < first + m_loc)
-    {
-      held.push_back(p);
-    }
-  }
-  const auto R = solver.ReleaseSchurRows();
-  CHECK(R.size() == held.size() * nS);
+  BlockCyclicGrid grid(comm, nS, 0, 2);
+  const auto B = solver.ReleaseSchurBlocks(grid);
+  REQUIRE(B.size() == grid.LocalSize());
   double err = 0.0;
-  for (std::size_t r = 0; r < held.size() && R.size() == held.size() * nS; r++)
+  for (int lj = 0; lj < grid.LocalCols(); lj++)
   {
-    for (int col = 0; col < nS; col++)
+    for (int li = 0; li < grid.LocalRows(); li++)
     {
-      err = std::max(err, std::abs(R[r * nS + col] - 2.0 * S_ref(held[r], col)));
+      const std::complex<double> ref = 2.0 * S_ref(grid.GlobalRow(li), grid.GlobalCol(lj));
+      err = std::max(
+          err, std::abs(B[li + static_cast<std::size_t>(lj) * grid.LeadingDim()] - ref));
     }
   }
   MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, comm);
@@ -4427,9 +4492,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   mesh::RefineMesh(iodata, pmesh);
   std::vector<std::unique_ptr<Mesh>> mesh;
   mesh.push_back(std::make_unique<Mesh>(std::move(pmesh[0])));
-  SpaceOperator space_op(iodata, mesh);
-  EnvironmentOperator env(iodata, space_op, grid_procs);
-  space_op.SetEnvironment(env);
+  SpaceOperator full_op(iodata, mesh);
+  EnvironmentOperator env(iodata, full_op, grid_procs);
+  SpaceOperator space_op(iodata, mesh, &env);
 
   const double omega = iodata.solver.driven.sample_f[0];
   const std::complex<double> a0(1.0, 0.0), a1(0.0, omega), a2(-omega * omega, 0.0);
@@ -4439,7 +4504,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
   auto A = space_op.GetSystemMatrix(a0, a1, a2, K.get(), C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega);
-  RegionSolver solver(iodata, space_op, env);
+  DrivenRegionSolver solver(iodata, space_op, env);
   const int n = A->Height();
   ComplexVector x(n), y(n), r(n);
   x.UseDevice(true);
@@ -4521,9 +4586,9 @@ struct OnlineRegion
     pmesh.push_back(mesh::Partition(iodata, std::move(smesh), comm));
     mesh::RefineMesh(iodata, pmesh);
     meshes.push_back(std::make_unique<Mesh>(std::move(pmesh[0])));
-    space_op = std::make_unique<SpaceOperator>(iodata, meshes);
-    env = std::make_unique<EnvironmentOperator>(iodata, *space_op);
-    space_op->SetEnvironment(*env);
+    SpaceOperator full_op(iodata, meshes);
+    env = std::make_unique<EnvironmentOperator>(iodata, full_op);
+    space_op = std::make_unique<SpaceOperator>(iodata, meshes, env.get());
   }
 };
 
@@ -4732,6 +4797,18 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                     Catch::Matchers::ContainsSubstring(
                         "does not support frequency-dependent material Permittivity"));
 }
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "Driven substructuring rejects PML regions",
+                 "[substructure][Serial][Parallel]")
+{
+  // A PML region, in the region or in the environment, is rejected: its integrators are
+  // assembled on its own elements, not on each side of Γ.
+  const int attribute = GENERATE(1, 2);
+  auto config = DrivenBoxConfig(temp_dir, "Offline");
+  config["Domains"]["PML"] = {{{"Attributes", {attribute}}}};
+  CHECK_THROWS_WITH(IoData(config, false),
+                    Catch::Matchers::ContainsSubstring("does not support PML regions"));
+}
 #endif
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
@@ -4836,11 +4913,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring writes the probes it interpolates in the region",
                  "[substructure][Serial][Parallel][Long]")
 {
-  // Two probes on Γ, one in the region and one in the environment. Online on the full mesh,
-  // the first three are written, those on Γ with the field of the region, on its side of Γ,
-  // where the normal E jumps (the permittivities of the sides differ): the values of a
-  // regular sweep with the probes on Γ moved into the region by 1e-9. The exact offline
-  // sweep, of the whole device, writes those off Γ as a regular sweep.
+  // Two probes on Γ, one in the region and one in the environment. Offline and online on
+  // the full mesh, the first three are written, those on Γ with the field of the region, on
+  // its side of Γ, where the normal E jumps (the permittivities of the sides differ): the
+  // values of a regular sweep with the probes on Γ moved into the region by 1e-9.
   auto probes = [](double shift)
   {
     return [shift](json &config)
@@ -4899,8 +4975,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       }
       return written;
     };
-    CHECK(check("postpro_Online", true) == std::set<std::string>{"1", "2", "3"});
-    CHECK(check("postpro_Offline", false) == std::set<std::string>{"1", "2", "3", "4"});
+    for (const std::string dir : {"postpro_Offline", "postpro_Online"})
+    {
+      CHECK(check(dir, true) == std::set<std::string>{"1", "2", "3"});
+    }
   }
 }
 #endif
@@ -4989,14 +5067,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
-TEST_CASE_METHOD(
-    palace::test::SharedTempDir,
-    "Driven substructuring gives no voltage of the environment's wave port online",
-    "[substructure][Serial][Parallel][Long]")
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring gives no voltage of the environment's wave port",
+                 "[substructure][Serial][Parallel][Long]")
 {
-  // The voltage and the impedance of a wave port need its field: offline they are those of
-  // the environment's port, online, where the port's field is not known, they are NaN, not
-  // 0 (its S-parameter comes from the model).
+  // The voltage and the impedance of a wave port need its field, which a substructured
+  // sweep knows in the region and on Γ only: those of the environment's port are NaN
+  // offline and online, not 0 (its S-parameter comes from the condensed environment).
   const auto dir = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
                    "substructuring_driven_wave";
   auto run = [&](const std::string &file)
@@ -5040,18 +5117,65 @@ TEST_CASE_METHOD(
   };
   run("driven_wave_inactive_offline.json");
   run("driven_wave_inactive_online.json");
-  for (const std::string name : {"V_wp[2]", "Z[2]"})
+  for (const std::string file :
+       {"driven_wave_inactive_offline.json", "driven_wave_inactive_online.json"})
   {
-    CAPTURE(name);
-    const auto off = values("driven_wave_inactive_offline.json",
-                            (name == "Z[2]") ? "port-Z.csv" : "port-V.csv", name);
-    const auto on = values("driven_wave_inactive_online.json",
-                           (name == "Z[2]") ? "port-Z.csv" : "port-V.csv", name);
-    REQUIRE(!off.empty());
-    REQUIRE(on.size() == off.size());
-    CHECK(std::ranges::all_of(off, [](double x) { return std::isfinite(x); }));
-    CHECK(std::ranges::any_of(off, [](double x) { return x != 0.0; }));
-    CHECK(std::ranges::all_of(on, [](double x) { return std::isnan(x); }));
+    for (const std::string name : {"V_wp[2]", "Z[2]"})
+    {
+      CAPTURE(file, name);
+      const auto v = values(file, (name == "Z[2]") ? "port-Z.csv" : "port-V.csv", name);
+      REQUIRE(!v.empty());
+      CHECK(std::ranges::all_of(v, [](double x) { return std::isnan(x); }));
+    }
+  }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring gives the energies of the interface dielectrics",
+                 "[substructure][Serial][Parallel]")
+{
+  // A "Dielectric" postprocessing on the boundary of the lumped port, in the region: an
+  // online sweep writes its energy, without the participation and the quality factor,
+  // which need the total energy. A regular run gives it as p U, with U = E_elec + E_cap
+  // (constant materials).
+  auto dielectric = [](json &config)
+  {
+    config["Boundaries"]["Postprocessing"]["Dielectric"] = {
+        {{"Index", 1}, {"Attributes", {1}}, {"Thickness", 1.0e-3}, {"Permittivity", 10.0}}};
+    config["Solver"]["Linear"]["Tol"] = 1.0e-12;
+  };
+  RunDrivenBox(temp_dir, "Offline", dielectric);
+  RunDrivenBox(temp_dir, "Online", dielectric);
+  RunDrivenBox(temp_dir, "Regular",
+               [&](json &config)
+               {
+                 dielectric(config);
+                 config["Solver"].erase("Substructuring");
+               });
+  auto column =
+      [&](const std::string &mode, const std::string &csv, const std::string &name)
+  {
+    const auto [header, rows] = ReadCsv(temp_dir / ("postpro_" + mode) / csv);
+    const auto it = std::ranges::find(header, name);
+    REQUIRE(it != header.end());
+    std::vector<double> v;
+    for (const auto &row : rows)
+    {
+      v.push_back(row[it - header.begin()]);
+    }
+    return v;
+  };
+  const auto E_surf = column("Online", "surface-Q.csv", "E_surf[1] (J)");
+  const auto p = column("Regular", "surface-Q.csv", "p_surf[1]");
+  const auto E_elec = column("Regular", "domain-E.csv", "E_elec (J)");
+  const auto E_cap = column("Regular", "domain-E.csv", "E_cap (J)");
+  REQUIRE(!p.empty());
+  REQUIRE(E_surf.size() == p.size());
+  for (std::size_t i = 0; i < p.size(); i++)
+  {
+    const double ref = p[i] * (E_elec[i] + E_cap[i]);
+    CAPTURE(i, E_surf[i], ref);
+    CHECK(std::abs(E_surf[i] - ref) <= 1.0e-6 * std::abs(ref));
   }
 }
 
@@ -5239,6 +5363,68 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 #endif
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "Driven substructuring solves the region at a resonance of the environment",
+    "[substructure][Serial][Parallel]")
+{
+  // The box of substructuring_driven_box with a lossless environment (PEC outside, without
+  // its port), 1e-8 above its lowest resonance with Γ held fixed (12.82739137795 GHz, of an
+  // eigenmode run of the environment with PEC on Γ), where S_E has a pole: offline and on
+  // the mesh of the region, the sweep gives the S of a regular sweep, factored, to 1e-8.
+  // The condensation loses digits as the frequency nears the pole, more with STRUMPACK
+  // than with MUMPS: S is within about 1e-10 here, and 1e-13 at 1e-6 from it.
+  const auto dir = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
+                   "substructuring_driven_box";
+  const auto model = temp_dir / "postpro_Offline" / "environment.model";
+  auto run = [&](const std::string &mode, const std::function<void(json &)> &edit)
+  {
+    std::ifstream fi(dir / "driven_offline.json");
+    json config = json::parse(fi, nullptr, true, true);
+    config["Model"]["Mesh"] = (dir / "mesh" / "box.mesh").string();
+    config["Problem"]["Output"] = (temp_dir / ("postpro_" + mode)).string();
+    config["Boundaries"].erase("Absorbing");
+    config["Boundaries"]["PEC"]["Attributes"] = {1, 2};
+    config["Boundaries"]["LumpedPort"].erase(0);
+    const double f = 12.82739137795 * (1.0 + 1.0e-8);
+    config["Solver"]["Driven"] = {{"MinFreq", f}, {"MaxFreq", f}, {"FreqStep", 1.0}};
+    edit(config);
+    IoData iodata(config, false);
+    MPI_Comm comm = Mpi::World();
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    palace::Run(iodata, comm, 1);
+  };
+  run("Offline", [](json &) {});
+  run("Online",
+      [&](json &config)
+      {
+        config["Model"]["Mesh"] = RegionMeshPath(model.string());
+        config["Solver"]["Substructuring"]["ModelFile"] = model.string();
+      });
+  run("Regular",
+      [](json &config)
+      {
+        config["Solver"].erase("Substructuring");
+        config["Solver"]["Linear"]["MGMaxLevels"] = 1;
+        config["Solver"]["Linear"]["ComplexCoarseSolve"] = true;
+      });
+  // S from its magnitude (dB) and phase (degrees).
+  auto S = [&](const std::string &mode)
+  {
+    const auto csv = ReadCsv(temp_dir / ("postpro_" + mode) / "port-S.csv");
+    REQUIRE(csv.second.size() == 1);
+    const auto &row = csv.second[0];
+    return std::polar(std::pow(10.0, row[1] / 20.0), row[2] * std::numbers::pi / 180.0);
+  };
+  const auto regular = S("Regular");
+  for (const std::string mode : {"Offline", "Online"})
+  {
+    CAPTURE(mode);
+    CHECK(std::abs(S(mode) - regular) <= 1.0e-8 * std::abs(regular));
+  }
+}
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring checks the environment against the model",
@@ -5505,170 +5691,6 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 
 #if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK)
 
-#if defined(MFEM_USE_MUMPS)
-TEST_CASE("MumpsSchurSolver refactors with new values", "[substructure][Serial][Parallel]")
-{
-  // A complex symmetric shifted Laplacian with Schur variables on a face of the cube,
-  // refactored with its values doubled: the Schur complement doubles, and the internal
-  // solves halve.
-  auto pmesh = MakeSplitCube(4);
-  mfem::H1_FECollection fec(2, 3);
-  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
-  mfem::ParBilinearForm a(&fes);
-  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
-  a.AddDomainIntegrator(new mfem::MassIntegrator);
-  a.Assemble();
-  a.Finalize();
-  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
-  MPI_Comm comm = fes.GetComm();
-  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
-  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
-  bdr = 0;
-  bdr[0] = 1;
-  fes.GetEssentialTrueDofs(bdr, face);
-  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
-  for (int i = 0; i < face.Size(); i++)
-  {
-    mine[i] = fes.GetMyTDofOffset() + face[i];
-  }
-  {
-    int n = face.Size();
-    std::vector<int> cnt(nranks), disp(nranks, 0);
-    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
-    for (int r = 1; r < nranks; r++)
-    {
-      disp[r] = disp[r - 1] + cnt[r - 1];
-    }
-    schur_vars.resize(disp.back() + cnt.back());
-    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
-                   disp.data(), HYPRE_MPI_BIG_INT, comm);
-  }
-  REQUIRE(!schur_vars.empty());
-  ComplexVector x(nt);
-  x.Real().Randomize(1 + Mpi::Rank(comm));
-  x.Imag().Randomize(2 + Mpi::Rank(comm));
-
-  ComplexMumpsSchurSolver::Coo coo;
-  std::vector<std::vector<double>> vals;
-  std::vector<int> row_ptr;
-  LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
-  for (double v : vals[0])
-  {
-    coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
-  }
-  ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
-                                 schur_vars, 0.0, true, false);
-  std::vector<std::complex<double>> S[2];
-  ComplexVector y[2];
-  for (int k = 0; k < 2; k++)
-  {
-    if (k == 1)
-    {
-      for (auto &v : solver.Values())
-      {
-        v *= 2.0;
-      }
-      solver.Refactor();
-    }
-    S[k] = solver.ReleaseSchur();
-    solver.SolveInternal({&x}, {&y[k]});
-  }
-  if (Mpi::Root(comm))
-  {
-    double d = 0.0, m = 0.0;
-    for (std::size_t q = 0; q < S[0].size(); q++)
-    {
-      d = std::max(d, std::abs(S[1][q] - 2.0 * S[0][q]));
-      m = std::max(m, std::abs(2.0 * S[0][q]));
-    }
-    CHECK(d <= 1.0e-12 * m);
-  }
-  ComplexVector d(y[1]);
-  d *= 2.0;
-  d -= y[0];
-  CHECK(linalg::Norml2(comm, d) <= 1.0e-12 * linalg::Norml2(comm, y[0]));
-}
-
-TEST_CASE("MumpsSchurSolver keeps its tolerance relative when refactored",
-          "[substructure][Serial][Parallel]")
-{
-  // The block low-rank (BLR) tolerance is relative to the largest diagonal entry of the
-  // values factored: refactored with values 1e6 times smaller, the Schur complement keeps
-  // the accuracy of the first factorization (with the scale of the first values, it loses
-  // three digits here).
-  auto pmesh = MakeSplitCube(12);
-  mfem::H1_FECollection fec(2, 3);
-  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
-  mfem::ParBilinearForm a(&fes);
-  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
-  a.AddDomainIntegrator(new mfem::MassIntegrator);
-  a.Assemble();
-  a.Finalize();
-  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
-  MPI_Comm comm = fes.GetComm();
-  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
-  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
-  bdr = 0;
-  bdr[0] = 1;
-  fes.GetEssentialTrueDofs(bdr, face);
-  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
-  for (int i = 0; i < face.Size(); i++)
-  {
-    mine[i] = fes.GetMyTDofOffset() + face[i];
-  }
-  {
-    int n = face.Size();
-    std::vector<int> cnt(nranks), disp(nranks, 0);
-    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
-    for (int r = 1; r < nranks; r++)
-    {
-      disp[r] = disp[r - 1] + cnt[r - 1];
-    }
-    schur_vars.resize(disp.back() + cnt.back());
-    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
-                   disp.data(), HYPRE_MPI_BIG_INT, comm);
-  }
-  auto schur = [&](double blr_tol)
-  {
-    ComplexMumpsSchurSolver::Coo coo;
-    std::vector<std::vector<double>> vals;
-    std::vector<int> row_ptr;
-    LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
-    for (double v : vals[0])
-    {
-      coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
-    }
-    const auto values = coo.val;
-    ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
-                                   schur_vars, blr_tol, true, false);
-    std::array<std::vector<std::complex<double>>, 2> S;
-    S[0] = solver.ReleaseSchur();
-    for (std::size_t q = 0; q < values.size(); q++)
-    {
-      solver.Values()[q] = 1.0e-6 * values[q];
-    }
-    solver.Refactor();
-    S[1] = solver.ReleaseSchur();
-    return S;
-  };
-  const auto exact = schur(0.0), blr = schur(1.0e-8);
-  if (Mpi::Root(comm))
-  {
-    for (int k = 0; k < 2; k++)
-    {
-      double d = 0.0, m = 0.0;
-      for (std::size_t q = 0; q < exact[k].size(); q++)
-      {
-        d = std::max(d, std::abs(blr[k][q] - exact[k][q]));
-        m = std::max(m, std::abs(exact[k][q]));
-      }
-      CAPTURE(k, d, m);
-      CHECK(d <= 1.0e-8 * m);
-    }
-  }
-}
-#endif
-
 TEST_CASE("DrivenSubstructure rejects attribute sets that do not split the mesh",
           "[substructure][Serial][Parallel]")
 {
@@ -5701,9 +5723,9 @@ TEST_CASE("DrivenSubstructure rejects attribute sets that do not split the mesh"
 TEST_CASE("DrivenSubstructure condenses the environment exactly",
           "[substructure][Serial][Parallel][Long]")
 {
-  // S_E(ω) from the partial factorization of the environment operator (alone, and with the
-  // region) against a dense condensation of the same operator, and the substructured solve
-  // against the full system: PEC in the region, a lumped port in the environment, a
+  // S_E(ω) from the partial factorization of the environment operator against a dense
+  // condensation of the same operator, and the condensations and interior solutions of
+  // vectors of the environment: PEC in the region, a lumped port in the environment, a
   // second-order absorbing boundary on both sides, an impedance sheet crossing Γ, a lossy
   // dielectric region and a conducting environment. A second frequency reuses the analyses.
   // Hex meshes with an impedance sheet, conforming and nonconforming (hanging nodes on Γ
@@ -5778,8 +5800,8 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   const auto &fes = space_op.GetNDSpace().Get();
   MPI_Comm comm = fes.GetComm();
   const bool root = Mpi::Root(comm);
-  DrivenSubstructure ds(space_op, {1}, {2}, false, nullptr, false, type);
-  const int nG = ds.InterfaceSize();
+  DrivenSubstructure ds(space_op, {1}, {2}, type);
+  const int nG = ds.GetInterface().size;
   REQUIRE(nG > 0);
 
   // Global environment-interior and interface true DOFs (replicated), and the environment
@@ -5789,7 +5811,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
   std::vector<HYPRE_BigInt> E_loc, E;
   for (int i = 0; i < nt; i++)
   {
-    if (ds.EnvironmentInterior()[i])
+    if (ds.GetInterface().env_int[i])
     {
       E_loc.push_back(tstart + i);
     }
@@ -5806,7 +5828,7 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     MPI_Allgatherv(E_loc.data(), n, HYPRE_MPI_BIG_INT, E.data(), cnt.data(), disp.data(),
                    HYPRE_MPI_BIG_INT, comm);
   }
-  const std::vector<HYPRE_BigInt> &G = ds.InterfaceTrueDofs();
+  const std::vector<HYPRE_BigInt> &G = ds.GetInterface().tdofs;
   std::vector<HYPRE_BigInt> idx(E);
   idx.insert(idx.end(), G.begin(), G.end());
   const int nE = static_cast<int>(E.size()), n = nE + nG;
@@ -5875,27 +5897,40 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     return A;
   };
 
-  // S_ref = A_GG - A_GE A_EE^-1 A_EG with the standard real representation [[Re, -Im],
-  // [Im, Re]] of the complex blocks.
+  // The standard real representation [[Re, -Im], [Im, Re]] of a block of A, and of a
+  // vector.
+  auto real_form =
+      [&](const std::vector<std::complex<double>> &A, int r0, int nr, int c0, int nc)
+  {
+    mfem::DenseMatrix T(2 * nr, 2 * nc);
+    for (int i = 0; i < nr; i++)
+    {
+      for (int j = 0; j < nc; j++)
+      {
+        const auto a = A[static_cast<std::size_t>(c0 + j) * n + (r0 + i)];
+        T(i, j) = T(nr + i, nc + j) = a.real();
+        T(i, nc + j) = -a.imag();
+        T(nr + i, j) = a.imag();
+      }
+    }
+    return T;
+  };
+  auto real_vector = [](const std::complex<double> *x, int m)
+  {
+    mfem::Vector v(2 * m);
+    for (int i = 0; i < m; i++)
+    {
+      v(i) = x[i].real();
+      v(m + i) = x[i].imag();
+    }
+    return v;
+  };
+
+  // S_ref = A_GG - A_GE A_EE^-1 A_EG.
   auto dense_schur = [&](const std::vector<std::complex<double>> &A)
   {
-    auto real_form = [&](int r0, int nr, int c0, int nc)
-    {
-      mfem::DenseMatrix T(2 * nr, 2 * nc);
-      for (int i = 0; i < nr; i++)
-      {
-        for (int j = 0; j < nc; j++)
-        {
-          const auto a = A[static_cast<std::size_t>(c0 + j) * n + (r0 + i)];
-          T(i, j) = T(nr + i, nc + j) = a.real();
-          T(i, nc + j) = -a.imag();
-          T(nr + i, j) = a.imag();
-        }
-      }
-      return T;
-    };
-    mfem::DenseMatrix Aee = real_form(0, nE, 0, nE), Aeg = real_form(0, nE, nE, nG),
-                      Age = real_form(nE, nG, 0, nE), Agg = real_form(nE, nG, nE, nG);
+    mfem::DenseMatrix Aee = real_form(A, 0, nE, 0, nE), Aeg = real_form(A, 0, nE, nE, nG),
+                      Age = real_form(A, nE, nG, 0, nE), Agg = real_form(A, nE, nG, nE, nG);
     mfem::DenseMatrixInverse inv(Aee);
     mfem::DenseMatrix X(2 * nE, 2 * nG), Y(2 * nG, 2 * nG);
     inv.Mult(Aeg, X);
@@ -5912,166 +5947,125 @@ TEST_CASE("DrivenSubstructure condenses the environment exactly",
     return S;
   };
 
-  // Online, with the region only: given S_E and the environment's source condensation
-  // (offline), the region and interface solution must be the offline one.
-  DrivenSubstructure ds_online(space_op, {1}, {2}, true, nullptr, false, type);
-  REQUIRE(ds_online.InterfaceSize() == nG);
+  // The condensation b_G - A_GE A_EE^-1 b_E and the interior solution A_EE^-1 b_E of a
+  // vector b on (E, Γ).
+  auto dense_condense = [&](const std::vector<std::complex<double>> &A,
+                            const std::vector<std::complex<double>> &b)
+  {
+    mfem::DenseMatrix Aee = real_form(A, 0, nE, 0, nE), Age = real_form(A, nE, nG, 0, nE);
+    mfem::DenseMatrixInverse inv(Aee);
+    const mfem::Vector bE = real_vector(b.data(), nE), bG = real_vector(b.data() + nE, nG);
+    mfem::Vector xE(2 * nE), r(2 * nG);
+    inv.Mult(bE, xE);
+    Age.Mult(xE, r);
+    std::vector<std::complex<double>> red(nG), x(nE);
+    for (int a = 0; a < nG; a++)
+    {
+      red[a] = {bG(a) - r(a), bG(nG + a) - r(nG + a)};
+    }
+    for (int i = 0; i < nE; i++)
+    {
+      x[i] = {xE(i), xE(nE + i)};
+    }
+    return std::make_pair(red, x);
+  };
+
+  // A vector on (E, Γ) at rank 0.
+  auto gather = [&](const ComplexVector &v)
+  {
+    Vector full(root ? disp[nranks - 1] + cnt[nranks - 1] : 0), full_i(full.Size());
+    MPI_Gatherv(v.Real().HostRead(), nt, MPI_DOUBLE, full.HostWrite(), cnt.data(),
+                disp.data(), MPI_DOUBLE, 0, comm);
+    MPI_Gatherv(v.Imag().HostRead(), nt, MPI_DOUBLE, full_i.HostWrite(), cnt.data(),
+                disp.data(), MPI_DOUBLE, 0, comm);
+    std::vector<std::complex<double>> y(root ? n : 0);
+    for (int i = 0; root && i < n; i++)
+    {
+      y[i] = {full(idx[i]), full_i(idx[i])};
+    }
+    return y;
+  };
+  auto rel_diff =
+      [](const std::complex<double> *x, const std::vector<std::complex<double>> &y)
+  {
+    double d = 0.0, m = 0.0;
+    for (std::size_t i = 0; i < y.size(); i++)
+    {
+      d = std::max(d, std::abs(x[i] - y[i]));
+      m = std::max(m, std::abs(y[i]));
+    }
+    return d / m;
+  };
 
   for (const double omega : {1.3, 0.7})
   {
     CAPTURE(omega);
     const auto A = dense_operator(omega);
-    const auto S_ref = root ? dense_schur(A) : std::vector<std::complex<double>>();
-    for (const bool region : {false, true})  // the environment alone, then both sides
+    ds.Condense(omega);
+    // The shares of the processes of the lower triangle of S_E, by columns on rank 0.
+    std::vector<std::complex<double>> lower;
+    ToRoot<std::complex<double>>(comm, ds.TakeSchur(), TriangleShareSizes(nG, comm),
+                                 kTriangleChunk,
+                                 [&lower](const std::complex<double> *x, std::size_t m)
+                                 { lower.insert(lower.end(), x, x + m); });
+    if (root)
     {
-      ds.Condense(omega, region);
+      const auto S_ref = dense_schur(A);
+      REQUIRE(lower.size() == static_cast<std::size_t>(TriangleSize(nG)));
+      double d = 0.0, m = 0.0;
+      std::size_t q = 0;
+      for (int b = 0; b < nG; b++)
+      {
+        for (int a = b; a < nG; a++, q++)
+        {
+          const std::size_t ab = static_cast<std::size_t>(b) * nG + a;
+          d = std::max(d, std::abs(lower[q] - S_ref[ab]));
+          m = std::max(m, std::abs(S_ref[ab]));
+        }
+      }
+      CAPTURE(nG, nE, d, m);
+      CHECK(d <= exact_tol * m);
+    }
+
+    // The condensations of the port excitation (an environment source), of a random vector
+    // on both sides and of a functional of the environment interior (as of a port voltage),
+    // and their interior solutions (0 on Γ).
+    std::vector<ComplexVector> b(3, ComplexVector(nt)), x;
+    space_op.GetExcitationVector(1, omega, b[0]);
+    b[1].Real().Randomize(3 + Mpi::Rank(comm));
+    b[1].Imag().Randomize(5 + Mpi::Rank(comm));
+    b[2].Real().Randomize(13 + Mpi::Rank(comm));
+    b[2].Imag() = 0.0;
+    for (int i = 0; i < nt; i++)
+    {
+      if (!ds.GetInterface().env_int[i])
+      {
+        b[2].Real()(i) = 0.0;
+      }
+    }
+    const auto red = ds.CondenseEnvironment({&b[0], &b[1], &b[2]}, &x);
+    CHECK(ds.CondenseEnvironment({}).empty());  // an environment without ports
+    REQUIRE(x.size() == 3);
+    for (int k = 0; k < 3; k++)
+    {
+      const auto bk = gather(b[k]), xk = gather(x[k]);
       if (!root)
       {
         continue;
       }
-      const auto &S = ds.Schur();
-      REQUIRE(S.size() == S_ref.size());
-      double d = 0.0, m = 0.0, asym = 0.0;
-      for (int b = 0; b < nG; b++)
+      const auto [red_ref, x_ref] = dense_condense(A, bk);
+      REQUIRE(red.size() == 3 * static_cast<std::size_t>(nG));
+      const double d_red = rel_diff(red.data() + static_cast<std::size_t>(k) * nG, red_ref),
+                   d_x = rel_diff(xk.data(), x_ref);
+      double x_gamma = 0.0;
+      for (int a = 0; a < nG; a++)
       {
-        for (int a = 0; a < nG; a++)
-        {
-          const std::size_t ab = static_cast<std::size_t>(b) * nG + a;
-          d = std::max(d, std::abs(S[ab] - S_ref[ab]));
-          m = std::max(m, std::abs(S_ref[ab]));
-          asym = std::max(asym, std::abs(S[ab] - S[static_cast<std::size_t>(a) * nG + b]));
-        }
+        x_gamma = std::max(x_gamma, std::abs(xk[nE + a]));
       }
-      CAPTURE(nG, nE, d, m, asym);
-      CHECK(d <= exact_tol * m);
-      CHECK(asym <= exact_tol * m);
-    }
-
-    // Substructured solves for the port excitation (an environment source) and random
-    // right-hand sides (sources on both sides; the third has the second's environment
-    // part): residuals of the full system.
-    std::vector<ComplexVector> b(3, ComplexVector(nt)), u;
-    space_op.GetExcitationVector(1, omega, b[0]);
-    b[1].Real().Randomize(3 + Mpi::Rank(comm));
-    b[1].Imag().Randomize(5 + Mpi::Rank(comm));
-    b[2].Real().Randomize(7 + Mpi::Rank(comm));
-    b[2].Imag().Randomize(11 + Mpi::Rank(comm));
-    for (int i = 0; i < nt; i++)
-    {
-      if (!ds.RegionInterior()[i])
-      {
-        b[2].Real()(i) = b[1].Real()(i);
-        b[2].Imag()(i) = b[1].Imag()(i);
-      }
-    }
-    for (int d : space_op.GetNDDbcTDofLists().back())
-    {
-      b[1].Real()(d) = b[1].Imag()(d) = b[2].Real()(d) = b[2].Imag()(d) = 0.0;
-    }
-    ds.Solve({&b[0], &b[1], &b[2]}, u);
-    const auto g_env = ds.EnvironmentSourceCondensation();
-    const auto u_gamma = ds.InterfaceSolution();
-
-    // A condensed environment functional (as for the environment's port voltages):
-    // l^T u_k = c + h^T u_Γ,k with c fixed by the environment sources, so the value for the
-    // third right-hand side follows from the second's.
-    {
-      ComplexVector l(nt);
-      l.Real().Randomize(13 + Mpi::Rank(comm));
-      l.Imag() = 0.0;
-      for (int i = 0; i < nt; i++)
-      {
-        if (!ds.EnvironmentInterior()[i])
-        {
-          l.Real()(i) = 0.0;
-        }
-      }
-      const auto h = ds.CondenseEnvironment({&l});
-      CHECK(ds.CondenseEnvironment({}).empty());  // an environment without ports
-      std::vector<ComplexVector> x;  // the environment interior solution for b[1]
-      ds.CondenseEnvironment({&b[1]}, &x);
-      double lx[2] = {mfem::InnerProduct(l.Real(), x[0].Real()),
-                      mfem::InnerProduct(l.Real(), x[0].Imag())};
-      Mpi::GlobalSum(2, lx, comm);
-      std::complex<double> V[2];
-      for (int k = 0; k < 2; k++)
-      {
-        double v[2] = {mfem::InnerProduct(l.Real(), u[k + 1].Real()),
-                       mfem::InnerProduct(l.Real(), u[k + 1].Imag())};
-        Mpi::GlobalSum(2, v, comm);
-        V[k] = {v[0], v[1]};
-      }
-      if (root)
-      {
-        std::complex<double> hu[2] = {0.0, 0.0};
-        for (int k = 0; k < 2; k++)
-        {
-          for (int a = 0; a < nG; a++)
-          {
-            hu[k] += h[a] * u_gamma[static_cast<std::size_t>(k + 1) * nG + a];
-          }
-        }
-        const double dv = std::abs(V[1] - (V[0] - hu[0] + hu[1]));
-        CAPTURE(dv, std::abs(V[1]));
-        CHECK(dv <= exact_tol * std::abs(V[1]));
-        // and l^T u = l^T x + h^T u_Γ, with x the environment interior solution.
-        const double dc = std::abs(V[0] - (std::complex<double>(lx[0], lx[1]) + hu[0]));
-        CAPTURE(dc);
-        CHECK(dc <= exact_tol * std::abs(V[0]));
-      }
-    }
-
-    // Online: the region and interface values of the offline solution, 0 in the
-    // environment interior.
-    {
-      std::vector<std::complex<double>> S_env;
-      if (root)
-      {
-        S_env = ds.Schur();
-      }
-      ds_online.Condense(omega, std::move(S_env));
-      std::vector<ComplexVector> u_online;
-      ds_online.Solve({&b[0], &b[1], &b[2]}, u_online, &g_env);
-      for (int k = 0; k < 3; k++)
-      {
-        double dmax[2] = {0.0, 0.0};
-        const double *xr = u_online[k].Real().HostRead(),
-                     *xi = u_online[k].Imag().HostRead();
-        const double *yr = u[k].Real().HostRead(), *yi = u[k].Imag().HostRead();
-        for (int i = 0; i < nt; i++)
-        {
-          const std::complex<double> x(xr[i], xi[i]), y(yr[i], yi[i]);
-          if (ds.EnvironmentInterior()[i])
-          {
-            dmax[1] = std::max(dmax[1], std::abs(x));
-          }
-          else
-          {
-            dmax[0] = std::max(dmax[0], std::abs(x - y));
-          }
-        }
-        Mpi::GlobalMax(2, dmax, comm);
-        const double unorm = linalg::Norml2(comm, u[k]);
-        CAPTURE(k, dmax[0], dmax[1], unorm);
-        CHECK(dmax[0] <= exact_tol * unorm);
-        CHECK(dmax[1] == 0.0);
-      }
-    }
-    auto K1 = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
-    auto C1 = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    auto M1 = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
-    auto A21 = space_op.GetExtraSystemMatrix<ComplexOperator>(omega, Operator::DIAG_ZERO);
-    auto A_full = space_op.GetSystemMatrix(
-        std::complex<double>(1.0, 0.0), std::complex<double>(0.0, omega),
-        std::complex<double>(-omega * omega, 0.0), K1.get(), C1.get(), M1.get(), A21.get());
-    for (int k = 0; k < 3; k++)
-    {
-      ComplexVector r(nt);
-      A_full->Mult(u[k], r);
-      r -= b[k];
-      const double res = linalg::Norml2(comm, r) / linalg::Norml2(comm, b[k]);
-      CAPTURE(k, res);
-      CHECK(res <= exact_tol);
+      CAPTURE(k, d_red, d_x, x_gamma);
+      CHECK(d_red <= exact_tol);
+      CHECK(d_x <= exact_tol);
+      CHECK(x_gamma == 0.0);
     }
   }
 }
@@ -7193,95 +7187,169 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(d.Norml2() <= 1.0e-9 * u_ref.Norml2());
 }
 
-TEST_CASE("Rows of an interface operator pass through rank 0 in chunks",
-          "[substructure][Serial][Parallel]")
+#if defined(MFEM_USE_MUMPS)
+
+TEST_CASE("MumpsSchurSolver refactors with new values", "[substructure][Serial][Parallel]")
 {
-  // Rank q holds q + 2 rows of width 3; a chunk of 1 or 6 doubles holds 1 or 2 rows, the
-  // largest one all of them.
-  MPI_Comm comm = Mpi::World();
-  const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm), w = 3;
-  const std::size_t chunk = GENERATE(1, 6, 1000);
-  auto value = [](int q, int r, int c) { return 100.0 * q + 10.0 * r + c; };
-  std::vector<int> cnt(nranks);
-  for (int q = 0; q < nranks; q++)
+  // A complex symmetric shifted Laplacian with Schur variables on a face of the cube,
+  // refactored with its values doubled: the Schur complement doubles, and the internal
+  // solves halve.
+  auto pmesh = MakeSplitCube(4);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
+  mfem::ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+  a.AddDomainIntegrator(new mfem::MassIntegrator);
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
+  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
+  bdr = 0;
+  bdr[0] = 1;
+  fes.GetEssentialTrueDofs(bdr, face);
+  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
+  for (int i = 0; i < face.Size(); i++)
   {
-    cnt[q] = q + 2;
+    mine[i] = fes.GetMyTDofOffset() + face[i];
   }
-  std::vector<double> rows(static_cast<std::size_t>(cnt[rank]) * w), expected;
-  for (int r = 0; r < cnt[rank]; r++)
   {
-    for (int c = 0; c < w; c++)
+    int n = face.Size();
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
     {
-      rows[r * w + c] = value(rank, r, c);
+      disp[r] = disp[r - 1] + cnt[r - 1];
     }
+    schur_vars.resize(disp.back() + cnt.back());
+    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
   }
+  REQUIRE(!schur_vars.empty());
+  ComplexVector x(nt);
+  x.Real().Randomize(1 + Mpi::Rank(comm));
+  x.Imag().Randomize(2 + Mpi::Rank(comm));
 
-  // To rank 0: every row once, in rank order, in chunks of at most the chunk.
-  std::vector<double> got;
-  int most = 0;
-  substructuring::RowsToRoot(comm, rows, w, cnt, chunk,
-                             [&](const double *x, int n)
-                             {
-                               got.insert(got.end(), x, x + n * w);
-                               most = std::max(most, n);
-                             });
-  for (int q = 0; Mpi::Root(comm) && q < nranks; q++)
+  ComplexMumpsSchurSolver::Coo coo;
+  std::vector<std::vector<double>> vals;
+  std::vector<int> row_ptr;
+  LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
+  for (double v : vals[0])
   {
-    for (int r = 0; r < cnt[q]; r++)
+    coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
+  }
+  ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
+                                 schur_vars, 0.0, true, false);
+  std::vector<std::complex<double>> S[2];
+  ComplexVector y[2];
+  for (int k = 0; k < 2; k++)
+  {
+    if (k == 1)
     {
-      for (int c = 0; c < w; c++)
+      for (auto &v : solver.Values())
       {
-        expected.push_back(value(q, r, c));
+        v *= 2.0;
       }
+      solver.Refactor();
     }
+    S[k] = solver.ReleaseSchur();
+    solver.SolveInternal({&x}, {&y[k]});
   }
-  CHECK(got == expected);
-  CHECK(most <= std::max<int>(1, static_cast<int>(chunk) / w));
-
-  // From rank 0: rank q takes the rows 3 i + q (i < 2 q + 3) of a source, in that order.
-  auto need = [](int q)
-  {
-    std::vector<int> a;
-    for (int i = 0; i < 2 * q + 3; i++)
-    {
-      a.push_back(3 * i + q);
-    }
-    return a;
-  };
-  auto read = [](int a, double *x)
-  {
-    for (int c = 0; c < 3; c++)
-    {
-      x[c] = a + 0.25 * c;
-    }
-  };
-  substructuring::RowsFromRoot from(comm, w, chunk);
   if (Mpi::Root(comm))
   {
-    from.Serve(need, read);
-  }
-  else
-  {
-    // Each chunk holds the next rows of the chunk, or the rest (probed before Next takes
-    // it).
-    const std::vector<int> a = need(rank);
-    const std::size_t per = std::max<std::size_t>(1, chunk / w);
-    for (std::size_t k = 0; k < a.size(); k++)
+    double d = 0.0, m = 0.0;
+    for (std::size_t q = 0; q < S[0].size(); q++)
     {
-      if (k % per == 0)
+      d = std::max(d, std::abs(S[1][q] - 2.0 * S[0][q]));
+      m = std::max(m, std::abs(2.0 * S[0][q]));
+    }
+    CHECK(d <= 1.0e-12 * m);
+  }
+  ComplexVector d(y[1]);
+  d *= 2.0;
+  d -= y[0];
+  CHECK(linalg::Norml2(comm, d) <= 1.0e-12 * linalg::Norml2(comm, y[0]));
+}
+
+TEST_CASE("MumpsSchurSolver keeps its tolerance relative when refactored",
+          "[substructure][Serial][Parallel]")
+{
+  // The block low-rank (BLR) tolerance is relative to the largest diagonal entry of the
+  // values factored: refactored with values 1e6 times smaller, the Schur complement keeps
+  // the accuracy of the first factorization (with the scale of the first values, it loses
+  // three digits here).
+  auto pmesh = MakeSplitCube(12);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
+  mfem::ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+  a.AddDomainIntegrator(new mfem::MassIntegrator);
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
+  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
+  bdr = 0;
+  bdr[0] = 1;
+  fes.GetEssentialTrueDofs(bdr, face);
+  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
+  for (int i = 0; i < face.Size(); i++)
+  {
+    mine[i] = fes.GetMyTDofOffset() + face[i];
+  }
+  {
+    int n = face.Size();
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    schur_vars.resize(disp.back() + cnt.back());
+    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
+  }
+  auto schur = [&](double blr_tol)
+  {
+    ComplexMumpsSchurSolver::Coo coo;
+    std::vector<std::vector<double>> vals;
+    std::vector<int> row_ptr;
+    LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
+    for (double v : vals[0])
+    {
+      coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
+    }
+    const auto values = coo.val;
+    ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
+                                   schur_vars, blr_tol, true, false);
+    std::array<std::vector<std::complex<double>>, 2> S;
+    S[0] = solver.ReleaseSchur();
+    for (std::size_t q = 0; q < values.size(); q++)
+    {
+      solver.Values()[q] = 1.0e-6 * values[q];
+    }
+    solver.Refactor();
+    S[1] = solver.ReleaseSchur();
+    return S;
+  };
+  const auto exact = schur(0.0), blr = schur(1.0e-8);
+  if (Mpi::Root(comm))
+  {
+    for (int k = 0; k < 2; k++)
+    {
+      double d = 0.0, m = 0.0;
+      for (std::size_t q = 0; q < exact[k].size(); q++)
       {
-        MPI_Status status;
-        int n = 0;
-        MPI_Probe(0, 0, comm, &status);
-        MPI_Get_count(&status, MPI_DOUBLE, &n);
-        CHECK(n == static_cast<int>(std::min(per, a.size() - k)) * w);
+        d = std::max(d, std::abs(blr[k][q] - exact[k][q]));
+        m = std::max(m, std::abs(exact[k][q]));
       }
-      std::vector<double> x(w), ref(w);
-      from.Next(x.data());
-      read(a[k], ref.data());
-      CHECK(x == ref);
+      CAPTURE(k, d, m);
+      CHECK(d <= 1.0e-8 * m);
     }
   }
 }
+#endif
 
 }  // namespace palace

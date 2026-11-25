@@ -22,7 +22,9 @@ class Units;
 namespace config
 {
 
+struct BoundaryData;
 struct ConductivityData;
+struct DomainData;
 
 }  // namespace config
 
@@ -55,6 +57,26 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
 
 // Convenience wrapper: Load followed by Partition with no Preprocess hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
+
+// Extrude the PML regions of the entries of config["Boundaries"]["PML"] (the extruded
+// blocks of domains.pml, see config::PMLData::Extrusion) from boundaries of a serial 3D
+// mesh: the surface of each entry is split into parts, the geometry nodes of each face of a
+// part move along the normal of a flat part, per component on a box, or along their rays
+// from their closest points on the core, each triangle becomes a column of prisms and each
+// quadrilateral one of hexahedra, with new attributes (one per attribute of the elements
+// below, above those of the mesh and of the configuration), and the other boundaries
+// through the edges of a part are extruded with their attributes. The surface becomes an
+// interior boundary, and the outer surface of each layer a boundary with the back
+// attribute. Each entry is replaced by one block for each part, with the attributes of the
+// extruded elements and of the elements below them, the back attribute, the default core,
+// and the form of the depth into the layer. Checks that no two parts touch, that each part
+// has one of the shapes of the depth, that every face faces its direction, that the layer
+// ends flush on the other boundaries and keeps the material interfaces and the boundaries
+// with a boundary condition across a box flat, that every extruded element has a positive
+// Jacobian, that no port or Floquet boundary touches the surface, and that only parts
+// extruded along their normal have periodic boundaries along their edges.
+void ExtrudePML(std::unique_ptr<mfem::Mesh> &mesh, config::DomainData &domains,
+                const config::BoundaryData &boundaries);
 
 // Maximum axis-aligned bbox extent of the pre-partition serial mesh, reduced over
 // `comm` so every rank sees the same value. Returns 0 when no rank holds a mesh.

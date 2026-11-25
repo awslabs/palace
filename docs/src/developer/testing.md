@@ -505,7 +505,8 @@ data rather than reading from the source-tree `examples/` directory.
     GPU runners. Each configuration runs the full unit test suite (serial +
     parallel) and all default regression tests.
  3. Long tests (`long-tests.yml`): Expensive test cases (e.g.,
-    `transmon/transmon_amr`) that are too slow to run on every push. They also
+    `transmon/transmon_amr`) that are too slow to run on every push, on a
+    Graviton4 (`arm64-8g`) runner. They also
     run the unit tests on MFEM's debug device (`--device debug`, on 1 and 2
     processes), which fails on a host access to data whose valid copy is on
     the device: `operator[]` and `operator()` do not synchronize, so on a GPU
@@ -531,6 +532,11 @@ The workflow checks out the exact revision for which the label was applied,
 or which produced the synchronize event. Same-repository pull requests run
 immediately. Pull requests from forks run after a maintainer approves the
 workflow through GitHub's **Approve and run** prompt.
+
+Every merge to `main` also runs the long tests, on the merge commit, so a
+merge without the label is still tested, after the fact: a failure shows on
+the commit on `main`. Their logs record the wall time of each long case after
+each merge, on the same instance type, and GitHub keeps them for 90 days.
 
 ### Building and running regression tests
 

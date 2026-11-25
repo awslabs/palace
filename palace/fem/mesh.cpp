@@ -13,6 +13,7 @@
 #include "fem/fespace.hpp"
 #include "fem/libceed/integrator.hpp"
 #include "utils/communication.hpp"
+#include "utils/omp.hpp"
 
 namespace palace
 {
@@ -227,7 +228,7 @@ auto GetElementAttributes(const std::vector<int> &indices,
 
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
                           std::vector<int> &active_indices, std::vector<int> &elem_attr,
-                          const mfem::GridFunction &mesh_nodes)
+                          const mfem::GridFunction &mesh_nodes, bool coords)
 {
   const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
   const mfem::Mesh &mesh = *mesh_fespace.GetMesh();
@@ -263,12 +264,15 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   ceed::InitCeedVector(attr_values, ceed, &elem_attr_vec);
 
   // Allocate storage for geometry factor data (attribute + quadrature weight + Jacobian at
-  // each quadrature point). The vector is only ever written and read by libCEED operators
-  // on this Ceed context, so it is stored in the backend's own strided layout
+  // each quadrature point, optionally followed by the quadrature point coordinates for 3D
+  // domain elements). The vector is only ever written and read by libCEED operators on this
+  // Ceed context, so it is stored in the backend's own strided layout
   // (CEED_STRIDES_BACKEND, as for the assembled quadrature data). Backends whose E-vector
   // layout matches that layout (the GPU backends) then read the vector directly as the
   // E-vector of every operator instead of gathering a copy of it per operator at setup.
-  CeedInt geom_data_size = 2 + data.space_dim * data.dim;
+  coords = coords && data.dim == 3 && data.space_dim == 3;
+  const CeedInt geom_data_size =
+      ceed::CeedGeometryDataSize(data.space_dim, data.dim, coords);
   const CeedSize geom_data_length =
       static_cast<CeedSize>(num_elem) * num_qpts * geom_data_size;
   PalaceCeedCall(ceed, CeedVectorCreate(ceed, geom_data_length, &data.geom_data));
@@ -283,7 +287,7 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   // Compute the required geometry factors at quadrature points.
   ceed::AssembleCeedGeometryData(ceed, mesh_restr, mesh_basis, mesh_nodes_vec, attr_restr,
                                  attr_basis, elem_attr_vec, data.geom_data,
-                                 data.geom_data_restr);
+                                 data.geom_data_restr, coords);
   PalaceCeedCall(ceed, CeedVectorDestroy(&mesh_nodes_vec));
   PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&mesh_restr));
   PalaceCeedCall(ceed, CeedBasisDestroy(&mesh_basis));
@@ -297,9 +301,13 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
 auto BuildCeedGeomFactorData(
     const mfem::ParMesh &mesh, const std::unordered_map<int, int> &loc_attr,
     const std::unordered_map<int, std::unordered_map<int, int>> &loc_bdr_attr,
-    const std::vector<int> &lossy_attr, const std::vector<int> &active_bdr_attr, Ceed ceed,
-    bool ceed_from_self)
+    const std::vector<int> &active_attr, const std::vector<int> &active_bdr_attr, Ceed ceed,
+    bool ceed_from_self, const std::vector<int> *attr_list = nullptr)
 {
+  // With attr_list, only the domain elements of the given (sorted) attributes, with the
+  // quadrature point coordinates and without the shared element subsets.
+  const bool coords = (attr_list != nullptr);
+  const std::vector<int> no_active_attr;
   // Create a list of the element indices in the mesh corresponding to a given thread and
   // element geometry type and corresponding geometry factor data. libCEED operators will be
   // constructed in parallel over threads, where each thread builds a composite operator
@@ -326,17 +334,30 @@ auto BuildCeedGeomFactorData(
     auto element_indices = GetElementIndices(mesh, use_bdr, start, stop);
     for (auto &[geom, indices] : element_indices)
     {
-      auto [active_indices, elem_attr] =
-          GetElementAttributes(indices, GetCeedAttribute, lossy_attr);
-      geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
-                                                       elem_attr, *mesh.GetNodes()));
+      if (attr_list)
+      {
+        std::erase_if(
+            indices, [&](int e)
+            { return !std::ranges::binary_search(*attr_list, mesh.GetAttribute(e)); });
+        if (indices.empty())
+        {
+          continue;
+        }
+      }
+      // The shared active-domain subset does not apply to the geometry factor data
+      // restricted to given attributes.
+      auto [active_indices, elem_attr] = GetElementAttributes(
+          indices, GetCeedAttribute, attr_list ? no_active_attr : active_attr);
+      geom_data_map.emplace(geom,
+                            AssembleGeometryData(ceed, geom, indices, active_indices,
+                                                 elem_attr, *mesh.GetNodes(), coords));
     }
   }
 
   // Then boundary elements. For embedded meshes (dim != sdim), boundary element geometry
   // data is only available when the CEED data has been rebuilt from the mesh itself
   // (after attribute remapping on a boundary submesh).
-  if (mesh.Dimension() == mesh.SpaceDimension() || ceed_from_self)
+  if (!attr_list && (mesh.Dimension() == mesh.SpaceDimension() || ceed_from_self))
   {
     const int nbe = mesh.GetNBE();
     const int stride = (nbe + nt - 1) / nt;
@@ -350,7 +371,7 @@ auto BuildCeedGeomFactorData(
       auto [active_indices, elem_attr] =
           GetElementAttributes(indices, GetCeedAttribute, active_bdr_attr);
       geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
-                                                       elem_attr, *mesh.GetNodes()));
+                                                       elem_attr, *mesh.GetNodes(), false));
     }
   }
 
@@ -399,13 +420,13 @@ Mesh::GetCeedGeomFactorData(Ceed ceed) const
   auto &geom_data_map = it->second;
   if (geom_data_map.empty() && !loc_attr.empty())
   {
-    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, lossy_attr,
+    geom_data_map = BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, active_attr,
                                             active_bdr_attr, ceed, ceed_from_self);
   }
   return geom_data_map;
 }
 
-void Mesh::SetCeedActiveAttributes(std::vector<int> lossy_attr_,
+void Mesh::SetCeedActiveAttributes(std::vector<int> active_attr_,
                                    std::vector<int> active_bdr_attr_)
 {
   auto Normalize = [](std::vector<int> &attr, std::size_t max_attr)
@@ -415,9 +436,9 @@ void Mesh::SetCeedActiveAttributes(std::vector<int> lossy_attr_,
     MFEM_VERIFY(attr.empty() || (attr.front() > 0 && attr.back() <= max_attr),
                 "Invalid process-local libCEED element-set attribute!");
   };
-  Normalize(lossy_attr_, MaxCeedAttribute());
+  Normalize(active_attr_, MaxCeedAttribute());
   Normalize(active_bdr_attr_, MaxCeedBdrAttribute());
-  if (lossy_attr_ == lossy_attr && active_bdr_attr_ == active_bdr_attr)
+  if (active_attr_ == active_attr && active_bdr_attr_ == active_bdr_attr)
   {
     // Reconfiguring with the same sets is a no-op. This happens for the mesh levels
     // retained across adaptive refinement iterations, whose geometry data stays valid.
@@ -431,8 +452,28 @@ void Mesh::SetCeedActiveAttributes(std::vector<int> lossy_attr_,
     MFEM_VERIFY(geom_data_map.empty(),
                 "Cannot change the libCEED element sets after geometry data is built!");
   }
-  lossy_attr = std::move(lossy_attr_);
+  active_attr = std::move(active_attr_);
   active_bdr_attr = std::move(active_bdr_attr_);
+}
+
+const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
+Mesh::GetCeedGeomFactorData(Ceed ceed, const std::vector<int> &attr_list) const
+{
+  MFEM_ASSERT(std::ranges::is_sorted(attr_list),
+              "Attribute list for the geometry factor data must be sorted!");
+  // The map entries are inserted by each thread for its own Ceed context.
+  std::optional<ceed::GeometryObjectMap<ceed::CeedGeomFactorData>> *geom_data_map;
+  PalacePragmaOmp(critical(GetCeedGeomFactorData))
+  {
+    geom_data_map = &geom_data_attr[attr_list][ceed];
+  }
+  if (!geom_data_map->has_value())
+  {
+    *geom_data_map =
+        BuildCeedGeomFactorData(*mesh, loc_attr, loc_bdr_attr, active_attr, active_bdr_attr,
+                                ceed, ceed_from_self, &attr_list);
+  }
+  return **geom_data_map;
 }
 
 void Mesh::ResetCeedObjects()
@@ -447,6 +488,22 @@ void Mesh::ResetCeedObjects()
     }
   }
   geom_data.clear();
+  for (auto &[attr_list, ceed_map] : geom_data_attr)
+  {
+    for (auto &[ceed, geom_data_map] : ceed_map)
+    {
+      if (geom_data_map)
+      {
+        for (auto &[key, val] : *geom_data_map)
+        {
+          PalaceCeedCall(ceed, CeedVectorDestroy(&val.geom_data));
+          PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.geom_data_restr));
+          PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&val.active_geom_data_restr));
+        }
+      }
+    }
+  }
+  geom_data_attr.clear();
   for (std::size_t i = 0; i < ceed::internal::GetCeedObjects().size(); i++)
   {
     Ceed ceed = ceed::internal::GetCeedObjects()[i];
@@ -465,7 +522,7 @@ void Mesh::Update()
   loc_bdr_attr.clear();
   loc_attr = BuildCeedAttributes(parent_mesh);
   loc_bdr_attr = BuildCeedBdrAttributes(parent_mesh);
-  lossy_attr.clear();
+  active_attr.clear();
   active_bdr_attr.clear();
   ResetCeedObjects();
 }
@@ -565,7 +622,7 @@ void Mesh::RebuildCeedAttributes()
     loc_bdr_attr = BuildCeedBdrAttributes(*mesh);
   }
   ceed_from_self = true;
-  lossy_attr.clear();
+  active_attr.clear();
   active_bdr_attr.clear();
   ResetCeedObjects();
 }

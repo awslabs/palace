@@ -41,8 +41,8 @@ class SpaceOperator;
 //   x̃(ω) = Σ_j a_j(ω) x_j,   a_j(ω) = (w_j / (ω - ω_j)) / Σ_k w_k / (ω - ω_k),
 // which interpolates the samples. The weights are those of the minimal rational interpolant
 // (MRI) of the snapshots {x_j, iω_j x_j}, as for the error indicator of the adaptive driven
-// solver (MinimalRationalInterpolation). The samples are distributed by rows over comm (the
-// local rows of each rank), and the weights are replicated.
+// solver (MinimalRationalInterpolation). The entries of the samples are distributed over
+// comm (each process holds its entries of every sample), and the weights are replicated.
 //
 class BarycentricInterpolant
 {
@@ -53,12 +53,8 @@ public:
   // weights.
   void AddSample(double omega, const std::vector<std::complex<double>> &x);
 
-  // The interpolant at ω (the local rows).
+  // The interpolant at ω (the entries of this process).
   std::vector<std::complex<double>> Evaluate(double omega) const;
-
-  // The interpolant over an orthonormal basis q_i of the samples, x̃(ω) = Σ_i y_i(ω) q_i.
-  const std::vector<std::vector<std::complex<double>>> &Basis() const { return Q; }
-  std::vector<std::complex<double>> BasisCoefficients(double omega) const;
 
   // The frequency between the outermost samples where the denominator Σ_j w_j / (ω - ω_j)
   // is smallest (near a pole, or far from the samples): the next sample.
@@ -67,7 +63,7 @@ public:
   const std::vector<double> &Samples() const { return z; }
   const std::vector<std::complex<double>> &Weights() const { return w; }
 
-  // Sample j as added (the local rows), x_j = Σ_i R_ij q_i.
+  // Sample j as added (the entries of this process), x_j = Σ_i R_ij q_i.
   std::vector<std::complex<double>> Sample(std::size_t j) const;
 
   // The coefficients a_j(ω) of samples at z with weights w.
@@ -81,13 +77,17 @@ private:
   std::vector<std::vector<std::complex<double>>> Q;  // orthonormal basis of the samples
   std::vector<std::complex<double>> R;               // samples = Q R (m x m, column-major)
   std::vector<std::complex<double>> w;
+
+  // The coefficients y_i(ω) of the interpolant over the basis q_i of the samples,
+  // x̃(ω) = Σ_i y_i(ω) q_i.
+  std::vector<std::complex<double>> BasisCoefficients(double omega) const;
 };
 
 //
 // A model saved by an offline driven substructuring sweep, written and read on rank 0 (the
 // header broadcast): the header (the interface signatures, the fingerprints of the
-// environment and of its sources, the environment's ports, the boundary attributes of the
-// region, the frequencies, the reference length of the nondimensionalization), the record
+// environment and of its sources, the environment's ports, the frequencies, the reference
+// length of the nondimensionalization), the record
 // of the environment (see EnvironmentRecord) and one record per frequency: S_E(ω), the
 // condensation g of the environment's sources (per excitation with environment sources),
 // and the condensed functionals of the environment's ports, whose values are V_j = c_jk +
@@ -97,7 +97,7 @@ private:
 //
 struct DrivenSubstructureModel
 {
-  static constexpr int kVersion = 13;  // of the header
+  static constexpr int kVersion = 14;  // of the model (a new header record leaves it)
   static constexpr int kSourceFp = 7;  // see DrivenSubstructure::SourceFingerprint
   // Relative tolerance of the comparisons of the environment with that of a saved model:
   // its fingerprint and element moments are sums over elements, which the partition changes
@@ -112,9 +112,8 @@ struct DrivenSubstructureModel
   std::vector<int> excitations;  // excitations with environment sources
   std::vector<double> exc_fp;    // their source fingerprints (kSourceFp each)
   std::vector<int> ports;        // environment lumped ports (index) and wave ports (-index)
-  std::vector<int> port_attributes;        // of each port: their number, then them (sorted)
-  std::vector<int> region_bdr_attributes;  // see BoundaryAttributesInRegion
-  std::vector<double> omega;               // frequencies of the records (nondimensional)
+  std::vector<int> port_attributes;  // of each port: their number, then them (sorted)
+  std::vector<double> omega;         // frequencies of the records (nondimensional)
   std::vector<std::complex<double>> weights;  // barycentric weights (rational model)
   // The adaptive sampling of a rational model: whether it met its tolerance tol (false
   // until it ends), the error estimate of its last sample, and the least eigenvalue of
@@ -124,23 +123,26 @@ struct DrivenSubstructureModel
 
   struct Record
   {
-    // S (nG x nG), g (nG x excitations), h (nG x ports), c (ports x excitations), all
-    // column-major.
+    // S (nG x nG, complex symmetric) by the share of this process of its lower triangle
+    // (see TriangleShare), and on rank 0 g (nG x excitations), h (nG x ports) and c (ports
+    // x excitations), column-major.
     std::vector<std::complex<double>> S, g, h, c;
   };
 
-  // A record as one vector, in the order of the file (S by its lower triangle), and the
-  // sizes of its parts.
-  std::vector<std::complex<double>> Flatten(const Record &r) const;
+  // A record as the vector of this process (see EnvironmentOperator::RecordFunction): its
+  // share of S_E, then the parts after it, handed over. The sizes of the parts of a record
+  // in the order of the file: S by the columns of its lower triangle, then g, h and c.
+  static std::vector<std::complex<double>> Flatten(Record &&r);
   std::array<std::size_t, 4> PartSizes() const;
 
   // The records of the model in its file (see substructuring::ModelFile), written and read
-  // by the calling process (ReadHeader is collective): the interface records of a new file
-  // (substructuring::InterfaceRecords: nG, sig_w, the signatures and length_scale), the
-  // header and the record of the environment, in a new file or appended (superseding the
-  // previous ones), and the records of the frequencies.
+  // by the calling process (AppendRecord and ReadHeader are collective): the interface
+  // records of a new file (substructuring::InterfaceRecords: nG, sig_w, the signatures and
+  // length_scale), the header and the record of the environment, in a new file or appended
+  // (superseding the previous ones), and the records of the frequencies, which rank 0
+  // writes, S from the shares of the processes in chunks.
   void WriteHeader(const std::string &path, bool create = true) const;
-  void AppendRecord(const std::string &path, const Record &r) const;
+  void AppendRecord(const std::string &path, const Record &r, MPI_Comm comm) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);
   std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
   // Number of complete records of frequencies in the file.
@@ -166,61 +168,58 @@ struct DrivenSubstructureModel
   static bool SameEnvironment(const std::vector<double> &a, const std::vector<double> &b);
   static bool SameSource(const double *a, const double *b, double tol = 1.0e-10);
 
-  // The passivity of a condensed environment S_E (n x n, complex symmetric, by its lower
-  // triangle in the order of a record): the least eigenvalue of Im S_E, which is positive
-  // semidefinite for a passive environment (Im u_Γ^H S_E u_Γ is the power it absorbs),
-  // relative to ‖S_E‖_F. A negative value is a violation.
-  static double Passivity(const std::complex<double> *lower, int n);
+  // The passivity of a condensed environment S_E (n x n, complex symmetric), given by the
+  // share of this process of its lower triangle (see TriangleShare, over the communicator
+  // of the grid): the least eigenvalue of Im S_E, which is positive semidefinite for a
+  // passive environment (Im u_Γ^H S_E u_Γ is the power it absorbs), relative to ‖S_E‖_F,
+  // computed on the grid. A negative value is a violation. Collective.
+  static double Passivity(const std::complex<double> *share, int n,
+                          const BlockCyclicGrid &grid);
 
   // Whether S_E is passive to tol: Im S_E + tol ‖S_E‖_F I is positive definite, that is,
-  // Passivity >= -tol (up to rounding), tested by a Cholesky factorization.
-  static bool Passive(const std::complex<double> *lower, int n, double tol);
+  // Passivity >= -tol (up to rounding), tested by a Cholesky factorization on the grid.
+  // Collective.
+  static bool Passive(const std::complex<double> *share, int n, double tol,
+                      const BlockCyclicGrid &grid);
 
 private:
   std::size_t RecordBytes() const;
 };
 
 //
-// Exact per-frequency substructuring of a driven problem: the environment operator
-// A_E(ω) = K_E + iω C_E - ω² M_E + A2_E(ω), assembled with Palace's operators restricted
-// to the environment, is condensed onto the interface Γ by a partial complex symmetric
-// MUMPS factorization, which gives S_E(ω). The region is factored with S_E(ω) added on Γ
-// as one system. Online, the environment is not assembled: S_E(ω) and the condensation of
-// the environment's sources come from a saved model, and the environment interior of the
-// solution is not computed.
+// The environment of a driven substructuring, condensed at a frequency: the environment
+// operator A_E(ω) = K_E + iω C_E - ω² M_E + A2_E(ω), assembled with Palace's operators
+// restricted to the environment, is condensed onto the interface Γ by a partial complex
+// symmetric factorization, which gives S_E(ω) and the condensations of vectors of the
+// environment (see CondenseEnvironment). Online, with a saved model, the environment is
+// not assembled: the class classifies the DOFs of Γ and of the two sides, and gives the
+// fingerprints and the port and boundary queries of the run (see EnvironmentOperator).
 //
 class DrivenSubstructure
 {
 public:
-  // Online, with the saved model: on the mesh of the region (region_mesh), Γ is the set of
-  // the region's boundary DOFs at the points of the saved interface DOFs. The
-  // factorizations are by the sparse direct solver given (STRUMPACK, MUMPS or SUPERLU),
-  // else: of the environment with its Schur complement onto Γ, by MUMPS (its partial
-  // factorization), STRUMPACK or SuperLU_DIST (one solve per interface DOF), of the region
-  // with S_E (one system) by STRUMPACK, MUMPS or SuperLU_DIST, in these orders among those
-  // Palace is built with, with the fill-reducing ordering given.
+  // Offline: the environment is condensed (see Condense), factored with its Schur
+  // complement onto Γ by the sparse direct solver given (STRUMPACK, MUMPS or SUPERLU), else
+  // by MUMPS, STRUMPACK or SuperLU_DIST (see SchurSolverFor), with the fill-reducing
+  // ordering given.
   DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
-                     const std::vector<int> &environment_attributes, bool online = false,
-                     const DrivenSubstructureModel *saved = nullptr,
-                     bool region_mesh = false, LinearSolver solver = LinearSolver::DEFAULT,
+                     const std::vector<int> &environment_attributes,
+                     LinearSolver solver = LinearSolver::DEFAULT,
                      SymbolicFactorization ordering = SymbolicFactorization::DEFAULT);
+
+  // Online, against a model of the environment (saved, or sampled in this run): its
+  // fingerprint centers, and on the mesh of the region (region_mesh) Γ is the set of the
+  // region's boundary DOFs at the points of its interface DOFs. The environment is not
+  // condensed.
+  DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
+                     const std::vector<int> &environment_attributes,
+                     const DrivenSubstructureModel &model, bool region_mesh);
   ~DrivenSubstructure();
 
-  // Condense the environment and factor the region against it at the angular frequency ω
-  // (nondimensional), or only condense the environment (without region, for its condensed
-  // data). The analyses of the first frequency are reused at the next ones. Online, S_E(ω)
-  // is given on rank 0 (|Γ| x |Γ|, column-major, in interface order). Collective.
-  void Condense(double omega, bool region = true);
-  void Condense(double omega, std::vector<std::complex<double>> &&S_env);
-
-  // Solve the coupled problem at the frequency of the last condensation for a batch of
-  // right-hand sides (full true-DOF vectors): the region with the interface loads of the
-  // environment sources, then the environment interior. Online, g_env on rank 0
-  // (|Γ| x |rhs|, column-major) is the condensation of the environment's sources, which
-  // replaces the environment part of the right-hand sides, and the environment interior
-  // of u is zero. Collective.
-  void Solve(const std::vector<const ComplexVector *> &rhs, std::vector<ComplexVector> &u,
-             const std::vector<std::complex<double>> *g_env = nullptr);
+  // Condense the environment at the angular frequency ω (nondimensional): S_E(ω) (see
+  // TakeSchur), and its factorization for CondenseEnvironment. The analysis of the first
+  // frequency is reused at the next ones. Offline only. Collective.
+  void Condense(double omega);
 
   // Condensation onto Γ of vectors supported on the environment interior and Γ with the
   // environment factorization of the last condensation, b_Γ - A_ΓE A_EE^-1 b_E, on rank 0
@@ -230,31 +229,13 @@ public:
   CondenseEnvironment(const std::vector<const ComplexVector *> &b,
                       std::vector<ComplexVector> *x = nullptr);
 
-  // On rank 0, after Solve: the condensation of the environment's sources (|Γ| x |rhs|,
-  // offline) and the interface solution (|Γ| x |rhs|), column-major.
-  const std::vector<std::complex<double>> &EnvironmentSourceCondensation() const
-  {
-    return g_last;
-  }
-  const std::vector<std::complex<double>> &InterfaceSolution() const { return u_last; }
-
-  // S_E(ω) of the last condensation on rank 0 (|Γ| x |Γ|, column-major, complex
-  // symmetric), in interface order (offline), or handed over.
-  const std::vector<std::complex<double>> &Schur() const { return S; }
+  // S_E(ω) of the last condensation (complex symmetric, in interface order), by the share
+  // of this process of its lower triangle (see TriangleShare), handed over.
   std::vector<std::complex<double>> TakeSchur() { return std::move(S); }
 
-  // Global true DOFs of the interface in interface order (replicated), and its size.
-  const std::vector<HYPRE_BigInt> &InterfaceTrueDofs() const { return gamma_tdofs; }
-  int InterfaceSize() const { return static_cast<int>(gamma_tdofs.size()); }
-
-  // Local true-DOF classification: environment interior, interface (excluding the
-  // Dirichlet DOFs).
-  const std::vector<char> &EnvironmentInterior() const { return is_env_int; }
-  const std::vector<char> &Interface() const { return is_gamma; }
-  const std::vector<char> &RegionInterior() const { return is_region_int; }
-
-  // Interface index of each local true DOF (-1 if not on Γ).
-  std::vector<int> InterfaceIndex() const;
+  // The interface Γ, in its order, with the classes of the local true DOFs: the
+  // environment interior, Γ and the region interior, none of them Dirichlet.
+  const SubstructureInterface &GetInterface() const { return iface; }
 
   MPI_Comm GetComm() const;
 
@@ -306,12 +287,16 @@ private:
   LinearSolver solver;
   SymbolicFactorization ordering;
   bool online, region_only = false;
-  std::vector<char> is_env_int, is_gamma, is_region_int;
-  std::vector<HYPRE_BigInt> gamma_tdofs;
-  std::vector<int> gamma_cnt, gamma_disp;  // interface DOFs per rank
+  std::vector<int> region_attrs;
+  SubstructureInterface iface;
 
-  // The operator K + iω C - ω² M + A2(ω) of one side (environment or region), factored on
-  // the side's interior and Γ: the lower-triangle pattern and the entries of the
+  DrivenSubstructure(SpaceOperator &space_op, const std::vector<int> &region_attributes,
+                     const std::vector<int> &environment_attributes,
+                     const DrivenSubstructureModel *model, bool region_mesh,
+                     LinearSolver solver, SymbolicFactorization ordering);
+
+  // The operator K + iω C - ω² M + A2(ω) of the environment, factored on its interior and
+  // Γ: the lower-triangle pattern and the entries of the
   // frequency-independent parts in pattern order (the assembled operators are not kept).
   struct Side
   {
@@ -343,15 +328,12 @@ private:
     HYPRE_BigInt n_dofs = 0;
     double border = 1.0;
   };
-  Side env, region;
-  bool solvable = false;  // the region is factored against the environment
-  // The region with S_E on Γ, factored as one system; its entries are the region's, then
-  // (on rank 0) S_E's lower triangle.
-  std::unique_ptr<SchurFactorization<std::complex<double>>> coupled;
-  std::size_t coupled_region_entries = 0;
-  // On rank 0: S_E (offline), the environment's source condensation and the interface
-  // solution of the last Solve.
-  std::vector<std::complex<double>> S, g_last, u_last;
+  Side env;
+  // The share of this process of the lower triangle of S_E of the last condensation, and
+  // the grid of the interface, of all the processes, on which the environment is condensed
+  // (offline).
+  std::vector<std::complex<double>> S;
+  std::unique_ptr<BlockCyclicGrid> gamma_grid;
 
   // The local true DOFs of the wave ports (each in the wave_ports of its side).
   std::map<int, std::vector<char>> wave_port_dofs;
@@ -365,17 +347,6 @@ private:
   // of a side, assembled on its elements, with its pinned DOFs eliminated (null if zero).
   std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> SideParts(const Side &side,
                                                                  int op) const;
-
-  // Factor the region with S_E (on rank 0) added on Γ as one system, releasing S_E once its
-  // entries are in the factored values if release (set_up: Setup of the region was called
-  // for its first factorization).
-  void FactorCoupled(double omega, std::vector<std::complex<double>> &S_env, bool release,
-                     bool set_up);
-
-  // The region and Γ from the coupled factorization, with g_env (rank 0) on Γ.
-  void SolveCoupled(const std::vector<const ComplexVector *> &rhs,
-                    std::vector<ComplexVector> &u,
-                    const std::vector<std::complex<double>> &g_env);
 
   // The rank-one modal terms of a side's wave ports at ω with their ports, in a fixed
   // order.
@@ -399,46 +370,14 @@ private:
             std::vector<std::complex<double>> &val) const;
 };
 
-// The lumped ports on the environment side (and its wave ports, as -index), with the true
-// DOFs of its lumped ports and the attributes of each (see
-// DrivenSubstructureModel::port_attributes), aborting for a lumped port touching Γ (its
-// excitation and voltage would depend on both sides). Collective.
+// The lumped ports on the environment side (and its wave ports, as -index), with the
+// attributes of each (see DrivenSubstructureModel::port_attributes), aborting for a lumped
+// port touching Γ (its excitation and voltage would depend on both sides). Collective.
 std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
-                                  std::map<int, std::vector<char>> &port_dofs,
                                   std::vector<int> &port_attributes);
-
-// The full S_E (n x n, row-major) of a record's lower triangle (by columns), mapped to the
-// current interface as M^-T S_E M^-1 with map, if given (SignatureMap::DualMatrix).
-std::vector<std::complex<double>> FullSchur(const std::complex<double> *lower, int n,
-                                            const SignatureMap *map);
 
 // The index of x in y (relative tolerance tol), -1 if none.
 int FindValue(const std::vector<double> &y, double x, double tol = 1.0e-10);
-
-// The sparse direct solver of a Schur complement factorization: that given, if it is one,
-// else MUMPS, STRUMPACK or SuperLU_DIST, preferred in this order (MUMPS's Schur complement
-// is distributed, the others' gathered on rank 0).
-LinearSolver SchurSolverType(LinearSolver type);
-
-// The factorization of a complex symmetric system by type and fill-reducing ordering, with
-// its Schur complement onto schur_vars, from its local lower-triangle COO entries (1-based
-// system indices, the system rows numbered by rank) and rows (the local index in the
-// vectors of the solves of each local system row), refactorable: MUMPS's partial
-// factorization with BLR at round-off, its Schur complement distributed on grid (if given,
-// else on all the ranks), or DirectSchurSolver.
-std::unique_ptr<SchurFactorization<std::complex<double>>>
-MakeSchurFactorization(LinearSolver type, SymbolicFactorization ordering, MPI_Comm comm,
-                       HYPRE_BigInt n_glob,
-                       SchurFactorization<std::complex<double>>::Coo &&coo,
-                       const std::vector<HYPRE_BigInt> &schur_vars,
-                       const std::vector<int> &rows, const BlockCyclicGrid *grid = nullptr);
-
-// For each global column (1-based) of cols, the value of sys (one per local true DOF from
-// tstart) at that true DOF on its owner: a request to each owner for its distinct columns.
-// Collective.
-std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
-                                      const std::vector<HYPRE_BigInt> &sys,
-                                      const std::vector<int> &cols);
 
 // The tolerance of the source fingerprint of an excitation (see
 // DrivenSubstructureModel::SameSource): the modes of the environment's wave ports, and so
@@ -446,18 +385,6 @@ std::vector<HYPRE_BigInt> OwnerValues(MPI_Comm comm, HYPRE_BigInt tstart,
 // only.
 double SourceTolerance(const IoData &iodata, const PortExcitations &port_excitations,
                        const std::vector<int> &env_ports, int excitation_idx);
-
-// The postprocessing of a region whose field is known in the region and on Γ only (from a
-// model, online or adaptive): the energies of the domain postprocessing in the region,
-// without totals or participation ratios, the surface fluxes on boundaries in the region
-// (on the mesh of the region, region_bdr_attributes, those the model records), and the
-// probes found in its elements, with a warning (what: "Online" or "Adaptive") naming those
-// left out, and the power of the environment's ports if it has some. Collective.
-void RegionPostprocessing(const std::vector<int> &region_attributes,
-                          const mfem::ParMesh &mesh,
-                          const std::vector<int> *region_bdr_attributes, bool env_ports,
-                          const char *what, config::DomainData &domains,
-                          config::BoundaryData &boundaries);
 
 }  // namespace palace
 

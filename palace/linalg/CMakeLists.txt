@@ -9,6 +9,7 @@ target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/amg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/ams.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/blockcyclic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/blockprecond.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/arpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/blockcyclic.cpp
@@ -36,13 +37,12 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/nleps.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/operator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/rap.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/schursolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/schurfactory.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/slepc.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/solver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/spectralnorm.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpack.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/strumpackcomplex.cpp
-  ${CMAKE_CURRENT_SOURCE_DIR}/strumpackschur.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlu.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superlucomplex.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/vector.cpp

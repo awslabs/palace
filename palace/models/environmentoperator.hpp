@@ -31,8 +31,8 @@ class SpaceOperator;
 // its saved model (see DrivenSubstructureModel): its Schur complement S_E(ω), the
 // condensation g_E(ω) of the sources of the excitations, and the values of its ports, at
 // the frequencies of an exact model or anywhere between the samples of a rational one. The
-// region is then the driven problem on its elements with S_E(ω) added on Γ (see
-// SpaceOperator::SetEnvironment).
+// region is then the driven problem on its elements with S_E(ω) added on Γ (see the
+// SpaceOperator of an environment).
 //
 // The terms at a frequency are those of the model's record there, or of the combination
 // Σ_k c_k(ω) of its records with the barycentric coefficients of a rational model, on the
@@ -44,7 +44,9 @@ class SpaceOperator;
 class EnvironmentOperator
 {
 public:
-  // The records of a model, in order (flat, in the saved basis, on root).
+  // Record j of a model (in the saved basis): each process its share of the lower triangle
+  // of S_E (see TriangleShare), then root the parts after it (see
+  // DrivenSubstructureModel::Flatten). Called on every process, in turn. Collective.
   using RecordFunction = std::function<std::vector<std::complex<double>>(std::size_t)>;
 
   // Read the model and check it against the run: the environment (its record and, on the
@@ -55,8 +57,9 @@ public:
   // Collective.
   EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op, int grid_procs = 0);
 
-  // The rational model of this run's environment, sampled offline on the full mesh, with
-  // its records. Collective.
+  // A model of this run's environment, condensed offline on the full mesh: rational, with
+  // its samples as records, taken here, or exact, at the frequencies of the sweep, whose
+  // records are taken when the sweep reaches them. Collective.
   EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
                       const DrivenSubstructureModel &sampled, const RecordFunction &record);
   ~EnvironmentOperator();
@@ -74,11 +77,11 @@ public:
   // The environment's lumped ports (index) and wave ports (-index).
   const std::vector<int> &Ports() const { return env_ports; }
 
-  // The boundary attributes in the region the model records (see
-  // DrivenSubstructureModel::region_bdr_attributes).
-  const std::vector<int> &RegionBoundaryAttributes() const
+  // On the mesh of the region, the boundary attributes of the environment elements it holds
+  // (see EnvironmentRecord::bdr_attributes).
+  const std::vector<int> &EnvironmentBoundaryAttributes() const
   {
-    return model.region_bdr_attributes;
+    return model.environment.bdr_attributes;
   }
 
   // y += R_Γᵀ S_E(ω) R_Γ x.
@@ -91,17 +94,8 @@ public:
   // C += S_E(ω) for the local part C of a matrix on Grid().
   void AddSchurBlocks(double omega, std::vector<std::complex<double>> &C);
 
-  // The true DOFs of Γ on this process, a block of the interface order: its first index is
-  // InterfaceOffsets()[rank], and the counts of all processes are InterfaceCounts().
-  const std::vector<int> &InterfaceTrueDofs() const { return gamma_local; }
-  const std::vector<int> &InterfaceCounts() const { return gamma_cnt; }
-  const std::vector<int> &InterfaceOffsets() const { return gamma_disp; }
-
-  // The frequency of the last preconditioner matrix of the region, which leaves S_E out
-  // (see SpaceOperator::GetPreconditionerMatrix): the RegionSolver factoring it adds S_E at
-  // that frequency.
-  void SetPreconditionerFrequency(double omega) { pc_omega = omega; }
-  double PreconditionerFrequency() const { return pc_omega; }
+  // The interface Γ of the run, in its order (see SubstructureInterface).
+  const SubstructureInterface &Interface() const { return iface; }
 
   // RHS += R_Γᵀ g_E(ω) of an excitation; false if it has no sources in the environment.
   bool AddExcitation(int excitation_idx, double omega, ComplexVector &RHS);
@@ -141,13 +135,13 @@ private:
                       const DrivenSubstructureModel *sampled, const RecordFunction &record,
                       int grid_procs);
 
-  SpaceOperator &space_op;
   MPI_Comm comm;
   const bool root;
   const std::string model_path;
   std::vector<int> region_attrs;
   DrivenSubstructureModel model;
-  std::unique_ptr<DrivenSubstructure> ds;
+  // The records of an exact model of this run (see the constructor).
+  RecordFunction exact_records;
   bool region_mesh = false;
   int nG = 0, np = 0, ne = 0;
   std::vector<int> env_ports;
@@ -160,10 +154,9 @@ private:
   std::map<int, int> ex_col;
   mfem::Array<int> pinned;
 
-  // The rows of Γ of this process: its local true DOFs (in interface order), and the
-  // counts and offsets of all processes.
+  // The interface, and the local true DOFs of Γ on this process, in interface order.
+  SubstructureInterface iface;
   std::vector<int> gamma_local;
-  std::vector<int> gamma_cnt, gamma_disp;
 
   // A record on the current interface: the local part of S_E on the grid, the rows of Γ of
   // this process of the condensed sources g (per model column) and of the port functionals
@@ -185,12 +178,11 @@ private:
   // The grid of the dense matrices on Γ, and the global rows and columns of the local part.
   std::optional<BlockCyclicGrid> grid;
   std::vector<int> grid_rows, grid_cols;
-  double pc_omega = std::numeric_limits<double>::quiet_NaN();
 
-  // A record from its flat entries on root (in the saved basis, see
-  // DrivenSubstructureModel::Flatten), or record j of the model file, whose S_E each
-  // process reads a share of, and the record from the parts after S_E on root. Collective.
-  Rows Distribute(const std::vector<std::complex<double>> &flat) const;
+  // A record from the shares of the processes (see RecordFunction), or record j of the
+  // model file, whose S_E each process reads a share of, and the record from the parts
+  // after S_E on root. Collective.
+  Rows Distribute(const std::vector<std::complex<double>> &x) const;
   Rows ReadRecord(int j) const;
   Rows DistributeVectors(const std::complex<double> *tail) const;
 

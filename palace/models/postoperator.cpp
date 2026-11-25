@@ -426,10 +426,10 @@ fs::path PostOperator<solver_t>::ExcitationSubFolder(int ex_idx) const
 }
 
 template <ProblemType solver_t>
-void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx, bool restart)
+void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
   requires(solver_t == ProblemType::DRIVEN)
 {
-  InitializeParaviewDataCollection(ExcitationSubFolder(ex_idx), restart);
+  InitializeParaviewDataCollection(ExcitationSubFolder(ex_idx));
 }
 
 template <ProblemType solver_t>
@@ -867,16 +867,29 @@ void PostOperator<solver_t>::EnsureParaviewDataCollection()
 
 template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(
-    const fs::path &sub_folder_name, bool restart)
+    const fs::path &sub_folder_name)
 {
   EnsureFieldCoefficientsSetup();
   if (!ShouldWriteParaviewFields())
   {
     return;
   }
-  // Close any files held by the previous collection before switching output paths.
-  paraview.reset();
-  paraview_bdr.reset();
+  // The collections kept write the mesh again at their next save, so that only the current
+  // ones hold it.
+  if (paraview)
+  {
+    paraview->ReleaseMeshCache();
+    paraview_bdr->ReleaseMeshCache();
+  }
+  auto [it, added] = paraview_collections.try_emplace(sub_folder_name);
+  auto &collections = it->second;
+  paraview_max_cycle = &collections.max_cycle;
+  if (!added)
+  {
+    paraview = collections.domain.get();
+    paraview_bdr = collections.boundary.get();
+    return;
+  }
 
   auto paraview_root = post_dir / "paraview";
   fs::path paraview_dir_v = paraview_root / OutputFolderName(solver_t);
@@ -888,10 +901,12 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     paraview_dir_b /= sub_folder_name;
   }
   // Set up postprocessing for output to disk.
-  paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
-  paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
-  paraview->UseRestartMode(restart);
-  paraview_bdr->UseRestartMode(restart);
+  collections.domain = std::make_unique<CeedParaViewDataCollection>(
+      paraview_dir_v, &fem_op->GetNDSpace().GetParMesh());
+  collections.boundary = std::make_unique<CeedParaViewDataCollection>(
+      paraview_dir_b, &fem_op->GetNDSpace().GetParMesh());
+  paraview = collections.domain.get();
+  paraview_bdr = collections.boundary.get();
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
   const bool use_ho = true;
@@ -905,7 +920,6 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
-  paraview_max_cycle = -1;
   paraview->SetDataFormat(format);
   MFEM_VERIFY(use_ceed_domain_paraview,
               "ParaView domain output requires the libCEED point-field path!");
@@ -1381,7 +1395,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
         units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * std::numbers::pi);
   }
   paraview->SetCycle(step);
-  paraview_max_cycle = std::max(paraview_max_cycle, step);
+  *paraview_max_cycle = std::max(*paraview_max_cycle, step);
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
@@ -1416,7 +1430,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   // non-used value to make the step identifiable within the data collection.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  paraview->SetCycle(paraview_max_cycle + 1);
+  paraview->SetCycle(*paraview_max_cycle + 1);
   if (paraview->GetTime() < 1.0)
   {
     paraview->SetTime(99.0);
@@ -1756,12 +1770,17 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // the frequency (of an eigenmode).
     // Without a stored electric energy of a frequency-dependent material (the same on
     // every process), the energies with it, and the participations in the total, are
-    // left empty. A given total (substructuring, whose materials are constant) is both.
+    // left empty. A given total (substructuring, whose materials are constant) is both,
+    // and the field of a substructured region alone (partial) gives none.
     const double omega = measurement_cache.freq.real();
-    const auto [energy, material] =
+    auto [energy, material] =
         total_field_energy ? DomainPostOperator::ElectricFieldEnergies{*total_field_energy,
                                                                        *total_field_energy}
                            : dom_post_op.GetElectricFieldEnergies(field, omega);
+    if (!total_field_energy && dom_post_op.partial)
+    {
+      energy.reset();
+    }
     measurement_cache.domain_E_field_energy_all = energy;
     measurement_cache.domain_E_field_energy_material = material;
 
@@ -2161,9 +2180,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
             ? fem_op->GetLumpedPortOp().GetPort(drive_port_idx).GetExcitationWeight()
             : std::complex<double>{1.0, 0.0};
     // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
-    // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
-    // Applied independently on the source and observation sides, so cross-type S
-    // (lumped↔wave) gets the correct single-sided phase.
+    // wave port with a non-zero offset; 1 otherwise (lumped and Floquet ports have no
+    // offset). Applied independently on the source and observation sides, so cross-type S
+    // (lumped↔wave, Floquet↔wave) gets the correct single-sided phase.
     const std::complex<double> src_deembed =
         (drive_port_type == PortType::WavePort)
             ? std::exp(1i * fem_op->GetWavePortOp().GetPort(drive_port_idx).kn0 *
@@ -2205,12 +2224,14 @@ void PostOperator<solver_t>::MeasureSParameter() const
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
 
-    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts).
+    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts). Floquet
+    // observation has no d_offset — only the source-side factor applies.
     for (auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
     {
       for (auto &[key, S] : S_map)
       {
         S /= drive_weight;
+        S *= src_deembed;
         auto [m, n, is_te] = key;
         auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
                                                              : (is_te ? "TE" : "TM");
@@ -2272,9 +2293,10 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
     // solver does not support lumped ports.
     //
     // TODO: Should this not include other types of energy too (surface impedance case)?
-    // Without U, the participations are not measured.
+    // Without U, the participations are not measured, nor the interfaces, except for a
+    // substructured region (partial), whose field gives their energies.
     const auto energy_electric_all = measurement_cache.ElectricEnergyNormalization();
-    if (!energy_electric_all)
+    if (!energy_electric_all && !dom_post_op.partial)
     {
       return;
     }
@@ -2284,6 +2306,13 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
     {
       auto energy = surf_post_op.GetInterfaceElectricFieldEnergy(
           idx, *E, measurement_cache.freq.real());
+      if (!energy_electric_all)
+      {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        measurement_cache.interface_eps_i.emplace_back(Measurement::InterfaceData{
+            idx, energy, surf_post_op.GetInterfaceLossTangent(idx), nan, nan});
+        continue;
+      }
 
       auto energy_participation_p = energy / *energy_electric_all;
       auto loss_tangent_delta = surf_post_op.GetInterfaceLossTangent(idx);
@@ -2580,7 +2609,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   measurement_cache = {};
   measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
-  if (stored_E)
+  if (stored_E && !dom_post_op.partial)
   {
     measurement_cache.domain_E_field_energy_all = quadratic_E(
         reduced_energy_E, reduced_energy_E_fd, DomainPostOperator::ElectricEnergy::STORED);
@@ -2597,7 +2626,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     {
       d.energy = quadratic_E(forms.first, reduced_domain_energy_E_fd.at(idx),
                              DomainPostOperator::ElectricEnergy::STORED);
-      if (stored_E)
+      if (measurement_cache.domain_E_field_energy_all)
       {
         d.participation_ratio =
             ParticipationRatio(*d.energy, *measurement_cache.domain_E_field_energy_all);
@@ -2740,9 +2769,26 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
       (omega == 0.0) ? mfem::infinity() : 0.5 * std::abs(omega) / std::abs(omega.imag());
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
+  MeasureAllImpl();
 
-  // Mini pretty-print table of eig summaries: always print with header since other
-  // measurements may log their results.
+  // Fraction of the field energy in the PML regions, which identifies the modes of the PML
+  // (with the material properties of the background medium in the layer, see
+  // DomainPostOperator). The electric energy outside of the PML regions is the stored
+  // energy, or the energy at the permittivity of the frequency-dependent materials if a
+  // material has no stored energy.
+  const bool has_pml = dom_post_op.HasPML();
+  if (has_pml)
+  {
+    const double energy_pml = dom_post_op.GetPMLElectricFieldEnergy(*E) +
+                              dom_post_op.GetPMLMagneticFieldEnergy(*B);
+    const double energy_all = measurement_cache.domain_E_field_energy_all.value_or(
+                                  measurement_cache.domain_E_field_energy_material) +
+                              measurement_cache.domain_H_field_energy_all + energy_pml;
+    measurement_cache.pml_energy_fraction =
+        (energy_all > 0.0) ? energy_pml / energy_all : 0.0;
+  }
+
+  // Mini pretty-print table of eig summaries.
   if (Mpi::Root(fem_op->GetComm()))
   {
     Table table;
@@ -2758,10 +2804,13 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
+    if (has_pml)
+    {
+      table.insert(Column("pml", "PML fraction") << measurement_cache.pml_energy_fraction);
+    }
     table[0].print_as_int = true;
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
-  MeasureAllImpl();
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);

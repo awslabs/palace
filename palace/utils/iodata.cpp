@@ -267,6 +267,17 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
   MFEM_VERIFY(boundaries_it != config.end(),
               "\"Boundaries\" must be specified in the configuration file!");
   boundaries = config::BoundaryData(*boundaries_it);
+  if (auto pml_it = boundaries_it->find("PML"); pml_it != boundaries_it->end())
+  {
+    // The entries of the PML extruded from boundaries are the last PML blocks.
+    MFEM_VERIFY(pml_it->is_array(),
+                "config[\"Boundaries\"][\"PML\"] should specify an array of entries in the "
+                "configuration file!");
+    for (std::size_t i = 0; i < pml_it->size(); i++)
+    {
+      domains.pml.emplace_back((*pml_it)[i], true).extrusion.entry = static_cast<int>(i);
+    }
+  }
   if (auto err = config::Validate(boundaries))
   {
     MFEM_ABORT("Configuration file validation failed!\n  " << *err);
@@ -707,7 +718,7 @@ void IoData::CheckConfiguration()
         solver.linear.type != LinearSolver::SUPERLU)
     {
       Mpi::Warning("Substructuring factors with STRUMPACK, MUMPS or SuperLU_DIST only: "
-                   "\"Solver.Linear.Type\" \"{}\" is not used!\n",
+                   "\"Solver.Linear.Type\" \"{}\" is not used for its factorizations!\n",
                    ToString(solver.linear.type));
     }
     // The factorizations are exact: of the options of the sparse direct solvers, they take
@@ -724,29 +735,128 @@ void IoData::CheckConfiguration()
     }
     solver.substructuring->direct_solver = solver.linear.type;
 
-    // An online driven sweep, and an offline adaptive one once it has sampled the
-    // environment, solve the region as a driven problem with the dense S_E of the
-    // environment on Γ (see SpaceOperator::SetEnvironment), preconditioned by the
-    // RegionSolver: from the region's exact complex matrix on one level, factored for its
-    // Schur complement onto Γ by a sparse direct solver (see RegionSolver). An offline
-    // exact sweep factors with its own solvers.
+    // A driven sweep solves the region as a driven problem with the dense S_E of the
+    // environment on Γ (see the SpaceOperator of an environment), by FGMRES preconditioned
+    // by the region solver: from the region's exact complex matrix on one level, factored
+    // for its Schur complement onto Γ by a sparse direct solver (see MakeDrivenKspSolver),
+    // whatever the options of the multigrid preconditioner and the Krylov solver.
     if (problem.type == ProblemType::DRIVEN)
     {
       auto &linear = solver.linear;
-      if (linear.type != LinearSolver::STRUMPACK && linear.type != LinearSolver::MUMPS &&
-          linear.type != LinearSolver::SUPERLU)
+      auto unused = [](const char *key)
       {
-#if defined(MFEM_USE_STRUMPACK)
-        linear.type = LinearSolver::STRUMPACK;
-#elif defined(MFEM_USE_MUMPS)
-        linear.type = LinearSolver::MUMPS;
-#elif defined(MFEM_USE_SUPERLU)
-        linear.type = LinearSolver::SUPERLU;
-#endif
+        Mpi::Warning(
+            "Driven substructuring solves the region by FGMRES with a direct solve "
+            "of it: \"Solver.Linear.{}\" is not used!\n",
+            key);
+      };
+      if (linear.mg_max_levels > 1)
+      {
+        unused("MGMaxLevels");
+      }
+      if (linear.pc_mat_real)
+      {
+        unused("PCMatReal");
+      }
+      if (linear.pc_mat_shifted > 0)
+      {
+        unused("PCMatShifted");
+      }
+      if (linear.krylov_solver != KrylovSolver::DEFAULT &&
+          linear.krylov_solver != KrylovSolver::FGMRES)
+      {
+        unused("KSPType");
+      }
+      if (linear.pc_side != PreconditionerSide::DEFAULT)
+      {
+        unused("PCSide");
       }
       linear.mg_max_levels = 1;
       linear.pc_mat_real = false;
       linear.pc_mat_shifted = 0;
+    }
+  }
+
+  // A PML region only absorbs in frequency domain simulations. In a transient simulation
+  // it would be a regular material, terminated by the outer boundary of the layer, which
+  // reflects (static simulations treat PML regions as regular materials, see
+  // MaterialOperator).
+  MFEM_VERIFY(problem.type != ProblemType::TRANSIENT ||
+                  std::ranges::all_of(domains.pml,
+                                      [](const auto &pml) { return pml.IsExtruded(); }),
+              "config[\"Domains\"][\"PML\"] is not supported for transient simulations!");
+
+  // The extruded PML of config["Boundaries"]["PML"] is built on the serial mesh, of prisms
+  // and hexahedra, which only nonconformal adaptive refinement refines. Its boundary
+  // becomes an interior boundary, between the physical region and the layer.
+  std::vector<int> extruded_attributes;
+  for (const auto &pml : domains.pml)
+  {
+    extruded_attributes.insert(extruded_attributes.end(), pml.extrusion.attributes.begin(),
+                               pml.extrusion.attributes.end());
+  }
+  std::ranges::sort(extruded_attributes);
+  const auto dup = std::ranges::adjacent_find(extruded_attributes);
+  MFEM_VERIFY(dup == extruded_attributes.end(),
+              "Boundary attribute " << ((dup != extruded_attributes.end()) ? *dup : 0)
+                                    << " is in more than one entry of "
+                                       "config[\"Boundaries\"][\"PML\"]!");
+  for (const auto &pml : domains.pml)
+  {
+    if (!pml.IsExtruded())
+    {
+      continue;
+    }
+    MFEM_VERIFY(problem.type == ProblemType::DRIVEN ||
+                    problem.type == ProblemType::EIGENMODE,
+                "config[\"Boundaries\"][\"PML\"] is only available for driven and "
+                "eigenmode simulations!");
+    MFEM_VERIFY(model.refinement.max_it == 0 || model.refinement.nonconformal,
+                "config[\"Boundaries\"][\"PML\"] extrudes prisms and hexahedra, which "
+                "require nonconformal adaptive mesh refinement!");
+    for (auto attr : pml.extrusion.attributes)
+    {
+      MFEM_VERIFY(!std::ranges::binary_search(boundaries.attributes, attr),
+                  "Boundary attribute "
+                      << attr
+                      << " of config[\"Boundaries\"][\"PML\"] cannot have "
+                         "another boundary condition!");
+    }
+  }
+
+  for (auto &pml : domains.pml)
+  {
+    if (pml.frequency_dependent || pml.reference_frequency > 0.0)
+    {
+      continue;
+    }
+    MFEM_VERIFY(pml.reference_frequency < 0.0,
+                "\"PML.ReferenceFrequency\" must be positive when specified. Omit it "
+                "to use the solver default.");
+
+    double reference_frequency = -1.0;
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      MFEM_VERIFY(!solver.driven.sample_f.empty(),
+                  "Static PML default ReferenceFrequency requires at least one driven "
+                  "sample frequency!");
+      // The absorption of a static PML grows with frequency: use the lowest frequency so
+      // that the reflection target is met at all frequencies.
+      reference_frequency = *std::ranges::min_element(solver.driven.sample_f);
+    }
+    else if (problem.type == ProblemType::EIGENMODE)
+    {
+      reference_frequency = solver.eigenmode.target;
+    }
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE)
+    {
+      // PML regions are only supported for driven and eigenmode simulations, and treated
+      // as regular materials otherwise (see MaterialOperator).
+      MFEM_VERIFY(reference_frequency > 0.0,
+                  "Static PML requires a positive reference frequency. Set "
+                  "\"PML.ReferenceFrequency\", use positive driven sample frequencies, "
+                  "or set a positive Eigenmode target.");
+      pml.reference_frequency = reference_frequency;
     }
   }
 
@@ -993,6 +1103,46 @@ void IoData::CheckConfiguration()
   // aliases for the concrete values, so default-constructed fields are already at
   // their resolved values and no runtime resolution is needed here.
 
+  // The PML subdomain correction is part of the geometric multigrid preconditioner, and
+  // uses a sparse direct solver. By default, it is used for frequency domain problems with
+  // PML regions, since the multigrid smoothers do not converge on the PML equations of
+  // strongly absorbing layers.
+  const bool has_pml =
+      (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE) &&
+      !domains.pml.empty();
+  if (solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DEFAULT)
+  {
+#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
+    constexpr bool has_direct = true;
+#else
+    const bool has_direct = (solver.linear.type == LinearSolver::CUDSS);
+#endif
+    solver.linear.pml_subdomain_solver =
+        (has_direct && has_pml && solver.linear.mg_max_levels > 1)
+            ? PMLSubdomainSolver::DIRECT
+            : PMLSubdomainSolver::NONE;
+  }
+
+  // AMS relies on a real-valued approximation of the system matrix, which the PML terms of
+  // strongly absorbing layers make indefinite: the preconditioner then breaks down, and the
+  // Krylov solver can report convergence to a meaningless solution.
+  MFEM_VERIFY(!has_pml || solver.linear.type != LinearSolver::AMS,
+              "PML regions are not supported with the AMS linear solver! Use a sparse "
+              "direct solver (\"Type\": \"SuperLU\", \"STRUMPACK\", or \"MUMPS\"), "
+              "which requires building Palace with SuperLU_DIST, STRUMPACK, or MUMPS.");
+  if (solver.linear.pml_subdomain_solver != PMLSubdomainSolver::NONE &&
+      solver.linear.mg_max_levels == 1)
+  {
+    Mpi::Warning("config[\"Solver\"][\"Linear\"][\"PMLSubdomainSolver\"] is only used with "
+                 "geometric multigrid preconditioning (\"MGMaxLevels\" > 1)!\n");
+  }
+#if !defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS)
+  MFEM_VERIFY(solver.linear.pml_subdomain_solver != PMLSubdomainSolver::DIRECT ||
+                  solver.linear.type == LinearSolver::CUDSS,
+              "PML subdomain solver \"Direct\" requested but Palace was not built with a "
+              "sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS)!");
+#endif
+
   // Validate build-availability of requested solver backends. Centralized here so
   // downstream code never encounters an unavailable backend at runtime.
 #if !defined(PALACE_WITH_SLEPC)
@@ -1114,23 +1264,16 @@ void IoData::CheckConfiguration()
                                { return material.HasFrequencyDependentPermittivity(); }),
                   "Driven substructuring does not support frequency-dependent material "
                   "Permittivity yet!");
-      // From a model (online, or after an adaptive sweep's samples), the field is known in
-      // the region and on Γ only.
-      MFEM_VERIFY(
-          (!sub.Online() && solver.driven.adaptive_tol <= 0.0) ||
-              (boundaries.postpro.dielectric.empty() &&
-               boundaries.postpro.farfield.attributes.empty()),
-          "Online or adaptive driven substructuring does not compute interface dielectric "
-          "or far-field postprocessing yet!");
+      // The PML integrators are assembled on the elements of their attributes, not on each
+      // side of Γ (see BilinearForm::PartialAssemble).
+      MFEM_VERIFY(domains.pml.empty(),
+                  "Driven substructuring does not support PML regions yet!");
     }
-    else
-    {
-      // The substructured static solves postprocess the field of the region (see
-      // SubstructuringSolver::RegionPostprocessing), which gives no far field.
-      MFEM_VERIFY(boundaries.postpro.farfield.empty(),
-                  "Substructuring does not compute \"Boundaries.Postprocessing.FarField\": "
-                  "remove it, or run without \"Solver.Substructuring\"!");
-    }
+    // The substructured solves postprocess the field of the region (see
+    // RegionPostprocessing), which gives no far field.
+    MFEM_VERIFY(boundaries.postpro.farfield.empty(),
+                "Substructuring does not compute \"Boundaries.Postprocessing.FarField\": "
+                "remove it, or run without \"Solver.Substructuring\"!");
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
       // One condensed environment serves every excitation, so inactive surface-current
@@ -1183,6 +1326,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 
   // Materials: conductivity and London penetration depth.
   for (auto &data : domains.materials)
+  {
+    config::Nondimensionalize(units, data);
+  }
+  for (auto &data : domains.pml)
   {
     config::Nondimensionalize(units, data);
   }

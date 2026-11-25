@@ -26,7 +26,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Initialize the project
-project(palace LANGUAGES CXX VERSION 0.19.0)
+project(palace LANGUAGES CXX VERSION 0.20.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
@@ -595,7 +595,7 @@ if(PALACE_WITH_STRUMPACK OR PALACE_WITH_MUMPS)
   else()
     message(STATUS "Found ScaLAPACK: SCALAPACK::SCALAPACK target")
   endif()
-  # The dense factorization of the interface system of driven substructuring.
+  # The dense factorization of the interface system of substructuring.
   target_link_libraries(${LIB_TARGET_NAME} PUBLIC SCALAPACK::SCALAPACK)
   target_compile_definitions(${LIB_TARGET_NAME} PUBLIC PALACE_WITH_SCALAPACK)
 endif()

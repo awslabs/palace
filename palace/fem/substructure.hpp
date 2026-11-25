@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -18,6 +17,12 @@
 
 namespace palace
 {
+
+namespace config
+{
+struct BoundaryData;
+struct DomainData;
+}  // namespace config
 
 class FiniteElementSpace;
 
@@ -59,6 +64,32 @@ InterfaceClasses ClassifyInterfaceTrueDofs(const mfem::Array<int> &region_marker
                                            const std::vector<char> &dirichlet,
                                            const std::vector<char> &cut);
 
+// The interface Γ of a substructured space, with the classes of its true DOFs (see
+// ClassifyInterfaceTrueDofs): its global order, by owner rank and then local index, in
+// which each rank's DOFs of Γ are its contiguous block [offset, offset + count), and the
+// global true DOF of each. Collective.
+struct SubstructureInterface : InterfaceClasses
+{
+  SubstructureInterface() = default;
+  SubstructureInterface(InterfaceClasses &&classes, HYPRE_BigInt tstart, MPI_Comm comm);
+
+  // The size of Γ, the block of this rank, and the counts and offsets of all ranks.
+  int size = 0, offset = 0, count = 0;
+  std::vector<int> counts, offsets;
+  // The index in Γ of each local true DOF (-1 off it), and the global true DOF of each
+  // index (replicated).
+  std::vector<int> index;
+  std::vector<HYPRE_BigInt> tdofs;
+
+  // The rows of Γ of this rank (count x w, row-major) of a matrix on rank 0 (size x w,
+  // row-major), and that matrix on rank 0 from the rows of all ranks (empty elsewhere).
+  // Collective.
+  template <typename T>
+  std::vector<T> ScatterRows(MPI_Comm comm, const std::vector<T> &full, int w) const;
+  template <typename T>
+  std::vector<T> GatherRows(MPI_Comm comm, const std::vector<T> &rows, int w) const;
+};
+
 // Geometric signatures of a set of true DOFs, replicated on all ranks (n x width,
 // row-major, width = SignatureWidth(fespace)), identifying them independently of the DOF
 // numbering: the DOF coordinates for H1 (width 3), the moments dof(e_b) and dof(x_a e_b)
@@ -79,15 +110,10 @@ struct SignatureMap
 {
   std::vector<std::vector<std::pair<int, double>>> rows;
 
-  // X_cur = M^-T X_saved for dual vectors X (n x k, row-major), and the rows [g0, g0 + m)
-  // of S_cur = M^-T S_saved M^-1 for a symmetric dual matrix S (n x n, m x n row-major)
-  // from the saved rows they combine, SavedRows(g0, m), read_row(a, x) filling each saved
-  // row a in their order: one saved row is held at a time.
+  // X_cur = M^-T X_saved for dual vectors X (n x k, row-major). (A dual matrix maps as
+  // S_cur = M^-T S_saved M^-1, see RedistributeTriangle.)
   template <typename T>
   std::vector<T> DualRows(const std::vector<T> &X, int k) const;
-  std::vector<int> SavedRows(int g0, int m) const;
-  template <typename T, typename ReadRow>
-  std::vector<T> DualMatrix(int g0, int m, ReadRow &&read_row) const;
 };
 
 // Which of a set of DOFs (H1 or H(curl) signatures of the given width) lie at the point of
@@ -124,62 +150,26 @@ std::vector<T> SignatureMap::DualRows(const std::vector<T> &X, int k) const
   return Y;
 }
 
-template <typename T, typename ReadRow>
-std::vector<T> SignatureMap::DualMatrix(int g0, int m, ReadRow &&read_row) const
-{
-  // (M^-T S M^-1)_gh = sum_a (M^-T)_ga z_h, z_h = sum_b (M^-T)_hb S_ab: each saved row a,
-  // mapped on its columns (z), adds to the rows g with (M^-T)_ga != 0.
-  const std::size_t n = rows.size();
-  const std::vector<int> saved = SavedRows(g0, m);
-  std::vector<std::vector<std::pair<std::size_t, double>>> to(saved.size());
-  for (int g = g0; g < g0 + m; g++)
-  {
-    for (const auto &[a, c] : rows[g])
-    {
-      const auto i = std::lower_bound(saved.begin(), saved.end(), a) - saved.begin();
-      to[i].emplace_back(g - g0, c);
-    }
-  }
-  std::vector<T> Y(static_cast<std::size_t>(m) * n, T(0.0)), x(n), z(n);
-  for (std::size_t a = 0; a < saved.size(); a++)
-  {
-    read_row(saved[a], x.data());
-    for (std::size_t h = 0; h < n; h++)
-    {
-      T v(0.0);
-      for (const auto &[b, c] : rows[h])
-      {
-        v += c * x[b];
-      }
-      z[h] = v;
-    }
-    for (const auto &[g, c] : to[a])
-    {
-      T *y = &Y[g * n];
-      for (std::size_t h = 0; h < n; h++)
-      {
-        y[h] += c * z[h];
-      }
-    }
-  }
-  return Y;
-}
-
 // Local true DOFs touched by the boundary elements with the given attributes (a true DOF
 // shared between ranks is marked on its owner).
 std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
                                    const std::vector<int> &bdr_attributes);
 
-// A with the rows and columns of the given local true DOFs replaced by the identity. The
-// identity is added rather than set by the elimination: a matrix assembled on the device
-// stores no diagonal entry in a row without element contributions.
-std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMatrix &A,
-                                                          const mfem::Array<int> &dofs);
-
 // The boundary attributes of the mesh whose elements all border elements of the region
 // only, so that a field known in the region determines quantities on them. Collective.
 std::vector<int> BoundaryAttributesInRegion(const mfem::ParMesh &mesh,
                                             const std::vector<int> &region_attributes);
+
+// The postprocessing that the field of a substructured region gives, in place: the domain
+// energies of region domains, the probes in region elements, and the surface fluxes and
+// dielectric postprocessing on boundaries in the region (BoundaryAttributesInRegion) other
+// than env_bdr_attributes (on the mesh of the region, the boundaries of the environment
+// elements it holds). Returns the indices of those it leaves out, with the key of their
+// configuration. Collective.
+std::vector<std::pair<std::string, std::vector<int>>>
+RegionPostprocessing(const mfem::ParMesh &mesh, const std::vector<int> &region_attributes,
+                     const std::vector<int> &env_bdr_attributes,
+                     config::DomainData &domains, config::BoundaryData &boundaries);
 
 // The mesh of the region and the interface written next to a saved substructuring model:
 // <model>_region.mesh and <model>_interface.msh.

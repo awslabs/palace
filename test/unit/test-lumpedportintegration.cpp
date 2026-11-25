@@ -377,6 +377,88 @@ TEST_CASE("LumpedPort batched voltages", "[lumped_port][Serial][Parallel][GPU]")
   CheckBatched();
 }
 
+TEST_CASE("LumpedPort voltage functional", "[lumped_port][Serial][Parallel]")
+{
+  // The voltage functional of a port gives its voltage, V = l^T E, for the rectangular
+  // ports of a cube (one and several elements) and the coaxial port of a cable, whose mode
+  // is not polynomial (1 / r).
+  MPI_Comm comm = Mpi::World();
+  const bool coaxial = GENERATE(false, true);
+  const auto order = GENERATE(1, 2);
+  CAPTURE(coaxial, order);
+  IoData iodata{coaxial ? Units(1.0e-3, 40.0) : Units(1.0e-6, 7.0)};
+  iodata.model.mesh = fs::path(PALACE_TEST_DATA_DIR) /
+                      (coaxial ? "regression/input/coaxial/mesh/coaxial.msh"
+                               : "lumpedport_mesh/cube_mesh_3_2_1_tet.msh");
+  iodata.model.L0 = coaxial ? 1.0e-3 : 1.0e-6;
+  iodata.model.Lc = coaxial ? 40.0 : 7.0;
+  iodata.model.crack_bdr_elements = false;
+  iodata.solver.order = order;
+  const json material = {{"Permeability", 1.0}, {"Permittivity", 1.0}, {"LossTan", 0.0}};
+  json domain = material;
+  domain["Attributes"] = coaxial ? json::array({1}) : json::array({1, 2, 3, 4, 5, 6});
+  const json domains_json = {{"Materials", json::array({domain})}};
+  iodata.domains = config::DomainData(domains_json);
+  const json ports =
+      coaxial
+          ? json::array({json::object({{"Index", 1},
+                                       {"R", 50.0},
+                                       {"Excitation", uint(1)},
+                                       {"Attributes", json::array({3})},
+                                       {"Direction", "+R"}})})
+          : json::array(
+                {json::object({{"Index", 1},
+                               {"R", 50.0},
+                               {"Excitation", uint(1)},
+                               {"Attributes", json::array({1})},
+                               {"Direction", "+Y"}}),
+                 json::object(
+                     {{"Index", 2},
+                      {"R", 75.0},
+                      {"Elements",
+                       json::array({json::object({{"Attributes", json::array({9, 11})},
+                                                  {"Direction", "+Y"}}),
+                                    json::object({{"Attributes", json::array({2, 6, 10})},
+                                                  {"Direction", "+X"}})})}})});
+  const json boundaries_json = {{"LumpedPort", ports}};
+  iodata.boundaries = config::BoundaryData(boundaries_json);
+  iodata.CheckConfiguration();
+
+  auto mesh = LoadScaleParMesh(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  GridFunction E(space_op.GetNDSpace(), true);
+  mfem::VectorFunctionCoefficient Er(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = 1.0 + x(1) + x(0) * x(0);
+                                       v(1) = 0.5 + 2.0 * x(0) - x(1) * x(2);
+                                       v(2) = x(0) - x(1);
+                                     });
+  mfem::VectorFunctionCoefficient Ei(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = x(0) + x(2);
+                                       v(1) = 1.0 - x(1) * x(1);
+                                       v(2) = 0.25 + x(0) * x(1);
+                                     });
+  E.Real().ProjectCoefficient(Er);
+  E.Imag().ProjectCoefficient(Ei);
+  mfem::Vector Er_t(space_op.GetNDSpace().GetTrueVSize()),
+      Ei_t(space_op.GetNDSpace().GetTrueVSize());
+  E.Real().GetTrueDofs(Er_t);
+  E.Imag().GetTrueDofs(Ei_t);
+  for (const auto &[idx, data] : space_op.GetLumpedPortOp())
+  {
+    const Vector l = data.GetVoltageFunctional(space_op.GetNDSpace().Get());
+    std::complex<double> V(l * Er_t, l * Ei_t);
+    Mpi::GlobalSum(1, &V, comm);
+    const std::complex<double> ref = data.GetVoltage(E);
+    CAPTURE(idx, ref.real(), ref.imag(), V.real(), V.imag());
+    CHECK(std::abs(ref) > 0.0);
+    CHECK(std::abs(V - ref) <= 1.0e-12 * std::abs(ref));
+  }
+}
+
 TEST_CASE("LumpedPort_BasicTests_1ElementPort_Cube321", "[lumped_port][Serial][Parallel]")
 {
   // This is a test of a square lumped port with R=50 Ohm. It tests the geometry,

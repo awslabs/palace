@@ -9,6 +9,7 @@
 #include <numbers>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include "linalg/lowertriangle.hpp"
 #include "models/portexcitations.hpp"
 #include "models/spaceoperator.hpp"
 #include "utils/communication.hpp"
@@ -33,7 +34,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
 EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
                                          const DrivenSubstructureModel *sampled,
                                          const RecordFunction &record, int grid_procs)
-  : space_op(space_op), comm(space_op.GetComm()), root(Mpi::Root(comm)),
+  : comm(space_op.GetComm()), root(Mpi::Root(comm)),
     model_path(iodata.solver.substructuring->model_file),
     region_attrs(iodata.solver.substructuring->region_attributes)
 {
@@ -65,9 +66,8 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
     model.environment.CheckConfig(*iodata.resolved_config, sub.environment_attributes,
                                   region_mesh);
   }
-  ds = std::make_unique<DrivenSubstructure>(
-      space_op, sub.region_attributes, sub.environment_attributes, true, &model,
-      region_mesh, sub.direct_solver, iodata.solver.linear.sym_factorization);
+  auto ds = std::make_unique<DrivenSubstructure>(
+      space_op, sub.region_attributes, sub.environment_attributes, model, region_mesh);
   if (region_mesh)
   {
     // Γ is on the boundary of the mesh of the region, so a boundary term on it would be the
@@ -94,39 +94,30 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
                     << fmt::format("{}", fmt::join(on_gamma, ", "))
                     << ") would be held by the region alone: run online on the full mesh!");
   }
-  nG = ds->InterfaceSize();
+  nG = ds->GetInterface().size;
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
-  std::map<int, std::vector<char>> port_dofs;
   std::vector<int> port_attributes;
-  env_ports = EnvironmentPorts(iodata, *ds, port_dofs, port_attributes);
+  env_ports = EnvironmentPorts(iodata, *ds, port_attributes);
 
-  // The pinned DOFs, and the rows of Γ of each process: its interface DOFs are a block of
-  // the interface order (by owner, then local index).
+  // The interface, the local true DOFs of Γ in its order, and the pinned DOFs.
+  iface = ds->GetInterface();
   const auto &dbc = space_op.GetNDDbcTDofLists().back();
-  std::vector<char> is_dbc(ds->Interface().size(), 0);
+  std::vector<char> is_dbc(iface.gamma.size(), 0);
   const int *dl = dbc.HostRead();
   for (int q = 0; q < dbc.Size(); q++)
   {
     is_dbc[dl[q]] = 1;
   }
-  for (std::size_t i = 0; i < ds->Interface().size(); i++)
+  for (std::size_t i = 0; i < iface.gamma.size(); i++)
   {
-    if (ds->Interface()[i])
+    if (iface.gamma[i])
     {
       gamma_local.push_back(static_cast<int>(i));
     }
-    else if (!ds->RegionInterior()[i] && !is_dbc[i])
+    else if (!iface.region_int[i] && !is_dbc[i])
     {
       pinned.Append(static_cast<int>(i));
     }
-  }
-  const int nranks = Mpi::Size(comm), nloc = static_cast<int>(gamma_local.size());
-  gamma_cnt.assign(nranks, 0);
-  gamma_disp.assign(nranks, 0);
-  MPI_Allgather(&nloc, 1, MPI_INT, gamma_cnt.data(), 1, MPI_INT, comm);
-  for (int r = 1; r < nranks; r++)
-  {
-    gamma_disp[r] = gamma_disp[r - 1] + gamma_cnt[r - 1];
   }
   grid.emplace(comm, nG, grid_procs);
   for (int l = 0; l < grid->LocalRows(); l++)
@@ -143,7 +134,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
 
   // The interface, environment and ports of the model.
   const auto &nd = space_op.GetNDSpace().Get();
-  const auto signatures = TrueDofSignatures(nd, ds->InterfaceIndex(), nG);
+  const auto signatures = TrueDofSignatures(nd, ds->GetInterface().index, nG);
   bool matches = model.nG == nG;
   if (matches)
   {
@@ -195,9 +186,7 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
     }
     for (std::size_t j = 0; j < model.omega.size(); j++)
     {
-      records.push_back(
-          sampled ? Distribute(root ? record(j) : std::vector<std::complex<double>>())
-                  : ReadRecord(static_cast<int>(j)));
+      records.push_back(sampled ? Distribute(record(j)) : ReadRecord(static_cast<int>(j)));
     }
     Mpi::Print(" Rational substructuring model: {:d} samples from {:.3e} to {:.3e} GHz\n",
                model.omega.size(), lo * unit_GHz, hi * unit_GHz);
@@ -220,6 +209,10 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
   }
   else
   {
+    if (sampled)
+    {
+      exact_records = record;
+    }
     for (double omega : omega_sample)
     {
       MFEM_VERIFY(FindValue(model.omega, omega) >= 0,
@@ -275,16 +268,20 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
 EnvironmentOperator::~EnvironmentOperator() = default;
 
 EnvironmentOperator::Rows
-EnvironmentOperator::Distribute(const std::vector<std::complex<double>> &flat) const
+EnvironmentOperator::Distribute(const std::vector<std::complex<double>> &x) const
 {
-  // S_E on the current interface (S_cur = M^-T S M^-1) on root, to the grid.
-  std::vector<std::complex<double>> S;
-  if (root)
-  {
-    S = FullSchur(flat.data(), nG, &gamma_map);
-  }
-  Rows rows = DistributeVectors(root ? flat.data() + model.PartSizes()[0] : nullptr);
-  rows.S = grid->ScatterFromRoot(S, true);
+  // S_E on the current interface (S_cur = M^-T S M^-1) on the grid, from the shares.
+  using T = std::complex<double>;
+  const auto range = TriangleShare(nG, comm);
+  const long long e0 = range[0];
+  std::vector<T> S(grid->LocalSize(), 0.0);
+  RedistributeTriangle<T>(
+      comm, nG,
+      [&x, e0](long long e, long long m, T *y) { std::copy_n(x.data() + (e - e0), m, y); },
+      saved_to_current, [this](int g, int h) { return grid->Owner(g, h); },
+      [this](int g, int h) { return grid->LocalIndex(g, h); }, S);
+  Rows rows = DistributeVectors(root ? x.data() + (range[1] - e0) : nullptr);
+  rows.S = std::move(S);
   return rows;
 }
 
@@ -310,125 +307,25 @@ EnvironmentOperator::Rows EnvironmentOperator::ReadRecord(int j) const
 
 std::vector<std::complex<double>> EnvironmentOperator::ReadSchur(long long pos) const
 {
-  // The lower triangle is by columns (column b holds rows a >= b, from entry
-  // b n - b (b - 1) / 2): each process reads its share in rounds of at most kChunk entries,
-  // and sends S_ab, and S_ba for a > b, to the entries of S_cur = M^-T S M^-1 they add to.
+  // Each process reads its share of the lower triangle (see TriangleShare), whose entries
+  // go to the entries of S_cur = M^-T S M^-1 on the grid they add to.
   using T = std::complex<double>;
-  constexpr long long kChunk = 1LL << 18;
-  const int nranks = Mpi::Size(comm), rank = Mpi::Rank(comm);
-  const long long n = nG, total = n * (n + 1) / 2;
-  const long long e0 = total * rank / nranks, e1 = total * (rank + 1) / nranks;
-  long long rounds = (e1 - e0 + kChunk - 1) / kChunk;
-  Mpi::GlobalMax(1, &rounds, comm);
+  std::vector<T> local(grid->LocalSize(), 0.0);
   std::ifstream f(model_path, std::ios::binary);
-  auto check = [&](bool ok)
-  {
-    int all = ok;
-    Mpi::GlobalMin(1, &all, comm);
-    MFEM_VERIFY(all, "Truncated substructuring model \"" << model_path << "\"!");
-  };
-  check(f.good());
-  auto start = [n](long long c) { return c * n - c * (c - 1) / 2; };
-  long long lo = 0, hi = n;
-  while (hi - lo > 1)
-  {
-    const long long mid = (lo + hi) / 2;
-    (start(mid) <= e0 ? lo : hi) = mid;
-  }
-  long long b = lo, a = b + (e0 - start(b));
-
-  const int mb = grid->BlockSize(), nprow = grid->NumProcessRows(),
-            npcol = grid->NumProcessCols();
-  const std::size_t lld = grid->LeadingDim();
-  const auto type = mpi::DataType<T>();
-  std::vector<T> local(grid->LocalSize(), 0.0), buf, svals, rvals;
-  std::vector<std::vector<int>> idx(nranks);
-  std::vector<std::vector<T>> vals(nranks);
-  std::vector<int> sidx, ridx, scnt(nranks), rcnt(nranks), sdsp(nranks), rdsp(nranks);
-  auto add = [&](int g, int h, T v)
-  {
-    const int q = ((g / mb) % nprow) * npcol + (h / mb) % npcol;
-    idx[q].push_back(g);
-    idx[q].push_back(h);
-    vals[q].push_back(v);
-  };
-  for (long long round = 0, e = e0; round < rounds; round++)
-  {
-    const long long e_end = std::min(e1, e + kChunk);
-    buf.resize(static_cast<std::size_t>(e_end - e));
-    if (!buf.empty())
-    {
-      f.seekg(pos + e * static_cast<long long>(sizeof(T)));
-      f.read(reinterpret_cast<char *>(buf.data()),
-             static_cast<std::streamsize>(buf.size() * sizeof(T)));
-    }
-    check(f.good());
-    for (int q = 0; q < nranks; q++)
-    {
-      idx[q].clear();
-      vals[q].clear();
-    }
-    for (const T s : buf)
-    {
-      for (const auto &[g, tg] : saved_to_current[a])
+  bool ok = f.good();
+  RedistributeTriangle<T>(
+      comm, nG,
+      [&](long long e, long long m, T *x)
       {
-        for (const auto &[h, th] : saved_to_current[b])
-        {
-          add(g, h, (tg * th) * s);
-          if (a != b)
-          {
-            add(h, g, (tg * th) * s);
-          }
-        }
-      }
-      if (++a == n)
-      {
-        a = ++b;
-      }
-    }
-    e = e_end;
-
-    // The entries to the processes holding them, which add them up.
-    for (int q = 0; q < nranks; q++)
-    {
-      scnt[q] = static_cast<int>(vals[q].size());
-    }
-    MPI_Alltoall(scnt.data(), 1, MPI_INT, rcnt.data(), 1, MPI_INT, comm);
-    sdsp[0] = rdsp[0] = 0;
-    for (int q = 1; q < nranks; q++)
-    {
-      sdsp[q] = sdsp[q - 1] + scnt[q - 1];
-      rdsp[q] = rdsp[q - 1] + rcnt[q - 1];
-    }
-    svals.clear();
-    sidx.clear();
-    for (int q = 0; q < nranks; q++)
-    {
-      svals.insert(svals.end(), vals[q].begin(), vals[q].end());
-      sidx.insert(sidx.end(), idx[q].begin(), idx[q].end());
-    }
-    const int nrecv = rdsp[nranks - 1] + rcnt[nranks - 1];
-    rvals.resize(nrecv);
-    ridx.resize(2 * static_cast<std::size_t>(nrecv));
-    MPI_Alltoallv(svals.data(), scnt.data(), sdsp.data(), type, rvals.data(), rcnt.data(),
-                  rdsp.data(), type, comm);
-    for (int q = 0; q < nranks; q++)
-    {
-      scnt[q] *= 2;
-      sdsp[q] *= 2;
-      rcnt[q] *= 2;
-      rdsp[q] *= 2;
-    }
-    MPI_Alltoallv(sidx.data(), scnt.data(), sdsp.data(), MPI_INT, ridx.data(), rcnt.data(),
-                  rdsp.data(), MPI_INT, comm);
-    for (int k = 0; k < nrecv; k++)
-    {
-      const int g = ridx[2 * k], h = ridx[2 * k + 1];
-      const std::size_t il = (g / (mb * nprow)) * mb + g % mb,
-                        jl = (h / (mb * npcol)) * mb + h % mb;
-      local[il + lld * jl] += rvals[k];
-    }
-  }
+        f.seekg(pos + static_cast<std::streamoff>(sizeof(T)) * e);
+        f.read(reinterpret_cast<char *>(x), static_cast<std::streamsize>(sizeof(T) * m));
+        ok = ok && f.good();
+      },
+      saved_to_current, [&](int g, int h) { return grid->Owner(g, h); },
+      [&](int g, int h) { return grid->LocalIndex(g, h); }, local);
+  int all = ok;
+  Mpi::GlobalMin(1, &all, comm);
+  MFEM_VERIFY(all, "Truncated substructuring model \"" << model_path << "\"!");
   return local;
 }
 
@@ -459,29 +356,21 @@ EnvironmentOperator::DistributeVectors(const std::complex<double> *tail) const
 
   // The rows of Γ of each process.
   Rows rows;
-  const auto type = mpi::DataType<std::complex<double>>();
-  const int m = gamma_cnt[Mpi::Rank(comm)];
-  auto scatter = [&](const std::complex<double> *x, int width)
+  auto scatter = [&](const std::vector<std::complex<double>> &all, int k)
   {
-    std::vector<int> cnt(gamma_cnt.size()), disp(gamma_cnt.size());
-    for (std::size_t q = 0; q < gamma_cnt.size(); q++)
-    {
-      cnt[q] = gamma_cnt[q] * width;
-      disp[q] = gamma_disp[q] * width;
-    }
-    std::vector<std::complex<double>> y(static_cast<std::size_t>(m) * width);
-    MPI_Scatterv(x, cnt.data(), disp.data(), type, y.data(), m * width, type, 0, comm);
-    return y;
+    const auto *x = all.data() + static_cast<std::size_t>(k) * nG;
+    return iface.ScatterRows(comm,
+                             root ? std::vector<std::complex<double>>(x, x + nG)
+                                  : std::vector<std::complex<double>>(),
+                             1);
   };
   for (int e = 0; e < ne; e++)
   {
-    rows.g.push_back(
-        scatter(root ? all_g.data() + static_cast<std::size_t>(e) * nG : nullptr, 1));
+    rows.g.push_back(scatter(all_g, e));
   }
   for (int j = 0; j < np; j++)
   {
-    rows.h.push_back(
-        scatter(root ? all_h.data() + static_cast<std::size_t>(j) * nG : nullptr, 1));
+    rows.h.push_back(scatter(all_h, j));
   }
   rows.c.resize(static_cast<std::size_t>(np) * ne);
   if (root)
@@ -527,7 +416,8 @@ void EnvironmentOperator::Prepare(double omega)
   }
   if (records.empty())
   {
-    cur = ReadRecord(FindValue(model.omega, omega));
+    const int j = FindValue(model.omega, omega);
+    cur = exact_records ? Distribute(exact_records(j)) : ReadRecord(j);
     omega_fun = omega;
   }
   else
@@ -596,7 +486,7 @@ EnvironmentOperator::AllInterfaceValues(const ComplexVector &x) const
   const auto x_loc = LocalInterfaceValues(x);
   std::vector<std::complex<double>> xG(nG);
   MPI_Allgatherv(x_loc.data(), static_cast<int>(x_loc.size()), type, xG.data(),
-                 gamma_cnt.data(), gamma_disp.data(), type, comm);
+                 iface.counts.data(), iface.offsets.data(), type, comm);
   return xG;
 }
 
@@ -609,7 +499,7 @@ std::vector<double> EnvironmentOperator::AllInterfaceValues(const Vector &x) con
     x_loc[a] = px[gamma_local[a]];
   }
   MPI_Allgatherv(x_loc.data(), static_cast<int>(x_loc.size()), MPI_DOUBLE, xG.data(),
-                 gamma_cnt.data(), gamma_disp.data(), MPI_DOUBLE, comm);
+                 iface.counts.data(), iface.offsets.data(), MPI_DOUBLE, comm);
   return xG;
 }
 
@@ -668,7 +558,7 @@ void EnvironmentOperator::RecordProduct(const std::vector<std::complex<double>> 
                                         const ComplexVector &x, ComplexVector &y) const
 {
   const auto yG = Product(S, AllInterfaceValues(x));
-  const int off = gamma_disp[Mpi::Rank(comm)];
+  const int off = iface.offset;
   double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
   for (std::size_t a = 0; a < gamma_local.size(); a++)
   {
@@ -710,7 +600,7 @@ void EnvironmentOperator::RecordAddMultPart(std::size_t k, bool imag, const Vect
                                             Vector &y) const
 {
   const auto yG = ProductPart(records[k].S, imag, AllInterfaceValues(x));
-  const int off = gamma_disp[Mpi::Rank(comm)];
+  const int off = iface.offset;
   double *py = y.HostReadWrite();
   for (std::size_t a = 0; a < gamma_local.size(); a++)
   {

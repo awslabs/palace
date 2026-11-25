@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -15,6 +16,7 @@
 #include <random>
 #include <sstream>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -25,6 +27,8 @@
 #include "fem/substructure.hpp"
 #include "fem/substructuremodel.hpp"
 #include "fixtures.hpp"
+#include "linalg/blockcyclic.hpp"
+#include "linalg/lowertriangle.hpp"
 #include "test-helpers.hpp"
 #include "utils/communication.hpp"
 
@@ -57,6 +61,54 @@ TEST_CASE("Interface true DOFs are identified consistently in parallel",
   };
   CHECK(count(1) == 49);
   CHECK(count(2) == 169);
+}
+
+TEST_CASE("The interface of a substructured space is numbered by rank",
+          "[substructure][Serial][Parallel]")
+{
+  // The cube split at x = 0.5 at order 2, without Dirichlet DOFs: the 169 interface DOFs
+  // are numbered in blocks of the ranks in rank order, each in local order, and each index
+  // gives back its true DOF.
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial = mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::HEXAHEDRON);
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    mfem::Vector c;
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+  }
+  serial.SetAttributes();
+  mfem::ParMesh mesh(comm, serial);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace pfes(&mesh, &fec);
+  mfem::Array<int> ra({1}), ea({2}), rm, em;
+  MarkInterfaceTrueDofs(pfes, ra, ea, rm, em);
+  const int nt = pfes.GetTrueVSize();
+  const HYPRE_BigInt tstart = pfes.GetMyTDofOffset();
+  const SubstructureInterface iface(
+      ClassifyInterfaceTrueDofs(rm, em, std::vector<char>(nt, 0), {}), tstart, comm);
+  const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
+  CHECK(iface.size == 169);
+  REQUIRE(static_cast<int>(iface.counts.size()) == nranks);
+  CHECK(iface.count == iface.counts[rank]);
+  CHECK(iface.offset == iface.offsets[rank]);
+  CHECK(iface.offsets.back() + iface.counts.back() == iface.size);
+  REQUIRE(iface.tdofs.size() == static_cast<std::size_t>(iface.size));
+  int wrong = 0, next = iface.offset;
+  for (int i = 0; i < nt; i++)
+  {
+    if (iface.gamma[i])
+    {
+      wrong += (iface.index[i] != next++ || iface.tdofs[iface.index[i]] != tstart + i);
+    }
+    else
+    {
+      wrong += (iface.index[i] != -1);
+    }
+  }
+  wrong += (next != iface.offset + iface.count);
+  Mpi::GlobalSum(1, &wrong, comm);
+  CHECK(wrong == 0);
 }
 
 TEST_CASE("Element moments tell sets of elements apart", "[substructure][Serial][Parallel]")
@@ -570,7 +622,8 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
   // orientations, as a different partition gives): the true-DOF bases of second-order
   // Nédélec elements differ beyond signs on the faces. The signature map must transform a
   // linear form and the mass matrix of one space into those of the other (dual quantities,
-  // x_cur = M^-T x_saved).
+  // x_cur = M^-T x_saved), the matrix from the shares of its lower triangle onto a grid of
+  // the processes, as a model's S_E is read (see RedistributeTriangle).
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   mfem::Mesh base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON);
@@ -664,80 +717,239 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
     CHECK(blocks > 0);  // face DOFs whose basis is not a signed permutation of the other's
   }
   const auto b = map.DualRows(b_s, 1);
-  // M in thirds of its rows (as ranks hold them), each from the saved rows it combines.
-  const int n = static_cast<int>(b_s.size()), third = (n + 2) / 3;
-  std::vector<double> M;
-  for (int g0 = 0; g0 < n; g0 += third)
+  const int n = static_cast<int>(b_s.size());
+  std::vector<std::vector<std::pair<int, double>>> to(n);
+  for (int g = 0; g < n; g++)
   {
-    const int m = std::min(third, n - g0);
-    std::vector<int> read;
-    const auto Mg =
-        map.DualMatrix<double>(g0, m,
-                               [&](int a, double *x)
-                               {
-                                 read.push_back(a);
-                                 std::copy_n(&M_s[static_cast<std::size_t>(a) * n], n, x);
-                               });
-    CHECK(read == map.SavedRows(g0, m));
-    CHECK(read.size() < static_cast<std::size_t>(n));
-    M.insert(M.end(), Mg.begin(), Mg.end());
+    for (const auto &[a, c] : map.rows[g])
+    {
+      to[a].emplace_back(g, c);
+    }
   }
-  REQUIRE(M.size() == M_c.size());
-  double db = 0.0, mb = 0.0, dM = 0.0, mM = 0.0;
+  MPI_Comm comm = Mpi::World();
+  const BlockCyclicGrid grid(comm, n, Mpi::Size(comm), 2);
+  std::vector<double> M(grid.LocalSize(), 0.0);
+  RedistributeTriangle<double>(
+      comm, n,
+      [&](long long e, long long m, double *x)
+      {
+        auto [a, c] = TriangleEntry(n, e);
+        for (long long k = 0; k < m; k++)
+        {
+          x[k] = M_s[static_cast<std::size_t>(c) * n + a];
+          if (++a == n)
+          {
+            a = ++c;
+          }
+        }
+      },
+      to, [&](int g, int h) { return grid.Owner(g, h); },
+      [&](int g, int h) { return grid.LocalIndex(g, h); }, M);
+  double db = 0.0, mb = 0.0, dM[2] = {0.0, 0.0};
   for (std::size_t i = 0; i < b.size(); i++)
   {
     db = std::max(db, std::abs(b[i] - b_c[i]));
     mb = std::max(mb, std::abs(b_c[i]));
   }
-  for (std::size_t q = 0; q < M.size(); q++)
+  for (int jl = 0; jl < grid.LocalCols(); jl++)
   {
-    dM = std::max(dM, std::abs(M[q] - M_c[q]));
-    mM = std::max(mM, std::abs(M_c[q]));
-  }
-  CAPTURE(blocks, db, mb, dM, mM);
-  CHECK(db <= 1.0e-12 * mb);
-  CHECK(dM <= 1.0e-12 * mM);
-}
-
-TEST_CASE("Eliminated rows without a stored diagonal become identity rows",
-          "[substructure][Serial][Parallel]")
-{
-  // Per rank: rows 0 and 3 store no entry (as a device-assembled matrix has for a DOF
-  // without element contributions), rows 1 and 2 are coupled, rows 4 and 5 diagonal.
-  // Eliminating rows 0, 1 and 3 leaves the identity on them and decouples row 2.
-  MPI_Comm comm = Mpi::World();
-  const int n = 6, rank = Mpi::Rank(comm), size = Mpi::Size(comm);
-  const HYPRE_BigInt off = static_cast<HYPRE_BigInt>(rank) * n,
-                     glob = static_cast<HYPRE_BigInt>(size) * n;
-  std::vector<HYPRE_BigInt> part;
-  if (HYPRE_AssumedPartitionCheck())
-  {
-    part = {off, off + n};
-  }
-  else
-  {
-    for (int r = 0; r <= size; r++)
+    for (int il = 0; il < grid.LocalRows(); il++)
     {
-      part.push_back(static_cast<HYPRE_BigInt>(r) * n);
+      const double ref =
+          M_c[static_cast<std::size_t>(grid.GlobalCol(jl)) * n + grid.GlobalRow(il)];
+      dM[0] = std::max(
+          dM[0], std::abs(M[il + static_cast<std::size_t>(grid.LeadingDim()) * jl] - ref));
+      dM[1] = std::max(dM[1], std::abs(ref));
     }
   }
-  std::vector<int> I = {0, 0, 2, 4, 4, 5, 6};
-  std::vector<HYPRE_BigInt> J = {off + 1, off + 2, off + 1, off + 2, off + 4, off + 5};
-  std::vector<double> V = {2.0, -1.0, -1.0, 2.0, 2.0, 2.0};
-  mfem::HypreParMatrix A(comm, n, glob, glob, I.data(), J.data(), V.data(), part.data(),
-                         part.data());
-  mfem::Array<int> dofs({0, 1, 3});
-  std::unique_ptr<mfem::HypreParMatrix> B = EliminateToIdentity(A, dofs);
-  mfem::Vector x(n), y(n);
-  x = 1.0;
-  B->Mult(x, y);
-  const double *yy = y.HostRead();
-  const std::array<double, 6> expected = {1.0, 1.0, 2.0, 1.0, 2.0, 2.0};
+  Mpi::GlobalMax(2, dM, comm);
+  CAPTURE(blocks, db, mb, dM[0], dM[1]);
+  CHECK(db <= 1.0e-12 * mb);
+  CHECK(dM[0] <= 1.0e-12 * dM[1]);
+}
+
+namespace
+{
+
+// The redistribution of the lower triangle of a symmetric n x n matrix S, each process
+// holding its share, through a signed permutation of its DOFs (S_cur(g, h) = s_g s_h
+// S(p_g, p_h), or S without it), onto the rows of a block of DOFs on each process and onto
+// a block cyclic grid of all of them, against S_cur on every process.
+template <typename T>
+void CheckTriangleRedistribution(int n, bool mapped)
+{
+  MPI_Comm comm = Mpi::World();
+  const int nranks = Mpi::Size(comm), rank = Mpi::Rank(comm);
+  // The entries of S, each computed once, so that each use of one is the same value.
+  std::vector<T> S(static_cast<std::size_t>(n) * n);
   for (int i = 0; i < n; i++)
   {
-    CAPTURE(i);
-    CHECK(yy[i] == expected[i]);
+    for (int j = 0; j <= i; j++)
+    {
+      if constexpr (std::is_same_v<T, double>)
+      {
+        S[static_cast<std::size_t>(i) * n + j] = std::sin(1.0 + i + 3.1 * j);
+      }
+      else
+      {
+        S[static_cast<std::size_t>(i) * n + j] =
+            T(std::sin(1.0 + i + 3.1 * j), std::cos(0.5 * i - 2.0 * j));
+      }
+      S[static_cast<std::size_t>(j) * n + i] = S[static_cast<std::size_t>(i) * n + j];
+    }
   }
+  auto value = [&](int a, int b) { return S[static_cast<std::size_t>(a) * n + b]; };
+  std::vector<int> perm(n);
+  std::iota(perm.begin(), perm.end(), 0);
+  std::mt19937 rng(7);
+  std::shuffle(perm.begin(), perm.end(), rng);
+  std::vector<int> saved(n);
+  std::vector<std::vector<std::pair<int, double>>> to;
+  if (mapped)
+  {
+    to.resize(n);
+    for (int a = 0; a < n; a++)
+    {
+      to[a] = {{perm[a], (a % 3 == 0) ? -1.0 : 1.0}};
+      saved[perm[a]] = a;
+    }
+  }
+  auto expected = [&](int g, int h)
+  {
+    if (!mapped)
+    {
+      return value(g, h);
+    }
+    const int a = saved[g], b = saved[h];
+    return ((a % 3 == 0) ? -1.0 : 1.0) * ((b % 3 == 0) ? -1.0 : 1.0) * value(a, b);
+  };
+  auto read = [&](long long e, long long m, T *x)
+  {
+    long long b = 0;
+    while (TriangleColumnStart(n, b + 1) <= e)
+    {
+      b++;
+    }
+    long long a = b + (e - TriangleColumnStart(n, b));
+    for (long long k = 0; k < m; k++)
+    {
+      x[k] = value(static_cast<int>(a), static_cast<int>(b));
+      if (++a == n)
+      {
+        a = ++b;
+      }
+    }
+  };
+
+  // The rows [n r / p, n (r + 1) / p) on process r.
+  auto first = [&](int r)
+  { return static_cast<int>(static_cast<long long>(n) * r / nranks); };
+  std::vector<T> rows(static_cast<std::size_t>(first(rank + 1) - first(rank)) * n, T(0.0));
+  RedistributeTriangle<T>(
+      comm, n, read, to,
+      [&](int g, int)
+      {
+        int q = 0;
+        while (first(q + 1) <= g)
+        {
+          q++;
+        }
+        return q;
+      },
+      [&](int g, int h) { return static_cast<std::size_t>(g - first(rank)) * n + h; },
+      rows);
+  double err = 0.0;
+  for (int g = first(rank); g < first(rank + 1); g++)
+  {
+    for (int h = 0; h < n; h++)
+    {
+      err = std::max(err, std::abs(rows[static_cast<std::size_t>(g - first(rank)) * n + h] -
+                                   expected(g, h)));
+    }
+  }
+
+  // The grid of all processes, in blocks of 4.
+  const BlockCyclicGrid grid(comm, n, nranks, 4);
+  std::vector<T> local(grid.LocalSize(), T(0.0));
+  RedistributeTriangle<T>(
+      comm, n, read, to, [&](int g, int h) { return grid.Owner(g, h); },
+      [&](int g, int h) { return grid.LocalIndex(g, h); }, local);
+  for (int jl = 0; jl < grid.LocalCols(); jl++)
+  {
+    for (int il = 0; il < grid.LocalRows(); il++)
+    {
+      const int g = grid.GlobalRow(il), h = grid.GlobalCol(jl);
+      err = std::max(err, std::abs(local[grid.LocalIndex(g, h)] - expected(g, h)));
+    }
+  }
+
+  // Back to the share of each process of the lower triangle, from the grid.
+  const auto share = ShareFromGrid(grid, local);
+  const auto range = TriangleShare(n, comm);
+  REQUIRE(share.size() == static_cast<std::size_t>(range[1] - range[0]));
+  const auto entry = TriangleEntry(n, range[0]);
+  long long a = entry[0], b = entry[1];
+  for (const T v : share)
+  {
+    err = std::max(err, std::abs(v - expected(static_cast<int>(a), static_cast<int>(b))));
+    if (++a == n)
+    {
+      a = ++b;
+    }
+  }
+  Mpi::GlobalMax(1, &err, comm);
+  CHECK(err == 0.0);
+}
+
+}  // namespace
+
+TEST_CASE("Saved lower triangles are redistributed onto rows and process grids",
+          "[substructure][Serial][Parallel]")
+{
+  const int n = GENERATE(1, 2, 37);
+  const bool mapped = GENERATE(false, true);
+  CAPTURE(n, mapped);
+  CheckTriangleRedistribution<double>(n, mapped);
+  CheckTriangleRedistribution<std::complex<double>>(n, mapped);
+}
+
+TEST_CASE("The parts of a model record pass through rank 0 in chunks",
+          "[substructure][Serial][Parallel]")
+{
+  // Rank q holds 3 q + 2 doubles, but rank 1 none; a chunk of 1 or 4 doubles holds part of
+  // those of a rank, the largest one all of them.
+  MPI_Comm comm = Mpi::World();
+  const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
+  const std::size_t chunk = GENERATE(1, 4, 1000);
+  auto count = [](int q) { return (q == 1) ? 0 : 3 * q + 2; };
+  auto value = [](int q, int i) { return 100.0 * q + i; };
+  std::vector<long long> size(nranks);
+  for (int q = 0; q < nranks; q++)
+  {
+    size[q] = count(q);
+  }
+  std::vector<double> x(count(rank)), expected;
+  for (int i = 0; i < count(rank); i++)
+  {
+    x[i] = value(rank, i);
+  }
+  std::vector<double> got;
+  std::size_t most = 0;
+  ToRoot<double>(comm, x, size, chunk,
+                 [&](const double *y, std::size_t n)
+                 {
+                   got.insert(got.end(), y, y + n);
+                   most = std::max(most, n);
+                 });
+  for (int q = 0; Mpi::Root(comm) && q < nranks; q++)
+  {
+    for (int i = 0; i < count(q); i++)
+    {
+      expected.push_back(value(q, i));
+    }
+  }
+  CHECK(got == expected);
+  CHECK(most <= chunk);
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,

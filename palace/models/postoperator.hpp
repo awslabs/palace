@@ -194,14 +194,19 @@ protected:
     return enable_gridfunction_output && ShouldWriteFields(step);
   }
 
-  // ParaView data collection: writing fields to disk for visualization.
-  // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
-  // and we only want initialize it if ShouldWriteParaviewFields() returns true.
-  std::optional<CeedParaViewDataCollection> paraview;
-  std::optional<CeedParaViewDataCollection> paraview_bdr;
-
-  // Largest cycle written, so the final save never overwrites a step written out of order.
-  int paraview_max_cycle = -1;
+  // ParaView data collections, writing fields to disk for visualization, set up only if
+  // ShouldWriteParaviewFields() returns true: the domain and boundary ones of each output
+  // folder, kept while the run writes others (a sweep by frequency writes those of each
+  // excitation in turn), with the largest cycle written, so the final save never overwrites
+  // a step written out of order; and the current ones.
+  struct ParaviewCollections
+  {
+    std::unique_ptr<CeedParaViewDataCollection> domain, boundary;
+    int max_cycle = -1;
+  };
+  std::map<fs::path, ParaviewCollections> paraview_collections;
+  CeedParaViewDataCollection *paraview = nullptr, *paraview_bdr = nullptr;
+  int *paraview_max_cycle = nullptr;
 
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
@@ -259,10 +264,9 @@ protected:
   void SetupFieldCoefficients();
   void EnsureFieldCoefficientsSetup();
 
-  // Initialize Paraview, register all fields to write. With restart, the collection
-  // continues the one in its folder, whose cycles before the next write are kept.
-  void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "",
-                                        bool restart = false);
+  // Make the ParaView collections of a folder the current ones: those kept from an earlier
+  // switch to it, or new ones with all the fields to write registered.
+  void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
   void EnsureParaviewDataCollection();
 
   // Subfolder for the field output of a driven excitation, the same for ParaView and grid
@@ -273,7 +277,7 @@ protected:
 public:
   // Public overload for the driven solver only, that takes in an excitation index and
   // sets the correct sub_folder_name path for the primary function above.
-  void InitializeParaviewDataCollection(int ex_idx, bool restart = false)
+  void InitializeParaviewDataCollection(int ex_idx)
     requires(solver_t == ProblemType::DRIVEN);
 
   // Whether this solve requests any field output. Drivers use this to release solver
@@ -506,7 +510,7 @@ public:
 
   // Wave port overlaps of the field with the port mode (the S-parameter before its
   // incident part is removed) given in the same way; their power and voltage are not
-  // available (zero).
+  // available (NaN).
   void SetWavePortOverlaps(std::map<int, std::complex<double>> overlaps)
     requires(solver_t == ProblemType::DRIVEN)
   {

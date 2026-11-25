@@ -46,15 +46,9 @@ using namespace std::complex_literals;
 namespace
 {
 
-// The sweep of a substructured region, for its messages: online, or offline adaptive.
-const char *RegionSweep(const IoData &iodata)
-{
-  return iodata.solver.substructuring->Online() ? "Online" : "Adaptive";
-}
-
 // The postprocessing of a sweep: that of the configuration or, for a substructured region,
 // whose field is known in the region and on Γ only, that of the region (see
-// RegionPostprocessing).
+// RegionPostprocessing), without total energies or participation ratios.
 std::pair<config::DomainData, config::BoundaryData>
 SweepPostprocessing(const IoData &iodata, const SpaceOperator &space_op)
 {
@@ -62,9 +56,23 @@ SweepPostprocessing(const IoData &iodata, const SpaceOperator &space_op)
   config::BoundaryData boundaries = iodata.boundaries;
   if (const auto *env = space_op.GetEnvironment())
   {
-    RegionPostprocessing(env->RegionAttributes(), space_op.GetMesh().Get(),
-                         env->RegionMesh() ? &env->RegionBoundaryAttributes() : nullptr,
-                         !env->Ports().empty(), RegionSweep(iodata), domains, boundaries);
+    domains.postpro.partial = true;
+    const auto left_out = RegionPostprocessing(
+        space_op.GetMesh().Get(), env->RegionAttributes(),
+        env->RegionMesh() ? env->EnvironmentBoundaryAttributes() : std::vector<int>{},
+        domains, boundaries);
+    std::string what;
+    for (const auto &[key, idx] : left_out)
+    {
+      what += fmt::format(", no \"{}\" {}", key, fmt::join(idx, ", "));
+    }
+    Mpi::Warning(
+        "Driven substructuring postprocesses the field of the region only: no total "
+        "energies or participation ratios{}{}!\n",
+        what,
+        env->Ports().empty() ? ""
+                             : ", and no power (or wave port voltage) of the "
+                               "environment's ports");
   }
   return {domains, boundaries};
 }
@@ -86,14 +94,13 @@ void SetEnvironmentPorts(SpaceOperator &space_op,
   }
 }
 
-void WarnRegionFields(const IoData &iodata, const SpaceOperator &space_op,
+void WarnRegionFields(const SpaceOperator &space_op,
                       const PostOperator<ProblemType::DRIVEN> &post_op)
 {
   if (space_op.GetEnvironment() && post_op.WillWriteFields())
   {
-    Mpi::Warning("{} driven substructuring writes the fields in the region and on the "
-                 "interface only (zero in the environment)!\n",
-                 RegionSweep(iodata));
+    Mpi::Warning("Driven substructuring writes the fields in the region and on the "
+                 "interface only (zero in the environment)!\n");
   }
 }
 
@@ -104,7 +111,8 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
-  SpaceOperator space_op(iodata, mesh);
+  auto full_op = std::make_unique<SpaceOperator>(iodata, mesh);
+  SpaceOperator &space_op = *full_op;
   const auto &port_excitations = space_op.GetPortExcitations();
   SaveMetadata(port_excitations);
 
@@ -135,32 +143,36 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
     Mpi::Print("\nRestarting from solve {}", iodata.solver.driven.restart);
   }
 
-  // Main frequency sweep loop. Online, the region is solved against the environment of the
-  // saved model.
-  if (const auto &sub = iodata.solver.substructuring; sub && sub->Online())
+  // Main frequency sweep loop. A substructured region is solved against its environment,
+  // with the operators of the region (see SpaceOperator): the environment of the saved
+  // model online, or condensed by this run offline, sampled for a rational model by an
+  // adaptive sweep, or at each frequency of an exact one, as its sweep reaches it (on the
+  // operators of the full problem, which the others release).
+  if (const auto &sub = iodata.solver.substructuring)
   {
-    EnvironmentOperator env(iodata, space_op);
-    space_op.SetEnvironment(env);
-    if (adaptive && env.NumRecords() == 0)
+    std::unique_ptr<EnvironmentOperator> env;
+    if (sub->Online())
     {
-      Mpi::Warning("An adaptive online sweep needs a model saved by an adaptive sweep: "
-                   "every frequency is solved!\n");
-      adaptive = false;
+      env = std::make_unique<EnvironmentOperator>(iodata, space_op);
+      if (adaptive && env->NumRecords() == 0)
+      {
+        Mpi::Warning("An adaptive online sweep needs a model saved by an adaptive sweep: "
+                     "every frequency is solved!\n");
+        adaptive = false;
+      }
     }
-    return {adaptive ? SweepAdaptive(space_op) : SweepUniform(space_op),
-            space_op.GlobalTrueVSize()};
-  }
-  // Offline, an adaptive sweep samples the environment's rational model, then reduces the
-  // region against it; an exact one solves the whole device frequency by frequency.
-  if (iodata.solver.substructuring)
-  {
-    if (adaptive)
+    else
     {
-      const auto env = SampleEnvironmentModel(iodata, space_op);
-      space_op.SetEnvironment(*env);
-      return {SweepAdaptive(space_op), space_op.GlobalTrueVSize()};
+      env = adaptive ? SampleEnvironmentModel(iodata, space_op)
+                     : ExactEnvironmentModel(iodata, space_op);
     }
-    return {SweepSubstructured(iodata, space_op), space_op.GlobalTrueVSize()};
+    if (sub->Online() || adaptive)
+    {
+      full_op.reset();
+    }
+    SpaceOperator region_op(iodata, mesh, env.get());
+    return {adaptive ? SweepAdaptive(region_op) : SweepUniform(region_op),
+            region_op.GlobalTrueVSize()};
   }
   return {adaptive ? SweepAdaptive(space_op) : SweepUniform(space_op),
           space_op.GlobalTrueVSize()};
@@ -177,7 +189,7 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   const auto [domains, boundaries] = SweepPostprocessing(iodata, space_op);
   PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
                                             boundaries, iodata.units, space_op);
-  WarnRegionFields(iodata, space_op, post_op);
+  WarnRegionFields(space_op, post_op);
 
   // The fixed system matrices are only needed when the system cannot be applied through
   // the preconditioner (see SpaceOperator::GetSystemOperator), so assemble them on first
@@ -352,19 +364,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
           E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
     }
 
-    if (!by_frequency || n_ex == 1)
+    if (excitation_starts || by_frequency)
     {
-      if (excitation_starts)
-      {
-        // Switch ParaView subfolders once per excitation, after the first solve.
-        post_op.InitializeParaviewDataCollection(excitation_idx);
-      }
-    }
-    else if (post_op.WillWriteFields(static_cast<int>(omega_i)))
-    {
-      // The fields of each excitation go to its own ParaView collection, continued at each
-      // frequency.
-      post_op.InitializeParaviewDataCollection(excitation_idx, true);
+      // Switch ParaView subfolders once per excitation, after the first solve, or to those
+      // of the excitation at each solve of a sweep by frequency (which keeps them).
+      post_op.InitializeParaviewDataCollection(excitation_idx);
     }
     SetEnvironmentPorts(space_op, post_op, excitation_idx, omega, E);
     auto total_domain_energy =
@@ -398,7 +402,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   const auto [domains, boundaries] = SweepPostprocessing(iodata, space_op);
   PostOperator<ProblemType::DRIVEN> post_op(iodata.problem, iodata.solver, domains,
                                             boundaries, iodata.units, space_op);
-  WarnRegionFields(iodata, space_op, post_op);
+  WarnRegionFields(space_op, post_op);
 
   // Configure PROM parameters if not specified.
   double offline_tol = iodata.solver.driven.adaptive_tol;
@@ -692,6 +696,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // for the online output sweep; failed residual checks transparently fall back to the
   // exact port eigensolver and enrich the basis.
   space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
+  prom_op.PrepareOnlinePhase();
   // For a substructured region, the reduced postprocessing takes the environment's port
   // values from the values on Γ of the reduced solution, those of the basis vectors
   // combined.

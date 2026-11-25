@@ -4,10 +4,8 @@
 #include "utils/ceedparaviewdatacollection.hpp"
 
 #include <algorithm>
-#include <fstream>
 #include <limits>
 #include <memory>
-#include <regex>
 #include <set>
 #include <sstream>
 #include <type_traits>
@@ -766,6 +764,12 @@ long long CeedParaViewDataCollection::AvoidedSliceCopyBytes()
   return avoided_slice_copy_bytes.load();
 }
 
+void CeedParaViewDataCollection::ReleaseMeshCache()
+{
+  std::string().swap(cached_mesh_vtu);
+  std::string().swap(cached_point_headers_vtu);
+}
+
 void CeedParaViewDataCollection::Save()
 {
   const std::string col_path = GenerateCollectionPath();
@@ -774,6 +778,7 @@ void CeedParaViewDataCollection::Save()
     const std::string path = col_path + "/" + GenerateVTUPath();
     MFEM_VERIFY(!create_directory(path, mesh, myid), "Error creating directory: " << path);
   }
+  MFEM_VERIFY(!restart_mode, "ParaView restart mode is not supported!");
   MFEM_VERIFY(q_field_map.NumFields() == 0,
               "ParaView output of quadrature functions is not supported!");
 
@@ -852,34 +857,8 @@ void CeedParaViewDataCollection::Save()
         WritePVTUFooter(pvtu_out, "proc");
       });
 
-  // The collection file lists the data sets of all saves, rewritten whole at each. In
-  // restart mode, the first save keeps those of an existing collection file at earlier
-  // times, which must be at earlier cycles.
-  if (restart_mode && !pvd_restarted && myid == 0)
-  {
-    std::ifstream pvd_in(col_path + "/" + GeneratePVDFileName());
-    const std::regex regexp("timestep=\"([^[:space:]]+)\".*file=\"Cycle(\\d+)");
-    std::smatch match;
-    std::string line;
-    while (std::getline(pvd_in, line))
-    {
-      if (std::regex_search(line, match, regexp))
-      {
-        if (std::stod(match[1]) >= GetTime())
-        {
-          break;
-        }
-        MFEM_VERIFY(std::stoi(match[2]) < GetCycle(),
-                    "Cycle " << GetCycle()
-                             << " is too small for restart mode: trying to overwrite "
-                                "existing data.");
-        pvd_datasets += line + "\n";
-      }
-    }
-  }
-  pvd_restarted = true;
+  // The collection file lists the data sets of all saves, rewritten whole at each.
   std::ostringstream dataset;
-  dataset.precision(std::numeric_limits<double>::max_digits10);
   dataset << "<DataSet timestep=\"" << GetTime() << "\" group=\"\" part=\"" << 0
           << "\" file=\"" << GeneratePVTUPath() + "/" + GeneratePVTUFileName("data")
           << "\" name=\"mesh\"/>\n";

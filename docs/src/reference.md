@@ -561,6 +561,9 @@ specifying an offset distance ``d`` for each wave port:
 \tilde{S}_{ij} = S_{ij}e^{ik_{n,i}d_i}e^{ik_{n,j}d_j} \,.
 ```
 
+Lumped and Floquet ports have ``d = 0``, so the S-parameters between a wave port and a port of
+another type carry the factor of the wave port once, whichever of the two is excited.
+
 ## Adaptive driven solver and reduced-order modeling
 
 The driven solver assembles a frequency-dependent linear system of the form
@@ -1129,6 +1132,80 @@ c_{ij} &= \bm{W}_i^T\bm{K}^E\bm{W}_j
   - \bm{J}^{E\,T}_i\bm{W}_j - \bm{J}^{E\,T}_j\bm{W}_i .
 \end{aligned}
 ```
+
+### Driven substructuring
+
+For a [driven](guide/problem.md#Driven-problems-in-the-frequency-domain) problem the operator of
+the environment depends on the frequency,
+``\bm{A}^E(\omega) = \bm{K}^E + i\omega\bm{C}^E - \omega^2\bm{M}^E + \bm{A}_2^E(\omega)``,
+assembled on its elements with the rank-one modal terms of its wave ports, which border its
+factorization. It is complex symmetric, so the condensation above holds at each frequency, with
+transposes:
+
+```math
+\bm{S}_E(\omega) = \bm{Z}(\omega)^T\bm{A}^E(\omega)\bm{Z}(\omega) , \qquad
+\bm{g}_k(\omega) = -\bm{A}_{\Gamma E}(\omega)\bm{A}_{EE}(\omega)^{-1}\bm{b}_{E,k}(\omega) ,
+```
+
+for the excitations ``k`` with sources ``\bm{b}_{E,k}`` in the environment. The voltage of a
+lumped port of the environment, or the overlap of a wave port with its mode (its S-parameter), is
+a linear functional ``V_j = \bm{l}_j^T\bm{u}`` of the field on the environment interior, so with
+``\bm{u}_E = \bm{Z}\bm{u}_\Gamma + \bm{w}_k``, ``\bm{w}_k = \bm{A}_{EE}^{-1}\bm{b}_{E,k}``,
+
+```math
+V_{jk} = c_{jk} + \bm{h}_j^T\bm{u}_{\Gamma,k} , \qquad
+\bm{h}_j = \bm{Z}^T\bm{l}_j = -\bm{A}_{\Gamma E}\bm{A}_{EE}^{-1}\bm{l}_{j,E} , \qquad
+c_{jk} = \bm{l}_j^T\bm{w}_k ,
+```
+
+and the ports of the environment follow from the interface solution of the region. A record of the
+environment at a frequency holds ``\bm{S}_E`` (by its lower triangle), the ``\bm{g}_k``, the
+``\bm{h}_j`` and the ``c_{jk}``: an exact sweep condenses one at each of its frequencies, and an
+online sweep solves the region against the saved ones.
+
+An adaptive sweep samples the records ``\bm{x}_j = \bm{x}(\omega_j)``, each part scaled by its
+norm at the first sample, and interpolates them with one set of barycentric weights for all their
+entries,
+
+```math
+\tilde{\bm{x}}(\omega) = \sum_j a_j(\omega)\bm{x}_j , \qquad
+a_j(\omega) = \frac{w_j / (\omega - \omega_j)}{\sum_l w_l / (\omega - \omega_l)} ,
+```
+
+the weights of the minimal rational interpolant of the snapshots
+``\{\bm{x}_j,\,i\omega_j\bm{x}_j\}``, as for the error indicator of the
+[adaptive driven solver](#Adaptive-driven-solver-and-reduced-order-modeling). The next sample is
+where the denominator is smallest between the outermost samples, and the sampling stops when the
+relative error of the interpolant at `"AdaptiveConvergenceMemory"` consecutive new samples, before
+each is added, is below `"AdaptiveTol"`. The environment absorbs the power
+``\mathrm{Im}\,\bm{u}_\Gamma^H\bm{S}_E\bm{u}_\Gamma`` (up to a positive factor, with the
+``i\omega`` of the damping term), so it is passive when the real symmetric
+``\mathrm{Im}\,\bm{S}_E`` is positive semidefinite. Between two samples, the least eigenvalue of
+``\mathrm{Im}\,\tilde{\bm{S}}_E`` relative to ``\|\tilde{\bm{S}}_E\|_F``, tested at the midpoint
+by Cholesky factorizations, is to be no lower than at the two samples less `"AdaptiveTol"`: it is
+zero there for a passive environment, and a second-order absorbing boundary can make it negative.
+A violation adds a sample at the midpoint where it is largest. The adaptive fast frequency sweep
+then reduces the region as it reduces a whole device, each record ``k`` being a
+[non-quadratic term](#Non-quadratic-boundary-terms) of the reduced problem with the scalar
+``a_k(\omega)``: ``\bm{Q}^T\bm{R}_\Gamma^T\bm{S}_{E,k}\bm{R}_\Gamma\bm{Q}`` in the operator and
+``\bm{Q}^T\bm{R}_\Gamma^T\bm{g}_{k}`` in the right-hand side, projected once per record as the
+basis ``\bm{Q}`` grows, while the ports of the environment take ``\tilde{\bm{h}}_j(\omega)`` and
+``\tilde{c}_{jk}(\omega)`` at the interface values of the reduced solution.
+
+Every sweep solves the region by FGMRES, preconditioned by a direct solve of the region with
+``\bm{S}_E`` added. The region's preconditioner matrix ``\bm{P}``, its operator without ``\bm{S}_E``
+with the eliminated true degrees of freedom (Dirichlet, and those of the environment off ``\Gamma``)
+as identity rows, is factored by a sparse direct solver for its Schur complement onto ``\Gamma``,
+``\bm{S}_R = \bm{P}_{\Gamma\Gamma} - \bm{P}_{\Gamma R}\bm{P}_{RR}^{-1}\bm{P}_{R\Gamma}``, and the
+dense ``\bm{S}_R + \bm{S}_E(\omega)``, distributed in two-dimensional blocks over the processes, by
+an LU factorization. A preconditioner application condenses the residual onto ``\Gamma``,
+``\bm{r}_\Gamma - \bm{P}_{\Gamma R}\bm{P}_{RR}^{-1}\bm{r}_R``, solves the dense system for
+``\bm{u}_\Gamma`` and expands
+``\bm{u}_R = \bm{P}_{RR}^{-1}(\bm{r}_R - \bm{P}_{R\Gamma}\bm{u}_\Gamma)``. When ``\bm{P}`` is the
+region's operator, the solve is exact but for rounding, except near a resonance of the region with
+``\Gamma`` held fixed, where ``\bm{P}_{RR}`` is nearly singular: FGMRES then takes a few more
+iterations, where GMRES, which applies the preconditioner to a combination of its basis, would lose
+digits.
 
 ## Error estimation and adaptive mesh refinement (AMR)
 

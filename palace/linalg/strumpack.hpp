@@ -39,6 +39,18 @@ inline void EnableStrumpackSharedPermutation(strumpack::SPOptions<ScalarType> &o
   }
 }
 
+// Make STRUMPACK map the subtrees of its elimination tree to the processes in proportion to
+// the size of their factors instead of the operations of their factorization (its default).
+// A triangular solve costs the factor size, not the factorization operations: the default
+// can leave one process a subtree with many times the average factor size, and every solve
+// then waits for that process. Palace sets this in its coarse solvers (StrumpackSolver and
+// StrumpackComplexSolver), where a factorization serves many solves.
+template <typename ScalarType>
+inline void SetStrumpackFactorSizeMapping(strumpack::SPOptions<ScalarType> &opts)
+{
+  opts.set_proportional_mapping(strumpack::ProportionalMapping::FACTOR_MEMORY);
+}
+
 //
 // A wrapper for the STRUMPACK direct solver package.
 //
@@ -51,7 +63,8 @@ private:
 public:
   StrumpackSolverBase(MPI_Comm comm, SymbolicFactorization reorder,
                       SparseCompression compression, double lr_tol, int butterfly_l,
-                      int lossy_prec, bool reorder_reuse, int print);
+                      int lossy_prec, bool reorder_reuse, int print,
+                      bool factor_size_mapping = true);
 
   StrumpackSolverBase(const IoData &iodata, MPI_Comm comm, int print)
     : StrumpackSolverBase(comm, iodata.solver.linear.sym_factorization,
