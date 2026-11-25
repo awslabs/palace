@@ -1396,6 +1396,13 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
       rhs.Imag() = 0.0;
       linalg::SetSubVector(rhs.Real(), space_op.GetNDDbcTDofLists().back(), 0.0);
       ksp->Mult(rhs, u);
+      if (!ksp->GetConverged())
+      {
+        Mpi::Warning(space_op.GetComm(),
+                     "The anchor solve of lumped port {:d} at screening frequency {:d} of "
+                     "{:d} did not converge!\n",
+                     port_idx, k + 1, nu.size());
+      }
       // Keep only the real part, a real field configuration: the drive is real, and so is
       // the system, except with a material loss tangent, whose complex mass matrix gives
       // the response an imaginary part of O(tan δ) and changes its real part by O(tan²δ).

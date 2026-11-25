@@ -6240,3 +6240,48 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
   }
   CHECK(RelativeDifference(v_impedance[1], v_inductive[1]) > 1.0e-3);
 }
+
+// An anchor is a real field which satisfies the PEC conditions: its drive is zero on the
+// Dirichlet dofs, and the imaginary part of its response, of O(tan δ) with a loss tangent,
+// is dropped, so that each screening frequency adds one real basis vector. The terminals of
+// the port are PEC, and the second screening frequency is close enough to the modes of the
+// cube for the loss tangent to matter.
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator-Synthesis-AnchorWithPECAndLossTangent",
+                 "[romoperator][Serial][Parallel]")
+{
+  json boundaries;
+  boundaries["PEC"] = {{"Attributes", json::array({104, 105})}};
+  auto setup_json = AnchorCubeConfig(temp_dir, boundaries);
+  setup_json["Model"]["L0"] = 1.0e-2;
+  setup_json["Domains"]["Materials"][0]["LossTan"] = 0.05;
+  setup_json["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"] =
+      json::array({0.0, 10.0});
+  IoData iodata(setup_json, false);
+  auto mesh_io = LoadScaleParMesh2(iodata, Mpi::World());
+  SpaceOperator space_op(iodata, mesh_io);
+  RomOperatorTest prom_op(iodata, space_op, 100);
+  prom_op.AddLumpedPortModesForSynthesis();
+  prom_op.AddLumpedPortAnchorModesForSynthesis(
+      iodata.solver.driven.adaptive_circuit_synthesis_anchor_freq);
+  REQUIRE(prom_op.GetReducedDimension() == 3);
+  CHECK(prom_op.GetNodeLabels().at(1) == "anchor_1_re");
+  CHECK(prom_op.GetNodeLabels().at(2) == "anchor_1_nu1_re");
+  const auto &dbc = space_op.GetNDDbcTDofLists().back();
+  int num_dbc = dbc.Size();
+  Mpi::GlobalSum(1, &num_dbc, Mpi::World());
+  REQUIRE(num_dbc > 0);
+  for (std::size_t k = 1; k < 3; k++)
+  {
+    CAPTURE(k);
+    const auto &v = prom_op.GetVectors().at(k);
+    const auto *data = v.HostRead();
+    double max_dbc = 0.0;
+    for (int i : dbc)
+    {
+      max_dbc = std::max(max_dbc, std::abs(data[i]));
+    }
+    Mpi::GlobalMax(1, &max_dbc, Mpi::World());
+    CHECK(max_dbc == 0.0);
+  }
+}
