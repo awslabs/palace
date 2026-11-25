@@ -120,6 +120,12 @@ private:
   GetInterfaceAmplitudeMaps(const InterfaceDielectricData &data,
                             const std::vector<int> &bdr_elems, int &num_amplitudes) const;
 
+  // Evaluation sides of the interface energy on boundary element i (see
+  // GetInterfaceDielectricSides), with FET set to its neighbor element transformations.
+  InterfaceDielectricSides GetInterfaceBdrElementSides(
+      const InterfaceDielectricData &data, int i, mfem::FaceElementTransformations &FET,
+      mfem::IsoparametricTransformation &T1, mfem::IsoparametricTransformation &T2) const;
+
   // libCEED surface functionals for flux and interface dielectric postprocessing,
   // constructed lazily per surface index to replace per-call coefficient evaluation and
   // boundary LinearForm assembly in the legacy paths when supported.
@@ -186,9 +192,10 @@ public:
   // field(k) returns the k-th field as a grid function on the H(curl) space of this
   // operator, whose face neighbor data is exchanged here. Each field is evaluated into its
   // amplitudes a(e) at the quadrature points of the interfaces, with U(e, e) = |a(e)|², so
-  // that B = Aᵀ A with A = [a(e_0), ...]. The amplitudes of all fields are stored at once,
-  // within memory_budget bytes per process: larger interfaces are evaluated in several
-  // passes, each of which calls field(k) for k = 0, ..., n - 1 in order. Collective.
+  // that B = Aᵀ A with A = [a(e_0), ...]. The amplitudes of all fields, and the maps to
+  // them from the element dofs, are stored at once, within memory_budget bytes per process
+  // (or for a single boundary element): larger interfaces are evaluated in several passes,
+  // each of which calls field(k) for k = 0, ..., n - 1 in order. Collective.
   std::map<int, Eigen::MatrixXd> GetInterfaceElectricFieldEnergyMatrices(
       int num_fields, const std::function<mfem::ParGridFunction &(int)> &field,
       std::size_t memory_budget = std::size_t(1) << 27) const;
