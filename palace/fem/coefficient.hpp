@@ -351,6 +351,50 @@ BdrSurfaceFluxCoefficient<SurfaceFlux::POWER>::GetLocalFlux(mfem::ElementTransfo
   V *= scaling;
 }
 
+// The sides of a boundary element at which an interface dielectric energy is evaluated,
+// from the attributes of its attached elements, attr1 of FET.Elem1 and attr2 of FET.Elem2
+// (0 when there is none): both sides for a generic interface, the vacuum sides for MA and
+// SA, and the other (substrate) sides for MS, where a frequency-dependent material is not
+// vacuum (MaterialOperator::IsVacuum). On a boundary which separates the fields on its two
+// sides (sum_sides, such as a thin metal sheet), the energies of two evaluated sides add,
+// except for SA, and otherwise the energy of their average field is evaluated. This is the
+// convention of InterfaceDielectricCoefficient, the interface energy functional
+// (SurfaceFunctional), and the interface energy matrices
+// (SurfacePostOperator::GetInterfaceElectricFieldEnergyMatrices).
+struct InterfaceDielectricSides
+{
+  // Evaluated sides, 1 for FET.Elem1 and 2 for FET.Elem2: first is 0 when neither side
+  // qualifies, and second is 0 for a single side.
+  int first = 0, second = 0;
+
+  // Whether the energies of the two sides are summed, rather than evaluating the energy of
+  // their average field.
+  bool sum = false;
+};
+
+inline InterfaceDielectricSides GetInterfaceDielectricSides(InterfaceDielectric type,
+                                                            const MaterialOperator &mat_op,
+                                                            int attr1, int attr2,
+                                                            bool sum_sides)
+{
+  InterfaceDielectricSides sides;
+  if (type == InterfaceDielectric::DEFAULT)
+  {
+    sides.first = 1;
+    sides.second = (attr2 > 0) ? 2 : 0;
+  }
+  else
+  {
+    const bool vacuum_side = (type != InterfaceDielectric::MS);
+    const bool use1 = (mat_op.IsVacuum(attr1) == vacuum_side);
+    const bool use2 = (attr2 > 0 && mat_op.IsVacuum(attr2) == vacuum_side);
+    sides.first = use1 ? 1 : (use2 ? 2 : 0);
+    sides.second = (use1 && use2) ? 2 : 0;
+  }
+  sides.sum = (sides.second > 0 && sum_sides && type != InterfaceDielectric::SA);
+  return sides;
+}
+
 // Computes a single-valued α Eᵀ E on boundaries from E given as a vector grid function.
 // Uses the neighbor element on a user specified side to compute a single-sided value for
 // potentially discontinuous solutions for an interior boundary element. The four cases
@@ -383,25 +427,66 @@ private:
   // energy of the average field (optional).
   const mfem::Array<int> *sum_sides_marker = nullptr;
 
-  bool SumSides(const mfem::ElementTransformation &T) const
+  // The evaluation sides at the boundary element of T (see GetInterfaceDielectricSides).
+  InterfaceDielectricSides GetSides(const mfem::ElementTransformation &T) const
   {
-    return FET.Elem2 && sum_sides_marker && T.Attribute <= sum_sides_marker->Size() &&
-           (*sum_sides_marker)[T.Attribute - 1];
+    const bool sum_sides = FET.Elem2 && sum_sides_marker &&
+                           T.Attribute <= sum_sides_marker->Size() &&
+                           (*sum_sides_marker)[T.Attribute - 1];
+    return GetInterfaceDielectricSides(Type, mat_op, FET.Elem1->Attribute,
+                                       FET.Elem2 ? FET.Elem2->Attribute : 0, sum_sides);
   }
 
-  // Whether a side (1 or 2) qualifies as vacuum or substrate side, and the field and
-  // element attribute on the given side. A frequency-dependent material is not vacuum,
-  // also with ε∞ = μ = 1 (MaterialOperator::IsVacuum, as in GetLocalVectorValue).
-  bool Qualifies(int side, bool vacuum_side) const
+  // Calls f(V, attr) for the real and then the imaginary part of the field at the
+  // evaluation sides, with the attribute of the element it is evaluated on: for each of the
+  // two sides when their energies are summed, and otherwise once for the field of the first
+  // side, averaged with that of the second side if there is one (with the attribute of the
+  // first side).
+  template <typename F>
+  void ForEachSideValue(const InterfaceDielectricSides &sides, int dim, F &&f) const
   {
-    const auto *elem = (side == 1) ? FET.Elem1 : FET.Elem2;
-    return elem && (mat_op.IsVacuum(elem->Attribute) == vacuum_side);
-  }
-  int GetSideVectorValue(const mfem::ParGridFunction &U, mfem::Vector &V, int side) const
-  {
-    auto &elem = (side == 1) ? *FET.Elem1 : *FET.Elem2;
-    U.GetVectorValue(elem, elem.GetIntPoint(), V);
-    return elem.Attribute;
+    if (!sides.first)
+    {
+      return;  // Neither side qualifies: no contribution
+    }
+    double V_data[3], W_data[3];
+    mfem::Vector V(V_data, dim), W(W_data, dim);
+    auto GetSideValue = [this](const mfem::ParGridFunction &U, int side, mfem::Vector &V)
+    {
+      auto &elem = (side == 1) ? *FET.Elem1 : *FET.Elem2;
+      U.GetVectorValue(elem, elem.GetIntPoint(), V);
+      return elem.Attribute;
+    };
+    if (sides.sum)
+    {
+      for (int side : {sides.first, sides.second})
+      {
+        int attr = GetSideValue(E.Real(), side, V);
+        f(V, attr);
+        if (E.HasImag())
+        {
+          attr = GetSideValue(E.Imag(), side, V);
+          f(V, attr);
+        }
+      }
+      return;
+    }
+    auto Average = [&](const mfem::ParGridFunction &U)
+    {
+      const int attr = GetSideValue(U, sides.first, V);
+      if (sides.second)
+      {
+        // Double-sided, not a true boundary. Just average the solution from both sides.
+        GetSideValue(U, sides.second, W);
+        add(0.5, V, W, V);
+      }
+      f(V, attr);
+    };
+    Average(E.Real());
+    if (E.HasImag())
+    {
+      Average(E.Imag());
+    }
   }
 
   void Initialize(mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip,
@@ -414,36 +499,6 @@ private:
     if (normal)
     {
       GetNormal(T, *normal, ori);
-    }
-  }
-
-  int GetLocalVectorValue(const mfem::ParGridFunction &U, mfem::Vector &V,
-                          bool vacuum_side) const
-  {
-    const bool use_elem1 = (mat_op.IsVacuum(FET.Elem1->Attribute) == vacuum_side);
-    const bool use_elem2 =
-        (FET.Elem2 && mat_op.IsVacuum(FET.Elem2->Attribute) == vacuum_side);
-    if (use_elem1)
-    {
-      U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
-      if (use_elem2)
-      {
-        // Double-sided, not a true boundary. Just average the solution from both sides.
-        double W_data[3];
-        mfem::Vector W(W_data, V.Size());
-        U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
-        add(0.5, V, W, V);
-      }
-      return FET.Elem1->Attribute;
-    }
-    else if (use_elem2)
-    {
-      U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), V);
-      return FET.Elem2->Attribute;
-    }
-    else
-    {
-      return 0;
     }
   }
 
@@ -465,45 +520,10 @@ template <>
 inline double InterfaceDielectricCoefficient<InterfaceDielectric::DEFAULT>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
-  // Get single-sided solution. Don't use lightspeed detection for differentiating side.
-  auto GetLocalVectorValueDefault = [this](const mfem::ParGridFunction &U, mfem::Vector &V)
-  {
-    U.GetVectorValue(*FET.Elem1, FET.Elem1->GetIntPoint(), V);
-    if (FET.Elem2)
-    {
-      // Double-sided, not a true boundary. Just average the field solution from both sides.
-      double W_data[3];
-      mfem::Vector W(W_data, V.Size());
-      U.GetVectorValue(*FET.Elem2, FET.Elem2->GetIntPoint(), W);
-      add(0.5, V, W, V);
-    }
-  };
-  double V_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim());
   Initialize(T, ip, nullptr);
   double V2 = 0.0;
-  if (SumSides(T))
-  {
-    // Sum of the energies on both sides.
-    for (int side : {1, 2})
-    {
-      GetSideVectorValue(E.Real(), V, side);
-      V2 += V * V;
-      if (E.HasImag())
-      {
-        GetSideVectorValue(E.Imag(), V, side);
-        V2 += V * V;
-      }
-    }
-    return 0.5 * t_i * epsilon_i * V2;
-  }
-  GetLocalVectorValueDefault(E.Real(), V);
-  V2 = V * V;
-  if (E.HasImag())
-  {
-    GetLocalVectorValueDefault(E.Imag(), V);
-    V2 += V * V;
-  }
+  ForEachSideValue(GetSides(T), T.GetSpaceDim(),
+                   [&V2](const mfem::Vector &V, int) { V2 += V * V; });
 
   // No specific interface, use full field evaluation: 0.5 * t * ε * |E|² .
   return 0.5 * t_i * epsilon_i * V2;
@@ -513,39 +533,17 @@ template <>
 inline double InterfaceDielectricCoefficient<InterfaceDielectric::MA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
-  // Get single-sided solution on air (vacuum) side and neighboring element attribute.
-  double V_data[3], normal_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
+  // Solution on the air (vacuum) side.
+  double normal_data[3];
+  mfem::Vector normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
-  if (SumSides(T) && Qualifies(1, true) && Qualifies(2, true))
-  {
-    // Sum of the energies on both sides.
-    double Vn2 = 0.0;
-    for (int side : {1, 2})
-    {
-      GetSideVectorValue(E.Real(), V, side);
-      Vn2 += (V * normal) * (V * normal);
-      if (E.HasImag())
-      {
-        GetSideVectorValue(E.Imag(), V, side);
-        Vn2 += (V * normal) * (V * normal);
-      }
-    }
-    return 0.5 * (t_i / epsilon_i) * Vn2;
-  }
-  int attr = GetLocalVectorValue(E.Real(), V, true);
-  if (attr <= 0)
-  {
-    return 0.0;
-  }
-  double Vn = V * normal;
-  double Vn2 = Vn * Vn;
-  if (E.HasImag())
-  {
-    GetLocalVectorValue(E.Imag(), V, true);
-    Vn = V * normal;
-    Vn2 += Vn * Vn;
-  }
+  double Vn2 = 0.0;
+  ForEachSideValue(GetSides(T), T.GetSpaceDim(),
+                   [&](const mfem::Vector &V, int)
+                   {
+                     const double Vn = V * normal;
+                     Vn2 += Vn * Vn;
+                   });
 
   // Metal-air interface: 0.5 * t / ε_MA * |E_n|² .
   return 0.5 * (t_i / epsilon_i) * Vn2;
@@ -555,46 +553,18 @@ template <>
 inline double InterfaceDielectricCoefficient<InterfaceDielectric::MS>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
-  // Get single-sided solution on substrate side and neighboring element attribute.
-  double V_data[3], W_data[3], normal_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim()), W(W_data, T.GetSpaceDim()),
-      normal(normal_data, T.GetSpaceDim());
+  // Solution on the substrate side, with the permittivity of its element.
+  double W_data[3], normal_data[3];
+  mfem::Vector W(W_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
-  if (SumSides(T) && Qualifies(1, false) && Qualifies(2, false))
-  {
-    // Sum of the energies on both sides.
-    double Vn2 = 0.0;
-    for (int side : {1, 2})
-    {
-      int side_attr = GetSideVectorValue(E.Real(), V, side);
-      const auto eps = GetSubstratePermittivity(side_attr);
-      eps.Mult(V, W);
-      Vn2 += (W * normal) * (W * normal);
-      if (E.HasImag())
-      {
-        GetSideVectorValue(E.Imag(), V, side);
-        eps.Mult(V, W);
-        Vn2 += (W * normal) * (W * normal);
-      }
-    }
-    return 0.5 * (t_i / epsilon_i) * Vn2;
-  }
-  int attr = GetLocalVectorValue(E.Real(), V, false);
-  if (attr <= 0)
-  {
-    return 0.0;
-  }
-  const auto eps = GetSubstratePermittivity(attr);
-  eps.Mult(V, W);
-  double Vn = W * normal;
-  double Vn2 = Vn * Vn;
-  if (E.HasImag())
-  {
-    GetLocalVectorValue(E.Imag(), V, false);
-    eps.Mult(V, W);
-    Vn = W * normal;
-    Vn2 += Vn * Vn;
-  }
+  double Vn2 = 0.0;
+  ForEachSideValue(GetSides(T), T.GetSpaceDim(),
+                   [&](const mfem::Vector &V, int attr)
+                   {
+                     GetSubstratePermittivity(attr).Mult(V, W);
+                     const double Vn = W * normal;
+                     Vn2 += Vn * Vn;
+                   });
 
   // Metal-substrate interface: 0.5 * t / ε_MS * |(ε_S E)_n|² .
   return 0.5 * (t_i / epsilon_i) * Vn2;
@@ -604,27 +574,19 @@ template <>
 inline double InterfaceDielectricCoefficient<InterfaceDielectric::SA>::Eval(
     mfem::ElementTransformation &T, const mfem::IntegrationPoint &ip)
 {
-  // Get single-sided solution on air side and neighboring element attribute.
-  double V_data[3], normal_data[3];
-  mfem::Vector V(V_data, T.GetSpaceDim()), normal(normal_data, T.GetSpaceDim());
+  // Solution on the air (vacuum) side.
+  double normal_data[3];
+  mfem::Vector normal(normal_data, T.GetSpaceDim());
   Initialize(T, ip, &normal);
-  int attr = GetLocalVectorValue(E.Real(), V, true);
-  if (attr <= 0)
-  {
-    return 0.0;
-  }
-  double Vn = V * normal;
-  V.Add(-Vn, normal);
-  double Vn2 = Vn * Vn;
-  double Vt2 = V * V;
-  if (E.HasImag())
-  {
-    GetLocalVectorValue(E.Imag(), V, true);
-    Vn = V * normal;
-    V.Add(-Vn, normal);
-    Vn2 += Vn * Vn;
-    Vt2 += V * V;
-  }
+  double Vn2 = 0.0, Vt2 = 0.0;
+  ForEachSideValue(GetSides(T), T.GetSpaceDim(),
+                   [&](mfem::Vector &V, int)
+                   {
+                     const double Vn = V * normal;
+                     V.Add(-Vn, normal);
+                     Vn2 += Vn * Vn;
+                     Vt2 += V * V;
+                   });
 
   // Substrate-air interface: 0.5 * t * (ε_SA * |E_t|² + 1 / ε_SA * |E_n|²) .
   return 0.5 * t_i * ((epsilon_i * Vt2) + (Vn2 / epsilon_i));

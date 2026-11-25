@@ -559,7 +559,12 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // (they also enrich the per-port reduced basis).
   if (iodata.solver.driven.adaptive_circuit_synthesis)
   {
-    prom_op.PrintPROMMatrices(iodata.units, iodata.problem.output);
+    // Project the interface dielectric energy forms of any interface dielectric
+    // postprocessing boundaries (config["Boundaries"]["Postprocessing"]["Dielectric"]) onto
+    // the basis, for the interface capacitance matrices rom-interface-<index>-C.csv.
+    prom_op.PrintPROMMatrices(
+        iodata.units, iodata.problem.output,
+        post_op.GetInterfaceElectricFieldEnergyMatrices(prom_op.GetBasis()));
   }
 
   // Exact wave-port modes computed by the HDM samples (and any synthesis samples) have

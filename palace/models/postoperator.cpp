@@ -2492,6 +2492,21 @@ bool PostOperator<solver_t>::ReducedPostprocessingNeedsField(int ex_idx) const
 }
 
 template <ProblemType solver_t>
+std::map<int, Eigen::MatrixXd>
+PostOperator<solver_t>::GetInterfaceElectricFieldEnergyMatrices(
+    const std::vector<Vector> &basis)
+  requires(solver_t == ProblemType::DRIVEN)
+{
+  return surf_post_op.GetInterfaceElectricFieldEnergyMatrices(
+      static_cast<int>(basis.size()),
+      [this, &basis](int k) -> mfem::ParGridFunction &
+      {
+        E->Real().SetFromTrueDofs(basis[k]);
+        return E->Real();
+      });
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
                                                     const ComplexVector *e,
                                                     std::complex<double> omega,
