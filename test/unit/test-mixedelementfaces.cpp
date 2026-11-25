@@ -22,10 +22,12 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators_all.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
 #include "fem/libceed/ceed.hpp"
+#include "fem/libceed/restriction.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -585,6 +587,65 @@ TEST_CASE("Mixed-element faces: H(curl) and H(div) operators",
   CHECK(worst.nd_mass < 1.0e-12);
   CHECK(worst.nd_curlcurl < 1.0e-12);
   CHECK(worst.rt_mass < 1.0e-12);
+}
+
+namespace
+{
+
+// A space that withholds the DofTransformation of element 0 from GetElementDofs, as MFEM's
+// ND_FECollection withholds that of pyramids: a restriction whose first element is element
+// 0 is then built by the sign-only branch, which the face transformations of the other
+// elements must not reach.
+class FirstElementDofTransformationWithheld : public mfem::FiniteElementSpace
+{
+public:
+  using mfem::FiniteElementSpace::FiniteElementSpace;
+  using mfem::FiniteElementSpace::GetElementDofs;
+  void GetElementDofs(int elem, mfem::Array<int> &dofs,
+                      mfem::DofTransformation &doftrans) const override
+  {
+    mfem::FiniteElementSpace::GetElementDofs(elem, dofs, doftrans);
+    if (elem == 0)
+    {
+      doftrans.SetDofTransformation(
+          static_cast<const mfem::StatelessDofTransformation *>(nullptr));
+    }
+  }
+};
+
+void BuildElementRestriction(const mfem::FiniteElementSpace &fespace,
+                             const std::vector<int> &indices)
+{
+  Ceed ceed = ceed::internal::GetCeedObjects()[0];
+  CeedElemRestriction restr = nullptr;
+  ceed::InitRestriction(fespace, indices, false, false, false, ceed, &restr);
+  PalaceCeedCall(ceed, CeedElemRestrictionDestroy(&restr));
+}
+
+}  // namespace
+
+TEST_CASE("Mixed-element faces: no face transformation reaches a sign-only restriction",
+          "[MixedElementFaces][Serial]")
+{
+#if defined(MFEM_USE_OPENMP)
+  SKIP("An exception thrown inside an OpenMP parallel region ends the program");
+#endif
+  // Tetrahedra at order 2: every element has a non-identity face transformation.
+  auto mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON);
+  REQUIRE(mesh.GetNE() > 1);
+  mfem::ND_FECollection fec(2, mesh.Dimension());
+  mfem::FiniteElementSpace fespace(&mesh, &fec);
+  REQUIRE(ceed::HasElementDofTransformation(fespace, 0));
+  REQUIRE(ceed::HasElementDofTransformation(fespace, 1));
+  CHECK_NOTHROW(BuildElementRestriction(fespace, {0, 1}));
+
+  FirstElementDofTransformationWithheld withheld(&mesh, &fec);
+  REQUIRE_FALSE(ceed::HasElementDofTransformation(withheld, 0));
+  REQUIRE(ceed::HasElementDofTransformation(withheld, 1));
+  CHECK_NOTHROW(BuildElementRestriction(withheld, {0}));
+  CHECK_THROWS_WITH(BuildElementRestriction(withheld, {0, 1}),
+                    Catch::Matchers::ContainsSubstring(
+                        "Unexpected DofTransformation for oriented element restriction"));
 }
 
 }  // namespace palace

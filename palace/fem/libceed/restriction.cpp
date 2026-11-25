@@ -315,6 +315,8 @@ void InitNativeRestr(const mfem::FiniteElementSpace &fespace,
       }
       if (!has_dof_trans)
       {
+        MFEM_VERIFY(face_flg || dof_trans.IsIdentity(),
+                    "Unexpected DofTransformation for oriented element restriction.");
         for (int j = 0; j < P; j++)
         {
           const int sgid = dofs[j];  // signed
