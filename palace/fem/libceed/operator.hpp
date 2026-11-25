@@ -43,6 +43,10 @@ protected:
   Vector dof_multiplicity;
   mutable Vector temp;
 
+  // Whether the transposed sub-operators are assembled, for a nonsymmetric square
+  // operator (see BilinearForm::PartialAssemble).
+  bool has_transpose = true;
+
 public:
   Operator(int h, int w);
   Operator(const Operator &) = delete;
@@ -53,6 +57,10 @@ public:
 
   // The composite of the transposed sub-operators of thread i (empty without them).
   CeedOperator Transpose(std::size_t i) const { return op_t[i]; }
+
+  // Leave out the transposed sub-operators: MultTranspose then aborts.
+  void SkipTranspose() { has_transpose = false; }
+  bool HasTranspose() const { return has_transpose; }
 
   auto Size() const { return op.size(); }
 

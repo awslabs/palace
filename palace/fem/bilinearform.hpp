@@ -41,7 +41,8 @@ protected:
 
   std::unique_ptr<ceed::Operator> PartialAssemble(const FiniteElementSpace &trial_fespace,
                                                   const FiniteElementSpace &test_fespace,
-                                                  bool skip_zero_coeff_elems) const;
+                                                  bool skip_zero_coeff_elems,
+                                                  bool assemble_transpose) const;
 
 public:
   // Order above which to use partial assembly vs. full.
@@ -97,17 +98,20 @@ public:
 
   std::unique_ptr<ceed::Operator> PartialAssemble() const
   {
-    return PartialAssemble(GetTrialSpace(), GetTestSpace(), skip_zero_coeff_elems);
+    constexpr bool assemble_transpose = true;
+    return PartialAssemble(GetTrialSpace(), GetTestSpace(), skip_zero_coeff_elems,
+                           assemble_transpose);
   }
 
   std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(bool skip_zeros) const
   {
     // Full assembly keeps the explicit zeros of the zero-coefficient elements, so that the
-    // sparsity pattern does not depend on the coefficient values.
-    constexpr bool skip_zero_coeff_elems = false;
-    return FullAssemble(
-        *PartialAssemble(GetTrialSpace(), GetTestSpace(), skip_zero_coeff_elems),
-        skip_zeros, false);
+    // sparsity pattern does not depend on the coefficient values, and does not need the
+    // transposes.
+    constexpr bool skip_zero_coeff_elems = false, assemble_transpose = false;
+    return FullAssemble(*PartialAssemble(GetTrialSpace(), GetTestSpace(),
+                                         skip_zero_coeff_elems, assemble_transpose),
+                        skip_zeros, false);
   }
 
   static std::unique_ptr<hypre::HypreCSRMatrix> FullAssemble(const ceed::Operator &op,

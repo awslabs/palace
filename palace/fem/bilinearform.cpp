@@ -29,7 +29,7 @@ void BilinearForm::AssembleQuadratureData()
 std::unique_ptr<ceed::Operator>
 BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
                               const FiniteElementSpace &test_fespace,
-                              bool skip_zero_coeff_elems) const
+                              bool skip_zero_coeff_elems, bool assemble_transpose) const
 {
   MFEM_VERIFY(&trial_fespace.GetMesh() == &test_fespace.GetMesh(),
               "Trial and test finite element spaces must correspond to the same mesh!");
@@ -37,7 +37,9 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
 
   // Initialize the operator. A square operator whose integrators all have symmetric forms
   // applies its transpose as itself. Otherwise, as with the antisymmetric Floquet terms of
-  // the curl, the transpose is assembled from the integrators of the transposed forms.
+  // the curl, the transpose is assembled from the integrators of the transposed forms,
+  // where the symmetric integrators share their sub-operators with the operator itself, or
+  // it is left out for a full assembly (assemble_transpose = false).
   std::unique_ptr<ceed::Operator> op;
   std::vector<std::unique_ptr<BilinearFormIntegrator>> domain_integs_t, boundary_integs_t;
   const bool square = (&trial_fespace == &test_fespace);
@@ -55,7 +57,7 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
   {
     op =
         std::make_unique<ceed::Operator>(test_fespace.GetVSize(), trial_fespace.GetVSize());
-    if (square)
+    if (square && assemble_transpose)
     {
       for (const auto &[integs, integs_t] :
            {std::pair{&domain_integs, &domain_integs_t},
@@ -63,12 +65,21 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
       {
         for (const auto &integ : *integs)
         {
+          if (integ->IsSymmetric())
+          {
+            integs_t->push_back(nullptr);  // Shares the sub-operator of the operator
+            continue;
+          }
           integs_t->push_back(integ->GetTranspose());
           MFEM_VERIFY(integs_t->back(),
                       "The transpose of a bilinear form with an integrator "
                       "of a nonsymmetric form is not available!");
         }
       }
+    }
+    else if (square)
+    {
+      op->SkipTranspose();
     }
   }
 
@@ -170,13 +181,18 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.GetGeomDataRestriction(*subset), &sub_op);
-          if (!integs_t.empty())
+          if (!integs_t.empty() && integs_t[i])
           {
             // The transposed form maps the test space to the trial space.
             integs_t[i]->SetMapTypes(test_map_type, trial_map_type);
             integs_t[i]->Assemble(ceed, test_restr, trial_restr, test_basis, trial_basis,
                                   data.geom_data, data.GetGeomDataRestriction(*subset),
                                   &sub_op_t);
+          }
+          else if (!integs_t.empty())
+          {
+            // A symmetric integrator is its own transpose.
+            PalaceCeedCall(ceed, CeedOperatorReferenceCopy(sub_op, &sub_op_t));
           }
           // Sub-operators owned by ceed::Operator.
           op->AddSubOperator(sub_op, sub_op_t);
@@ -214,13 +230,18 @@ BilinearForm::PartialAssemble(const FiniteElementSpace &trial_fespace,
           integ->SetMapTypes(trial_map_type, test_map_type);
           integ->Assemble(ceed, trial_restr, test_restr, trial_basis, test_basis,
                           data.geom_data, data.geom_data_restr, &sub_op);
-          if (!domain_integs_t.empty())
+          if (!domain_integs_t.empty() && domain_integs_t[k])
           {
             // The transposed form maps the test space to the trial space.
             domain_integs_t[k]->SetMapTypes(test_map_type, trial_map_type);
             domain_integs_t[k]->Assemble(ceed, test_restr, trial_restr, test_basis,
                                          trial_basis, data.geom_data, data.geom_data_restr,
                                          &sub_op_t);
+          }
+          else if (!domain_integs_t.empty())
+          {
+            // A symmetric integrator is its own transpose.
+            PalaceCeedCall(ceed, CeedOperatorReferenceCopy(sub_op, &sub_op_t));
           }
           op->AddSubOperator(sub_op, sub_op_t, attr_list);  // Owned by ceed::Operator
         }
@@ -313,8 +334,8 @@ BilinearForm::Assemble(const FiniteElementSpaceHierarchy &fespaces, bool skip_ze
     else
     {
       pa_ops.push_back(PartialAssemble(fespaces.GetFESpaceAtLevel(l),
-                                       fespaces.GetFESpaceAtLevel(l),
-                                       skip_zero_coeff_elems));
+                                       fespaces.GetFESpaceAtLevel(l), skip_zero_coeff_elems,
+                                       true));
     }
   }
 

@@ -206,17 +206,25 @@ public:
 // the PML integrators always store them at the quadrature points, in every operator and on
 // every device: after assembly, a PML point costs what an anisotropic material point with
 // stored quadrature data costs.
+//
+// The PML tensors are complex symmetric, so the real and imaginary parts of the forms are
+// symmetric, except for the Floquet cross term, which is antisymmetric.
 class PMLIntegratorBase : public BilinearFormIntegrator
 {
 protected:
   const void *ctx;
   std::size_t ctx_size;
 
+  // Context owned by the integrator, as for a transpose with another prefactor.
+  std::shared_ptr<std::vector<char>> owned_ctx;
+
 public:
   PMLIntegratorBase(const void *ctx, std::size_t ctx_size)
     : BilinearFormIntegrator(nullptr), ctx(ctx), ctx_size(ctx_size)
   {
   }
+
+  bool IsSymmetric() const override { return true; }
 };
 
 // a(u, v) = (c μ̃⁻¹ curl u, curl v) for H(curl) elements.
@@ -295,6 +303,10 @@ class FloquetCrossPMLIntegrator : public PMLIntegratorBase
 {
 public:
   using PMLIntegratorBase::PMLIntegratorBase;
+
+  // The transpose of the antisymmetric form is the form with the opposite prefactor.
+  bool IsSymmetric() const override { return false; }
+  std::unique_ptr<BilinearFormIntegrator> GetTranspose() const override;
 
   void Assemble(Ceed ceed, CeedElemRestriction trial_restr, CeedElemRestriction test_restr,
                 CeedBasis trial_basis, CeedBasis test_basis, CeedVector geom_data,

@@ -131,6 +131,21 @@ void FloquetDiffusionPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction tria
                       geom_data_restr, op);
 }
 
+std::unique_ptr<BilinearFormIntegrator> FloquetCrossPMLIntegrator::GetTranspose() const
+{
+  // Copy the context and negate the prefactor of the μ̃⁻¹ terms (see pml_qf.h).
+  auto buffer = std::make_shared<std::vector<char>>(
+      static_cast<const char *>(ctx), static_cast<const char *>(ctx) + ctx_size);
+  MFEM_VERIFY(ctx_size >= 4 * sizeof(CeedIntScalar), "Invalid PML QFunction context!");
+  auto *data = reinterpret_cast<CeedIntScalar *>(buffer->data());
+  data[2].second = -data[2].second;
+  data[3].second = -data[3].second;
+  auto integ_t = std::make_unique<FloquetCrossPMLIntegrator>(buffer->data(), ctx_size);
+  integ_t->owned_ctx = std::move(buffer);
+  integ_t->assemble_q_data = assemble_q_data;
+  return integ_t;
+}
+
 void FloquetCrossPMLIntegrator::Assemble(Ceed ceed, CeedElemRestriction trial_restr,
                                          CeedElemRestriction test_restr,
                                          CeedBasis trial_basis, CeedBasis test_basis,

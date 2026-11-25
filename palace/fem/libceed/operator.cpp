@@ -219,6 +219,8 @@ void Operator::AddMultTranspose(const Vector &x, Vector &y, const double a) cons
 {
   MFEM_VERIFY(a == 1.0,
               "ceed::Operator::AddMultTranspose only supports coefficient = 1.0!");
+  MFEM_VERIFY(has_transpose, "ceed::Operator::AddMultTranspose of an operator assembled "
+                             "without its transpose!");
   if (dof_multiplicity.Size() > 0)
   {
     temp.SetSize(height);
@@ -1351,6 +1353,10 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
                                                       fespace_coarse.GetVSize())
                 : std::make_unique<Operator>(fespace_coarse.GetVSize(),
                                              fespace_coarse.GetVSize());
+  if (!op_fine.HasTranspose())
+  {
+    op_coarse->SkipTranspose();
+  }
 
   // Assemble the coarse operator by coarsening each sub-operator (over threads, geometry
   // types, integrators) of the original fine operator.
@@ -1387,7 +1393,12 @@ std::unique_ptr<Operator> CeedOperatorCoarsen(const Operator &op_fine,
       CeedOperator sub_op_coarse, sub_op_coarse_t = nullptr;
       const auto &attr_list = op_fine.GetSubOperatorAttributes(id, k);
       SingleOperatorCoarsen(ceed, sub_ops_fine[k], attr_list, &sub_op_coarse);
-      if (nsub_ops_fine_t > 0)
+      if (nsub_ops_fine_t > 0 && sub_ops_fine_t[k] == sub_ops_fine[k])
+      {
+        // A symmetric sub-operator shared as its own transpose.
+        PalaceCeedCall(ceed, CeedOperatorReferenceCopy(sub_op_coarse, &sub_op_coarse_t));
+      }
+      else if (nsub_ops_fine_t > 0)
       {
         SingleOperatorCoarsen(ceed, sub_ops_fine_t[k], attr_list, &sub_op_coarse_t);
       }

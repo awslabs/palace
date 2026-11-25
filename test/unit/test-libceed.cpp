@@ -1999,13 +1999,11 @@ TEST_CASE("3D libCEED Interpolators", "[libCEED][Interpolator][Serial][Parallel]
   RunCeedInterpolatorTests(MPI_COMM_WORLD, TestMeshPath(mesh), 0, amr, order);
 }
 
-// Test the 31 (SpaceDim=3, Dim=1) libCEED qfunctions for boundary integrators on a 2D
-// mesh embedded in 3D. Uses the standard RunCeedIntegratorTests with embed_in_3d=true.
-// Matrix coefficients are excluded (need sdim x sdim, not dim x dim).
 // The partial assembly of a square form which is not symmetric, as the Floquet terms of the
 // curl, -(k x u, curl v) + (curl u, k x v) with an antisymmetric cross-product matrix, has
 // the transposes of its integrators: its transpose is that of its full assembly, also after
-// coarsening. A symmetric form keeps a symmetric operator.
+// coarsening, where the symmetric integrators share their sub-operators as their own
+// transposes. A symmetric form keeps a symmetric operator.
 TEMPLATE_TEST_CASE_SIG("3D libCEED Transposes of Nonsymmetric Forms",
                        "[libCEED][Serial][Parallel]", ((const char *Mesh), Mesh),
                        FicheraHex, FicheraTet)
@@ -2110,6 +2108,9 @@ TEMPLATE_TEST_CASE_SIG("3D libCEED Transposes of Nonsymmetric Forms",
   }
 }
 
+// Test the 31 (SpaceDim=3, Dim=1) libCEED qfunctions for boundary integrators on a 2D
+// mesh embedded in 3D. Uses the standard RunCeedIntegratorTests with embed_in_3d=true.
+// Matrix coefficients are excluded (need sdim x sdim, not dim x dim).
 TEST_CASE("2D-in-3D libCEED Boundary Operators", "[libCEED][Serial][Parallel]")
 {
   auto mesh = GENERATE("star-quad.mesh", "star-tri.mesh");
