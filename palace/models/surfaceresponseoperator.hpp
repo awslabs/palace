@@ -2504,6 +2504,11 @@ struct SurfaceResponsePreflightOutcome
   // CUT-PLAN step 4b (ruling R4): this pass's identification for the census operator (the
   // three-dimensional Features path with a match; else null: the operator builds its own).
   std::shared_ptr<const SurfaceResponseGeometry> response_geometry;
+  // CUT-PLAN step 4b (the supervisor's ruling (B)): the models the census operator's model
+  // loop builds, in its order (this pass's identification in two dimensions and on the
+  // three-dimensional Features path; the root's only), for
+  // SurfaceResponsePreflightModelRefusal.
+  std::vector<config::ElectrostaticSolverData::ResponseCorrectionModelData> census_models;
 };
 
 // CUT-PLAN step 4b (lane v1step4b; ruling R1): the line of a PreflightOnly run that builds
@@ -2513,6 +2518,15 @@ struct SurfaceResponsePreflightOutcome
 std::string SurfaceResponsePreflightCensusRefusal(
     const SurfaceResponsePreflightOutcome &outcome,
     const config::ElectrostaticSolverData::ResponseCorrectionData &request);
+
+// CUT-PLAN step 4b (the supervisor's ruling (B)): the line of a PreflightOnly run that
+// builds no resolution census because the operator's matrix step refuses one of
+// outcome.census_models (the first, as that step stops at it), predicted on the root by the
+// step's own test on the matrices it reads; empty when it accepts every model. Called where
+// the census would be built (a read it stops on stops the census operator too). Collective.
+std::string
+SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outcome,
+                                     const Units &units, MPI_Comm comm);
 
 // Classify the configured automatic surface-response neighborhoods without assembling a
 // finite-element operator or solving a field problem. The deterministic JSON manifest

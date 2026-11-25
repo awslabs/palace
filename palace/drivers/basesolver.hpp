@@ -164,6 +164,12 @@ public:
       std::vector<std::unique_ptr<Mesh>> &mesh, bool fail_closed,
       const std::shared_ptr<const SurfaceResponseGeometry> &identified) const;
 
+  // CUT-PLAN step 4b (the supervisor's ruling (B)): a PreflightOnly census not evaluated,
+  // whatever the reason: `line` printed after an empty line and kept in palace.json as
+  // SurfaceResponse.ResolutionCensusNotEvaluated (the one field of every such census).
+  // Every rank calls it (the root prints and writes).
+  void ReportResolutionCensusNotEvaluated(MPI_Comm comm, const std::string &line) const;
+
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.
   void SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const;

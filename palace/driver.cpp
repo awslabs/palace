@@ -186,8 +186,14 @@ int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
   MFEM_VERIFY(request, "Surface-response preflight requires a response correction!");
   // CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling R1): a solve-form run stops
   // before its census here; the census is not built and the exit status is the manifest's.
-  const std::string refusal = SurfaceResponsePreflightCensusRefusal(outcome, *request);
+  std::string refusal = SurfaceResponsePreflightCensusRefusal(outcome, *request);
   const auto policy = request->geometry_failure_policy;
+  // The supervisor's ruling (B): where the census would be built, a model the operator's
+  // matrix step refuses (predicted by that step's own test on the matrices it reads).
+  if (refusal.empty() && (outcome.fail_closed_summary.empty() || !policy))
+  {
+    refusal = SurfaceResponsePreflightModelRefusal(outcome, iodata.units, comm);
+  }
   if (!outcome.fail_closed_summary.empty())
   {
     // The supervisor's rulings (b) and R2 (2026-11-25): today's FailClosed line first;
@@ -208,13 +214,13 @@ int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
         kSurfaceResponsePreflightFailClosedExitStatus);
     if (policy)
     {
-      Mpi::Print(comm, "\nResolution census: not evaluated (GeometryFailurePolicy "
-                       "\"FailClosed\" is set); \"GeometryFailurePolicy\": \"RecordRaw\" "
-                       "gives it\n");
+      solver.ReportResolutionCensusNotEvaluated(
+          comm, "Resolution census: not evaluated (GeometryFailurePolicy \"FailClosed\" "
+                "is set); \"GeometryFailurePolicy\": \"RecordRaw\" gives it");
     }
     else if (!refusal.empty())
     {
-      Mpi::Print(comm, "\n{}\n", refusal);
+      solver.ReportResolutionCensusNotEvaluated(comm, refusal);
     }
     else
     {
@@ -234,7 +240,7 @@ int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
   }
   if (!refusal.empty())
   {
-    Mpi::Print(comm, "\n{}\n", refusal);
+    solver.ReportResolutionCensusNotEvaluated(comm, refusal);
   }
   else
   {
