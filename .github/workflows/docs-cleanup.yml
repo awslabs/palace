@@ -5,86 +5,72 @@ name: gh-pages Cleanup
 
 permissions:
   contents: write
+  pull-requests: read
 
 on:
-  pull_request:
+  # pull_request_target runs this workflow as it is on main, also for pull requests from
+  # forks and for those that branched off before a change to it. It never checks out the code
+  # of the pull request.
+  pull_request_target:
     types: [closed]
   schedule:
     - cron: '0 3 * * 0'  # Weekly, Sunday 3 AM UTC
+  workflow_dispatch:
+
+concurrency:
+  group: gh-pages-cleanup
+  cancel-in-progress: false
 
 jobs:
-  cleanup-pr-previews:
-    if: github.event_name == 'pull_request'
+  # Each run removes the previews of all closed pull requests, including those that a
+  # deployment finishing after its pull request closed brought back.
+  # A run that loses a race with a deployment leaves gh-pages alone; the next run catches up.
+  cleanup:
+    # Runs started by Dependabot get a read-only token; the weekly run catches up.
+    if: github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     steps:
+      # Only the tree is needed: fetch gh-pages without its files.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: gh-pages
+          ref: refs/heads/gh-pages
+          filter: blob:none
+          sparse-checkout: /.nojekyll
+          sparse-checkout-cone-mode: false
 
-      - name: Delete preview and history
+      - name: Remove the previews of closed pull requests
         env:
-          PRNUM: ${{ github.event.number }}
+          GH_TOKEN: ${{ github.token }}
+          # Fail instead of downloading the files of the site.
+          GIT_NO_LAZY_FETCH: 1
         run: |
-          if [[ -d previews/PR$PRNUM ]]; then
-            git config user.name "Documenter.jl"
-            git config user.email "documenter@juliadocs.github.io"
-            git rm -rf previews/PR$PRNUM
-            git commit -m "delete preview"
-            git branch gh-pages-new $(echo "delete history" | git commit-tree HEAD^{tree})
-            git push --force origin gh-pages-new:gh-pages
-          fi
-
-  # Coverage reports from non-PR builds (e.g., pushes to main, workflow_dispatch)
-  # are stored under coverage/<sha>. We check whether the SHA still exists in
-  # the repo and, if so, whether it is older than 30 days.
-  cleanup-old-coverage:
-    if: github.event_name == 'schedule'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: gh-pages
-
-      - name: Fetch main branch for SHA lookups
-        run: git fetch origin main --depth=1000
-
-      - name: Remove old coverage reports
-        run: |
-          if [[ ! -d coverage ]]; then
-            echo "No coverage directory found"
+          head=$(git rev-parse HEAD)
+          closed=()
+          while IFS= read -r dir; do
+            # Documenter names the previews previews/PR<number>; leave anything else alone.
+            [[ "$dir" =~ ^previews/PR([0-9]+)$ ]] || continue
+            # Remove a preview only once GitHub says that its pull request is closed.
+            state=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${BASH_REMATCH[1]}" --jq .state)
+            if [[ "$state" == closed ]]; then
+              closed+=("$dir")
+            fi
+          done < <(git ls-tree -d --name-only "$head" previews/)
+          if [[ ${#closed[@]} -eq 0 ]]; then
+            echo "No previews of closed pull requests"
             exit 0
           fi
+          printf 'Removing %s\n' "${closed[@]}"
 
-          DELETED=0
-          CUTOFF=$(date -d '30 days ago' +%s 2>/dev/null || date -v-30d +%s)
-
-          for dir in coverage/*/; do
-            [[ -d "$dir" ]] || continue
-            SHA=$(basename "$dir")
-
-            # If the SHA no longer exists in the repo, remove it
-            if ! git cat-file -e "$SHA" 2>/dev/null; then
-              echo "Removing $dir (SHA $SHA no longer exists)"
-              git rm -rf "$dir"
-              DELETED=$((DELETED + 1))
-              continue
+          # The checkout left the index at $head. Like the documentation deployments, keep
+          # gh-pages a single commit.
+          git rm -r -q --cached --sparse -- "${closed[@]}"
+          tree=$(git write-tree)
+          commit=$(git -c user.name="Documenter.jl" -c user.email="documenter@juliadocs.github.io" \
+            commit-tree "$tree" -m "Remove the previews of ${#closed[@]} closed pull requests")
+          if ! git push --force-with-lease="gh-pages:${head}" origin \
+              "${commit}:refs/heads/gh-pages"; then
+            if [[ "$(git ls-remote origin refs/heads/gh-pages | cut -f1)" == "$head" ]]; then
+              exit 1  # Not a race with a deployment
             fi
-
-            # SHA exists — check its commit date
-            COMMIT_DATE=$(git log -1 --format=%ct "$SHA" 2>/dev/null || echo "0")
-            if [[ "$COMMIT_DATE" -lt "$CUTOFF" ]]; then
-              echo "Removing $dir (commit date older than 30 days)"
-              git rm -rf "$dir"
-              DELETED=$((DELETED + 1))
-            fi
-          done
-
-          if [[ "$DELETED" -gt 0 ]]; then
-            git config user.name "Documenter.jl"
-            git config user.email "documenter@juliadocs.github.io"
-            git commit -m "clean up $DELETED old coverage report(s)"
-            git branch gh-pages-new $(echo "delete history" | git commit-tree HEAD^{tree})
-            git push --force origin gh-pages-new:gh-pages
-          else
-            echo "No old coverage reports to clean up"
+            echo "::warning::gh-pages changed during the cleanup; the next run will remove these."
           fi

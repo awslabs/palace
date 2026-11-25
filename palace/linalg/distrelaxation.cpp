@@ -74,6 +74,30 @@ void DistRelaxationSmoother<OperType>::SetOrder(int cheby_order)
   SetChebyshevOrder(*B_G, cheby_order);
 }
 
+template <OperatorType OperType>
+void DistRelaxationSmoother<OperType>::SetMasks(const std::vector<int> &tdofs,
+                                                const std::vector<int> &tdofs_G)
+{
+  auto SetMask = [](Solver<OperType> &smoother, const std::vector<int> &mask)
+  {
+    if (auto *cheby = dynamic_cast<ChebyshevSmoother<OperType> *>(&smoother))
+    {
+      cheby->SetMask(mask);
+    }
+    else if (auto *cheby_1st =
+                 dynamic_cast<ChebyshevSmoother1stKind<OperType> *>(&smoother))
+    {
+      cheby_1st->SetMask(mask);
+    }
+    else
+    {
+      MFEM_VERIFY(mask.empty(), "Smoother does not support masked true DOFs!");
+    }
+  };
+  SetMask(*B, tdofs);
+  SetMask(*B_G, tdofs_G);
+}
+
 namespace
 {
 

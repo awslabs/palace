@@ -2,12 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <complex>
+#include <cstdio>
 #include <iterator>
 #include <limits>
 #include <numbers>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
+#include <unistd.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -20,6 +26,7 @@
 #include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/jsonschema.hpp"
+#include "utils/permittivitymodel.hpp"
 
 using json = nlohmann::json;
 using namespace palace;
@@ -1248,6 +1255,239 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
   }
 }
 
+TEST_CASE("Config Linear PML subdomain solver", "[config][Serial]")
+{
+  CHECK(config::LinearSolverData(json::object()).pml_subdomain_solver ==
+        PMLSubdomainSolver::DEFAULT);
+  CHECK(config::LinearSolverData(json{{"PMLSubdomainSolver", "Direct"}})
+            .pml_subdomain_solver == PMLSubdomainSolver::DIRECT);
+  CHECK(
+      config::LinearSolverData(json{{"PMLSubdomainSolver", "None"}}).pml_subdomain_solver ==
+      PMLSubdomainSolver::NONE);
+  CHECK_THROWS(config::LinearSolverData(json{{"PMLSubdomainSolver", "Iterative"}}));
+
+  // The default is resolved for the problem: direct when there are PML regions and
+  // geometric multigrid is enabled.
+  auto Resolve = [](bool pml, json linear)
+  {
+    json domains = {{"Materials", {{{"Attributes", {1, 2}}}}}};
+    if (pml)
+    {
+      domains["PML"] = json::array({json{{"Attributes", {2}}}});
+    }
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", domains},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}},
+                     {"Linear", linear}}}};
+    IoData iodata(config, false);
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Solver"]["Linear"]["PMLSubdomainSolver"].get<std::string>() ==
+          ToString(iodata.solver.linear.pml_subdomain_solver));
+    return iodata.solver.linear.pml_subdomain_solver;
+  };
+#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
+  CHECK(Resolve(true, json::object()) == PMLSubdomainSolver::DIRECT);
+#else
+  CHECK(Resolve(true, json::object()) == PMLSubdomainSolver::NONE);
+#endif
+  CHECK(Resolve(false, json::object()) == PMLSubdomainSolver::NONE);
+  CHECK(Resolve(true, json{{"MGMaxLevels", 1}}) == PMLSubdomainSolver::NONE);
+  CHECK(Resolve(true, json{{"PMLSubdomainSolver", "None"}}) == PMLSubdomainSolver::NONE);
+
+  // AMS does not support PML regions.
+  CHECK_THROWS(Resolve(true, json{{"Type", "AMS"}}));
+  CHECK(Resolve(false, json{{"Type", "AMS"}}) == PMLSubdomainSolver::NONE);
+}
+
+TEST_CASE("Config Linear PML preconditioner options", "[config][Serial]")
+{
+  // Threshold of the stretch magnitude for the smoother masks.
+  const config::LinearSolverData defaults(json::object());
+  CHECK(defaults.pml_smoother_threshold == 2.0);
+  CHECK_FALSE(defaults.complex_coarse_solve);
+  const config::LinearSolverData linear(
+      json{{"PMLSmootherThreshold", 3.0}, {"ComplexCoarseSolve", false}});
+  CHECK(linear.pml_smoother_threshold == 3.0);
+  CHECK_FALSE(linear.complex_coarse_solve);
+  CHECK(config::LinearSolverData(json{{"PMLSmootherThreshold", 0.0}})
+            .pml_smoother_threshold == 0.0);
+
+  // PML regions do not change the defaults of the coarse-level solve and of the sparse
+  // direct solver.
+  auto Resolve = [](bool pml, json linear)
+  {
+    json domains = {{"Materials", {{{"Attributes", {1, 2}}}}}};
+    if (pml)
+    {
+      domains["PML"] = json::array({json{{"Attributes", {2}}}});
+    }
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", domains},
+                   {"Boundaries", json::object()},
+                   {"Solver",
+                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}},
+                     {"Linear", linear}}}};
+    IoData iodata(config, false);
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>() ==
+          iodata.solver.linear.complex_coarse_solve);
+    CHECK(resolved["Solver"]["Linear"]["PMLSmootherThreshold"].get<double>() ==
+          iodata.solver.linear.pml_smoother_threshold);
+    return iodata.solver.linear;
+  };
+  CHECK_FALSE(Resolve(true, json::object()).complex_coarse_solve);
+  CHECK(Resolve(true, json{{"ComplexCoarseSolve", true}}).complex_coarse_solve);
+  CHECK_FALSE(Resolve(false, json::object()).complex_coarse_solve);
+  CHECK(Resolve(true, json::object()).type == Resolve(false, json::object()).type);
+}
+
+TEST_CASE("Config preconditioner matrix symmetry", "[config][Serial]")
+{
+  auto Symmetry = [](json linear, bool floquet)
+  {
+    json boundaries = json::object();
+    if (floquet)
+    {
+      boundaries["Periodic"] = {
+          {"FloquetWaveVector", {0.0, 1.0, 0.0}},
+          {"BoundaryPairs", {{{"DonorAttributes", {1}}, {"ReceiverAttributes", {2}}}}}};
+    }
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver",
+                    {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}},
+                     {"Linear", linear}}}};
+    IoData iodata(config, false);
+    return GetPreconditionerMatrixSymmetry(iodata);
+  };
+  CHECK(Symmetry(json::object(), false) == MatrixSymmetry::SYMMETRIC);
+  CHECK(Symmetry(json{{"PCMatShifted", true}}, false) == MatrixSymmetry::SPD);
+  CHECK(Symmetry(json::object(), true) == MatrixSymmetry::UNSYMMETRIC);
+  CHECK(Symmetry(json{{"PCMatShifted", true}}, true) == MatrixSymmetry::UNSYMMETRIC);
+}
+
+TEST_CASE("Config PML complex frequency shift", "[config][Serial]")
+{
+  // For a static PML, the complex frequency shift is equivalent to a different real stretch
+  // and conductivity, and is rejected.
+  CHECK_THROWS(config::PMLData(json{{"Attributes", {2}}, {"AlphaMax", 0.5}}));
+  CHECK_THROWS(config::PMLData(json{{"Attributes", {2}}, {"AlphaMax", {0.0, 0.0, 0.5}}}));
+  CHECK_NOTHROW(config::PMLData(
+      json{{"Attributes", {2}}, {"AlphaMax", 0.5}, {"FrequencyDependent", true}}));
+  CHECK_NOTHROW(config::PMLData(json{{"Attributes", {2}}, {"AlphaMax", 0.0}}));
+}
+
+TEST_CASE("Config PML conductivity", "[config][Serial]")
+{
+  // By default, σ_max is computed from the size of the PML elements, unless a reflection
+  // target is specified.
+  const config::PMLData def(json{{"Attributes", {2}}});
+  CHECK(def.sigma_auto);
+  const config::PMLData automatic(json{{"Attributes", {2}}, {"SigmaMax", "Auto"}});
+  CHECK(automatic.sigma_auto);
+  const config::PMLData target(json{{"Attributes", {2}}, {"ReflectionTarget", 1.0e-3}});
+  CHECK(!target.sigma_auto);
+  CHECK(target.reflection_target == 1.0e-3);
+  CHECK_THROWS(config::PMLData(json{{"Attributes", {2}}, {"SigmaMax", "Default"}}));
+  CHECK_THROWS(config::PMLData(
+      json{{"Attributes", {2}}, {"SigmaMax", "Auto"}, {"ReflectionTarget", 1.0e-3}}));
+
+  // The resolved configurations are valid, and only contain the reflection target if used.
+  for (const auto &pml :
+       {json{{"Attributes", {2}}}, json{{"Attributes", {2}}, {"ReflectionTarget", 1.0e-3}}})
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials", {{{"Attributes", {1, 2}}}}}, {"PML", json::array({pml})}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
+    IoData iodata(config, false);
+    config = IoData::ConcretizeDefaults(iodata, config);
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+    const auto &j_pml = config["Domains"]["PML"][0];
+    CHECK(j_pml.contains("ReflectionTarget") == pml.contains("ReflectionTarget"));
+    CHECK(j_pml["SigmaMax"] == (pml.contains("ReflectionTarget") ? json(nullptr) : "Auto"));
+    IoData iodata2(config, false);
+    REQUIRE(iodata2.domains.pml.size() == 1);
+    CHECK(iodata2.domains.pml[0].sigma_auto == iodata.domains.pml[0].sigma_auto);
+  }
+}
+
+TEST_CASE("Config PML regions", "[config][Serial]")
+{
+  const config::PMLData pml(json{{"Attributes", {4, 2, 4}}});
+  CHECK(pml.attributes == std::vector<int>{2, 4});
+  CHECK(pml.autodetect_geometry);
+  CHECK_THROWS(config::PMLData(json::object()));  // Attributes are required
+
+  // The layer geometry is detected, or given by both Direction and Thickness.
+  const config::PMLData configured(
+      json{{"Attributes", {2}}, {"Direction", {"+X", "-z"}}, {"Thickness", 0.5}});
+  CHECK(!configured.autodetect_geometry);
+  CHECK(configured.directions ==
+        std::array<bool, 6>{false, true, false, false, true, false});
+  CHECK(configured.thickness == std::array<double, 6>{0.0, 0.5, 0.0, 0.0, 0.5, 0.0});
+  CHECK_THROWS(config::PMLData(json{{"Attributes", {2}}, {"Direction", {"+X"}}}));
+  CHECK_THROWS(config::PMLData(json{{"Attributes", {2}}, {"Thickness", 0.5}}));
+
+  // PML attributes need materials.
+  json domains = {{"Materials", {{{"Attributes", {1, 2, 3}}}}},
+                  {"PML", json::array({json{{"Attributes", {2}}}})}};
+  const config::DomainData data(domains);
+  REQUIRE(data.pml.size() == 1);
+  CHECK(data.pml[0].attributes == std::vector<int>{2});
+  domains["PML"][0]["Attributes"] = {4};
+  CHECK_THROWS(config::DomainData(domains));
+
+  // Several PML blocks, with their own parameters and disjoint attributes.
+  domains["PML"] = json::array({json{{"Attributes", {2}}, {"Order", 2}},
+                                json{{"Attributes", {3}}, {"FrequencyDependent", true}}});
+  const config::DomainData blocks(domains);
+  REQUIRE(blocks.pml.size() == 2);
+  CHECK(blocks.pml[0].order == 2);
+  CHECK(!blocks.pml[0].frequency_dependent);
+  CHECK(blocks.pml[1].order == 3);
+  CHECK(blocks.pml[1].frequency_dependent);
+  domains["PML"][1]["Attributes"] = {3, 2};
+  CHECK_THROWS(config::DomainData(domains));
+
+  // The PML blocks are given as an array.
+  domains["PML"] = json{{"Attributes", {2}}};
+  CHECK_THROWS(config::DomainData(domains));
+}
+
+TEST_CASE("Config PML regions in transient simulations", "[config][Serial]")
+{
+  // A PML region does not absorb in a transient simulation, which rejects it, while the
+  // static simulations treat it as a regular material.
+  const json config = {
+      {"Problem", {{"Type", "Transient"}, {"Output", "test_output"}}},
+      {"Model", {{"Mesh", "test.msh"}}},
+      {"Domains",
+       {{"Materials", {{{"Attributes", {1, 2}}}}},
+        {"PML", json::array({json{{"Attributes", {2}}}})}}},
+      {"Boundaries", json::object()},
+      {"Solver",
+       {{"Transient",
+         {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}}}};
+  CHECK_THROWS_WITH(
+      IoData(config, false),
+      Catch::Matchers::ContainsSubstring("is not supported for transient simulations"));
+  auto without_pml = config;
+  without_pml["Domains"].erase("PML");
+  CHECK_NOTHROW(IoData(without_pml, false));
+}
+
 TEST_CASE("Config Eigenmode saved modes", "[config][Serial]")
 {
   CHECK(config::EigenSolverData(json{{"Target", 1.0}, {"N", 3}, {"Save", 2}}).n_post == 2);
@@ -1571,6 +1811,347 @@ TEST_CASE("ParseStringAsDirection", "[config][Serial]")
   CHECK_NOTHROW(config::ParseStringAsDirection("", false));
 }
 
+TEST_CASE("Config material permittivity models", "[config][Serial]")
+{
+  SECTION("Legacy scalar and vector inputs")
+  {
+    const config::MaterialData scalar({{"Attributes", {1}}, {"Permittivity", 2.5}});
+    CHECK(scalar.epsilon_r.s == std::array<double, 3>{2.5, 2.5, 2.5});
+    CHECK_FALSE(scalar.HasFrequencyDependentPermittivity());
+
+    const config::MaterialData vector(
+        {{"Attributes", {1}}, {"Permittivity", {2.0, 3.0, 4.0}}});
+    CHECK(vector.epsilon_r.s == std::array<double, 3>{2.0, 3.0, 4.0});
+    CHECK_FALSE(vector.HasFrequencyDependentPermittivity());
+  }
+
+  SECTION("Named terms keep their models and expand to canonical poles")
+  {
+    const json permittivity = {
+        {"HighFrequencyLimit", 2.08},
+        {"Terms",
+         {{{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}},
+          {{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.02}},
+          {{"Type", "Lorentz"},
+           {"DeltaPermittivity", 0.8},
+           {"ResonanceFrequency", 6.0},
+           {"DampingFrequency", 0.2}},
+          {{"Type", "PoleResidue"},
+           {"Pole", {-2.0e12, 5.0e12}},
+           {"Residue", {1.2e12, -0.4e12}}},
+          {{"Type", "DjordjevicSarkar"},
+           {"Strength", 0.0575258},
+           {"LowerFrequency", 9.07157e-5},
+           {"UpperFrequency", 159.154956}}}}};
+    const config::MaterialData data({{"Attributes", {1}}, {"Permittivity", permittivity}});
+    CHECK(data.epsilon_r.s == std::array<double, 3>{2.08, 2.08, 2.08});
+    REQUIRE(data.permittivity_terms.size() == 5);
+
+    constexpr double scale = 2.0 * std::numbers::pi * 1.0e9;
+    const double wp = scale, gamma = 0.1 * scale;
+    const auto &drude = std::get<config::DrudeData>(data.permittivity_terms[0]);
+    CHECK(drude.omega_p == Catch::Approx(wp));
+    CHECK(drude.gamma == Catch::Approx(gamma));
+    const auto &debye = std::get<config::DebyeData>(data.permittivity_terms[1]);
+    CHECK(debye.delta == 1.5);
+    CHECK(debye.tau == Catch::Approx(0.02e-9));
+    const double w0 = 6.0 * scale, damping = 0.2 * scale;
+    const auto &lorentz = std::get<config::LorentzData>(data.permittivity_terms[2]);
+    CHECK(lorentz.delta == 0.8);
+    CHECK(lorentz.omega_0 == Catch::Approx(w0));
+    CHECK(lorentz.gamma == Catch::Approx(damping));
+    const auto &pole = std::get<config::PermittivityPoleData>(data.permittivity_terms[3]);
+    CHECK(pole.pole == std::complex<double>{-2.0e12, 5.0e12});
+    CHECK(pole.residue == std::complex<double>{1.2e12, -0.4e12});
+    const auto &ds = std::get<config::DjordjevicSarkarData>(data.permittivity_terms[4]);
+    CHECK(ds.strength == Catch::Approx(0.0575258));
+    CHECK(ds.omega_lower == Catch::Approx(scale * 9.07157e-5));
+    CHECK(ds.omega_upper == Catch::Approx(scale * 159.154956));
+    CHECK_FALSE(permittivity::IsPassiveByConstruction(data.permittivity_terms));
+
+    const auto poles = permittivity::PoleTerms(data.permittivity_terms);
+    REQUIRE(poles.size() == 5);
+    CHECK(poles[0].pole == std::complex<double>{0.0, 0.0});
+    CHECK(poles[0].residue.real() == Catch::Approx(wp * wp / gamma));
+    CHECK(poles[1].pole.real() == Catch::Approx(-gamma));
+    CHECK(poles[1].residue.real() == Catch::Approx(-wp * wp / gamma));
+    CHECK(poles[2].pole.real() == Catch::Approx(-1.0 / 0.02e-9));
+    CHECK(poles[2].residue.real() == Catch::Approx(1.5 / 0.02e-9));
+    const double wd = std::sqrt(w0 * w0 - 0.25 * damping * damping);
+    CHECK(poles[3].pole.real() == Catch::Approx(-0.5 * damping));
+    CHECK(poles[3].pole.imag() == Catch::Approx(wd));
+    CHECK(poles[3].residue.real() == 0.0);
+    CHECK(poles[3].residue.imag() == Catch::Approx(-0.5 * 0.8 * w0 * w0 / wd));
+    CHECK(poles[4].pole == std::complex<double>{-2.0e12, 5.0e12});
+    CHECK(poles[4].residue == std::complex<double>{1.2e12, -0.4e12});
+    CHECK(permittivity::DjordjevicSarkarTerms(data.permittivity_terms).size() == 1);
+  }
+
+  SECTION("Overdamped Lorentz stays one oscillator with two real poles")
+  {
+    const config::MaterialData data({{"Attributes", {1}},
+                                     {"Permittivity",
+                                      {{"HighFrequencyLimit", 1.0},
+                                       {"Terms",
+                                        {{{"Type", "Lorentz"},
+                                          {"DeltaPermittivity", 0.5},
+                                          {"ResonanceFrequency", 1.0},
+                                          {"DampingFrequency", 3.0}}}}}}});
+    REQUIRE(data.permittivity_terms.size() == 1);
+    CHECK(std::holds_alternative<config::LorentzData>(data.permittivity_terms[0]));
+    CHECK(permittivity::IsPassiveByConstruction(data.permittivity_terms));
+    const auto poles = permittivity::PoleTerms(data.permittivity_terms);
+    REQUIRE(poles.size() == 2);
+    CHECK(poles[0].pole.imag() == 0.0);
+    CHECK(poles[1].pole.imag() == 0.0);
+    CHECK(poles[0].pole.real() < 0.0);
+    CHECK(poles[1].pole.real() < poles[0].pole.real());
+  }
+
+  SECTION("Invalid term parameters are rejected")
+  {
+    auto CheckInvalid = [](const json &term, const char *reason, double eps_inf = 1.0)
+    {
+      const json material = {
+          {"Attributes", {1}},
+          {"Permittivity", {{"HighFrequencyLimit", eps_inf}, {"Terms", {term}}}}};
+      CHECK_THROWS_WITH(config::MaterialData(material),
+                        Catch::Matchers::ContainsSubstring(reason));
+    };
+    CheckInvalid({{"Type", "Drude"}, {"PlasmaFrequency", 0.0}, {"CollisionFrequency", 0.1}},
+                 "must be positive");
+    CheckInvalid({{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 0.0}},
+                 "RelaxationTime must be positive");
+    CheckInvalid({{"Type", "Lorentz"},
+                  {"DeltaPermittivity", 1.0},
+                  {"ResonanceFrequency", 1.0},
+                  {"DampingFrequency", 2.0}},
+                 "critically damped");
+    CheckInvalid({{"Type", "Lorentz"},  // Within the near-critical tolerance
+                  {"DeltaPermittivity", 1.0},
+                  {"ResonanceFrequency", 1.0},
+                  {"DampingFrequency", 2.0 * (1.0 + 1.0e-8)}},
+                 "critically damped");
+    CheckInvalid({{"Type", "PoleResidue"}, {"Pole", {-1.0, -2.0}}, {"Residue", 1.0}},
+                 "upper half-plane");
+    CheckInvalid({{"Type", "DjordjevicSarkar"},
+                  {"Strength", 1.0},
+                  {"LowerFrequency", 2.0},
+                  {"UpperFrequency", 1.0}},
+                 "UpperFrequency > LowerFrequency");
+    CheckInvalid({{"Type", "Unknown"}}, "Unknown");
+
+    // Typed terms must be passive on their own.
+    for (const double value : {0.0, -0.5})
+    {
+      CAPTURE(value);
+      CheckInvalid(
+          {{"Type", "Debye"}, {"DeltaPermittivity", value}, {"RelaxationTime", 0.02}},
+          "gain at every frequency");
+      CheckInvalid({{"Type", "Lorentz"},
+                    {"DeltaPermittivity", value},
+                    {"ResonanceFrequency", 1.0},
+                    {"DampingFrequency", 0.1}},
+                   "gain");
+      CheckInvalid({{"Type", "DjordjevicSarkar"},
+                    {"Strength", value},
+                    {"LowerFrequency", 1.0},
+                    {"UpperFrequency", 2.0}},
+                   "gain at every frequency");
+      CheckInvalid(
+          {{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 0.02}},
+          "HighFrequencyLimit must be positive", value);
+    }
+
+    // Terms whose residues cancel at a common pole are a configuration error.
+    const json pole = {{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 1.0}};
+    json cancelling = pole;
+    cancelling["Residue"] = -1.0;
+    const json material = {
+        {"Attributes", {1}},
+        {"Permittivity", {{"HighFrequencyLimit", 1.0}, {"Terms", {pole, cancelling}}}}};
+    CHECK_THROWS_WITH(config::MaterialData(material),
+                      Catch::Matchers::ContainsSubstring("cancel exactly"));
+  }
+}
+
+TEST_CASE("Config frequency-dependent permittivity support gates", "[config][Serial]")
+{
+  auto MakeConfig = []
+  {
+    return json{
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials",
+           {{{"Attributes", {1}},
+             {"Permittivity",
+              {{"HighFrequencyLimit", 2.0},
+               {"Terms",
+                {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 2.0}}}}}}}}}}},
+        {"Boundaries", json::object()},
+        {"Solver",
+         {{"Driven",
+           {{"Samples", {{{"MinFreq", 1.0}, {"MaxFreq", 1.0}, {"FreqStep", 1.0}}}}}}}}};
+  };
+
+  // Match the message, so that a config rejected for an unrelated reason does not pass.
+  const std::string reason = "Frequency-dependent material Permittivity";
+  auto CheckRejected = [&reason](const json &config)
+  { CHECK_THROWS_WITH(IoData(config, false), Catch::Matchers::ContainsSubstring(reason)); };
+
+  SECTION("Ordinary driven solve is accepted")
+  {
+    CHECK_NOTHROW(IoData(MakeConfig(), false));
+  }
+  SECTION("Resolved config preserves the named object exactly")
+  {
+    auto config = MakeConfig();
+    config["Domains"]["Materials"][0]["Permittivity"] = {
+        {"HighFrequencyLimit", 2.08},
+        {"Terms",
+         {{{"Type", "Drude"}, {"PlasmaFrequency", 1.0}, {"CollisionFrequency", 0.1}}}}};
+    const json supplied = config["Domains"]["Materials"][0]["Permittivity"];
+    const IoData iodata(config, false);
+    const auto resolved = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(resolved["Domains"]["Materials"][0]["Permittivity"] == supplied);
+  }
+  SECTION("Unsupported problem types are rejected")
+  {
+    for (const auto *type : {"Transient"})
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      CheckRejected(config);
+    }
+  }
+  SECTION("Static problem types are accepted")
+  {
+    for (const auto *type : {"Electrostatic", "Magnetostatic", "BoundaryMode"})
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      CHECK_NOTHROW(IoData(config, false));
+    }
+  }
+  SECTION("Only problems which use the permittivity warn about its defects")
+  {
+    // A PoleResidue term with gain. Electrostatics uses its static limit and warns;
+    // magnetostatics does not use the permittivity and does not warn.
+    auto Output = [](const json &config)
+    {
+      std::fflush(stdout);
+      std::FILE *tmp = std::tmpfile();
+      REQUIRE(tmp);
+      const int saved = dup(fileno(stdout));
+      dup2(fileno(tmp), fileno(stdout));
+      IoData iodata(config, false);
+      std::fflush(stdout);
+      dup2(saved, fileno(stdout));
+      close(saved);
+      std::rewind(tmp);
+      std::string out;
+      for (int c; (c = std::fgetc(tmp)) != EOF;)
+      {
+        out.push_back(static_cast<char>(c));
+      }
+      std::fclose(tmp);
+      return out;
+    };
+    const std::string warning = "frequency-dependent Permittivity of material 1";
+    for (const auto *type : {"Electrostatic", "Magnetostatic"})
+    {
+      CAPTURE(type);
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      config["Domains"]["Materials"][0]["Permittivity"]["Terms"][0]["Residue"] = -1.0;
+      CHECK((Output(config).find(warning) != std::string::npos) ==
+            (std::string(type) == "Electrostatic"));
+    }
+
+    // Gain of the whole material is diagnosed apart from the stored energy, which
+    // PoleResidue terms do not specify. A RAW −0.5/(s + 1) compensated by a typed Debye
+    // 1/(1 + s) (τ = 1 s) is passive, so not gain, but has no stored energy. Neither is
+    // diagnosed for electrostatics, which uses the static permittivity.
+    const std::string gain = "has gain", unspecified = "no stored-energy realization";
+    auto WithTerms = [&](const json &terms, const char *type)
+    {
+      auto config = MakeConfig();
+      config["Problem"]["Type"] = type;
+      config["Domains"]["Materials"][0]["Permittivity"]["Terms"] = terms;
+      return Output(config);
+    };
+    const json compensated = {
+        {{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 1.0e9}},
+        {{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", -0.5}}};
+    {
+      const auto out = WithTerms(compensated, "Driven");
+      CAPTURE(out);
+      CHECK(out.find(unspecified) != std::string::npos);
+      // The runtime owns the actual omissions: the configuration can only state them as
+      // conditional on the material being on the mesh.
+      CHECK(out.find("If this material is on the mesh") != std::string::npos);
+      CHECK(out.find(gain) == std::string::npos);
+      CHECK(WithTerms(compensated, "Electrostatic").find(unspecified) == std::string::npos);
+    }
+    {
+      // A passive PoleResidue Debye states the same, and a typed Debye does not.
+      const auto out = WithTerms(
+          {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", 1.0}}}, "Driven");
+      CAPTURE(out);
+      CHECK(out.find(unspecified) != std::string::npos);
+      CHECK(out.find(gain) == std::string::npos);
+      CHECK(
+          WithTerms(
+              {{{"Type", "Debye"}, {"DeltaPermittivity", 1.0}, {"RelaxationTime", 1.0e9}}},
+              "Driven")
+              .find(unspecified) == std::string::npos);
+    }
+    {
+      // Gain is reported as such, without a claim that the field solution is invalid.
+      const auto out = WithTerms(
+          {{{"Type", "PoleResidue"}, {"Pole", -1.0}, {"Residue", -1.0}}}, "Driven");
+      CAPTURE(out);
+      CHECK(out.find(gain) != std::string::npos);
+      CHECK(out.find("not physical") == std::string::npos);
+    }
+  }
+  SECTION("Adaptive circuit synthesis is accepted")
+  {
+    auto config = MakeConfig();
+    // Synthesis requires two distinct samples, independently of the material model.
+    config["Solver"]["Driven"]["Samples"][0]["MaxFreq"] = 2.0;
+    config["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-3;
+    config["Solver"]["Driven"]["AdaptiveCircuitSynthesis"] = true;
+    json port;
+    port["Index"] = 1;
+    port["Attributes"] = {2};
+    port["R"] = 50.0;
+    port["Direction"] = "+X";
+    port["Excitation"] = true;
+    config["Boundaries"]["LumpedPort"] = json::array({port});
+    CHECK_NOTHROW(IoData(config, false));
+  }
+  SECTION("Numeric wave ports and absorbing boundaries are accepted")
+  {
+    // Absorbing boundaries are checked against the neighboring material on the mesh.
+    auto config = MakeConfig();
+    config["Boundaries"]["WavePort"] = {{{"Index", 1}, {"Attributes", {2}}}};
+    config["Boundaries"]["WavePortPEC"] = {{"Attributes", {3}}};
+    config["Boundaries"]["Absorbing"] = {{"Attributes", {4}}};
+    CHECK_NOTHROW(IoData(config, false));
+  }
+  SECTION("Floquet ports and nonzero periodic Floquet wave vectors are accepted")
+  {
+    auto config = MakeConfig();
+    config["Boundaries"]["FloquetPort"] = {{{"Index", 1}, {"Attributes", {4}}}};
+    config["Boundaries"]["Periodic"] = {
+        {"FloquetWaveVector", {0.0, 0.1, 0.0}},
+        {"BoundaryPairs", {{{"DonorAttributes", {2}}, {"ReceiverAttributes", {3}}}}}};
+    CHECK_NOTHROW(IoData(config, false));
+  }
+}
+
 TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 {
   SECTION("Electrostatic resolves linear solver sentinels")
@@ -1610,6 +2191,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_linear["AMGAggressiveCoarsening"].get<int>() == 1);
     CHECK(j_linear["AMSMaxIts"].get<int>() == 1);
     CHECK(j_linear["MGCycleIts"].get<int>() == 1);
+    CHECK(config["Domains"]["Materials"][0]["Permittivity"] == 1.0);
   }
 
   SECTION("Omitted Output resolves to default and concretizes (issue #745)")
@@ -1643,6 +2225,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata.solver.linear.krylov_solver == KrylovSolver::CG);
     CHECK(iodata.solver.linear.ams_singular_op == 1);
     CHECK(iodata.solver.linear.ams_max_it == 1);
+    CHECK(iodata.solver.linear.ams_agglomeration_target == 2048);
     CHECK(iodata.solver.linear.mg_cycle_it == 1);
     CHECK(GetPreconditionerMatrixSymmetry(iodata) == MatrixSymmetry::SPD);
 
@@ -1650,8 +2233,32 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(config["Solver"]["Linear"]["Type"].get<std::string>() == "AMS");
     CHECK(config["Solver"]["Linear"]["AMSSingularOperator"].get<int>() == 1);
     CHECK(config["Solver"]["Linear"]["AMSMaxIts"].get<int>() == 1);
+    CHECK(config["Solver"]["Linear"]["AMSAgglomerationTarget"].get<int>() == 2048);
     CHECK(config["Solver"]["Linear"]["MGCycleIts"].get<int>() == 1);
     CHECK(config["Solver"]["Magnetostatic"]["InactivePorts"] == "Open");
+  }
+
+  SECTION("AMSAgglomerationTarget is read, with 0 to disable the agglomeration")
+  {
+    auto Config = [](int target)
+    {
+      return json{
+          {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+          {"Model", {{"Mesh", "test.msh"}}},
+          {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+          {"Boundaries", json::object()},
+          {"Solver", {{"Linear", {{"Type", "AMS"}, {"AMSAgglomerationTarget", target}}}}}};
+    };
+    for (int target : {0, 512})
+    {
+      json config = Config(target);
+      CHECK(ValidateConfig(config).empty());
+      IoData iodata(config, false);
+      CHECK(iodata.solver.linear.ams_agglomeration_target == target);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["AMSAgglomerationTarget"].get<int>() == target);
+    }
+    CHECK_FALSE(ValidateConfig(Config(-1)).empty());
   }
 
   SECTION("User-specified values survive concretization")
@@ -1791,6 +2398,38 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     // default rather than naming a specific backend option.
     CHECK(j_linear["PCSide"].get<std::string>() == "Default");
     CHECK(j_linear["ColumnOrdering"].get<std::string>() == "Default");
+  }
+
+  SECTION("Driven resolves InitialGuess to true for uniform and adaptive sweeps")
+  {
+    auto make_config = [](bool adaptive)
+    {
+      json driven = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}};
+      if (adaptive)
+      {
+        driven["AdaptiveTol"] = 1.0e-3;
+      }
+      return json{{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                  {"Boundaries", {{"WavePort", {{{"Index", 1}, {"Attributes", {2}}}}}}},
+                  {"Solver", {{"Driven", driven}}}};
+    };
+    for (bool adaptive : {false, true})
+    {
+      INFO("adaptive = " << adaptive);
+      json config = make_config(adaptive);
+      IoData iodata(config, false);
+      CHECK(iodata.solver.linear.initial_guess == 1);
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["InitialGuess"].get<int>() == 1);
+
+      // An explicit false is kept.
+      config = make_config(adaptive);
+      config["Solver"]["Linear"] = {{"InitialGuess", false}};
+      IoData iodata_off(config, false);
+      CHECK(iodata_off.solver.linear.initial_guess == 0);
+    }
   }
 
   SECTION("Transient resolves Type DEFAULT to GeneralizedAlpha")
@@ -2076,6 +2715,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
     CHECK(l2.ams_singular_op == l1.ams_singular_op);
     CHECK(l2.ams_max_it == l1.ams_max_it);
+    CHECK(l2.ams_agglomeration_target == l1.ams_agglomeration_target);
     CHECK(l2.amg_agg_coarsen == l1.amg_agg_coarsen);
     CHECK(l2.reorder_reuse == l1.reorder_reuse);
     CHECK(l2.pc_side == l1.pc_side);
@@ -2373,17 +3013,21 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
 
   SECTION("Round-trip: Magnetostatic and FluxLoop defaulted fields are reproducible")
   {
-    json config = {{"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
-                   {"Model", {{"Mesh", "test.msh"}}},
-                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
-                   {"Boundaries",
-                    {{"FluxLoop",
-                      {{{"Index", 3},
-                        {"FilmAttributes", {8}},
-                        {"HoleAttributes", {9}},
-                        {"FluxAmounts", {1.0}},
-                        {"Direction", "+Z"}}}}}},
-                   {"Solver", json::object()}};
+    json config = {
+        {"Problem", {{"Type", "Magnetostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+        {"Boundaries",
+         {{"FluxLoop",
+           {{{"Index", 3},
+             {"FilmAttributes", {8}},
+             {"HoleAttributes", {9}},
+             {"FluxAmounts", {1.0}},
+             {"Direction", "+Z"}}}},
+          {"Superconductor",
+           {{{"Attributes", {10}}, {"KineticInductance", 1.0e-12}},
+            {{"Attributes", {11}}, {"PenetrationDepth", 0.1}, {"Thickness", 0.2}}}}}},
+        {"Solver", json::object()}};
 
     IoData iodata1(config, false);
     config = IoData::ConcretizeDefaults(iodata1, config);
@@ -2400,6 +3044,27 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(iodata2.boundaries.fluxloop.at(3).pec_lperp ==
           iodata1.boundaries.fluxloop.at(3).pec_lperp);
 
+    // TwoSided is written out for every Superconductor. The (PenetrationDepth, Thickness)
+    // and KineticInductance forms are mutually exclusive, so the keys of the unused form
+    // are not.
+    REQUIRE(config["Boundaries"]["Superconductor"].size() == 2);
+    // The film of the flux loop is registered as a further Superconductor after the two
+    // declared ones, in both IoData objects.
+    REQUIRE(iodata1.boundaries.superconductor.size() == 3);
+    REQUIRE(iodata2.boundaries.superconductor.size() == 3);
+    for (std::size_t i = 0; i < 2; ++i)
+    {
+      const auto &j_sc = config["Boundaries"]["Superconductor"][i];
+      CHECK_FALSE(j_sc.at("TwoSided").get<bool>());
+      CHECK(iodata2.boundaries.superconductor[i].two_sided ==
+            iodata1.boundaries.superconductor[i].two_sided);
+      CHECK(iodata2.boundaries.superconductor[i].Ls ==
+            iodata1.boundaries.superconductor[i].Ls);
+    }
+    CHECK_FALSE(config["Boundaries"]["Superconductor"][0].contains("PenetrationDepth"));
+    CHECK_FALSE(config["Boundaries"]["Superconductor"][0].contains("Thickness"));
+    CHECK_FALSE(config["Boundaries"]["Superconductor"][1].contains("KineticInductance"));
+
     auto ms_gaps = SchemaCoverageGaps("/properties/Solver/properties/Magnetostatic",
                                       config["Solver"]["Magnetostatic"], /*skip=*/{});
     INFO("Solver.Magnetostatic missing keys: " << json(ms_gaps).dump());
@@ -2408,6 +3073,15 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                                         config["Boundaries"]["FluxLoop"][0], /*skip=*/{});
     INFO("Boundaries.FluxLoop[] missing keys: " << json(loop_gaps).dump());
     CHECK(loop_gaps.empty());
+
+    // PenetrationDepth/Thickness and KineticInductance are mutually exclusive forms with
+    // no meaningful default (0.0 reads as a value), so they are only emitted as given.
+    auto sc_gaps =
+        SchemaCoverageGaps("/properties/Boundaries/properties/Superconductor/items",
+                           config["Boundaries"]["Superconductor"][0],
+                           /*skip=*/{"PenetrationDepth", "Thickness", "KineticInductance"});
+    INFO("Boundaries.Superconductor[] missing keys: " << json(sc_gaps).dump());
+    CHECK(sc_gaps.empty());
   }
 
   SECTION("Round-trip: BoundaryMode defaulted fields are reproducible")
@@ -2547,6 +3221,76 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                                        /*skip=*/{"MaterialAxes"});
     INFO("Domains.Materials[] missing keys: " << json(mat_gaps).dump());
     CHECK(mat_gaps.empty());
+  }
+
+  SECTION("Static PML ReferenceFrequency defaults to the lowest driven frequency")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials", {{{"Attributes", {1, 2}}}}},
+          {"PML", json::array({json{{"Attributes", {2}}}})}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
+
+    IoData iodata1(config, false);
+    REQUIRE(iodata1.domains.pml.size() == 1);
+    CHECK(iodata1.domains.pml[0].reference_frequency == 1.0);
+
+    config = IoData::ConcretizeDefaults(iodata1, config);
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+
+    auto &j_pml = config["Domains"]["PML"][0];
+    CHECK(j_pml["ReferenceFrequency"].get<double>() == 1.0);
+    CHECK(j_pml["FrequencyDependent"].get<bool>() == false);
+    CHECK(j_pml["AllowRefinement"].get<bool>() == false);
+    CHECK(j_pml["SigmaMax"] == "Auto");
+
+    IoData iodata2(config, false);
+    REQUIRE(iodata2.domains.pml.size() == 1);
+    CHECK(iodata2.domains.pml[0].reference_frequency ==
+          iodata1.domains.pml[0].reference_frequency);
+
+    auto pml_gaps =
+        SchemaCoverageGaps("/$defs/PML", j_pml,
+                           /*skip=*/{"Direction", "Thickness", "ReflectionTarget"});
+    INFO("Domains.PML missing keys: " << json(pml_gaps).dump());
+    CHECK(pml_gaps.empty());
+  }
+
+  SECTION("Static PML ReferenceFrequency defaults to eigenmode target")
+  {
+    json config = {{"Problem", {{"Type", "Eigenmode"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains",
+                    {{"Materials", {{{"Attributes", {1, 2}}}}},
+                     {"PML", json::array({json{{"Attributes", {2}}}})}}},
+                   {"Boundaries", json::object()},
+                   {"Solver", {{"Eigenmode", {{"Target", 4.2}}}}}};
+
+    IoData iodata(config, false);
+    REQUIRE(iodata.domains.pml.size() == 1);
+    CHECK(iodata.domains.pml[0].reference_frequency == 4.2);
+
+    config = IoData::ConcretizeDefaults(iodata, config);
+    CHECK(config["Domains"]["PML"][0]["ReferenceFrequency"].get<double>() == 4.2);
+  }
+
+  SECTION("Static PML ReferenceFrequency zero is invalid")
+  {
+    json config = {
+        {"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains",
+         {{"Materials", {{{"Attributes", {1, 2}}}}},
+          {"PML", json::array({json{{"Attributes", {2}}, {"ReferenceFrequency", 0.0}}})}}},
+        {"Boundaries", json::object()},
+        {"Solver", {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 3.0}, {"FreqStep", 1.0}}}}}};
+
+    CHECK_THROWS(IoData(config, false));
   }
 }
 

@@ -10,12 +10,14 @@
 #include <iostream>
 #include <limits>
 #include <numbers>
+#include <optional>
 #include <regex>
 #include <set>
 #include <sstream>
 #include <stack>
 #include <string>
 #include <string_view>
+#include <fmt/format.h>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -26,6 +28,7 @@
 #include "utils/enum_string.hpp"
 #include "utils/geodata.hpp"
 #include "utils/jsonschema.hpp"
+#include "utils/permittivitymodel.hpp"
 
 namespace palace
 {
@@ -264,6 +267,17 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
   MFEM_VERIFY(boundaries_it != config.end(),
               "\"Boundaries\" must be specified in the configuration file!");
   boundaries = config::BoundaryData(*boundaries_it);
+  if (auto pml_it = boundaries_it->find("PML"); pml_it != boundaries_it->end())
+  {
+    // The entries of the PML extruded from boundaries are the last PML blocks.
+    MFEM_VERIFY(pml_it->is_array(),
+                "config[\"Boundaries\"][\"PML\"] should specify an array of entries in the "
+                "configuration file!");
+    for (std::size_t i = 0; i < pml_it->size(); i++)
+    {
+      domains.pml.emplace_back((*pml_it)[i], true).extrusion.entry = static_cast<int>(i);
+    }
+  }
   if (auto err = config::Validate(boundaries))
   {
     MFEM_ABORT("Configuration file validation failed!\n  " << *err);
@@ -291,6 +305,103 @@ IoData::IoData(const nlohmann::json &config, bool print) : units(1.0, 1.0), init
 
 IoData::IoData(const char *filename, bool print) : IoData(ParseAndValidate(filename), print)
 {
+}
+
+void IoData::WarnPermittivityModelDefects() const
+{
+  // Typed permittivity terms are passive by construction. A PoleResidue term may not be,
+  // which is allowed (a fit may only be meant for the requested frequencies), but warned.
+  // Two separate conditions are stated: gain of the whole response of the material, and
+  // that its PoleResidue terms specify no stored energy (which is not gain).
+  // Magnetostatics does not use the permittivity, so there is nothing to warn about.
+  // Electrostatics uses the static permittivity, with no stored energy of the harmonic
+  // polarization.
+  if (problem.type == ProblemType::MAGNETOSTATIC)
+  {
+    return;
+  }
+  std::optional<std::pair<double, double>> band;  // GHz
+  switch (problem.type)
+  {
+    case ProblemType::DRIVEN:
+      if (!solver.driven.sample_f.empty())
+      {
+        const auto [lo, hi] = std::minmax_element(solver.driven.sample_f.begin(),
+                                                  solver.driven.sample_f.end());
+        band = {*lo, *hi};
+      }
+      break;
+    case ProblemType::EIGENMODE:
+      band = {solver.eigenmode.target, solver.eigenmode.target_upper};
+      break;
+    case ProblemType::BOUNDARYMODE:
+      band = {solver.boundary_mode.freq, solver.boundary_mode.freq};
+      break;
+    case ProblemType::ELECTROSTATIC:
+      band = {0.0, 0.0};
+      break;
+    default:
+      break;
+  }
+  constexpr double angular_to_ghz = 1.0 / (2.0 * std::numbers::pi * 1.0e9);
+  auto describe = [&](const std::vector<permittivity::FrequencyInterval> &intervals)
+  {
+    std::string str;
+    bool overlap = false;
+    for (const auto &interval : intervals)
+    {
+      const double lo = interval.lower * angular_to_ghz,
+                   hi = interval.upper * angular_to_ghz;
+      str += str.empty() ? "" : ", ";
+      str += (lo == 0.0 && std::isinf(hi)) ? "at every frequency"
+             : (lo == 0.0)                 ? fmt::format("below {:.6g} GHz", hi)
+             : std::isinf(hi)              ? fmt::format("above {:.6g} GHz", lo)
+                                           : fmt::format("{:.6g} to {:.6g} GHz", lo, hi);
+      overlap = overlap || (band && lo <= band->second && hi >= band->first);
+    }
+    if (band)
+    {
+      str += overlap ? fmt::format(", overlapping the requested {:.6g} to {:.6g} GHz",
+                                   band->first, band->second)
+                     : fmt::format(", outside the requested {:.6g} to {:.6g} GHz",
+                                   band->first, band->second);
+    }
+    return str;
+  };
+  for (std::size_t i = 0; i < domains.materials.size(); i++)
+  {
+    const auto &material = domains.materials[i];
+    if (permittivity::IsPassiveByConstruction(material.permittivity_terms))
+    {
+      continue;
+    }
+    const auto defects =
+        permittivity::FindDefects(material.epsilon_r.s[0], material.permittivity_terms);
+    if (!defects.gain.empty())
+    {
+      Mpi::Warning("The frequency-dependent Permittivity of material {:d} (attributes {}) "
+                   "has gain, a negative dissipated power, {}!\nThe field solve uses the "
+                   "model as given; a fit may only be meant for some frequencies.\n",
+                   i + 1, material.attributes, describe(defects.gain));
+    }
+    if (problem.type == ProblemType::ELECTROSTATIC)
+    {
+      continue;
+    }
+    // A property of the configured model. The solver decides the omitted outputs for the
+    // materials on its mesh and lists them; this diagnosis can only state the condition.
+    if (!permittivity::HasStoredEnergy(material.permittivity_terms))
+    {
+      Mpi::Warning("The PoleResidue terms of the frequency-dependent Permittivity of "
+                   "material {:d} (attributes {}) specify its susceptibility but no "
+                   "stored-energy realization. If this material is on the mesh, Palace "
+                   "does not report the electric energy of the regions with it, nor the "
+                   "outputs normalized by it; the runtime warning lists the actual "
+                   "omissions. The field solve is unaffected. Use Drude, Debye, or Lorentz "
+                   "terms where the stored energy is needed.\n",
+                   i + 1, material.attributes);
+    }
+  }
 }
 
 void IoData::CheckConfiguration()
@@ -385,6 +496,19 @@ void IoData::CheckConfiguration()
                   "SurfaceCurrent index "
                       << idx << " to use \"InactiveMode\": \"Open\"!");
     }
+  }
+
+  const bool has_frequency_dependent_permittivity = std::any_of(
+      domains.materials.begin(), domains.materials.end(),
+      [](const auto &material) { return material.HasFrequencyDependentPermittivity(); });
+  if (has_frequency_dependent_permittivity)
+  {
+    // Static problems use the zero-frequency limit (MaterialOperator). Transient problems
+    // would need the time-domain response of a model defined in frequency.
+    MFEM_VERIFY(problem.type != ProblemType::TRANSIENT,
+                "Frequency-dependent material Permittivity is not supported for Transient "
+                "simulations!");
+    WarnPermittivityModelDefects();
   }
 
   // Check that the provided domain and boundary objects are all supported by the requested
@@ -583,6 +707,89 @@ void IoData::CheckConfiguration()
       "Superconductor boundary \"TwoSided\" cannot be used with "
       "\"CrackInternalBoundaryElements\": true, which cracks the mesh along the film!");
 
+  // A PML region only absorbs in frequency domain simulations. In a transient simulation
+  // it would be a regular material, terminated by the outer boundary of the layer, which
+  // reflects (static simulations treat PML regions as regular materials, see
+  // MaterialOperator).
+  MFEM_VERIFY(problem.type != ProblemType::TRANSIENT ||
+                  std::ranges::all_of(domains.pml,
+                                      [](const auto &pml) { return pml.IsExtruded(); }),
+              "config[\"Domains\"][\"PML\"] is not supported for transient simulations!");
+
+  // The extruded PML of config["Boundaries"]["PML"] is built on the serial mesh, of prisms
+  // and hexahedra, which only nonconformal adaptive refinement refines. Its boundary
+  // becomes an interior boundary, between the physical region and the layer.
+  std::vector<int> extruded_attributes;
+  for (const auto &pml : domains.pml)
+  {
+    extruded_attributes.insert(extruded_attributes.end(), pml.extrusion.attributes.begin(),
+                               pml.extrusion.attributes.end());
+  }
+  std::ranges::sort(extruded_attributes);
+  const auto dup = std::ranges::adjacent_find(extruded_attributes);
+  MFEM_VERIFY(dup == extruded_attributes.end(),
+              "Boundary attribute " << ((dup != extruded_attributes.end()) ? *dup : 0)
+                                    << " is in more than one entry of "
+                                       "config[\"Boundaries\"][\"PML\"]!");
+  for (const auto &pml : domains.pml)
+  {
+    if (!pml.IsExtruded())
+    {
+      continue;
+    }
+    MFEM_VERIFY(problem.type == ProblemType::DRIVEN ||
+                    problem.type == ProblemType::EIGENMODE,
+                "config[\"Boundaries\"][\"PML\"] is only available for driven and "
+                "eigenmode simulations!");
+    MFEM_VERIFY(model.refinement.max_it == 0 || model.refinement.nonconformal,
+                "config[\"Boundaries\"][\"PML\"] extrudes prisms and hexahedra, which "
+                "require nonconformal adaptive mesh refinement!");
+    for (auto attr : pml.extrusion.attributes)
+    {
+      MFEM_VERIFY(!std::ranges::binary_search(boundaries.attributes, attr),
+                  "Boundary attribute "
+                      << attr
+                      << " of config[\"Boundaries\"][\"PML\"] cannot have "
+                         "another boundary condition!");
+    }
+  }
+
+  for (auto &pml : domains.pml)
+  {
+    if (pml.frequency_dependent || pml.reference_frequency > 0.0)
+    {
+      continue;
+    }
+    MFEM_VERIFY(pml.reference_frequency < 0.0,
+                "\"PML.ReferenceFrequency\" must be positive when specified. Omit it "
+                "to use the solver default.");
+
+    double reference_frequency = -1.0;
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      MFEM_VERIFY(!solver.driven.sample_f.empty(),
+                  "Static PML default ReferenceFrequency requires at least one driven "
+                  "sample frequency!");
+      // The absorption of a static PML grows with frequency: use the lowest frequency so
+      // that the reflection target is met at all frequencies.
+      reference_frequency = *std::ranges::min_element(solver.driven.sample_f);
+    }
+    else if (problem.type == ProblemType::EIGENMODE)
+    {
+      reference_frequency = solver.eigenmode.target;
+    }
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE)
+    {
+      // PML regions are only supported for driven and eigenmode simulations, and treated
+      // as regular materials otherwise (see MaterialOperator).
+      MFEM_VERIFY(reference_frequency > 0.0,
+                  "Static PML requires a positive reference frequency. Set "
+                  "\"PML.ReferenceFrequency\", use positive driven sample frequencies, "
+                  "or set a positive Eigenmode target.");
+      pml.reference_frequency = reference_frequency;
+    }
+  }
+
   // Resolve default values in configuration file.
   if (solver.linear.type == LinearSolver::DEFAULT)
   {
@@ -636,13 +843,12 @@ void IoData::CheckConfiguration()
   }
   if (solver.linear.initial_guess < 0)
   {
-    if ((problem.type == ProblemType::DRIVEN && solver.driven.adaptive_tol <= 0.0) ||
-        problem.type == ProblemType::TRANSIENT ||
+    if (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::TRANSIENT ||
         problem.type == ProblemType::ELECTROSTATIC ||
         problem.type == ProblemType::MAGNETOSTATIC)
     {
-      // Default true only driven simulations without adaptive frequency sweep, transient
-      // simulations, electrostatics, or magnetostatics.
+      // Default true for driven (adaptive frequency sweeps certify convergence from the
+      // PROM solution), transient, electrostatic, and magnetostatic simulations.
       solver.linear.initial_guess = 1;
     }
     else
@@ -844,6 +1050,46 @@ void IoData::CheckConfiguration()
   // aliases for the concrete values, so default-constructed fields are already at
   // their resolved values and no runtime resolution is needed here.
 
+  // The PML subdomain correction is part of the geometric multigrid preconditioner, and
+  // uses a sparse direct solver. By default, it is used for frequency domain problems with
+  // PML regions, since the multigrid smoothers do not converge on the PML equations of
+  // strongly absorbing layers.
+  const bool has_pml =
+      (problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE) &&
+      !domains.pml.empty();
+  if (solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DEFAULT)
+  {
+#if defined(MFEM_USE_SUPERLU) || defined(MFEM_USE_STRUMPACK) || defined(MFEM_USE_MUMPS)
+    constexpr bool has_direct = true;
+#else
+    const bool has_direct = (solver.linear.type == LinearSolver::CUDSS);
+#endif
+    solver.linear.pml_subdomain_solver =
+        (has_direct && has_pml && solver.linear.mg_max_levels > 1)
+            ? PMLSubdomainSolver::DIRECT
+            : PMLSubdomainSolver::NONE;
+  }
+
+  // AMS relies on a real-valued approximation of the system matrix, which the PML terms of
+  // strongly absorbing layers make indefinite: the preconditioner then breaks down, and the
+  // Krylov solver can report convergence to a meaningless solution.
+  MFEM_VERIFY(!has_pml || solver.linear.type != LinearSolver::AMS,
+              "PML regions are not supported with the AMS linear solver! Use a sparse "
+              "direct solver (\"Type\": \"SuperLU\", \"STRUMPACK\", or \"MUMPS\"), "
+              "which requires building Palace with SuperLU_DIST, STRUMPACK, or MUMPS.");
+  if (solver.linear.pml_subdomain_solver != PMLSubdomainSolver::NONE &&
+      solver.linear.mg_max_levels == 1)
+  {
+    Mpi::Warning("config[\"Solver\"][\"Linear\"][\"PMLSubdomainSolver\"] is only used with "
+                 "geometric multigrid preconditioning (\"MGMaxLevels\" > 1)!\n");
+  }
+#if !defined(MFEM_USE_SUPERLU) && !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS)
+  MFEM_VERIFY(solver.linear.pml_subdomain_solver != PMLSubdomainSolver::DIRECT ||
+                  solver.linear.type == LinearSolver::CUDSS,
+              "PML subdomain solver \"Direct\" requested but Palace was not built with a "
+              "sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS)!");
+#endif
+
   // Validate build-availability of requested solver backends. Centralized here so
   // downstream code never encounters an unavailable backend at runtime.
 #if !defined(PALACE_WITH_SLEPC)
@@ -925,6 +1171,10 @@ void IoData::NondimensionalizeInputs(std::unique_ptr<mfem::Mesh> &mesh)
 
   // Materials: conductivity and London penetration depth.
   for (auto &data : domains.materials)
+  {
+    config::Nondimensionalize(units, data);
+  }
+  for (auto &data : domains.pml)
   {
     config::Nondimensionalize(units, data);
   }

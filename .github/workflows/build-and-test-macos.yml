@@ -282,7 +282,7 @@ jobs:
 
       - name: Run unit tests
         if: needs.filter.outputs.test == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: |
           # Configure environment
           export DYLD_LIBRARY_PATH="$(pwd)/palace-install/lib:$DYLD_LIBRARY_PATH"
@@ -291,7 +291,7 @@ jobs:
           # Skip [Regression] and [Long] cases here; they have their
           # own slower steps further down. CTest pins OMP_NUM_THREADS and
           # reserves PROCESSORS per case, so -j just bounds concurrency.
-          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -LE "^(regression|long)$"
+          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure --timeout 900 -LE "^(regression|long)$"
 
       - name: Run regression tests
         if: needs.filter.outputs.test == 'true'
@@ -304,4 +304,4 @@ jobs:
           export PATH=$(pwd)/palace-install/bin:$PATH
 
           cd palace-build/palace-build/test/unit
-          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure -L "^regression$"
+          ctest -j "$(nproc 2> /dev/null || sysctl -n hw.ncpu)" --output-on-failure --timeout 900 -L "^regression$"

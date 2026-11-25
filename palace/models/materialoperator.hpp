@@ -4,9 +4,15 @@
 #ifndef PALACE_MODELS_MATERIAL_OPERATOR_HPP
 #define PALACE_MODELS_MATERIAL_OPERATOR_HPP
 
+#include <algorithm>
+#include <complex>
+#include <string>
+#include <vector>
 #include <mfem.hpp>
 #include "fem/mesh.hpp"
+#include "models/pml.hpp"
 #include "utils/configfile.hpp"
+#include "utils/permittivitymodel.hpp"
 
 namespace palace
 {
@@ -18,6 +24,13 @@ class IoData;
 //
 class MaterialOperator
 {
+public:
+  // One nonzero pole-residue term r/(s - p) of a material susceptibility.
+  struct PermittivityPoleTerm
+  {
+    std::complex<double> pole, residue;
+  };
+
 private:
   // Reference to underlying mesh object (not owned).
   const Mesh &mesh;
@@ -38,18 +51,59 @@ private:
   double floquet_omega_ref = 0.0;  // Nondimensional; when > 0, k_F scales with frequency.
   mfem::Array<double> mat_c0_min, mat_c0_max, mat_mu_eps_max;
 
+  // PML blocks, and the map from libCEED attribute to material index without the PML
+  // attributes (-1), for the bulk material terms which the PML terms replace.
+  std::vector<pml::Layer> pml_layers;
+  mfem::Array<int> attr_mat_bulk;
+
   // Are materials isotropic? True when all the material properties are effectively
   // scalar-valued (ie, true scalars or vectors with identical entries). Also true when a
   // material is isotropic, the intersection is true when all are isotropic.
   mfem::Array<bool> attr_is_isotropic;
 
   // Flag for global domain attributes with nonzero loss tangent, electrical conductivity,
-  // London penetration depth, or Floquet wave vector.
-  bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr;
+  // London penetration depth, Floquet wave vector, or a frequency-dependent permittivity
+  // model (with mesh support on any process).
+  bool has_losstan_attr, has_conductivity_attr, has_london_attr, has_wave_attr,
+      has_frequency_dependent_permittivity;
+
+  // The frequency-dependent permittivity state of one material (empty for a constant
+  // material).
+  struct FrequencyDependentMaterial
+  {
+    // Global mesh attributes.
+    std::vector<int> attributes;
+    // Exact zero poles are folded into mat_sigma during setup; all remaining terms share a
+    // cached spatial mass operator for each material. The poles are distinct: terms with a
+    // common pole are one term with the sum of their residues.
+    std::vector<PermittivityPoleTerm> pole_terms;
+    std::vector<config::DjordjevicSarkarData> djordjevic_sarkar_terms;
+    // The terms as configured, for the complete susceptibility and the stored energy (the
+    // same on every process).
+    std::vector<config::PermittivityTermData> terms;
+    // Global support of the nonlinear terms (A2), and of the configured model (including
+    // one with only exact zero poles).
+    bool support = false, model_support = false;
+    // Largest relative permeability and the high-frequency permittivity, for
+    // GetFrequencyDependentMaxMuEpsilon.
+    double mu_max = 0.0, eps_inf = 0.0;
+    // The user conductivity, if it is isotropic.
+    double sigma = 0.0;
+    bool sigma_isotropic = true;
+  };
+
+  // Frequency-dependent permittivity state is indexed by the global position in
+  // Domains.Materials, unlike attr_mat which is compacted independently on each rank.
+  std::vector<FrequencyDependentMaterial> frequency_dependent_materials;
+  // Global material index (position in Domains.Materials) of each rank-local material.
+  mfem::Array<int> local_mat_to_material;
 
   void SetUpMaterialProperties(const std::vector<config::MaterialData> &materials,
                                const config::PeriodicBoundaryData &periodic,
                                ProblemType problem_type, const mfem::ParMesh &mesh);
+  void SetUpPML(const std::vector<config::PMLData> &pml,
+                const std::vector<config::MaterialData> &materials,
+                ProblemType problem_type, const mfem::ParMesh &mesh, int fe_order);
   void SetUpFloquetWaveVector(const config::PeriodicBoundaryData &periodic,
                               ProblemType problem_type, const mfem::ParMesh &mesh);
 
@@ -73,7 +127,8 @@ private:
 public:
   MaterialOperator(const std::vector<config::MaterialData> &materials,
                    const config::PeriodicBoundaryData &periodic, ProblemType problem_type,
-                   const Mesh &mesh);
+                   const Mesh &mesh, const std::vector<config::PMLData> &pml = {},
+                   int fe_order = 1);
   MaterialOperator(const IoData &iodata, const Mesh &mesh);
 
   int SpaceDimension() const { return mat_muinv.SizeI(); }
@@ -144,8 +199,199 @@ public:
   // electric and magnetic polarizations generally lie on different material axes.
   double GetMaxMuEpsilon() const;
 
+  // max(mu_r) * Re(epsilon_r(omega)) over the globally supported frequency-dependent
+  // materials, or zero without any. GetMaxMuEpsilon uses the high-frequency permittivity,
+  // which a dispersive material exceeds below its resonances. At a complex ω, Re(ε(ω)) is
+  // replaced by Re(ω² ε(ω)) / (Re ω)², so that (Re ω)² times the result is the largest
+  // max(mu_r) * Re(ω² ε(ω)), the real part of the squared wave number. Not collective.
+  double GetFrequencyDependentMaxMuEpsilon(std::complex<double> omega) const;
+
+  // Split the libCEED boundary attributes of the given mesh boundary attributes by the
+  // frequency-dependent material (any configured model) of their neighboring domain.
+  // Returns those next to no such material, and the index and attributes of each material
+  // that neighbors the boundaries on any process (the attributes may be empty on this one).
+  struct FrequencyDependentBdrSplit
+  {
+    mfem::Array<int> other;
+    std::vector<std::pair<std::size_t, mfem::Array<int>>> materials;
+  };
+  FrequencyDependentBdrSplit SplitCeedBdrAttributesByFrequencyDependentPermittivity(
+      const mfem::Array<int> &bdr_attrs) const;
+  double GetFrequencyDependentPermittivityHighFrequency(std::size_t material_idx) const
+  {
+    return frequency_dependent_materials.at(material_idx).eps_inf;
+  }
+
   bool HasLossTangent() const { return has_losstan_attr; }
   bool HasConductivity() const { return has_conductivity_attr; }
+  bool HasFrequencyDependentPermittivity() const
+  {
+    return has_frequency_dependent_permittivity;
+  }
+  std::size_t NumFrequencyDependentPermittivityMaterials() const
+  {
+    return frequency_dependent_materials.size();
+  }
+  bool HasFrequencyDependentPermittivityA2(std::size_t material_idx) const
+  {
+    const auto &fd = frequency_dependent_materials.at(material_idx);
+    return !fd.pole_terms.empty() || !fd.djordjevic_sarkar_terms.empty();
+  }
+  // Whether the nonlinear terms (A2) of the material have mesh support on any process. This
+  // is the predicate of the operators that hold A2, not of the complete permittivity.
+  bool HasFrequencyDependentPermittivitySupport(std::size_t material_idx) const
+  {
+    return frequency_dependent_materials.at(material_idx).support;
+  }
+  // Whether the material has a configured frequency-dependent model with mesh support on
+  // any process, including a model with only exact zero poles (no A2). This is the
+  // predicate of every consumer of the complete permittivity ε(s) or the stored energy.
+  bool HasFrequencyDependentPermittivityModel(std::size_t material_idx) const
+  {
+    return frequency_dependent_materials.at(material_idx).model_support;
+  }
+  const std::vector<int> &
+  GetFrequencyDependentPermittivityAttributes(std::size_t material_idx) const
+  {
+    return frequency_dependent_materials.at(material_idx).attributes;
+  }
+  // Evaluate the complete frequency-dependent contribution to the system coefficient.
+  // The high-frequency permittivity and exact zero poles are handled by the ordinary mass
+  // and conductivity paths, respectively.
+  std::complex<double>
+  EvaluateFrequencyDependentPermittivityA2(std::size_t material_idx,
+                                           std::complex<double> s) const;
+  // The two parts of EvaluateFrequencyDependentPermittivityA2: the pole terms, with complex
+  // poles expanded into conjugate pairs and each contributing r·s²/(s − p), at distinct
+  // poles, and the remaining non-rational Djordjevic-Sarkar contribution.
+  const std::vector<PermittivityPoleTerm> &
+  GetPermittivityPoleTerms(std::size_t material_idx) const
+  {
+    return frequency_dependent_materials.at(material_idx).pole_terms;
+  }
+  std::complex<double> EvaluateDjordjevicSarkarPermittivityA2(std::size_t material_idx,
+                                                              std::complex<double> s) const;
+  // The resonances of a frequency-dependent material within the given number of half-widths
+  // of [omega_min, omega_max]: Im p of each pole p of its pole terms in the upper
+  // half-plane (of Lorentz terms and complex PoleResidue poles), whose half-width is −Re p.
+  std::vector<double> GetPermittivityResonances(std::size_t material_idx, double omega_min,
+                                                double omega_max, double half_widths) const;
+  // The complete relative permittivity ε∞ + χ(s) of a frequency-dependent material, at
+  // s ≠ 0, from its configured terms, including exact zero poles. Errors at a singularity.
+  std::complex<double> EvaluateFrequencyDependentPermittivity(std::size_t material_idx,
+                                                              std::complex<double> s) const;
+  // The wave permittivity ε(s) + σ/s of a frequency-dependent material, with its user
+  // Conductivity σ (a free current, not part of D or the stored energy), for the
+  // propagation constant and impedance of an absorbing boundary or Floquet port. Unlike the
+  // conductivity matrix, σ excludes the zero poles, which ε(s) already contains. Errors for
+  // an anisotropic σ.
+  std::complex<double>
+  EvaluateFrequencyDependentWavePermittivity(std::size_t material_idx,
+                                             std::complex<double> s) const;
+  // Whether the stored electric energy of a material is specified
+  // (permittivity::HasStoredEnergy): for a constant material and for typed and
+  // Djordjevic-Sarkar terms, not for a material with a PoleResidue term of nonzero pole.
+  // This is a property of the configured model, fixed for the run and the same on every
+  // process; the field solve is unaffected. The reason states why a material has none.
+  bool HasStoredElectricEnergy(std::size_t material_idx) const;
+  const std::string &GetStoredElectricEnergyReason(std::size_t material_idx) const;
+  // Whether every frequency-dependent material with mesh support
+  // (HasFrequencyDependentPermittivityModel) has a stored electric energy, or every one
+  // with one of the given domain attributes: the stored electric energy of the mesh, or of
+  // the region, is then available.
+  bool HasStoredElectricEnergy() const;
+  bool HasStoredElectricEnergy(const std::vector<int> &attributes) const;
+
+  // ε∞ + the stored-energy susceptibility (permittivity::StoredEnergySusceptibility) at
+  // real ω > 0: the constant permittivity with the same time-averaged stored electric
+  // energy as the model, at least ε∞ > 0. Requires HasStoredElectricEnergy(material_idx).
+  // Errors at a singularity (an exact lossless resonance).
+  double GetFrequencyDependentStoredEnergyPermittivity(std::size_t material_idx,
+                                                       double omega) const;
+
+  // Material tensors at the real angular frequency ω > 0, in the layout of
+  // GetPermittivityReal() (indexed by the rank-local material, for
+  // MaterialPropertyCoefficient). Constant materials keep their entries, Re{ε}, Im{ε} =
+  // −Re{ε} tan δ, and Re{ε} for the stored energy; a frequency-dependent material has
+  // Re ε(iω), Im ε(iω), or GetFrequencyDependentStoredEnergyPermittivity. These are values,
+  // not state: the getters above always return the high-frequency permittivity ε∞. The
+  // stored-energy tensor requires HasStoredElectricEnergy().
+  mfem::DenseTensor EvaluatePermittivityReal(double omega) const;
+  mfem::DenseTensor EvaluatePermittivityImag(double omega) const;
+  mfem::DenseTensor EvaluateStoredEnergyPermittivity(double omega) const;
+
+  // The light speed (μ ε)^(-1/2) at the real angular frequency ω > 0, in the layout of
+  // GetLightSpeed(), with Re ε(iω) for the given frequency-dependent materials (global
+  // indices, the same on every process): the wave speed of a lossless medium with this
+  // permittivity. Errors unless Re ε(iω) > 0 for each, on every process. Other
+  // frequency-dependent materials keep ε∞ and are not evaluated.
+  mfem::DenseTensor EvaluateLightSpeed(double omega,
+                                       const std::vector<std::size_t> &materials) const;
+
+  // Whether the domain attribute is vacuum for interface postprocessing: a light speed of
+  // one and no frequency-dependent permittivity, independent of the frequency (a
+  // frequency-dependent material with ε∞ = 1 is not vacuum).
+  bool IsVacuum(int attr) const;
+
+  // A copy of the material tensor data (in the layout of GetPermittivityReal()), with
+  // f(m, M) applied to the entry M of each rank-local material with the configured
+  // frequency-dependent model m.
+  template <typename F>
+  mfem::DenseTensor MapFrequencyDependentMaterials(const mfem::DenseTensor &data,
+                                                   F &&f) const
+  {
+    mfem::DenseTensor out(data);
+    for (int k = 0; k < out.SizeK(); k++)
+    {
+      const int m = GetLocalFrequencyDependentPermittivityModelMaterial(k);
+      if (m >= 0)
+      {
+        f(static_cast<std::size_t>(m), out(k));
+      }
+    }
+    return out;
+  }
+
+  // The frequency-dependent material with a configured model on the given domain attribute
+  // (unlike GetFrequencyDependentPermittivityMaterial, also one with only zero poles), or
+  // -1 if there is none. The same for a rank-local material index.
+  int GetFrequencyDependentPermittivityModelMaterial(int attr) const;
+  int GetLocalFrequencyDependentPermittivityModelMaterial(int local_mat) const;
+
+  // The rank-local material index of a domain attribute, for the evaluated tensors above.
+  int GetLocalMaterial(int attr) const { return AttrToMat(attr); }
+  // The entry of a material tensor (in the layout of GetPermittivityReal()) on a domain
+  // attribute.
+  auto GetMaterialEntry(const mfem::DenseTensor &data, int attr) const
+  {
+    return Wrap(data, attr);
+  }
+  // The time-averaged stored electric energy of the polarization of a frequency-dependent
+  // material at real ω > 0, as a susceptibility (permittivity::StoredEnergySusceptibility):
+  // the stored energy is that of a constant permittivity ε∞ plus this value. Requires
+  // HasStoredElectricEnergy(material_idx). Errors at a singularity (an exact lossless
+  // resonance), where the energy is not finite.
+  double GetFrequencyDependentStoredEnergySusceptibility(std::size_t material_idx,
+                                                         double omega) const;
+  // Re χ(iω) of the nonlinear terms of a frequency-dependent material, the field energy at
+  // its permittivity ε(iω) less that at ε∞ (a zero pole contributes none). Errors at a
+  // singularity (an exact lossless resonance).
+  double GetFrequencyDependentSusceptibilityReal(std::size_t material_idx,
+                                                 double omega) const;
+  // The frequency-dependent material with a nonlinear term on the given domain attribute,
+  // or -1 if there is none.
+  int GetFrequencyDependentPermittivityMaterial(int attr) const;
+  bool HasDjordjevicSarkarPermittivity(std::size_t material_idx) const
+  {
+    return !frequency_dependent_materials.at(material_idx).djordjevic_sarkar_terms.empty();
+  }
+  // True when a globally supported material has a nonlinear permittivity term. This is
+  // deliberately frequency independent: valid additive contributions can cancel at an
+  // interpolation or ROM probe frequency without ceasing to be nonlinear.
+  bool HasFrequencyDependentPermittivityA2() const;
+  // Distinct poles (in s = iω) of the nonlinear permittivity terms of all globally
+  // supported materials, i.e. the poles of their contribution to A2(s).
+  std::vector<std::complex<double>> GetFrequencyDependentPermittivityPoles() const;
   bool HasLondonDepth() const { return has_london_attr; }
   bool HasWaveVector() const { return has_wave_attr; }
   const mfem::Vector &GetWaveVector() const { return wave_vector; }
@@ -155,8 +401,36 @@ public:
   const mfem::DenseMatrix &GetWaveVectorCross() const { return wave_vector_cross; }
   bool HasFloquetFrequencyScaling() const { return floquet_omega_ref > 0.0; }
   double GetFloquetOmegaRef() const { return floquet_omega_ref; }
+  // Cartesian PML regions (see models/pml.hpp), only for 3D frequency domain problems, in
+  // blocks with their own stretch. A frequency-dependent stretch is evaluated at the solve
+  // frequency, so that the PML terms contribute to the frequency-dependent part A2(ω) of
+  // the system matrix.
+  bool HasPML() const { return !pml_layers.empty(); }
+  bool HasFrequencyDependentPML() const
+  {
+    return std::ranges::any_of(pml_layers, [](const pml::Layer &layer)
+                               { return layer.IsFrequencyDependent(); });
+  }
+  const std::vector<pml::Layer> &GetPMLLayers() const { return pml_layers; }
 
+  // Attributes of the PML regions of all blocks (global mesh attributes, sorted).
+  std::vector<int> GetPMLAttributes() const;
+
+  // Whether the local libCEED attribute is in a PML region.
+  bool IsPMLCeedAttribute(int ceed_attr) const
+  {
+    return std::ranges::any_of(pml_layers, [ceed_attr](const pml::Layer &layer)
+                               { return layer.IsPMLCeedAttribute(ceed_attr); });
+  }
+
+  // The material properties of PML attributes are those of the background material of the
+  // layer. The map from attribute to material GetAttributeToMaterial() includes them (for
+  // the error estimators, field postprocessing, and boundary conditions on the boundaries
+  // of the PML regions), while GetBulkAttributeToMaterial() excludes them: for the volume
+  // terms of the system matrices, replaced by the PML terms in the PML regions, and for the
+  // domain energies, which exclude the PML regions.
   const auto &GetAttributeToMaterial() const { return attr_mat; }
+  const auto &GetBulkAttributeToMaterial() const { return attr_mat_bulk; }
   mfem::Array<int> GetBdrAttributeToMaterial() const;
 
   template <typename T>
@@ -238,7 +512,8 @@ public:
 // constructed from the mutated iodata yields the physically correct in-plane 2x2 block
 // (leading submatrix = R^T M R) and scalar out-of-plane components ((2,2) = n^T M n) via
 // the default 2D construction path — no additional frame information is required
-// downstream. `lambda_L` is a scalar length, unaffected.
+// downstream. An isotropic tensor stays exactly isotropic. `lambda_L` is a scalar length,
+// unaffected.
 void RotateMaterialDefinitions(std::vector<config::MaterialData> &materials,
                                const mfem::Vector &e1, const mfem::Vector &e2,
                                const mfem::Vector &normal);
@@ -259,6 +534,9 @@ bool IsIsotropic(const config::SymmetricMatrixData<N> &data);
 
 template <std::size_t N>
 bool IsIdentity(const config::SymmetricMatrixData<N> &data);
+
+template <std::size_t N>
+mfem::DenseMatrix ToDenseMatrix(const config::SymmetricMatrixData<N> &data);
 
 }  // namespace palace::internal::mat
 

@@ -18,6 +18,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/materialoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/modeeigensolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/modeoperatorassembly.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/pml.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/portexcitations.cpp
@@ -31,6 +32,7 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/surfaceimpedanceoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacepostoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/surfacerationalimpedanceoperator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/surfaceterms.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/superconductorsheetoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/timeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/waveportoperator.cpp

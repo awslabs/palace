@@ -34,6 +34,12 @@ struct LinearSolverData;
 // LinearSolverData.
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata);
 
+// Whether the coarse-level solver of a complex-valued multigrid preconditioner is applied
+// to the real-valued Br + Bi of its complex-valued operator (see MfemWrapperSolver), rather
+// than to the complex-valued operator: AMS, BoomerAMG, and the sparse direct solvers
+// without ComplexCoarseSolve.
+bool UseRealCoarseApproximation(const config::LinearSolverData &linear);
+
 //
 // Linear solver class composing an iterative solver and preconditioner object.
 //
@@ -94,6 +100,17 @@ public:
   // iterations.
   void SetAutoMultigridCycle(std::vector<GeometricMultigridSolver<OperType> *> &&gmg,
                              int print);
+
+  // Whether the iterative solver uses the given solution vector as initial guess.
+  void SetInitialGuess(bool guess) { ksp->SetInitialGuess(guess); }
+
+  // Stop the solve as soon as the correction to a nonzero initial guess exceeds tol times
+  // the solution norm, when the Krylov solver can monitor it (GMRES with left or no
+  // preconditioning; see GmresSolver::SetMaxRelativeCorrection). No limit if tol = 0.
+  void SetMaxRelativeCorrection(double tol);
+
+  // Whether the most recent Mult was stopped by the correction limit.
+  bool GetCorrectionExceeded() const;
 
   void Mult(const VecType &x, VecType &y) const;
 };

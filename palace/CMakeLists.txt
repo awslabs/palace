@@ -26,7 +26,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Initialize the project
-project(palace LANGUAGES CXX VERSION 0.19.0)
+project(palace LANGUAGES CXX VERSION 0.20.0)
 
 # Define build settings and defaults
 set(PALACE_WITH_OPENMP OFF CACHE BOOL "Use OpenMP for shared-memory parallelism")
@@ -765,11 +765,6 @@ target_link_libraries(
 if(PALACE_WITH_GSLIB)
   target_compile_definitions(${LIB_TARGET_NAME}
     PUBLIC PALACE_WITH_GSLIB
-  )
-endif()
-if(PALACE_WITH_GPU_AWARE_MPI)
-  target_compile_definitions(${LIB_TARGET_NAME}
-    PUBLIC PALACE_WITH_GPU_AWARE_MPI
   )
 endif()
 

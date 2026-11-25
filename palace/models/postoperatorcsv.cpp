@@ -37,24 +37,34 @@ Measurement Measurement::Dimensionalize(const Units &units,
   measurement_cache.eigenmode_Q = nondim_measurement_cache.eigenmode_Q;              // NONE
   measurement_cache.error_abs = nondim_measurement_cache.error_abs;                  // NONE
   measurement_cache.error_bkwd = nondim_measurement_cache.error_bkwd;                // NONE
+  measurement_cache.pml_energy_fraction =
+      nondim_measurement_cache.pml_energy_fraction;  // NONE
 
+  auto energy = [&units](const std::optional<double> &e) -> std::optional<double>
+  {
+    if (!e)
+    {
+      return std::nullopt;
+    }
+    return units.Dimensionalize<Units::ValueType::ENERGY>(*e);
+  };
   measurement_cache.domain_E_field_energy_all =
-      units.Dimensionalize<Units::ValueType::ENERGY>(
-          nondim_measurement_cache.domain_E_field_energy_all);
+      energy(nondim_measurement_cache.domain_E_field_energy_all);
   measurement_cache.domain_H_field_energy_all =
       units.Dimensionalize<Units::ValueType::ENERGY>(
           nondim_measurement_cache.domain_H_field_energy_all);
+  measurement_cache.domain_E_field_energy_material =
+      units.Dimensionalize<Units::ValueType::ENERGY>(
+          nondim_measurement_cache.domain_E_field_energy_material);
   for (const auto &e : nondim_measurement_cache.domain_E_field_energy_i)
   {
-    measurement_cache.domain_E_field_energy_i.emplace_back(Measurement::DomainData{
-        e.idx, units.Dimensionalize<Units::ValueType::ENERGY>(e.energy),
-        e.participation_ratio});
+    measurement_cache.domain_E_field_energy_i.emplace_back(
+        Measurement::DomainData{e.idx, energy(e.energy), e.participation_ratio});
   }
   for (const auto &e : nondim_measurement_cache.domain_H_field_energy_i)
   {
-    measurement_cache.domain_H_field_energy_i.emplace_back(Measurement::DomainData{
-        e.idx, units.Dimensionalize<Units::ValueType::ENERGY>(e.energy),
-        e.participation_ratio});
+    measurement_cache.domain_H_field_energy_i.emplace_back(
+        Measurement::DomainData{e.idx, energy(e.energy), e.participation_ratio});
   }
   measurement_cache.lumped_port_capacitor_energy =
       units.Dimensionalize<Units::ValueType::ENERGY>(
@@ -84,9 +94,12 @@ Measurement Measurement::Dimensionalize(const Units &units,
       dim[k].capacitor_energy =
           units.Dimensionalize<Units::ValueType::ENERGY>(data.capacitor_energy);
 
-      dim[k].mode_port_kappa =
-          units.Dimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa) /
-          (2 * std::numbers::pi);
+      if (data.mode_port_kappa)
+      {
+        dim[k].mode_port_kappa =
+            units.Dimensionalize<Units::ValueType::FREQUENCY>(*data.mode_port_kappa) /
+            (2 * std::numbers::pi);
+      }
       dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
@@ -180,24 +193,34 @@ Measurement Measurement::Nondimensionalize(const Units &units,
   measurement_cache.eigenmode_Q = dim_measurement_cache.eigenmode_Q;              // NONE
   measurement_cache.error_abs = dim_measurement_cache.error_abs;                  // NONE
   measurement_cache.error_bkwd = dim_measurement_cache.error_bkwd;                // NONE
+  measurement_cache.pml_energy_fraction =
+      dim_measurement_cache.pml_energy_fraction;  // NONE
 
+  auto energy = [&units](const std::optional<double> &e) -> std::optional<double>
+  {
+    if (!e)
+    {
+      return std::nullopt;
+    }
+    return units.Nondimensionalize<Units::ValueType::ENERGY>(*e);
+  };
   measurement_cache.domain_E_field_energy_all =
-      units.Nondimensionalize<Units::ValueType::ENERGY>(
-          dim_measurement_cache.domain_E_field_energy_all);
+      energy(dim_measurement_cache.domain_E_field_energy_all);
   measurement_cache.domain_H_field_energy_all =
       units.Nondimensionalize<Units::ValueType::ENERGY>(
           dim_measurement_cache.domain_H_field_energy_all);
+  measurement_cache.domain_E_field_energy_material =
+      units.Nondimensionalize<Units::ValueType::ENERGY>(
+          dim_measurement_cache.domain_E_field_energy_material);
   for (const auto &e : dim_measurement_cache.domain_E_field_energy_i)
   {
-    measurement_cache.domain_E_field_energy_i.emplace_back(Measurement::DomainData{
-        e.idx, units.Nondimensionalize<Units::ValueType::ENERGY>(e.energy),
-        e.participation_ratio});
+    measurement_cache.domain_E_field_energy_i.emplace_back(
+        Measurement::DomainData{e.idx, energy(e.energy), e.participation_ratio});
   }
   for (const auto &e : dim_measurement_cache.domain_H_field_energy_i)
   {
-    measurement_cache.domain_H_field_energy_i.emplace_back(Measurement::DomainData{
-        e.idx, units.Nondimensionalize<Units::ValueType::ENERGY>(e.energy),
-        e.participation_ratio});
+    measurement_cache.domain_H_field_energy_i.emplace_back(
+        Measurement::DomainData{e.idx, energy(e.energy), e.participation_ratio});
   }
   measurement_cache.lumped_port_capacitor_energy =
       units.Nondimensionalize<Units::ValueType::ENERGY>(
@@ -227,9 +250,12 @@ Measurement Measurement::Nondimensionalize(const Units &units,
       dim[k].capacitor_energy =
           units.Nondimensionalize<Units::ValueType::ENERGY>(data.capacitor_energy);
 
-      dim[k].mode_port_kappa =
-          units.Nondimensionalize<Units::ValueType::FREQUENCY>(data.mode_port_kappa) *
-          (2 * std::numbers::pi);
+      if (data.mode_port_kappa)
+      {
+        dim[k].mode_port_kappa =
+            units.Nondimensionalize<Units::ValueType::FREQUENCY>(*data.mode_port_kappa) *
+            (2 * std::numbers::pi);
+      }
       dim[k].quality_factor = data.quality_factor;                                  // NONE
       dim[k].inductive_energy_participation = data.inductive_energy_participation;  // NONE
     }
@@ -571,6 +597,16 @@ void PostOperatorCSV<solver_t>::FinalizeCSVData()
 }
 
 template <ProblemType solver_t>
+void PostOperatorCSV<solver_t>::RemoveOmittedTable(const fs::path &file_name) const
+{
+  // Like WriteFullTableTrunc, which removes the previous file before writing it.
+  if (!reload_table)
+  {
+    fs::remove(post_dir / file_name);
+  }
+}
+
+template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_post_op)
 {
   domain_E = TableWithCSVFile(post_dir / "domain-E.csv", reload_table);
@@ -584,17 +620,30 @@ void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_
   {
     std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
 
-    t.insert(fmt::format("Ee_{}", ex_idx), fmt::format("E_elec{} (J)", ex_label), ex_idx);
+    // The stored electric energy of a region, and its participation in the total, are
+    // omitted where they are not available (a frequency-dependent material without a
+    // stored electric energy), which is fixed for the run.
+    const bool total_E = dom_post_op.HasStoredElectricFieldEnergy();
+    if (total_E)
+    {
+      t.insert(fmt::format("Ee_{}", ex_idx), fmt::format("E_elec{} (J)", ex_label), ex_idx);
+    }
     t.insert(fmt::format("Em_{}", ex_idx), fmt::format("E_mag{} (J)", ex_label), ex_idx);
     t.insert(fmt::format("Ec_{}", ex_idx), fmt::format("E_cap{} (J)", ex_label), ex_idx);
     t.insert(fmt::format("Ei_{}", ex_idx), fmt::format("E_ind{} (J)", ex_label), ex_idx);
 
     for (const auto &[idx, data] : dom_post_op.M_i)
     {
-      t.insert(fmt::format("Ee_{}_{}", idx, ex_idx),
-               fmt::format("E_elec[{}]{} (J)", idx, ex_label), ex_idx);
-      t.insert(fmt::format("pe_{}_{}", idx, ex_idx),
-               fmt::format("p_elec[{}]{}", idx, ex_label), ex_idx);
+      if (dom_post_op.HasStoredDomainElectricFieldEnergy(idx))
+      {
+        t.insert(fmt::format("Ee_{}_{}", idx, ex_idx),
+                 fmt::format("E_elec[{}]{} (J)", idx, ex_label), ex_idx);
+        if (total_E)
+        {
+          t.insert(fmt::format("pe_{}_{}", idx, ex_idx),
+                   fmt::format("p_elec[{}]{}", idx, ex_label), ex_idx);
+        }
+      }
       t.insert(fmt::format("Em_{}_{}", idx, ex_idx),
                fmt::format("E_mag[{}]{} (J)", idx, ex_label), ex_idx);
       t.insert(fmt::format("pm_{}_{}", idx, ex_idx),
@@ -616,8 +665,11 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
   }
 
   CheckAppendIndex(domain_E->table["idx"], row_idx_v, row_i);
-  domain_E->table[fmt::format("Ee_{}", m_ex_idx)]
-      << measurement_cache.domain_E_field_energy_all;
+  if (measurement_cache.domain_E_field_energy_all)
+  {
+    domain_E->table[fmt::format("Ee_{}", m_ex_idx)]
+        << *measurement_cache.domain_E_field_energy_all;
+  }
   domain_E->table[fmt::format("Em_{}", m_ex_idx)]
       << measurement_cache.domain_H_field_energy_all;
   domain_E->table[fmt::format("Ec_{}", m_ex_idx)]
@@ -626,15 +678,21 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
       << measurement_cache.lumped_port_inductor_energy;
   for (const auto &data : measurement_cache.domain_E_field_energy_i)
   {
-    domain_E->table[fmt::format("Ee_{}_{}", data.idx, m_ex_idx)] << data.energy;
-    domain_E->table[fmt::format("pe_{}_{}", data.idx, m_ex_idx)]
-        << data.participation_ratio;
+    if (data.energy)
+    {
+      domain_E->table[fmt::format("Ee_{}_{}", data.idx, m_ex_idx)] << *data.energy;
+    }
+    if (data.participation_ratio)
+    {
+      domain_E->table[fmt::format("pe_{}_{}", data.idx, m_ex_idx)]
+          << *data.participation_ratio;
+    }
   }
   for (const auto &data : measurement_cache.domain_H_field_energy_i)
   {
-    domain_E->table[fmt::format("Em_{}_{}", data.idx, m_ex_idx)] << data.energy;
+    domain_E->table[fmt::format("Em_{}_{}", data.idx, m_ex_idx)] << data.energy.value();
     domain_E->table[fmt::format("pm_{}_{}", data.idx, m_ex_idx)]
-        << data.participation_ratio;
+        << data.participation_ratio.value();
   }
   WriteTable(*domain_E);
 }
@@ -721,10 +779,17 @@ void PostOperatorCSV<solver_t>::PrintSurfaceF()
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &surf_post_op)
+void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &surf_post_op,
+                                                   bool total_energy)
 {
   if (surf_post_op.eps_surfs.empty())
   {
+    return;
+  }
+  // The participations are normalized by U, so omitted without it.
+  if (!total_energy)
+  {
+    RemoveOmittedTable("surface-Q.csv");
     return;
   }
   surface_Q = TableWithCSVFile(post_dir / "surface-Q.csv", reload_table);
@@ -1194,6 +1259,10 @@ void PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
 
   if constexpr (solver_t == ProblemType::DRIVEN || solver_t == ProblemType::TRANSIENT)
   {
+    // Incident voltage and current of the excited port: peak amplitudes of the unit time-
+    // averaged power wave for the frequency domain, instantaneous amplitudes scaled by the
+    // pulse envelope for the time domain.
+    constexpr bool time_harmonic = (solver_t == ProblemType::DRIVEN);
     for (const auto &[idx, data] : lumped_port_op)
     {
       // Cast to avoid compiler warnings about types.
@@ -1201,10 +1270,10 @@ void PostOperatorCSV<solver_t>::PrintPortVI(const LumpedPortOperator &lumped_por
       {
         // Weighted incident voltage a V_inc,0 and current a I_inc,0 of the port, with the
         // weight a = A exp(iφ) (a = 1 without weight) and the unit-power quantities V_inc,0
-        // and I_inc,0 = P_inc,0 / V_inc,0 (GetExcitationVoltage is the unit-power one).
+        // and I_inc,0 (GetExcitationVoltage and GetExcitationCurrent).
         auto Jcoeff = measurement_cache.Jcoeff_excitation;
-        const std::complex<double> V_inc = data.GetIncidentVoltage() * Jcoeff;
-        const std::complex<double> I_inc = data.GetIncidentCurrent() * Jcoeff;
+        const std::complex<double> V_inc = data.GetIncidentVoltage(time_harmonic) * Jcoeff;
+        const std::complex<double> I_inc = data.GetIncidentCurrent(time_harmonic) * Jcoeff;
 
         if (complex_incident_port_VI)
         {
@@ -1259,8 +1328,14 @@ void PostOperatorCSV<solver_t>::InitializePortS(const SpaceOperator &fem_op)
   requires(solver_t == ProblemType::DRIVEN)
 {
   auto nr_ports = fem_op.GetLumpedPortOp().Size() + fem_op.GetWavePortOp().Size();
-  if (nr_ports == 0 || !fem_op.GetPortExcitations().IsMultipleSimple())
+  if (nr_ports == 0)
   {
+    return;
+  }
+  // Only power-normalized port sources define S-parameters, so omitted without them.
+  if (!fem_op.GetPortExcitations().HasSParameters())
+  {
+    RemoveOmittedTable("port-S.csv");
     return;
   }
   port_S = TableWithCSVFile(post_dir / "port-S.csv", reload_table);
@@ -1374,6 +1449,12 @@ void PostOperatorCSV<solver_t>::InitializeFloquetPortS(const SpaceOperator &fem_
   {
     return;
   }
+  // Only power-normalized port sources define S-parameters, so omitted without them.
+  if (!fem_op.GetPortExcitations().HasSParameters())
+  {
+    RemoveOmittedTable("port-floquet-S.csv");
+    return;
+  }
 
   using fmt::format;
   floquet_port_S = TableWithCSVFile(post_dir / "port-floquet-S.csv", reload_table);
@@ -1447,15 +1528,14 @@ void PostOperatorCSV<solver_t>::PrintPortZ()
       port_Z->table[format("im_z_pv_{}", idx)] << data.Z_PV.imag();
     }
 
-    // Per-excitation total-field impedance Z[i][j] = V / I. GetPower returns the full
-    // Poynting integral P = ∫(E × H*)·n dS = V I* (without the 1/2 time-averaging
-    // factor), so Z = (V · conj(V)) / conj(P). This is direction-specific (sign of P
-    // depends on whether the field at port i is incoming or outgoing): Re{Z[i][i]} > 0
-    // at the driven port, but Re{Z[i][j]} for i ≠ j can be negative when port i is a
-    // passive receiver of power leaving the domain.
+    // Per-excitation total-field impedance Z[i][j] = V / I. GetPower returns the
+    // complex time-averaged power P = 1/2 ∫(E × H*)·n dS = 1/2 V I* for peak
+    // phasors, so Z = |V|² / (2 conj(P)). This is direction-specific: Re{Z[i][i]}
+    // is positive at the driven port, while Re{Z[i][j]} for i != j can be negative
+    // at a passive port where power leaves the domain.
     if (std::abs(data.P) > 0.0)
     {
-      auto Z = (data.V * std::conj(data.V)) / std::conj(data.P);
+      auto Z = std::norm(data.V) / (2.0 * std::conj(data.P));
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
       port_Z->table[format("im_z_{}_{}", idx, m_ex_idx)] << Z.imag();
     }
@@ -1513,17 +1593,22 @@ void PostOperatorCSV<solver_t>::PrintFloquetPortS()
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeEig()
+void PostOperatorCSV<solver_t>::InitializeEig(bool has_pml)
   requires(solver_t == ProblemType::EIGENMODE)
 {
   eig = TableWithCSVFile(post_dir / "eig.csv");
-  eig->table.reserve(nr_expected_measurement_rows, 6);
+  eig_pml = has_pml;
+  eig->table.reserve(nr_expected_measurement_rows, eig_pml ? 7 : 6);
   eig->table.insert("idx", "m", -1, 0, PrecIndexCol(solver_t), "");
   eig->table.insert("f_re", "Re{f} (GHz)");
   eig->table.insert("f_im", "Im{f} (GHz)");
   eig->table.insert("q", "Q");
   eig->table.insert("err_back", "Error (Bkwd.)");
   eig->table.insert("err_abs", "Error (Abs.)");
+  if (eig_pml)
+  {
+    eig->table.insert("pml", "PML fraction");
+  }
   WriteTable(*eig);
 }
 
@@ -1541,12 +1626,16 @@ void PostOperatorCSV<solver_t>::PrintEig()
   eig->table["q"] << measurement_cache.eigenmode_Q;
   eig->table["err_back"] << measurement_cache.error_bkwd;
   eig->table["err_abs"] << measurement_cache.error_abs;
+  if (eig_pml)
+  {
+    eig->table["pml"] << measurement_cache.pml_energy_fraction;
+  }
   WriteTable(*eig);
 }
 
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeEigPortEPR(
-    const LumpedPortOperator &lumped_port_op)
+    const LumpedPortOperator &lumped_port_op, bool total_energy)
   requires(solver_t == ProblemType::EIGENMODE)
 {
   auto has_L = [](const auto &port) { return std::abs(port.second.L) > 0.0; };
@@ -1554,6 +1643,12 @@ void PostOperatorCSV<solver_t>::InitializeEigPortEPR(
                     std::back_inserter(ports_with_L));
   if (ports_with_L.empty())
   {
+    return;
+  }
+  // The participations are normalized by U, so omitted without it.
+  if (!total_energy)
+  {
+    RemoveOmittedTable("port-EPR.csv");
     return;
   }
   port_EPR = TableWithCSVFile(post_dir / "port-EPR.csv");
@@ -1578,13 +1673,14 @@ void PostOperatorCSV<solver_t>::PrintEigPortEPR()
   for (const auto idx : ports_with_L)
   {
     auto vi = measurement_cache.lumped_port_vi.at(idx);
-    port_EPR->table[fmt::format("p_{}", idx)] << vi.inductive_energy_participation;
+    port_EPR->table[fmt::format("p_{}", idx)] << vi.inductive_energy_participation.value();
   }
   WriteTable(*port_EPR);
 }
 
 template <ProblemType solver_t>
-void PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lumped_port_op)
+void PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lumped_port_op,
+                                                   bool total_energy)
   requires(solver_t == ProblemType::EIGENMODE)
 {
   auto has_R = [](const auto &port) { return std::abs(port.second.R) > 0.0; };
@@ -1592,6 +1688,12 @@ void PostOperatorCSV<solver_t>::InitializeEigPortQ(const LumpedPortOperator &lum
                     std::back_inserter(ports_with_R));
   if (ports_with_R.empty())
   {
+    return;
+  }
+  // The coupling rates are normalized by the total stored energy 2 U, so omitted without U.
+  if (!total_energy)
+  {
+    RemoveOmittedTable("port-Q.csv");
     return;
   }
   port_Q = TableWithCSVFile(post_dir / "port-Q.csv");
@@ -1617,8 +1719,8 @@ void PostOperatorCSV<solver_t>::PrintEigPortQ()
   for (const auto idx : ports_with_R)
   {
     auto vi = measurement_cache.lumped_port_vi.at(idx);
-    port_Q->table[fmt::format("Ql_{}", idx)] << vi.quality_factor;
-    port_Q->table[fmt::format("Kl_{}", idx)] << vi.mode_port_kappa;
+    port_Q->table[fmt::format("Ql_{}", idx)] << vi.quality_factor.value();
+    port_Q->table[fmt::format("Kl_{}", idx)] << vi.mode_port_kappa.value();
   }
   WriteTable(*port_Q);
 }
@@ -1781,9 +1883,12 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   {
     return;
   }
+  // Whether U, which normalizes the participations and coupling rates, is available
+  // (Measurement::ElectricEnergyNormalization), fixed for the run.
+  const bool total_energy = post_op.dom_post_op.HasStoredElectricFieldEnergy();
   InitializeDomainE(post_op.dom_post_op);
   InitializeSurfaceF(post_op.surf_post_op);
-  InitializeSurfaceQ(post_op.surf_post_op);
+  InitializeSurfaceQ(post_op.surf_post_op, total_energy);
 
 #if defined(MFEM_USE_GSLIB)
   {
@@ -1817,9 +1922,9 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
   }
   if constexpr (solver_t == ProblemType::EIGENMODE)
   {
-    InitializeEig();
-    InitializeEigPortEPR(post_op.fem_op->GetLumpedPortOp());
-    InitializeEigPortQ(post_op.fem_op->GetLumpedPortOp());
+    InitializeEig(post_op.dom_post_op.HasPML());
+    InitializeEigPortEPR(post_op.fem_op->GetLumpedPortOp(), total_energy);
+    InitializeEigPortQ(post_op.fem_op->GetLumpedPortOp(), total_energy);
   }
   if constexpr (solver_t == ProblemType::BOUNDARYMODE)
   {

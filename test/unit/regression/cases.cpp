@@ -9,26 +9,114 @@
 // long-tests CI workflow.
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <cstdio>
 #include <filesystem>
+#include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <numbers>
+#include <regex>
+#include <span>
 #include <string>
+#include <string_view>
 #include <vector>
+#include <unistd.h>
 
 #include <Eigen/Dense>
 #include <catch2/catch_test_macros.hpp>
+#include <nlohmann/json.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include "driver.hpp"
+#include "fixtures.hpp"
 
 #include "regression_helpers.hpp"
+#include "utils/communication.hpp"
 #include "utils/constants.hpp"
+#include "utils/iodata.hpp"
+#include "utils/omp.hpp"
+#include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
+#include "utils/timer.hpp"
 
 namespace
 {
+
+// Layout of a planar stack along the normal of the Floquet ports, lengths in m: vacuum from
+// port 1 to a slab, the slab, then the exit medium to port 2. The exit medium is vacuum for
+// a free-standing slab. For a half-space it is the slab material itself, and port 2 lies
+// inside it, at a depth of thickness + back.
+struct SlabLayout
+{
+  double front;             // Vacuum from port 1 to the slab
+  double thickness;         // Slab
+  double back = 0.0;        // Exit medium from the slab to port 2
+  bool half_space = false;  // Exit medium is the slab material, not vacuum
+};
+
+// Normal-incidence Floquet port S-parameters of a slab of relative permittivity
+// epsilon_r(f) (f in GHz) in the given layout. The oracle is the Fresnel solution of the
+// three layers, with the phase of the vacuum and exit medium between the slab and the
+// ports. Port 2 normalizes the transmitted wave to the power it carries, which in a lossy
+// exit medium of index n is proportional to Re n. The frequencies come from the CSV, and
+// must be those of the reference: they must print exactly in its nine significant digits,
+// or the oracle sees the rounding where the S-parameters are steep.
+palace::test::CustomCheck
+TestDielectricSlab(std::function<std::complex<double>(double)> epsilon_r, SlabLayout layout)
+{
+  return [epsilon_r, layout](palace::Table &actual, palace::Table &reference,
+                             const std::filesystem::path &)
+  {
+    REQUIRE(reference.n_rows() > 0);
+    REQUIRE(actual.n_rows() == reference.n_rows());
+    REQUIRE(actual.n_complete_rows() == actual.n_rows());
+    REQUIRE(actual.n_cols() == 9);
+    constexpr std::complex<double> imaginary{0.0, 1.0};
+    for (std::size_t row = 0; row < actual.n_rows(); ++row)
+    {
+      const double frequency = actual[0].data[row];  // GHz
+      INFO("Frequency: " << frequency << " GHz");
+      CHECK_THAT(frequency, Catch::Matchers::WithinAbs(reference[0].data[row], 1.0e-8));
+      // Positive-time convention: passive permittivity has negative imaginary part.
+      const auto index = std::sqrt(epsilon_r(frequency));
+      const auto exit_index = layout.half_space ? index : std::complex<double>{1.0};
+      const double k0 = 2.0 * std::numbers::pi * frequency * 1.0e9 / 299792458.0;
+      const auto q = std::exp(-imaginary * k0 * index * layout.thickness);
+      const auto rho_front = (1.0 - index) / (1.0 + index);
+      const auto rho_back = (index - exit_index) / (index + exit_index);
+      const auto denominator = 1.0 + rho_front * rho_back * q * q;
+      const auto reflection = (rho_front + rho_back * q * q) / denominator *
+                              std::exp(-2.0 * imaginary * k0 * layout.front);
+      const auto transmission = 2.0 / (1.0 + index) * 2.0 * index / (index + exit_index) *
+                                q / denominator * std::sqrt(exit_index.real()) *
+                                std::exp(-imaginary * k0 * layout.front) *
+                                std::exp(-imaginary * k0 * exit_index * layout.back);
+      double outgoing_power = 0.0;
+      for (std::size_t column = 1; column + 1 < actual.n_cols(); column += 2)
+      {
+        const auto &header = actual[column].header_text;
+        INFO("Floquet channel: " << header);
+        const double magnitude = std::pow(10.0, actual[column].data[row] / 20.0);
+        const double phase = actual[column + 1].data[row] * std::numbers::pi / 180.0;
+        const auto amplitude = std::polar(magnitude, phase);
+        const auto expected = header == "|S[P1(0;0)TE][1]| (dB)"   ? reflection
+                              : header == "|S[P2(0;0)TE][1]| (dB)" ? transmission
+                                                                   : std::complex<double>{};
+        CHECK(std::abs(amplitude - expected) < 1.0e-7);
+        outgoing_power += std::norm(amplitude);
+      }
+      const double absorption = 1.0 - outgoing_power;
+      const double expected_absorption =
+          1.0 - std::norm(reflection) - std::norm(transmission);
+      CHECK(absorption >= -1.0e-8);
+      CHECK(absorption <= 1.0 + 1.0e-8);
+      CHECK_THAT(absorption, Catch::Matchers::WithinAbs(expected_absorption, 1.0e-8));
+    }
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Shared custom-check factories. Each returns a callable matching
@@ -67,6 +155,50 @@ palace::test::CustomCheck TestFarfield(double rtol)
       const double thresh = rtol * std::max(m_a, m_r);
       CHECK(std::abs(m_a - m_r) <= thresh);
     }
+  };
+}
+
+// The half-wave dipole fixture samples 11 rings uniformly in cos(theta), with
+// NSample=100 plus an extra off-grid direction. Integrate ring-averaged intensity
+// with Simpson's rule and compare radiation to accepted power, independently of refs.
+palace::test::CustomCheck TestDipolePowerBalance(double rtol)
+{
+  return [rtol](palace::Table &actual, palace::Table &reference,
+                const std::filesystem::path &path)
+  {
+    TestFarfield(rtol)(actual, reference, path);
+    REQUIRE(actual.n_cols() == 10);
+    std::array<double, 11> intensity{};
+    std::array<int, 11> count{};
+    for (std::size_t row = 0; row < actual.n_rows(); row++)
+    {
+      const double u = std::cos(actual[2].data[row] * std::numbers::pi / 180.0);
+      const int ring = static_cast<int>(std::lround(5.0 * (u + 1.0)));
+      if (std::abs(u - (0.2 * ring - 1.0)) > 1.0e-8)
+      {
+        continue;  // The extra ThetaPhis sample is not part of the quadrature.
+      }
+      double field_sq = 0.0;
+      for (int col = 4; col < 10; col++)
+      {
+        field_sq += actual[col].data[row] * actual[col].data[row];
+      }
+      intensity[ring] += field_sq / (2.0 * palace::electromagnetics::Z0_);
+      count[ring]++;
+    }
+    double radiated = 0.0;
+    for (int ring = 0; ring <= 10; ring++)
+    {
+      REQUIRE(count[ring] > 0);
+      const int weight = (ring == 0 || ring == 10) ? 1 : ((ring % 2) ? 4 : 2);
+      radiated += weight * intensity[ring] / count[ring];
+    }
+    radiated *= 2.0 * std::numbers::pi * 0.2 / 3.0;
+    palace::TableWithCSVFile scattering((path.parent_path() / "port-S.csv").string(), true);
+    REQUIRE(scattering.table.n_rows() == 1);
+    REQUIRE(scattering.table[1].header_text == "|S[1][1]| (dB)");
+    const double accepted = 1.0 - std::pow(10.0, scattering.table[1].data[0] / 10.0);
+    CHECK_THAT(radiated, Catch::Matchers::WithinRel(accepted, rtol));
   };
 }
 
@@ -237,7 +369,9 @@ palace::test::CustomCheck CompareComplexValues(double rtol, double atol)
 
 // Compare port-S.csv as complex scattering amplitudes rather than separately comparing
 // logarithmic magnitude and wrapped phase. This gives a stable absolute tolerance near
-// transmission zeros and a relative tolerance for order-one reflection/transmission.
+// transmission zeros and a relative tolerance for order-one reflection/transmission. In
+// port-floquet-S.csv, an order which is evanescent at a frequency has a NaN magnitude and
+// phase, which match a NaN in the reference.
 palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
 {
   return [rtol, atol](palace::Table &actual, palace::Table &reference,
@@ -289,6 +423,10 @@ palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
       REQUIRE(phase_r != nullptr);
       for (std::size_t row = 0; row < n_rows; row++)
       {
+        if (std::isnan(mag_a->data[row]) && std::isnan(mag_r.data[row]))
+        {
+          continue;
+        }
         const double amp_a = std::pow(10.0, mag_a->data[row] / 20.0);
         const double amp_r = std::pow(10.0, mag_r.data[row] / 20.0);
         const double phase_a_rad = phase_a->data[row] * std::numbers::pi / 180.0;
@@ -306,6 +444,53 @@ palace::test::CustomCheck ComparePortSParameters(double rtol, double atol)
   };
 }
 
+// Reflection check for PML cases: every "|S[...]| (dB)" column of the actual output must be
+// below max_db at every frequency (the PML absorbs the wave: a broken PML reflects, e.g. at
+// -18 dB for a second-order ABC versus -62 dB for the PML), and must match the reference in
+// linear magnitude within atol (a difference in dB is meaningless for |S| ~ 1e-3 that is
+// dominated by the solver tolerances). Cross-polarization entries of Floquet ports below
+// -200 dB in the reference are negligible and skipped.
+palace::test::CustomCheck TestPMLReflection(double max_db, double atol)
+{
+  return [max_db, atol](palace::Table &actual, palace::Table &reference,
+                        const std::filesystem::path &)
+  {
+    CHECK(actual.n_rows() == reference.n_rows());
+    const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
+    std::size_t num_s_columns = 0;
+    for (auto &mag_r : reference)
+    {
+      const std::string &hdr = mag_r.header_text;
+      if (hdr.find("|S[") == std::string::npos || hdr.find("(dB)") == std::string::npos)
+      {
+        continue;
+      }
+      palace::Column *mag_a = nullptr;
+      for (auto &c : actual)
+      {
+        if (c.header_text == hdr)
+        {
+          mag_a = &c;
+        }
+      }
+      REQUIRE(mag_a != nullptr);
+      num_s_columns++;
+      for (std::size_t r = 0; r < n_rows; r++)
+      {
+        if (mag_r.data[r] < -200.0)
+        {
+          continue;
+        }
+        INFO("row " << r + 1 << " column '" << hdr << "': " << mag_a->data[r] << " dB");
+        CHECK(mag_a->data[r] < max_db);
+        CHECK_THAT(std::pow(10.0, mag_a->data[r] / 20.0),
+                   Catch::Matchers::WithinAbs(std::pow(10.0, mag_r.data[r] / 20.0), atol));
+      }
+    }
+    CHECK(num_s_columns > 0);
+  };
+}
+
 // Standard "drop per-element extrema + eigenmode error columns" list.
 const std::vector<std::string> eigen_excluded = {"Maximum", "Minimum", "Mean",
                                                  "Error (Bkwd.)", "Error (Abs.)"};
@@ -315,11 +500,14 @@ constexpr auto force_default_solver = palace::test::SolverOverridePolicy::ForceD
 // (phase isn't reproducible). NaN entries (evanescent modes) count as matches. By default
 // the dB values are compared and signals below -200 dB (negligible) count as matches; with
 // linear, the magnitudes |S| = 10^(dB/20) are compared within atol + rtol |S|, which gives
-// adaptive sweeps an absolute tolerance near 0 dB. Ports the Julia test_floquet_sparams.
-palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool linear = false)
+// adaptive sweeps an absolute tolerance near 0 dB. Unless lossless is false (a fixture
+// with an absorbing PML), these fixtures are lossless and include all propagating channels,
+// and their powers sum to one; include the sibling lumped/wave CSV in power closure.
+palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool linear = false,
+                                             bool lossless = true)
 {
-  return [rtol, atol, linear](palace::Table &actual, palace::Table &reference,
-                              const std::filesystem::path &)
+  return [rtol, atol, linear, lossless](palace::Table &actual, palace::Table &reference,
+                                        const std::filesystem::path &path)
   {
     const std::size_t n_cols = std::min(actual.n_cols(), reference.n_cols());
     const std::size_t n_rows = std::min(actual.n_rows(), reference.n_rows());
@@ -350,6 +538,153 @@ palace::test::CustomCheck TestFloquetSParams(double rtol, double atol, bool line
           CHECK_THAT(v_new, Catch::Matchers::WithinRel(v_ref, rtol) ||
                                 Catch::Matchers::WithinAbs(v_ref, atol));
         }
+      }
+    }
+
+    if (!lossless)
+    {
+      return;
+    }
+    std::unique_ptr<palace::TableWithCSVFile> other_ports;
+    const auto other_path = path.parent_path() / "port-S.csv";
+    if (std::filesystem::is_regular_file(other_path))
+    {
+      other_ports = std::make_unique<palace::TableWithCSVFile>(other_path.string(), true);
+      REQUIRE(other_ports->table.n_rows() == actual.n_rows());
+    }
+    for (std::size_t row = 0; row < actual.n_rows(); row++)
+    {
+      std::map<std::string, double> power;
+      auto accumulate = [&](palace::Table &table)
+      {
+        for (const auto &column : table)
+        {
+          const auto &header = column.header_text;
+          if (header.rfind("|S[", 0) != 0 || header.find("(dB)") == std::string::npos)
+          {
+            continue;
+          }
+          const auto start = header.rfind('[');
+          const auto end = header.find(']', start);
+          REQUIRE(start != std::string::npos);
+          REQUIRE(end != std::string::npos);
+          const double value = column.data[row];
+          if (!std::isnan(value))  // Evanescent orders carry no real power.
+          {
+            power[header.substr(start + 1, end - start - 1)] +=
+                std::pow(10.0, value / 10.0);
+          }
+        }
+      };
+      accumulate(actual);
+      if (other_ports)
+      {
+        accumulate(other_ports->table);
+      }
+      REQUIRE_FALSE(power.empty());
+      for (const auto &[excitation, sum] : power)
+      {
+        INFO("row " << row << ", excitation " << excitation);
+        CHECK_THAT(sum, Catch::Matchers::WithinAbs(1.0, rtol));
+      }
+    }
+  };
+}
+
+// Reciprocity of the coupling between a wave port and the specular order of a Floquet port,
+// compared as complex values: S[w][f] of port-S.csv, with the Floquet port excited, and
+// S[Pf(0;0)..][w] of port-floquet-S.csv, with the wave port excited, are equal for a
+// reciprocal structure at normal incidence. Both carry the de-embedding factor of the wave
+// port once, on the observation side for the one and on the source side for the other. The
+// magnitude and power checks of TestFloquetSParams can't see a missing factor: for a
+// lossless wave port, it is a phase.
+palace::test::CustomCheck TestFloquetWaveReciprocity(std::string wave_id,
+                                                     std::string floquet_id, double atol)
+{
+  return [wave_id = std::move(wave_id), floquet_id = std::move(floquet_id),
+          atol](palace::Table &actual, palace::Table &, const std::filesystem::path &path)
+  {
+    palace::TableWithCSVFile wave_ports((path.parent_path() / "port-S.csv").string(), true);
+    auto amplitude = [](palace::Table &table, const std::string &id, std::size_t row)
+    {
+      const palace::Column *magnitude = nullptr, *phase = nullptr;
+      for (const auto &column : table)
+      {
+        if (column.header_text == "|" + id + "| (dB)")
+        {
+          magnitude = &column;
+        }
+        else if (column.header_text == "arg(" + id + ") (deg.)")
+        {
+          phase = &column;
+        }
+      }
+      REQUIRE(magnitude != nullptr);
+      REQUIRE(phase != nullptr);
+      return std::polar(std::pow(10.0, magnitude->data[row] / 20.0),
+                        phase->data[row] * std::numbers::pi / 180.0);
+    };
+    REQUIRE(actual.n_rows() > 0);
+    REQUIRE(wave_ports.table.n_rows() == actual.n_rows());
+    for (std::size_t row = 0; row < actual.n_rows(); row++)
+    {
+      const auto s_wave = amplitude(wave_ports.table, wave_id, row);
+      const auto s_floquet = amplitude(actual, floquet_id, row);
+      INFO("row " << row + 1 << ": " << wave_id << " = " << s_wave << ", " << floquet_id
+                  << " = " << s_floquet);
+      CHECK(std::abs(s_wave - s_floquet) <= atol);
+    }
+  };
+}
+
+// Reference-free check of error-indicators.csv, for a case whose indicator has no unique
+// reference value. Each row of Norm, Minimum, Maximum, and Mean is finite and satisfies
+// 0 <= Minimum <= Mean <= Maximum <= Norm <= upper: the indicator of an element is at most
+// the root sum of squares of all of them, also after the RMS over solves. With nonzero, the
+// Norm is also positive.
+palace::test::CustomCheck TestErrorIndicatorBounds(double upper, bool nonzero)
+{
+  return [upper, nonzero](palace::Table &actual, palace::Table &,
+                          const std::filesystem::path &)
+  {
+    auto column = [&](const std::string &hdr) -> const palace::Column *
+    {
+      for (auto &c : actual)
+      {
+        if (c.header_text == hdr)
+        {
+          return &c;
+        }
+      }
+      return nullptr;
+    };
+    const auto *norm = column("Norm"), *min = column("Minimum"), *max = column("Maximum"),
+               *mean = column("Mean");
+    REQUIRE(norm);
+    REQUIRE(min);
+    REQUIRE(max);
+    REQUIRE(mean);
+    REQUIRE(actual.n_rows() > 0);
+    constexpr double slack = 1.0e-12;  // Mean and Maximum are equal for a uniform indicator
+    for (std::size_t r = 0; r < actual.n_rows(); ++r)
+    {
+      const double n = norm->data[r], lo = min->data[r], hi = max->data[r],
+                   m = mean->data[r];
+      INFO("row " << r + 1 << ": Norm = " << n << ", Minimum = " << lo
+                  << ", Maximum = " << hi << ", Mean = " << m << ", upper = " << upper);
+      CHECK(
+          (std::isfinite(n) && std::isfinite(lo) && std::isfinite(hi) && std::isfinite(m)));
+      CHECK(lo >= 0.0);
+      CHECK(lo <= m * (1.0 + slack));
+      CHECK(m <= hi * (1.0 + slack));
+      CHECK(hi <= n * (1.0 + slack));
+      CHECK(n <= upper);
+      CHECK(hi <= upper);
+      CHECK(m <= upper);
+      CHECK(lo <= upper);
+      if (nonzero)
+      {
+        CHECK(n > 0.0);
       }
     }
   };
@@ -700,7 +1035,7 @@ palace::test::CustomCheck TestWavePortShortedGuide(CircularWaveguideTE11 guide,
 }
 
 // Reference-free check of the wave-port total-field impedance in port-Z.csv. At the wave
-// port's own excitation, Z[i][i] = |V|^2 / conj(P) must agree with the input impedance
+// port's own excitation, Z[i][i] = |V|^2 / (2 conj(P)) must agree with the input impedance
 // implied by the reflection coefficient in the sibling port-S.csv,
 //   Z_PV (1 + S_ii) / (1 - S_ii).
 // V and P are integrals of the total field while S_ii is a modal overlap, so the two
@@ -1161,7 +1496,12 @@ palace::test::CustomCheck TestWavePortCoupledRoundTrip(double atol)
 // to the real modal reference y_ref via a Kurokawa power-wave transform, and checks the
 // resulting |S| against Palace's field-derived port-S. Agreement validates that the
 // exported circuit reproduces the solver's own S-parameters. Frequencies and per-port
-// y_ref are read from the sibling rom-port-reference.csv (same sweep grid).
+// y_ref are read from the sibling rom-port-reference.csv (same sweep grid). It assumes
+// that each terminal coordinate is the port's modal amplitude and that the load on its
+// diagonal is y_ref. That does not hold for a lumped port: in the exported matrices its
+// terminal coordinate carries a voltage of α² and a load of α²/R, α = orth_R(row, row),
+// not 1 and 1/R. Use it for wave-port networks only; TestWavePortCoupledRoundTrip covers
+// lumped ports.
 palace::test::CustomCheck TestWavePortSRoundTrip(double atol_lin)
 {
   return [atol_lin](palace::Table &actual, palace::Table &,
@@ -1530,6 +1870,33 @@ palace::test::CustomCheck TestFloquetAbsorbingEigen(double rtol)
   };
 }
 
+// The transverse electric field at probe 1 (columns E_x and E_y of probe-E.csv) has the
+// same polarization at every frequency: (E_x, E_y) of each row is a complex multiple of
+// that of the first row, to a relative tol. One polarization of a mode of a homogeneous
+// guide has this property. Which polarization of a degenerate pair is selected depends on
+// the partition of the mesh, so that the field itself has no reference value.
+palace::test::CustomCheck TestProbePolarization(double tol)
+{
+  return [tol](palace::Table &a, palace::Table &, const std::filesystem::path &)
+  {
+    REQUIRE(a.n_cols() >= 5);
+    REQUIRE(a.n_rows() > 1);
+    auto E = [&a](std::size_t i, std::size_t c)
+    { return std::complex<double>(a[c].data[i], a[c + 1].data[i]); };
+    const std::complex<double> ex0 = E(0, 1), ey0 = E(0, 3);
+    const double mag0 = std::hypot(std::abs(ex0), std::abs(ey0));
+    REQUIRE(mag0 > 0.0);
+    for (std::size_t i = 1; i < a.n_rows(); ++i)
+    {
+      const std::complex<double> ex = E(i, 1), ey = E(i, 3);
+      INFO("row " << i + 1 << ": E_x = " << ex << ", E_y = " << ey
+                  << ", row 1: E_x = " << ex0 << ", E_y = " << ey0);
+      CHECK(std::abs(ex * ey0 - ey * ex0) <=
+            tol * std::hypot(std::abs(ex), std::abs(ey)) * mag0);
+    }
+  };
+}
+
 }  // namespace
 
 // ===========================================================================
@@ -1554,6 +1921,20 @@ TEST_CASE("rings", "[Serial][Parallel][GPU][Regression]")
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("rings", "rings.json", "", opts);
+}
+
+// The rings with a natural far field (PEC only on the planar rings): the constant field
+// along z satisfies the boundary conditions, so AMS's auxiliary space operator is singular.
+// Checks that the singular AMS solve converges.
+TEST_CASE("rings_natural_farfield", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("rings_natural", "rings_natural.json", "", opts);
 }
 
 TEST_CASE("rings_multiring_inactive_ports", "[Serial][Parallel][GPU][Regression]")
@@ -1882,6 +2263,181 @@ TEST_CASE("cylinder_cavity_impedance_amr", "[Serial][Parallel][GPU][Regression]"
                                   "cavity_impedance_amr", opts);
 }
 
+// The dispersive cavity cases check nonlinear eigenfrequencies and model stored energy.
+// Per-element estimator extrema remain excluded as in the nondispersive eigenmode cases.
+TEST_CASE("cylinder_cavity_drude", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_drude.json", "cavity_drude", opts);
+}
+
+// Lorentz medium tuned to the TM010 cavity mode. Each cavity mode splits into a polariton
+// branch on each side of the material pole; above a target below the pole the lowest modes
+// are the lower branches, including that of TM011 next to the pole, which a polynomial seed
+// or an unscaled Newton step misses. This case solves the exactly linearized pole terms,
+// cylinder_cavity_lorentz_slp the same problem with the SLP nonlinear eigensolver.
+TEST_CASE("cylinder_cavity_lorentz", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz.json", "cavity_lorentz",
+                                  opts);
+}
+
+TEST_CASE("cylinder_cavity_lorentz_slp", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz_slp.json",
+                                  "cavity_lorentz_slp", opts);
+}
+
+// Lorentz medium tuned just above the TM010 and TE111 modes, with a target well below: the
+// lowest modes, with the degenerate TE111 pair, are the lower branches between the target
+// and the pole. This case solves the exactly linearized pole terms.
+TEST_CASE("cylinder_cavity_lorentz_detuned", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "cavity_lorentz_detuned.json",
+                                  "cavity_lorentz_detuned", opts);
+}
+
+// The example of cylinder_cavity_lorentz with N = 8. As in the Lorentz-filled box of the
+// eigenmode driver tests, every mode of a cavity filled with one material solves f² ε(f) =
+// f_h² ε∞ for a mode f_h of the constant ε∞ on the same mesh, and the list of the roots for
+// each of the constant modes has the multiplicity of the modes: a pair of constant modes
+// gives a pair of roots. Each root must be found as often as it is in the list. The roots
+// increase with f_h on each side of the resonance (2.903636 GHz). Below it, from the
+// example's target of 2.8 GHz, the 8 modes end with the roots of the constant pair at
+// 4.4117 GHz. From 2.95 GHz, above the zero of ε at 2.91059 + 0.01i GHz (the root for f_h
+// = 0, the longitudinal modes of the material, of a large multiplicity), they end with the
+// roots of that pair above the resonance, at 4.4197 GHz, the pair one of which the
+// nonlinear eigensolver missed in the review. The pairs of this mesh are not exactly
+// degenerate (split by 1.2e-7 of their frequency with the constant material), but the roots
+// of a pair are closer than the tolerance of the solves. The case uses the default
+// eigensolver of the build, as the other regression cases do: these run with as many
+// processes as the machine has cores, and ARPACK needs more unknowns on every process than
+// it has basis vectors. The eigenmode driver tests compare both eigensolvers.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "cylinder_cavity_lorentz_pairs: both modes of each pair",
+                 "[Serial][Parallel][Regression]")
+{
+  namespace fs = std::filesystem;
+  const auto dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cylinder";
+  auto example =
+      palace::IoData::ParseAndValidate((dir / "cavity_lorentz.json").string().c_str());
+  example["Model"]["Mesh"] = (dir / example["Model"]["Mesh"].get<std::string>()).string();
+  example["Problem"]["Verbose"] = 0;
+  const auto &permittivity = example["Domains"]["Materials"][0]["Permittivity"];
+  const auto &term = permittivity["Terms"][0];
+  REQUIRE(term["Type"] == "Lorentz");
+  const double e_inf = permittivity["HighFrequencyLimit"],
+               d_eps = term["DeltaPermittivity"], f_res = term["ResonanceFrequency"],
+               gamma = term["DampingFrequency"];
+  // Distinct roots are 5e-5 of their frequency apart or more, the roots of a pair within
+  // 1e-7, and the modes are found to 2e-7 (with the tolerances of the example).
+  constexpr double rtol = 1.0e-6;
+  constexpr std::size_t n = 8, n_constant = 12;
+  const std::complex<double> i(0.0, 1.0);
+  // The roots of f² (ε∞ D(f) + Δε f₀²) = f_h² ε∞ D(f), D(f) = f₀² − f² + i γ f, above the
+  // target, from the companion matrix of the monic quartic.
+  auto Roots = [&](std::complex<double> f_h, double target)
+  {
+    const double h2 = std::norm(f_h) * e_inf;  // f_h is real for a lossless cavity
+    Eigen::Matrix4cd companion = Eigen::Matrix4cd::Zero();
+    companion(0, 0) = i * gamma;
+    companion(0, 1) = (e_inf * f_res * f_res + d_eps * f_res * f_res + h2) / e_inf;
+    companion(0, 2) = -i * gamma * h2 / e_inf;
+    companion(0, 3) = -h2 * f_res * f_res / e_inf;
+    companion(1, 0) = companion(2, 1) = companion(3, 2) = 1.0;
+    const Eigen::ComplexEigenSolver<Eigen::Matrix4cd> solver(companion);
+    REQUIRE(solver.info() == Eigen::Success);
+    std::vector<std::complex<double>> roots;
+    std::ranges::copy_if(solver.eigenvalues(), std::back_inserter(roots),
+                         [target](auto f) { return f.real() >= target; });
+    return roots;
+  };
+  // The eigenfrequencies in eig.csv, in the order of the output (nearest the target first).
+  auto Solve = [this](nlohmann::json config, const std::string &name)
+  {
+    MPI_Comm comm = palace::Mpi::World();
+    const auto output = temp_dir / name;
+    config["Problem"]["Output"] = output.string();
+    palace::IoData iodata(config, false);
+    palace::MakeOutputFolder(iodata, comm);
+    palace::BlockTimer::Reset();
+    palace::Run(iodata, comm, palace::utils::ConfigureOmp());
+    palace::Mpi::Barrier(comm);
+    palace::TableWithCSVFile eig((output / "eig.csv").string(), true);
+    std::vector<std::complex<double>> f;
+    for (std::size_t k = 0; k < eig.table[1].data.size(); k++)
+    {
+      f.emplace_back(eig.table[1].data[k], eig.table[2].data[k]);
+    }
+    return f;
+  };
+  auto by_frequency = [](auto a, auto b) { return a.real() < b.real(); };
+  auto close = [](auto a, auto b) { return std::abs(a - b) <= rtol * std::abs(b); };
+
+  auto config = example;
+  config["Solver"]["Eigenmode"]["N"] = n_constant;
+  config["Solver"]["Eigenmode"]["Target"] = 1.0;
+  config["Domains"]["Materials"][0]["Permittivity"] = e_inf;
+  const auto constant = Solve(config, "constant");
+  REQUIRE(constant.size() >= n_constant);
+  for (const double target : {example["Solver"]["Eigenmode"]["Target"].get<double>(), 2.95})
+  {
+    CAPTURE(target);
+    std::vector<std::complex<double>> expected;
+    for (std::size_t h = 0; h < n_constant; h++)
+    {
+      std::ranges::copy(Roots(constant[h], target), std::back_inserter(expected));
+    }
+    std::ranges::sort(expected, by_frequency);
+    REQUIRE(expected.size() > n);
+    // The roots of the higher constant modes are higher, and the n modes end with a
+    // complete pair.
+    REQUIRE(std::ranges::min(Roots(constant[n_constant - 1], target), by_frequency).real() >
+            expected[n].real());
+    REQUIRE(!close(expected[n], expected[n - 1]));
+    config = example;
+    config["Solver"]["Eigenmode"]["N"] = n;
+    config["Solver"]["Eigenmode"]["Target"] = target;
+    const auto lorentz = Solve(config, "lorentz-" + std::to_string(target));
+    REQUIRE(lorentz.size() >= n);
+    std::vector<std::complex<double>> found(lorentz.begin(), lorentz.begin() + n);
+    std::ranges::sort(found, by_frequency);
+    for (std::size_t k = 0; k < n; k++)
+    {
+      auto copies = [&](const auto &list)
+      {
+        return std::ranges::count_if(list, [&](auto f) { return close(f, expected[k]); });
+      };
+      CAPTURE(k, found[k], expected[k]);
+      CHECK(close(found[k], expected[k]));
+      CHECK(copies(found) == copies(std::span(expected).first(n)));
+    }
+  }
+}
+
 // The SLEPc NEP (SLP) shell receives device arrays on a GPU. The impedance boundary adds
 // damping, so this covers the full (K, C, M) path of the NEP solver. Without SLEPc,
 // Palace replaces SLP with Hybrid, which the SLP references do not check.
@@ -1900,7 +2456,6 @@ TEST_CASE("cylinder_cavity_impedance_conductivity_slp",
   palace::test::RunRegressionCase("cylinder", "cavity_impedance_conductivity_slp.json",
                                   "cavity_impedance_conductivity_slp", opts);
 }
-
 TEST_CASE("cylinder_waveguide", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -1975,6 +2530,78 @@ TEST_CASE("cylinder_driven_wave_tm_cutoff", "[Serial][Parallel][GPU][Regression]
                                   "driven_wave_tm_cutoff", opts);
 }
 
+// TE11 (Mode 1) of the circular guide is a degenerate pair, and the field at a point off
+// the axis shows which polarization each port mode solve selected: in this homogeneous
+// guide it must be the same at every frequency. Which one it is depends on the partition of
+// the mesh, so the probed fields are not compared with the reference. S11 and the energies
+// do not depend on the polarization; |S11| is round-off around 0 dB.
+TEST_CASE("cylinder_driven_wave_te11_sweep", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean", "(dB)"};
+  opts.custom_checks["probe-E.csv"] = TestProbePolarization(1.0e-4);
+  opts.excluded_files = {"probe-B.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_te11_sweep.json",
+                                  "driven_wave_te11_sweep", opts);
+}
+
+// TM01 port of the guide filled with a lossless Lorentz medium, whose Re ε exceeds the
+// high-frequency value by 50%. The reference S-parameters are from the constant
+// permittivity ε(ω) solved at each frequency. TE21 propagates below TM01 above 3.02 GHz.
+// Both modes reflect all the power, so |S11| is round-off around 0 dB and the phase is
+// compared. Stored energy and frequency-aware error indicators use dispersive references.
+TEST_CASE("cylinder_driven_wave_tm_dispersive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"(dB)"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_tm_dispersive.json",
+                                  "driven_wave_tm_dispersive", opts);
+}
+
+// The Lorentz-filled guide of cylinder_driven_wave_tm_dispersive ending in a second-order
+// absorbing boundary, which uses ε(ω) of the medium next to it and reflects -39 to -48 dB
+// of TE11 (Mode 1). The second-order term needs a mode with a tangential curl on the end:
+// TM01 has none. The reference S-parameters are from the constant permittivity ε(ω) solved
+// at each frequency; the adaptive case checks the reduced model's factored terms.
+// As in cylinder_driven_wave, the per-element error indicator extrema and mean are not
+// compared. TE11 is a degenerate pair. Its mode solve starts from the same fixed vector at
+// every frequency and returns the same polarization at each, on 1 and on 2 processes alike
+// (the fields at two probes agree to a relative 1e-9). S, the energies, and the indicator
+// Norm do not depend on the polarization.
+TEST_CASE("cylinder_driven_wave_absorbing", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing.json",
+                                  "driven_wave_absorbing", opts);
+}
+
+// The error indicator is the RMS over the greedy samples, which depend on the TE11
+// polarization and so on the number of processes: it has no unique reference value. The
+// medium is homogeneous, the recovered fluxes are L2 projections of εE and B/μ, and the
+// lossless Lorentz medium has W >= ε > 0. The squared indicators then sum to at most
+// (|ε|²/W ||E||² + ||B||²/μ) / (4 E_t) <= 1 for each sample, with the time-averaged
+// stored energy E_t = (W ||E||² + ||B||²/μ) / 4.
+TEST_CASE("cylinder_driven_wave_absorbing_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.custom_checks["error-indicators.csv"] = TestErrorIndicatorBounds(1.0, true);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("cylinder", "driven_wave_absorbing_adaptive.json",
+                                  "driven_wave_absorbing_adaptive", opts);
+}
+
 // TE11 mode of the lossless PEC-shorted circular waveguide swept from below its cutoff
 // (about 2.23 GHz) to above it: below cutoff, the propagation constant of the lossless port
 // mode is imaginary, and the wave port must take the root which decays away from the port,
@@ -2042,7 +2669,7 @@ TEST_CASE("waveguide_absorbing_order2", "[Serial][Parallel][GPU][Regression]")
 // Im{k_n}: the coupled round-trip reconstructs S11 from the synthesized pencil to ~1e-8 of
 // the live field-derived port-S, which a fit of Re{k_n} only misses by up to 8e-3. The
 // synthesized eigenvalue estimates are not converged HDM eigenpairs here, so they are
-// presence-checked only.
+// presence-checked only, without a stored reference.
 TEST_CASE("cylinder_driven_wave_tm_lossy_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2058,9 +2685,12 @@ TEST_CASE("cylinder_driven_wave_tm_lossy_synth", "[Serial][Parallel][Regression]
                          "rom-orthogonalization-matrix-R",
                          "rom-coupled-S",
                          "rom-coupled-G",
-                         "rom-coupled-H"};
-  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
-                         "error-indicators.csv", "domain-E.csv"};
+                         "rom-coupled-H",
+                         "rom-eigenvalues",
+                         "rom-eigenvectors"};
+  opts.required_unstored_files = {"rom-eigenvalues.csv", "rom-eigenvectors-re.csv",
+                                  "rom-eigenvectors-im.csv"};
+  opts.excluded_files = {"rom-port-reference", "error-indicators.csv", "domain-E.csv"};
   opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-6),
                                       compare_s = ComparePortSParameters(1.0e-4, 1.0e-7)](
                                          palace::Table &actual, palace::Table &reference,
@@ -2198,6 +2828,24 @@ TEST_CASE("dielectric_grating_uniform", "[Serial][Parallel][GPU][Regression]")
                                   "uniform", opts);
 }
 
+// The cell of dielectric_grating_uniform with a PML extruded along the normal of its top
+// (1 cm in 4 layers, with the periodic boundaries through the layer) in place of the second
+// Floquet port. The specular reflection is that of the second Floquet port to 0.07 dB, and
+// that of a meshed slab of the same elements to 1e-9 dB.
+TEST_CASE("dielectric_grating_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] =
+      TestFloquetSParams(opts.rtol, opts.atol, false, /*lossless=*/false);
+  palace::test::RunRegressionCase("dielectric_grating", "dielectric_grating_pml.json",
+                                  "pml", opts);
+}
+
 // Adaptive (PROM) counterpart of dielectric_grating_uniform, which assembles the Floquet
 // DtN correction at every greedy sample. As in the other adaptive cases, the outputs other
 // than the S-parameters are structural smoke checks.
@@ -2212,10 +2860,10 @@ TEST_CASE("dielectric_grating_adaptive", "[Serial][Parallel][GPU][Regression]")
                                   "adaptive", opts);
 }
 
-// Mixed Floquet + lumped/wave port S-parameter tests: validate the sqrt(2) power
-// normalization bridge for cross-type observations. Use custom checks to verify power
-// balance (sum |S|^2 = 1 for the lossless structure). Floquet NaN and negligible
-// entries handled as in dielectric_grating.
+// Mixed Floquet + lumped/wave port S-parameter tests: all port families share the unit
+// time-averaged incident power normalization, so cross-type S needs no bridge factor. Use
+// custom checks to verify power balance (sum |S|^2 = 1 for the lossless structure). Floquet
+// NaN and negligible entries handled as in dielectric_grating.
 TEST_CASE("floquet_lumped", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2228,6 +2876,8 @@ TEST_CASE("floquet_lumped", "[Serial][Parallel][GPU][Regression]")
                                   opts);
 }
 
+// The wave port has an offset, so that the couplings between the ports carry its
+// de-embedding factor, which both must include once (TestFloquetWaveReciprocity).
 TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2235,20 +2885,439 @@ TEST_CASE("floquet_wave", "[Serial][Parallel][GPU][Regression]")
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum"};
   opts.paraview_fields = false;
-  opts.custom_checks["port-floquet-S.csv"] = TestFloquetSParams(opts.rtol, opts.atol);
+  opts.custom_checks["port-floquet-S.csv"] =
+      [floquet = TestFloquetSParams(opts.rtol, opts.atol),
+       reciprocity = TestFloquetWaveReciprocity("S[2][1]", "S[P1(0;0)TE][2]", 1.0e-6)](
+          palace::Table &actual, palace::Table &reference,
+          const std::filesystem::path &actual_path)
+  {
+    floquet(actual, reference, actual_path);
+    reciprocity(actual, reference, actual_path);
+  };
   palace::test::RunRegressionCase("floquet_wave", "floquet_wave.json", "floquet_wave",
                                   opts);
 }
 
-// --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all three ---
+// --- PML: perfectly matched layer absorbing regions. ---
+//
+// Rectangular waveguide (TE10 at 3 GHz, |S11| = -18 dB with a second-order ABC) terminated
+// by a static PML on +z. The PML terms are evaluated at the quadrature points (per element,
+// per rank), so the reflection is partition independent to solver tolerance; the absolute
+// tolerance of 1e-4 on |S11| ~ 7e-4 (-63 dB) catches a PML regressing to a partially
+// reflecting layer, while the max_db threshold is reference free.
+void RunPMLDrivenCase(std::string_view case_dir, const std::string &config,
+                      const std::string &s_file, double max_db)
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks[s_file] = TestPMLReflection(max_db, /*atol=*/1.0e-4);
+  palace::test::RunRegressionCase(case_dir, config + ".json", config, opts);
+}
+
+TEST_CASE("pml_waveguide", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPMLDrivenCase("pml_waveguide", "waveguide_pml", "port-S.csv", -55.0);
+}
+
+// The guide of waveguide_absorbing terminated by a PML extruded along the normal of its end
+// (10 mm in 4 layers), in place of the absorbing boundary, with the PEC walls extending
+// through the layer. |S11| is -58 to -84 dB from 8 to 14 GHz, against -13 to -43 dB for
+// the second-order absorbing boundary, and the same as for the meshed slab of the same
+// elements.
+TEST_CASE("waveguide_absorbing_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPMLDrivenCase("waveguide_absorbing", "waveguide_absorbing_pml", "port-S.csv", -55.0);
+}
+
+// E-plane bifurcation with arms of different lengths, each terminated by its own block of
+// PML regions (one static, one frequency-dependent with a real stretch and a complex
+// frequency shift). The complex S11 (|S11| ~ -19 dB, the
+// reflection of the bifurcation) is diffed against the reference, and against the
+// PML-independent values of the same bifurcation with arms of equal lengths terminated by a
+// single PML block (separate mesh). The atol of 4e-3 covers the discretization differences
+// of the two meshes (~1.5e-3), while a poorly absorbing PML (reflection target 1e-2 in the
+// shorter arm) is off by 1e-2 to 2e-2.
+palace::test::CustomCheck TestPMLBifurcation(double atol_ref, double atol_pml)
+{
+  // (f (GHz), |S11| (dB), arg(S11) (deg.)) with arms of equal lengths.
+  constexpr std::array<std::array<double, 3>, 3> pml_independent = {
+      {{2.0, -18.964354921, -130.742504370},
+       {2.4, -18.947565085, 100.122345236},
+       {2.8, -18.939765133, -15.454213064}}};
+  return [=](palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
+  {
+    auto col = [](palace::Table &t, const std::string &key)
+    {
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
+      {
+        if (t[c].header_text.find(key) != std::string::npos)
+        {
+          return static_cast<int>(c);
+        }
+      }
+      return -1;
+    };
+    auto S = [](double db, double deg)
+    { return std::polar(std::pow(10.0, db / 20.0), deg * std::numbers::pi / 180.0); };
+    const int a_f = col(actual, "f (GHz)"), a_mag = col(actual, "|S[1][1]| (dB)"),
+              a_arg = col(actual, "arg(S[1][1])");
+    const int r_mag = col(reference, "|S[1][1]| (dB)"),
+              r_arg = col(reference, "arg(S[1][1])");
+    REQUIRE(std::min({a_f, a_mag, a_arg, r_mag, r_arg}) >= 0);
+    REQUIRE(actual.n_rows() == pml_independent.size());
+    REQUIRE(reference.n_rows() == pml_independent.size());
+    for (std::size_t r = 0; r < pml_independent.size(); r++)
+    {
+      const auto s = S(actual[a_mag].data[r], actual[a_arg].data[r]);
+      const auto s_ref = S(reference[r_mag].data[r], reference[r_arg].data[r]);
+      const auto &[f, db, deg] = pml_independent[r];
+      INFO("f = " << actual[a_f].data[r] << " GHz: S11 = " << s << ", reference " << s_ref
+                  << ", PML-independent " << S(db, deg));
+      CHECK_THAT(actual[a_f].data[r], Catch::Matchers::WithinAbs(f, 1.0e-12));
+      CHECK(std::abs(s - s_ref) < atol_ref);
+      CHECK(std::abs(s - S(db, deg)) < atol_pml);
+    }
+  };
+}
+
+TEST_CASE("pml_waveguide_bifurcation", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-S.csv"] = TestPMLBifurcation(1.0e-4, 4.0e-3);
+  palace::test::RunRegressionCase("pml_waveguide", "bifurcation.json", "bifurcation", opts);
+}
+
+// Iris-coupled cavity: a shorted section of the waveguide coupled through an inductive iris
+// to an output section terminated by the PML. With the static stretch the eigenvalue
+// problem is linear; with the frequency-dependent stretch (evaluated at the complex
+// eigenfrequency) it is nonlinear and solved by the hybrid eigensolver seeded with the
+// stretch frozen at the target. The resonance (1.778 GHz, Q ~ 495, set by the radiation
+// through the iris) is diffed against the reference, and against the same PML-independent
+// value for both stretches: with poorly absorbing PML parameters (a reflection target of
+// 1e-2 instead of 1e-6), Q changes by 11%.
+palace::test::CustomCheck TestPMLCavityResonance(double rtol, double f_re, double q,
+                                                 double rtol_f_re, double rtol_q)
+{
+  return [=](palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
+  {
+    auto col = [](palace::Table &t, const std::string &key)
+    {
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
+      {
+        if (t[c].header_text.find(key) != std::string::npos)
+        {
+          return static_cast<int>(c);
+        }
+      }
+      return -1;
+    };
+    REQUIRE(actual.n_rows() >= 1);
+    REQUIRE(reference.n_rows() >= 1);
+    for (const std::string key : {"Re{f}", "Im{f}", "Q"})
+    {
+      const int a = col(actual, key), r = col(reference, key);
+      REQUIRE(a >= 0);
+      REQUIRE(r >= 0);
+      INFO("column '" << key << "'");
+      CHECK_THAT(actual[a].data[0], Catch::Matchers::WithinRel(reference[r].data[0], rtol));
+    }
+    const double f_re_a = actual[col(actual, "Re{f}")].data[0];
+    const double q_a = actual[col(actual, "Q")].data[0];
+    INFO("resonance Re{f} = " << f_re_a << " GHz, Q = " << q_a);
+    CHECK_THAT(f_re_a, Catch::Matchers::WithinRel(f_re, rtol_f_re));
+    CHECK_THAT(q_a, Catch::Matchers::WithinRel(q, rtol_q));
+
+    // The resonance of the cavity has a small fraction of its energy in the PML region (the
+    // field leaking through the iris and attenuated in the layer).
+    const int a = col(actual, "PML fraction"), r = col(reference, "PML fraction");
+    REQUIRE(a >= 0);
+    REQUIRE(r >= 0);
+    INFO("PML fraction = " << actual[a].data[0]);
+    CHECK_THAT(actual[a].data[0], Catch::Matchers::WithinRel(reference[r].data[0], rtol_q));
+    CHECK(actual[a].data[0] < 0.05);
+  };
+}
+
+void RunPMLCavityCase(const std::string &config)
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.custom_checks["eig.csv"] =
+      TestPMLCavityResonance(1.0e-4, 1.77827, 494.6, 2.0e-5, 1.0e-2);
+  palace::test::RunRegressionCase("pml_waveguide", config + ".json", config, opts);
+}
+
+// Omits [GPU]: the device code of the static PML is covered by the other GPU cases, and the
+// frequency-dependent case covers the PML eigenmode solve on GPU.
+TEST_CASE("pml_waveguide_iris_cavity", "[Serial][Parallel][Regression]")
+{
+  RunPMLCavityCase("iris_cavity");
+}
+
+TEST_CASE("pml_waveguide_iris_cavity_fd", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPMLCavityCase("iris_cavity_fd");
+}
+
+// Adaptive fast frequency sweep and circuit synthesis with a frequency-dependent PML on a
+// dielectric-filled waveguide stepping into the vacuum PML region (|S11| ~ -13 dB). The PML
+// terms of the PROM are projected per frequency during the greedy sampling, fit with a
+// rational function (poles on the imaginary axis) for the online sweep, and realized with
+// auxiliary states in the synthesized circuit. The swept S-parameters match the reference
+// to the adaptive tolerance, and the synthesized S round-trips to the PROM S. Omits [GPU]
+// for its cost: the PML terms of the PROM on GPU are covered by pml_oblique_45_tm_adaptive,
+// and the rational fit and synthesis run on the host.
+TEST_CASE("pml_waveguide_fd_synth", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-11;
+  opts.skip_rowcount = true;
+  opts.min_rows = 1;
+  opts.excluded_columns = {"Error (Bkwd.)", "Error (Abs.)", "Maximum", "Minimum", "Mean"};
+  // Partition-dependent pencil matrices and eigenvectors consumed by no check here.
+  opts.unstored_files = {"rom-Linv",
+                         "rom-Rinv",
+                         "rom-C-",
+                         "rom-portload-",
+                         "rom-orthogonalization-matrix-R",
+                         "rom-coupled-S",
+                         "rom-coupled-G",
+                         "rom-coupled-H",
+                         "rom-eigenvectors"};
+  opts.excluded_files = {"rom-eigenvalues", "error-indicators.csv", "rom-port-reference",
+                         "domain-E.csv"};
+  opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(1.0e-3);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("pml_waveguide", "waveguide_pml_fd_synth.json",
+                                  "waveguide_pml_fd_synth", opts);
+}
+
+// Layered parallel-plate waveguide (substrate and vacuum) whose material interface crosses
+// the +z PML: the stretch must be the same in both PML regions (σ_max from the smallest
+// refractive index of their materials), otherwise the quasi-TEM mode reflects at -23 dB
+// from the interface inside the layer, versus below -85 dB at 2, 5, and 8 GHz here.
+TEST_CASE("pml_layered", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPMLDrivenCase("pml_layered", "pml_layered", "port-S.csv", -60.0);
+}
+
+// Plane wave absorption at grazing incidence (80° TE, Floquet port on a periodic vacuum
+// cell), with the conductivity computed from a reflection target R = 1e-12: the reflection,
+// about R^cos θ (|S11| ~ -42 dB), grows towards grazing incidence like that of a continuous
+// PML.
+TEST_CASE("pml_oblique_grazing_80_te", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPMLDrivenCase("pml_oblique", "grazing_80_te", "port-floquet-S.csv", -38.0);
+}
+
+// Adaptive fast frequency sweep (2.5-3.5 GHz) of the oblique incidence case with a
+// frequency-dependent PML. With the Floquet wave vector, the PML terms of the PROM are not
+// symmetric: symmetrizing them drops the Floquet cross terms and the greedy sampling does
+// not converge. The TM reflection stays below -70 dB over the band.
+TEST_CASE("pml_oblique_45_tm_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPMLDrivenCase("pml_oblique", "oblique_45_tm_adaptive", "port-floquet-S.csv", -70.0);
+}
+
+// TM plane wave at the angle θ from a dielectric of relative permittivity eps_r onto the
+// half-space z > 0 of a uniaxial crystal of principal permittivities eps_o, eps_e, and
+// eps_o on the material axes (1, 0, 0), (0, c, s), and (0, -s, c), rotated by the tilt
+// about x. In the plane of incidence, the crystal has the permittivity
+// [ε_yy ε_yz; ε_yz ε_zz]. With k_y = √eps_r sin θ in units of k₀, its TM waves have
+// k_z = (-ε_yz k_y ± √D) / ε_zz with D = det ε (ε_zz - k_y²), and the Fresnel reflection
+// is R = (Z_i - Z_t) / (Z_i + Z_t) for the impedances Z_i = √(eps_r - k_y²) / eps_r
+// and Z_t = √D / det ε, the same for both signs of the tilt.
+struct UniaxialHalfSpaceTM
+{
+  double eps_r, eps_o, eps_e, tilt_deg, theta_deg;
+
+  double ReflectionDB() const
+  {
+    const double c = std::cos(tilt_deg * std::numbers::pi / 180.0),
+                 s = std::sin(tilt_deg * std::numbers::pi / 180.0);
+    const double eps_yy = eps_e * c * c + eps_o * s * s,
+                 eps_zz = eps_e * s * s + eps_o * c * c, eps_yz = (eps_e - eps_o) * c * s;
+    const double det = eps_yy * eps_zz - eps_yz * eps_yz;
+    const double k_y = std::sqrt(eps_r) * std::sin(theta_deg * std::numbers::pi / 180.0);
+    const double D = det * (eps_zz - k_y * k_y);
+    const double Z_i = std::sqrt(eps_r - k_y * k_y) / eps_r, Z_t = std::sqrt(D) / det;
+    return 20.0 * std::log10(std::abs((Z_i - Z_t) / (Z_i + Z_t)));
+  }
+};
+
+// Reference-free check of the TM reflection in port-floquet-S.csv against the Fresnel
+// reflection of the half-space within tol_db, after the reference diff of the magnitudes.
+palace::test::CustomCheck TestPMLHalfSpaceReflection(UniaxialHalfSpaceTM half_space,
+                                                     double tol_db, double rtol,
+                                                     double atol)
+{
+  const auto reference_check = TestFloquetSParams(rtol, atol, false, /*lossless=*/false);
+  return [=](palace::Table &actual, palace::Table &reference,
+             const std::filesystem::path &path)
+  {
+    reference_check(actual, reference, path);
+    const palace::Column *s_tm = nullptr;
+    for (auto &column : actual)
+    {
+      if (column.header_text == "|S[P1(0;0)TM][1]| (dB)")
+      {
+        s_tm = &column;
+      }
+    }
+    REQUIRE(s_tm != nullptr);
+    REQUIRE(actual.n_rows() == 1);
+    const double r_db = half_space.ReflectionDB();
+    INFO("|S11| (TM) = " << s_tm->data[0] << " dB, Fresnel reflection " << r_db << " dB");
+    CHECK_THAT(s_tm->data[0], Catch::Matchers::WithinAbs(r_db, tol_db));
+  };
+}
+
+// A tensor material in a PML region: the periodic cell of pml_oblique filled with a
+// dielectric (relative permittivity 9) in front of a +z PML region whose background is a
+// uniaxial crystal of principal permittivities 9, 1, and 9 on material axes rotated by
+// -45° about x. The layer stands for a half-space of the crystal, so the TM reflection at
+// 30° is the Fresnel reflection of the half-space, -10.065 dB. The wave going into the
+// crystal has its phase running towards the interface (k_z / k₀ = -0.205), so the stretch
+// amplifies it, by e^(|k_z| A) = 17 across the layer for R(0) = e^(-2 k₀ A) = 1e-12: the
+// electric energy in the layer is 1.4e3 times that in the cell. The angle stays away from
+// total reflection (48.2°), towards which this growth reaches 1.5e5 at 40° and 9.5e8 at
+// 47°, and the computed reflection then depends on the mesh and the linear solver. The
+// tolerance of 0.01 dB is 2.6 times the discretization error, which converges as h⁴
+// (0.0038 dB here, and 0.0002 dB with one uniform refinement).
+TEST_CASE("pml_oblique_uniaxial_30_tm", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-floquet-S.csv"] = TestPMLHalfSpaceReflection(
+      UniaxialHalfSpaceTM{9.0, 9.0, 1.0, -45.0, 30.0}, 1.0e-2, opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("pml_oblique", "uniaxial_30_tm.json", "uniaxial_30_tm",
+                                  opts);
+}
+
+// The microstrip patch antenna of examples/patch_antenna at 6, 7.5, 10 and 14.5 GHz, whose
+// substrate and ground plane run through the open faces of the box: with the second-order
+// absorbing boundary, and (without 6 GHz) with the PML extruded from the open faces as one
+// closed layer from a segment through the substrate, which ends flush with the ground plane
+// and the port face (the absorbing boundary continues across its ends). At 7.5 GHz, near
+// the first resonance, |S11| is -17.8 dB with the absorbing boundary and -19.9 dB with the
+// PML.
+void RunPatchAntennaCase(const std::string &config)
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-3;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("patch_antenna", config + ".json", config, opts);
+}
+
+TEST_CASE("patch_antenna", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPatchAntennaCase("patch_antenna");
+}
+
+TEST_CASE("patch_antenna_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  RunPatchAntennaCase("patch_antenna_pml");
+}
+
+// floquet_wave filled with a lossless Lorentz medium, at oblique incidence. The reference
+// wave-port S-parameters, including the coupling from the Floquet port, are from the
+// constant permittivity ε(ω) solved at each frequency. The Floquet S-parameters are
+// compared as complex values, so that their phases are checked too, with an absolute
+// tolerance of 1e-8 (-160 dB): the orders that are not excited are round-off below -170
+// dB, and the excited orders, down to -52 dB, are compared to the relative tolerance.
+TEST_CASE("floquet_wave_dispersive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-5;
+  opts.atol = 1.0e-16;
+  opts.custom_checks["port-floquet-S.csv"] = ComparePortSParameters(opts.rtol, 1.0e-8);
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("floquet_wave", "floquet_wave_dispersive.json",
+                                  "floquet_wave_dispersive", opts);
+}
+
+// Adaptive sweep of a 5 mm slab with the Lorentz permittivity 2 + f0^2 / (f0^2 - f^2 +
+// i gamma f), f0 = 2 GHz and gamma = 0.2 GHz, between vacuum Floquet ports at normal
+// incidence. Nine frequencies from 1 to 3 GHz cross the resonance and the band of negative
+// real permittivity above it. At every frequency, sampled or not, the TE reflection and
+// transmission, with the vacuum phase to the ports, must match the Fresnel solution to
+// 1e-7, the cross-polarized TM outputs must vanish, and the absorption must match to 1e-8.
+// The case is 5.3e-10 from the Fresnel solution at order 3, and 2.6e-6 at order 2.
+TEST_CASE("floquet_lorentz_slab_adaptive", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.paraview_fields = false;
+  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.custom_checks["port-floquet-S.csv"] = TestDielectricSlab(
+      [](double f) { return 2.0 + 4.0 / std::complex<double>(4.0 - f * f, 0.2 * f); },
+      {.front = 0.0375, .thickness = 0.005, .back = 0.0375});
+  palace::test::RunRegressionCase("dielectric_slab", "adaptive.json", "adaptive", opts);
+}
+
+// Adaptive sweep of the silicon carbide half-space of the dielectric_grating example: the
+// Lorentz permittivity 6.7 + 3.305 f0^2 / (f0^2 - f^2 + i gamma f), f0 = 23.8 THz and gamma
+// = 142.8 GHz, of 6H-SiC (Spitzer et al., 1959) at normal incidence, from vacuum 0.5 um
+// above the surface. Port 2 lies 0.25 um deep in the silicon carbide, whose permittivity
+// its Floquet port uses, so it terminates the half-space. 149 frequencies from 2 to 22 um,
+// from 9 full solves, cross the reststrahlen band of negative real permittivity between the
+// TO and LO phonons, where |epsilon| reaches 550. The checks are those of the slab above.
+TEST_CASE("dielectric_grating_sic_reststrahlen", "[Serial][Parallel][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.paraview_fields = false;
+  opts.unstored_files = {"domain-E.csv", "error-indicators.csv"};
+  opts.custom_checks["port-floquet-S.csv"] = TestDielectricSlab(
+      [](double f)
+      {
+        return 6.7 + 3.305 * 23800.0 * 23800.0 /
+                         std::complex<double>(23800.0 * 23800.0 - f * f, 142.8 * f);
+      },
+      {.front = 0.5e-6, .thickness = 0.25e-6, .half_space = true});
+  palace::test::RunRegressionCase("dielectric_grating", "sic_reststrahlen.json",
+                                  "sic_reststrahlen", opts);
+}
+
+// --- antenna: reltol=2e-2, atol=50*1e-10 = 5e-9 for all four ---
 
 TEST_CASE("antenna_halfwave_dipole", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 2.0e-2;
   opts.atol = 5.0e-9;
+  opts.custom_checks["farfield-rE.csv"] = TestDipolePowerBalance(opts.rtol);
   palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole.json",
                                   "antenna_halfwave_dipole", opts);
+}
+
+TEST_CASE("antenna_halfwave_dipole_pml", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 5.0e-9;
+  palace::test::RunRegressionCase("antenna", "antenna_halfwave_dipole_pml.json",
+                                  "antenna_halfwave_dipole_pml", opts);
 }
 
 TEST_CASE("antenna_short_dipole", "[Serial][Parallel][GPU][Regression]")
@@ -2363,10 +3432,13 @@ TEST_CASE("coaxial_wave_losstan", "[Serial][Parallel][GPU][Regression]")
 // Circuit synthesis of the uniform coaxial line of finite-conductivity conductors between
 // two wave ports of coaxial_wave_conductivity. The synthesized port loads must carry the
 // attenuation of the lossy quasi-TEM port modes, Im{k_n}: the coupled round-trip
-// reconstructs the 2x2 S from the synthesized pencil to ~1e-5 of the live field-derived
-// port-S, which a fit of Re{k_n} only (a lossless port line) misses by up to 5e-2. The
-// synthesized eigenvalues are the far, nonphysical poles of the matched line (Q < 1), so
-// they are presence-checked only.
+// reconstructs the 2x2 S from the synthesized pencil to 5e-6 of the live field-derived
+// port-S, which a fit of Re{k_n} only (a lossless port line) misses by up to 5e-2, and the
+// polynomial part of the fits of the conductivity terms realized on their full projected
+// mass instead of the directions of their poles by 8.4e-5. The synthesized eigenvalues are
+// the far, nonphysical poles of the matched line (Q < 1), and the reference admittance
+// exported for port 1 changes with the partition and the build by up to 10%, so these
+// outputs and the eigenvectors are presence-checked only, without a stored reference.
 TEST_CASE("coaxial_wave_conductivity_synth", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2382,10 +3454,14 @@ TEST_CASE("coaxial_wave_conductivity_synth", "[Serial][Parallel][Regression]")
                          "rom-orthogonalization-matrix-R",
                          "rom-coupled-S",
                          "rom-coupled-G",
-                         "rom-coupled-H"};
-  opts.excluded_files = {"rom-eigenvalues", "rom-eigenvectors", "rom-port-reference",
-                         "error-indicators.csv"};
-  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(1.0e-4),
+                         "rom-coupled-H",
+                         "rom-eigenvalues",
+                         "rom-eigenvectors",
+                         "rom-port-reference"};
+  opts.required_unstored_files = {"rom-eigenvalues.csv", "rom-eigenvectors-re.csv",
+                                  "rom-eigenvectors-im.csv", "rom-port-reference.csv"};
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.custom_checks["port-S.csv"] = [round_trip = TestWavePortCoupledRoundTrip(2.0e-5),
                                       compare_s = ComparePortSParameters(1.0e-4, 1.0e-5)](
                                          palace::Table &actual, palace::Table &reference,
                                          const std::filesystem::path &actual_path)
@@ -2421,8 +3497,9 @@ TEST_CASE("coaxial_lumped_wave_synth", "[Serial][Parallel][Regression]")
   opts.excluded_files = {"rom-eigenvectors",    "rom-port-reference", "port-I.csv",
                          "port-V.csv",          "port-Z.csv",         "domain-E.csv",
                          "error-indicators.csv"};
-  // Full mixed 2x2 round-trip: synthesized-vs-field S to ~6e-4 here, so 2e-3 clears
-  // cross-backend noise while catching a broken cross-type coupling map.
+  // Full mixed 2x2 round-trip: synthesized-vs-field S to 7e-13 here at 16 processes, with
+  // the lumped port coupled through its voltage functional; 2e-3 is the tolerance set for
+  // the earlier unit terminal selector, kept unchanged.
   opts.custom_checks["port-S.csv"] = TestWavePortCoupledRoundTrip(2.0e-3);
   opts.custom_checks["rom-eigenvalues.csv"] =
       CompareRomEigenvalues(/*bkwd_max=*/1.0e-6, /*rtol_re=*/1.0e-3, /*rtol_im=*/5.0e-3,
@@ -2430,6 +3507,60 @@ TEST_CASE("coaxial_lumped_wave_synth", "[Serial][Parallel][Regression]")
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("coaxial", "lumped_wave_synth.json", "lumped_wave_synth",
                                   opts);
+}
+
+TEST_CASE_METHOD(
+    palace::test::SharedTempDir,
+    "coaxial_lumped_pec_synth: lumped-port coupling of the synthesized circuit",
+    "[Serial][Parallel][Regression]")
+{
+  // A lossless coaxial line, shorted at its far end and driven by a 50 Ω lumped port, at
+  // Order 2. The L2 projection of the coaxial port mode onto this coarse mesh has a W norm
+  // of about 0.995 of the continuum mode, so its basis vector has a voltage of about 0.995,
+  // not 1. The synthesized circuit with its exported source and observation maps must
+  // reproduce the field S-parameters of the reduced model (S = V/√R - 1) at every swept
+  // frequency, much more tightly than the 2e-2 error of a unit terminal selector.
+  const std::string mesh =
+      std::string(PALACE_TEST_DATA_DIR) + "/regression/input/coaxial/mesh/coaxial.msh";
+  nlohmann::json config = {
+      {"Problem", {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir.string()}}},
+      {"Model", {{"Mesh", mesh}, {"L0", 1.0e-3}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 2.08}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {2, 4}}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"Attributes", {3}},
+           {"R", 50.0},
+           {"Direction", "+R"},
+           {"Excitation", 1}}}}}},
+      {"Solver",
+       {{"Order", 2},
+        {"Device", "CPU"},
+        {"Driven",
+         {{"MinFreq", 0.5},
+          {"MaxFreq", 20.0},
+          {"FreqStep", 0.5},
+          {"AdaptiveTol", 1.0e-4},
+          {"AdaptiveCircuitSynthesis", true},
+          {"SaveStep", 0}}},
+        {"Linear",
+         {{"Type", "Default"}, {"KSPType", "GMRES"}, {"Tol", 1.0e-10}, {"MaxIts", 400}}}}}};
+  MPI_Comm comm = palace::Mpi::World();
+  palace::IoData iodata(config, false);
+  palace::MakeOutputFolder(iodata, comm);
+  palace::BlockTimer::Reset();
+  palace::Run(iodata, comm, palace::utils::ConfigureOmp());
+  palace::Mpi::Barrier(comm);
+  if (palace::Mpi::Root(comm))
+  {
+    const auto port_s = temp_dir / "port-S.csv";
+    palace::TableWithCSVFile field(port_s.string(), /*load_existing_file=*/true);
+    REQUIRE(field.table.n_rows() == 40);
+    TestWavePortCoupledRoundTrip(1.0e-6)(field.table, field.table, port_s);
+  }
 }
 
 TEST_CASE("rational_impedance", "[Serial][Parallel][GPU][Regression]")
@@ -2453,6 +3584,76 @@ TEST_CASE("rational_impedance_eigen", "[Serial][Parallel][GPU][Regression]")
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("rational_impedance", "series_rlc18_rational_eigen.json",
                                   "series_rlc18_eigen", opts);
+}
+
+// The seed of the nonlinear eigensolve of rational_impedance_eigen, without the
+// quasi-Newton refinement. Its Robin coefficient has a pole (the 18 GHz notch) inside the
+// interpolation window, which the seed freezes at the target instead of interpolating; the
+// seed mode is then within 1% of the mode at ~9.60 + 0.045i GHz (Q = 131 for 108), and 4%
+// off with Q = 14 when the coefficient is interpolated.
+TEST_CASE("rational_impedance_eigen_seed", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_rational_eigen_seed.json",
+                                  "series_rlc18_eigen_seed", opts);
+}
+
+// The seed of rational_impedance_eigen_seed with a capacitance in parallel with the
+// termination, whose Robin coefficient has a polynomial part of degree 2, exact in the
+// seed, and a pole part, which the seed freezes at the target: the seed mode is ~11.41 +
+// 0.032i GHz, and ~9.96 + 1.35i GHz when the whole Robin coefficient is frozen or
+// interpolated.
+TEST_CASE("rational_impedance_eigen_seed_shunt", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_shunt_rational_eigen_seed.json",
+                                  "series_rlc18_shunt_eigen_seed", opts);
+}
+
+// The seed of rational_impedance_eigen_seed with an admittance 1e-26 s² in parallel with
+// the termination (not passive), whose Robin coefficient has a polynomial part of degree 3,
+// not exact in the seed: the seed freezes the whole coefficient at the target, with the
+// seed mode ~9.6695 + 0.0004i GHz, against ~9.6694 - 0.0035i GHz with only its pole part
+// frozen and ~9.24 + 0.32i GHz with the interpolant of the whole coefficient.
+TEST_CASE("rational_impedance_eigen_seed_cubic", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc18_cubic_rational_eigen_seed.json",
+                                  "series_rlc18_cubic_eigen_seed", opts);
+}
+
+// The seed of a series RLC termination whose notch (40 GHz) lies above the interpolation
+// window: the seed keeps the polynomial interpolant of its Robin coefficient, with the seed
+// mode ~9.9388 - 0.00065i GHz, against ~9.9420 + 0.0009i GHz with its pole part frozen.
+TEST_CASE("rational_impedance_eigen_seed_fit", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 2.0e-2;
+  opts.atol = 1.0e-11;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("rational_impedance",
+                                  "series_rlc40_rational_eigen_seed.json",
+                                  "series_rlc40_eigen_seed", opts);
 }
 
 TEST_CASE("cpw_lumped_uniform", "[Serial][Parallel][GPU][Regression]")
@@ -2529,6 +3730,33 @@ TEST_CASE("cpw_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
   palace::test::RunRegressionCase("cpw", "cpw_wave_adaptive.json", "wave_adaptive", opts);
 }
 
+// Adaptive sweep of a lumped port on a small cube with an "AdaptiveTol" of 1e-6, far below
+// the accuracy of the HDM solutions at a linear tolerance of 1e-3. The sweep converges only
+// if the samples which the PROM does not reproduce are refined: its outputs must then match
+// those of a uniform sweep at a linear tolerance of 1e-12 to "AdaptiveTol". Without the
+// refinement, the sampling reaches "AdaptiveMaxSamples" with domain energies off by 1e-4 or
+// more. The error indicators depend on the samples.
+TEST_CASE("cube_lumped_adaptive_loose", "[Serial][Parallel][Regression]")
+{
+  // The mesh has 36 elements, and a mesh is not partitioned into more parts than it has
+  // elements. That error is raised on the root process only, so the others would wait
+  // for their part of the mesh without end.
+  if (palace::Mpi::Size(palace::Mpi::World()) > 36)
+  {
+    SKIP("The mesh has fewer elements than there are MPI processes");
+  }
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 0.0;
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.paraview_fields = false;
+  opts.custom_checks["port-V.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["port-I.csv"] = CompareComplexValues(opts.rtol, opts.atol);
+  opts.custom_checks["port-S.csv"] = ComparePortSParameters(opts.rtol, opts.atol);
+  palace::test::RunRegressionCase("cube", "lumped_adaptive_loose.json",
+                                  "lumped_adaptive_loose", opts);
+}
+
 TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
@@ -2542,6 +3770,47 @@ TEST_CASE("cpw_lumped_eigen", "[Serial][Parallel][GPU][Regression]")
   opts.skip_rowcount = true;
   opts.custom_checks["farfield-rE.csv"] = TestFarfield(opts.rtol);
   palace::test::RunRegressionCase("cpw", "cpw_lumped_eigen.json", "lumped_eigen", opts);
+}
+
+// The microstrip loop read as a line on a Djordjevic-Sarkar FR4 substrate (Re ε ≈ 4.3,
+// tan δ ≈ 0.02) between wave ports, in an air box whose absorbing faces neighbor only air:
+// the air beyond the ends has no material, so it is removed and the end planes become the
+// ports. The reference S-parameters are from the constant permittivity ε(ω), with its loss
+// tangent, solved at each frequency. Stored energy and frequency-aware error indicators
+// use dispersive references. The port modes see the box faces as WavePortPEC here, and as
+// absorbing in the adaptive case.
+TEST_CASE("microstrip_wave_pec", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("microstrip", "microstrip_wave_pec.json", "wave_pec",
+                                  opts);
+}
+
+TEST_CASE("microstrip_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("microstrip", "microstrip_wave_adaptive.json",
+                                  "wave_adaptive", opts);
+}
+
+// The port mode of microstrip_wave as a BoundaryMode solve on the end plane, at 10 GHz,
+// against the constant permittivity ε(ω) with its loss tangent.
+TEST_CASE("microstrip_boundarymode", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.paraview_fields = false;
+  palace::test::RunRegressionCase("microstrip", "microstrip_boundarymode.json",
+                                  "boundarymode", opts);
 }
 
 TEST_CASE("cpw_wave_eigen", "[Serial][Parallel][GPU][Regression]")
@@ -2652,6 +3921,242 @@ TEST_CASE("adapter_driven_synth_inactive", "[Serial][Parallel][Regression]")
                                   "driven_synth_inactive", opts);
 }
 
+namespace
+{
+
+// Circuit synthesis of adapter_driven_synth at Order 1, with its vacuum replaced by the
+// given material, on [f_min, f_max] GHz at the given AdaptiveTol. Reference-free checks of
+// what is written and what is warned about:
+//   (1) the S-parameters, the synthesized circuit with its port loads and coupling maps,
+//       and the eigenvalue estimates are all written, with finite S-parameters;
+//   (2) a warning for each port fit whose residual exceeds AdaptiveTol, and for no other;
+//   (3) NaN errors for exactly the eigenvalue estimates which the warning lists, finite
+//       errors for the others;
+//   (4) the circuit reproduces the S-parameters of the reduced model on the band within the
+//       largest port fit residual printed, or AdaptiveTol if every fit meets it: a circuit
+//       which is less accurate than its fits report fails.
+void CheckAdapterSynthesis(const std::filesystem::path &temp_dir,
+                           const nlohmann::json &material, double f_min, double f_max,
+                           double tol)
+{
+  namespace fs = std::filesystem;
+  const auto dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "adapter";
+  auto config =
+      palace::IoData::ParseAndValidate((dir / "driven_synth.json").string().c_str());
+  config["Model"]["Mesh"] = (dir / config["Model"]["Mesh"].get<std::string>()).string();
+  config["Problem"]["Output"] = temp_dir.string();
+  config["Problem"]["Verbose"] = 0;
+  config["Domains"]["Materials"][0].update(material);
+  config["Solver"]["Order"] = 1;
+  config["Solver"]["Driven"]["MinFreq"] = f_min;
+  config["Solver"]["Driven"]["MaxFreq"] = f_max;
+  config["Solver"]["Driven"]["AdaptiveTol"] = tol;
+  const std::size_t n_freq =
+      1 +
+      std::lround((f_max - f_min) / config["Solver"]["Driven"]["FreqStep"].get<double>());
+  MPI_Comm comm = palace::Mpi::World();
+  palace::IoData iodata(config, false);
+  palace::MakeOutputFolder(iodata, comm);
+  palace::BlockTimer::Reset();
+  // What the run prints (on the root), with the standard output restored also when it
+  // throws.
+  struct Capture
+  {
+    std::FILE *file = std::tmpfile();
+    int saved = -1;
+    Capture()
+    {
+      std::fflush(stdout);
+      saved = dup(fileno(stdout));
+      dup2(fileno(file), fileno(stdout));
+    }
+    ~Capture()
+    {
+      std::fflush(stdout);
+      dup2(saved, fileno(stdout));
+      close(saved);
+      std::fclose(file);
+    }
+    std::string Text()
+    {
+      std::fflush(stdout);
+      std::rewind(file);
+      std::string text;
+      for (int c; (c = std::fgetc(file)) != EOF;)
+      {
+        text.push_back(static_cast<char>(c));
+      }
+      return text;
+    }
+  };
+  std::string out;
+  {
+    Capture capture;
+    palace::Run(iodata, comm, palace::utils::ConfigureOmp());
+    palace::Mpi::Barrier(comm);
+    out = capture.Text();
+  }
+  if (!palace::Mpi::Root(comm))
+  {
+    return;
+  }
+  INFO(out.substr(0, 20000));
+  auto Column = [](palace::Table &t,
+                   const std::string &header) -> const std::vector<double> &
+  {
+    for (auto &c : t)
+    {
+      if (c.header_text == header)
+      {
+        return c.data;
+      }
+    }
+    FAIL("No column " << header);
+    return t.begin()->data;
+  };
+
+  // (1)
+  for (const std::string file :
+       {"port-S.csv", "rom-coupled-S.csv", "rom-coupled-G.csv", "rom-coupled-H.csv",
+        "rom-eigenvalues.csv", "rom-eigenvectors-re.csv", "rom-port-reference.csv",
+        "rom-Linv-re.csv", "rom-Rinv-re.csv", "rom-C-re.csv",
+        "rom-portload-waveport_1_re-Linv-re.csv", "rom-portload-waveport_2_re-Linv-re.csv"})
+  {
+    CAPTURE(file);
+    CHECK(fs::is_regular_file(temp_dir / file));
+  }
+  palace::TableWithCSVFile field((temp_dir / "port-S.csv").string(), true);
+  palace::TableWithCSVFile circuit((temp_dir / "rom-coupled-S.csv").string(), true);
+  REQUIRE(field.table.n_rows() == n_freq);
+  REQUIRE(circuit.table.n_rows() == n_freq);
+
+  // (2)
+  double residual_max = 0.0;
+  for (const std::string port : {"1", "2"})
+  {
+    CAPTURE(port);
+    const std::regex fit(" Wave port " + port +
+                         R"(: (polynomial|augmented) synthesis residual (\S+)( → (\S+))? )"
+                         R"(\(tol (\S+?),)");
+    std::smatch m;
+    REQUIRE(std::regex_search(out, m, fit));
+    const double residual = std::stod(m[4].matched ? m[4].str() : m[2].str());
+    CAPTURE(residual);
+    CHECK(std::abs(std::stod(m[5].str()) - tol) <= 1.0e-12);
+    const bool warned =
+        std::regex_search(out, std::regex("Wave port " + port +
+                                          R"(: augmented synthesis residual \S+ exceeds )"
+                                          R"(AdaptiveTol)"));
+    CHECK(warned == (residual > tol));
+    residual_max = std::max(residual_max, residual);
+  }
+
+  // (3)
+  std::vector<std::complex<double>> listed;
+  const std::regex line(R"(\n f = (\S+) (\S+)i GHz: wave port \d+ has \d+ of \d+ modes)");
+  for (auto it = std::sregex_iterator(out.begin(), out.end(), line);
+       it != std::sregex_iterator(); ++it)
+  {
+    listed.emplace_back(std::stod((*it)[1].str()), std::stod((*it)[2].str()));
+  }
+  CHECK(listed.empty() == (out.find("estimates not evaluated (NaN)") == std::string::npos));
+  palace::TableWithCSVFile estimates((temp_dir / "rom-eigenvalues.csv").string(), true);
+  const auto &re = Column(estimates.table, "Re{f} (GHz)");
+  const auto &im = Column(estimates.table, "Im{f} (GHz)");
+  const auto &bkwd = Column(estimates.table, "Error (Bkwd.)");
+  const auto &absolute = Column(estimates.table, "Error (Abs.)");
+  std::size_t num_nan = 0;
+  for (std::size_t r = 0; r < re.size(); r++)
+  {
+    const std::complex<double> f(re[r], im[r]);
+    CAPTURE(f, bkwd[r], absolute[r]);
+    CHECK(std::isnan(bkwd[r]) == std::isnan(absolute[r]));
+    if (std::isnan(bkwd[r]))
+    {
+      num_nan++;
+      CHECK(std::ranges::any_of(listed, [f](auto g)
+                                { return std::abs(g - f) <= 1.0e-6 * std::abs(f); }));
+    }
+    else
+    {
+      CHECK(std::isfinite(bkwd[r]));
+      CHECK(std::isfinite(absolute[r]));
+    }
+  }
+  CHECK(num_nan == listed.size());
+
+  // (4)
+  double error = 0.0;
+  for (const std::string ij : {"[1][1]", "[2][1]", "[1][2]", "[2][2]"})
+  {
+    const auto &db = Column(field.table, "|S" + ij + "| (dB)");
+    const auto &deg = Column(field.table, "arg(S" + ij + ") (deg.)");
+    const auto &s_re = Column(circuit.table, "Re{S" + ij + "}");
+    const auto &s_im = Column(circuit.table, "Im{S" + ij + "}");
+    for (std::size_t r = 0; r < db.size(); r++)
+    {
+      const auto s =
+          std::polar(std::pow(10.0, db[r] / 20.0), deg[r] * std::numbers::pi / 180.0);
+      CHECK(std::isfinite(std::abs(s)));
+      error = std::max(error, std::abs(std::complex<double>(s_re[r], s_im[r]) - s));
+    }
+  }
+  CAPTURE(residual_max, error, num_nan);
+  CHECK(error <= std::max(tol, residual_max));
+}
+
+}  // namespace
+
+// The resonance of the review of the frequency-dependent materials (a damped Lorentz medium
+// at 9.5 GHz, damping 0.2 GHz) inside the band of adapter_driven_synth, at AdaptiveTol 1e-3
+// for the run time. The propagation constants of the wave ports in the resonant medium are
+// not rational, and their fits miss the tolerance. Next to the resonance the port modes at
+// the complex frequencies of some synthesized eigenvalue estimates do not converge.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "adapter_driven_synth_lorentz: circuit synthesis through a resonance",
+                 "[Serial][Parallel][Regression]")
+{
+  const nlohmann::json lorentz = {{"Permittivity",
+                                   {{"HighFrequencyLimit", 1.0},
+                                    {"Terms",
+                                     {{{"Type", "Lorentz"},
+                                       {"DeltaPermittivity", 0.02},
+                                       {"ResonanceFrequency", 9.5},
+                                       {"DampingFrequency", 0.2}}}}}}};
+  CheckAdapterSynthesis(temp_dir, lorentz, 8.0, 11.0, 1.0e-3);
+}
+
+// A weaker resonance (Δε 0.005), on a band around it (9 to 10 GHz) where the fits of the
+// port propagation constants meet AdaptiveTol 1e-6. Their pole part, realized on the
+// directions of the port mass above the rank tolerance, cancels most of their polynomial
+// part: realized on the full mass instead, the polynomial part left the circuit 5e-6 from
+// the reduced model.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "adapter_driven_synth_lorentz_band: circuit synthesis at a resonance",
+                 "[Serial][Parallel][Regression]")
+{
+  const nlohmann::json lorentz = {{"Permittivity",
+                                   {{"HighFrequencyLimit", 1.0},
+                                    {"Terms",
+                                     {{{"Type", "Lorentz"},
+                                       {"DeltaPermittivity", 0.005},
+                                       {"ResonanceFrequency", 9.5},
+                                       {"DampingFrequency", 0.2}}}}}}};
+  CheckAdapterSynthesis(temp_dir, lorentz, 9.0, 10.0, 1.0e-6);
+}
+
+// A strongly lossy constant medium (loss tangent 0.95). The modes of the ports are real
+// after their phase normalization, up to the noise of the mode solve in one of them: as a
+// node of the circuit, that noise left the synthesized pencil numerically singular and its
+// S-parameters 3e-5 from the reduced model.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "adapter_driven_synth_lossy: circuit synthesis with lossy ports",
+                 "[Serial][Parallel][Regression]")
+{
+  CheckAdapterSynthesis(temp_dir, {{"Permittivity", 1.0}, {"LossTan", 0.95}}, 9.0, 10.0,
+                        1.0e-6);
+}
+
 // --- transmon: heavy eigen cases. Tagged `[Regression][Long]` so the
 // default `ctest -L "^regression$"` sweep skips them (the regression
 // block uses TEST_SPEC `[Regression]~[Long]`); CI exercises them via
@@ -2724,6 +4229,78 @@ TEST_CASE("cavity2d_eigenmode_slp_fallback", "[Serial][Parallel][Regression]")
   palace::test::RunRegressionCase("cavity2d", "eigenmode_slp.json", "eigenmode_slp", opts);
 }
 
+// More modes requested than converge in a single iteration of the eigenvalue solver
+// ("MaxIts": 1): the converged modes are postprocessed, with a warning, rather than
+// aborting. Their leading modes are those of cavity2d_eigenmode.
+TEST_CASE("cavity2d_eigenmode_partial", "[Serial][Parallel][Regression]")
+{
+  constexpr std::size_t num_requested = 20;  // config["Solver"]["Eigenmode"]["N"]
+  constexpr std::size_t num_compared = 5;
+  constexpr double rtol = 1.0e-4;
+  palace::test::RegressionOptions opts;
+  opts.rtol = rtol;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.skip_rowcount = true;
+  opts.max_rows = num_compared;
+  opts.min_rows = num_compared;
+  // The error indicators accumulate over the converged modes, whose number depends on the
+  // eigenvalue solver.
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.linear_solver_policy = force_default_solver;
+  opts.custom_checks["eig.csv"] =
+      [=](palace::Table &actual, palace::Table &reference, const std::filesystem::path &)
+  {
+    // Fewer modes than requested converged, and all of them are written.
+    CHECK(actual.n_rows() >= num_compared);
+    CHECK(actual.n_rows() < num_requested);
+    auto col = [](palace::Table &t, const std::string &key)
+    {
+      for (std::size_t c = 0; c < t.n_cols(); ++c)
+      {
+        if (t[c].header_text.find(key) != std::string::npos)
+        {
+          return static_cast<int>(c);
+        }
+      }
+      return -1;
+    };
+    const std::size_t n_rows =
+        std::min({actual.n_rows(), reference.n_rows(), num_compared});
+    for (const std::string key : {"Re{f}", "Im{f}", "Q"})
+    {
+      const int a = col(actual, key), r = col(reference, key);
+      REQUIRE(a >= 0);
+      REQUIRE(r >= 0);
+      for (std::size_t i = 0; i < n_rows; i++)
+      {
+        INFO("column '" << key << "', row " << i + 1);
+        CHECK_THAT(actual[a].data[i],
+                   Catch::Matchers::WithinRel(reference[r].data[i], rtol));
+      }
+    }
+  };
+  palace::test::RunRegressionCase("cavity2d", "eigenmode_partial.json", "eigenmode_partial",
+                                  opts);
+}
+
+// The cavity filled with a damped Lorentz medium. Each mode solves ω²ε(ω) = ω_b²ε_b for a
+// mode ω_b of the cavity at constant ε_b, which the reference matches to 10 digits. The
+// error indicators depend on the basis of the degenerate pair and are not compared.
+TEST_CASE("cavity2d_eigenmode_lorentz", "[Serial][Parallel][GPU][Regression]")
+{
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-6;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = eigen_excluded;
+  opts.excluded_files = {"error-indicators.csv"};
+  opts.skip_rowcount = true;
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  palace::test::RunRegressionCase("cavity2d", "eigenmode_lorentz.json", "eigenmode_lorentz",
+                                  opts);
+}
+
 // Coarse 2D driven tolerances (partition- and platform-sensitive).
 TEST_CASE("cavity2d_driven", "[Serial][Parallel][GPU][Regression]")
 {
@@ -2745,16 +4322,17 @@ TEST_CASE("cavity2d_electrostatic", "[Serial][Parallel][GPU][Regression]")
                                   "electrostatic", opts);
 }
 
+// The surface current gives a uniform B (the inductance is μ₀/2 to 1e-10), which the
+// discrete spaces represent exactly: the true error is zero. The indicator then follows the
+// relative residual at which CG stops, below its tolerance of 1e-8 (4e-10 to 1.6e-9 on 2-8
+// processes, 3e-12 to 1.3e-11 at a tolerance of 1e-10), and is bounded by that tolerance
+// rather than compared. The reference-cell 2D curl recovery gave 4.8e-6.
 TEST_CASE("cavity2d_magnetostatic", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-10;
-  // Without volume currents, the 2D magnetic flux density is uniform, so the error
-  // estimate is set by the linear solver tolerance: bound it rather than compare it.
-  opts.custom_checks["error-indicators.csv"] =
-      [](palace::Table &actual, palace::Table &, const std::filesystem::path &)
-  { CHECK(actual[0].data[0] < 1.0e-7); };
+  opts.custom_checks["error-indicators.csv"] = TestErrorIndicatorBounds(1.0e-8, false);
   opts.linear_solver_policy = force_default_solver;
   palace::test::RunRegressionCase("cavity2d", "cavity2d_magnetostatic.json",
                                   "magnetostatic", opts);

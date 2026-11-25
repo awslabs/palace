@@ -14,7 +14,9 @@ but not limited to computed values like eigenfrequencies, scattering parameters,
 element parameters. In addition, each simulation type will write a file called
 `domain-E.csv`, which includes information about the electric and magnetic field energies,
 as well as lumped element energies, for each step of the simulation (eigenmode, frequency,
-or time step, for examples).
+or time step, for examples). For a frequency-dependent dielectric, electric energy includes
+polarization storage according to the [material model](model.md#Energy-and-postprocessing),
+evaluated at the real part of the frequency for eigenmodes.
 
 Models containing lumped or wave port boundaries or surface current excitations will
 automatically postprocess quantities related to those boundaries. This is described in
@@ -68,7 +70,10 @@ Additionally, when surface current excitations are present, the excitations are 
 `surface-I.csv`.
 
 For frequency domain problems, the values output are the complex-valued peak voltages and
-currents, computed from the field phasors.
+currents, computed from the field phasors. The current of a lumped port is ``V/Z``, the current
+through its own `"R"`, `"L"`, and `"C"`, and not the current delivered to the model. Quadratic
+quantities (powers, energies, Poynting vectors) are time averages over one period, and each
+excited port delivers 1 W of time-averaged incident power.
 
 ## Domain postprocessing
 
@@ -81,7 +86,9 @@ These include:
     (associated with the specified domain attributes and indexed by the specified integer
     `"Index"`). These are from the electric and magnetic field solutions and written to the
     same `domain-E.csv` file in the specified postprocessing output directory used for the
-    global energies (described above).
+    global energies (described above). In the PML regions, which the global energies
+    exclude, they are computed with the material properties of the background medium of the
+    layer (see [Perfectly matched layer](boundaries.md#Perfectly-matched-layer)).
   - [`config["Domains"]["Postprocessing"]["Probe"]`](../config/reference.md#config-domains-postprocessing-probe) :
     Probe the values of the computed electric field and magnetic flux density solutions at
     specified locations in the computational domain. The availability of the ``\bm{E}`` and
@@ -89,6 +96,18 @@ These include:
     only ``\bm{B}`` is output and ``\bm{E}`` is not computed, whereas the inverse is true
     for electrostatics). For each computed field, the postprocessed values are written to
     `probe-E.csv` and `probe-B.csv` in the specified output directory.
+
+### Limits of stored-energy accounting
+
+Boundary-mode energies contain only the transverse electric and longitudinal magnetic
+components, not the full modal energy. The electric energy includes the polarization
+energy of a frequency-dependent material that has a stored energy; for a material without
+one, it is not reported (see [Energy and postprocessing](model.md#Energy-and-postprocessing)).
+Lumped L/C energies use the circuit voltage and branch current, which can differ from the
+energy stored in the boundary sheet when the port field is not uniform. The energy stored
+in `"Impedance"`, `"RationalImpedance"` and `"Conductivity"` boundaries and, in the
+frequency domain, the kinetic energy of London superconductors are not included. These
+columns therefore do not give a complete energy balance.
 
 ## Boundary postprocessing
 
@@ -171,13 +190,25 @@ interface. In addition, the constitutive parameters can be discontinuous between
 For example,
 
 ```math
-U_e = \frac{1}{2} \bm{E}^{*} \bm{\epsilon} \bm{E}, \qquad
-U_m = \frac{1}{2} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
-\bm{S} = \operatorname{Re}\!\left\{\bm{E} \times
-\left(\bm{\mu}^{-1}\bm{B}\right)^{*}\right\}.
+U_e = \frac{1}{4} \bm{E}^{*} \bm{W} \bm{E}, \qquad
+U_m = \frac{1}{4} \bm{B}^{*} \bm{\mu}^{-1} \bm{B}, \qquad
+\bm{S} = \frac{1}{2} \operatorname{Re}\!\left\{\bm{E} \times
+\left(\bm{\mu}^{-1}\bm{B}\right)^{*}\right\}
 ```
 
-A jump in ``\bm{\epsilon}`` or ``\bm{\mu}^{-1}`` can therefore produce a jump in an energy
+for the complex peak phasors of a frequency domain solution (time-averaged quantities), or
+``U_e = \frac{1}{2} \bm{E}\cdot\bm{\epsilon}\bm{E}``, ``U_m = \frac{1}{2} \bm{B}\cdot\bm{\mu}^{-1}\bm{B}``,
+and ``\bm{S} = \bm{E}\times\bm{\mu}^{-1}\bm{B}`` for the real-valued instantaneous fields of a
+time domain or static solution.
+
+Here ``\bm{W}=\operatorname{Re}\bm{\epsilon}`` for constant materials, while a
+frequency-dependent model supplies its stored-energy weight, which includes polarization.
+When *Palace* cannot report the stored electric energy of a frequency-dependent material
+on the mesh, ``U_e`` is not written (see [the model guide](model.md)).
+Electric flux and charge still use the complete complex ``\bm{\epsilon}(i\omega)``,
+not ``\bm{W}``.
+
+A jump in ``\bm{W}`` or ``\bm{\mu}^{-1}`` can therefore produce a jump in an energy
 density or the Poynting vector, even where the conforming trace of a primary field is
 continuous. Similarly, at a material interface:
 
@@ -225,7 +256,9 @@ well as:
 
   - Surface charge density: `Q_s`, `Q_s_real`, `Q_s_imag` (C/m²)
   - Surface current density: `J_s`, `J_s_real`, `J_s_imag` (A/m)
-  - Wave port boundary mode electric field: `E0_real`, `E0_imag` (V/m)
+  - Wave port boundary mode electric field: `E0_<i>_real`, `E0_<i>_imag` for wave port `i`
+    (V/m), the port mode normalized to 1 W of time-averaged power, which is the incident
+    field of an excitation of the port
 
 ## Adaptive mesh refinement
 
@@ -241,8 +274,18 @@ is enabled and adaptation was performed, *Palace* saves the adapted mesh to disk
 records a `SavedAdaptedMesh` block in `palace.json` summarizing its topology. When *Palace*
 is built with `zlib`, the saved mesh is gzip-compressed and written with a `.meshgz`
 extension; without `zlib` it is written uncompressed as `.mesh`. MFEM detects the compression
-from the file contents when reading, so either file can be used directly as a restart mesh. The block always
-describes the mesh saved next to it: the top-level `palace.json` describes the final adapted
+from the file contents when reading, so either file can be used directly as a restart mesh. A
+nonconforming mesh is written by all processes in parallel: the file keeps the refinement
+tree of the input mesh, with its roots listed process by process, so its numbering depends on
+the partition of the mesh, but not the mesh it describes. When such a mesh is used as the mesh
+of a restart, *Palace* reads it in parallel, which takes much less time and memory for large
+meshes, unless the restart modifies the mesh (for example with `"MakeSimplex"`, refinement
+regions, or periodic boundaries). The root process decompresses a compressed file and sends
+each process its part; for very large meshes, decompressing the file beforehand (for example
+with `gunzip`) is faster, since every process then reads its part of the file directly.
+Meshes which cannot be written in parallel (for example NURBS meshes, or three-dimensional
+meshes with anisotropic refinement) are gathered on the root process instead, with a warning.
+The block always describes the mesh saved next to it: the top-level `palace.json` describes the final adapted
 mesh, and (when `SaveAdaptIterations` is also enabled) each `iterationX/palace.json` describes
 that iteration's saved mesh, so a saved mesh and its block can always be paired. The block
 contains:

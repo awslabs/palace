@@ -3,6 +3,7 @@
 
 #include "ams.hpp"
 
+#include <algorithm>
 #include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "fem/integrator.hpp"
@@ -16,7 +17,7 @@ namespace palace
 HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
                                FiniteElementSpace &h1_fespace, int cycle_it, int smooth_it,
                                bool vector_interp, bool singular_op, bool agg_coarsen,
-                               int print)
+                               int agglomeration_target, int print)
   : mfem::HypreSolver(),
     // From the Hypre docs for AMS: cycles 1, 5, 8, 11, 13 are fastest, 7 yields fewest its
     // (MFEM default is 13). 14 is similar to 11/13 but is cheaper in that is uses additive
@@ -30,7 +31,8 @@ HypreAmsSolver::HypreAmsSolver(FiniteElementSpace &nd_fespace,
     ams_singular(singular_op),
     // For positive (SPD) operators, we will use aggressive coarsening but not for frequency
     // domain problems when the preconditioner matrix is not SPD.
-    agg_coarsen(agg_coarsen), print((print > 1) ? print - 1 : 0)
+    agg_coarsen(agg_coarsen), agglomeration_target(agglomeration_target),
+    print((print > 1) ? print - 1 : 0)
 {
   // From MFEM: The AMS preconditioner may sometimes require inverting singular matrices
   // with BoomerAMG, which are handled correctly in Hypre's Solve method, but can produce
@@ -201,12 +203,25 @@ void HypreAmsSolver::InitializeSolver()
   }
 
   HYPRE_AMSSetSmoothingOptions(ams, relax_type, ams_smooth_it, weight, omega);
+#if defined(HYPRE_AMS_AMG_REDIST)
+  // Gather the coarse levels of the auxiliary space AMG hierarchies with few rows per
+  // process onto fewer processes during the solve (same hierarchies and V-cycles, results
+  // agree up to the summation order): they are otherwise dominated by message latency.
+  HYPRE_AMSSetAMGRedistTarget(ams, agglomeration_target);
+#endif
   HYPRE_AMSSetAlphaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                               interp_type, Pmax);
   HYPRE_AMSSetBetaAMGOptions(ams, coarsen_type, amg_agg_levels, amg_relax_type, theta,
                              interp_type, Pmax);
 
-  int coarse_relax_type = 9;  // Default, l1-symm. GS, 9 = Gaussian elimination
+  // Coarsest-level solve of the auxiliary space AMG: Gaussian elimination (9), which in
+  // hypre does not pivot, or l1-Jacobi (18), which hypre also uses when the coarsest level
+  // has more than 9 rows and which keeps the cycle independent of the partition. For a
+  // singular operator (no mass term), Πᵀ A Π is singular when a constant vector field
+  // satisfies the essential boundary conditions (Π c is then a gradient). Elimination
+  // without pivoting then divides by a rounding-level pivot and turns the rounding in every
+  // residual into large gradients, which stall the Krylov solver.
+  const int coarse_relax_type = ams_singular ? 18 : 9;
   HYPRE_AMSSetAlphaAMGCoarseRelaxType(ams, coarse_relax_type);
   HYPRE_AMSSetBetaAMGCoarseRelaxType(ams, coarse_relax_type);
 
@@ -269,6 +284,22 @@ void HypreAmsSolver::SetOperator(const Operator &op)
   auxB.Reset();
   auxX.Delete();
   auxX.Reset();
+}
+
+int GetAmsSingularCoarseSmoothIts(const std::vector<HYPRE_BigInt> &level_sizes,
+                                  int mg_smooth_it)
+{
+  MFEM_VERIFY(!level_sizes.empty() && level_sizes[0] > 0,
+              "The number of AMS smoothing sweeps requires a nonempty coarsest level!");
+  double ratio = 0.0;
+  for (std::size_t l = 1; l < level_sizes.size(); l++)
+  {
+    ratio += static_cast<double>(level_sizes[l]);
+  }
+  ratio /= static_cast<double>(level_sizes[0]);
+  // Round 1.5 times the ratio to the nearest integer within [8, 32] (clamped before the
+  // conversion, which is only defined for values that an int can hold).
+  return std::max(mg_smooth_it, static_cast<int>(std::clamp(1.5 * ratio + 0.5, 8.0, 32.0)));
 }
 
 }  // namespace palace

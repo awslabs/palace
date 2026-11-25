@@ -92,6 +92,9 @@ jobs:
       - name: Check test tags
         run: ./scripts/check-test-tags test/unit
 
+      - name: Check output writes
+        run: ./scripts/check-output-writes palace
+
       - name: Test CMake architecture helpers
         run: cmake -P cmake/tests/MultiArchitecture.cmake
 

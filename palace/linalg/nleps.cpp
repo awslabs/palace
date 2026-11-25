@@ -260,12 +260,18 @@ void QuasiNewtonSolver::SetInitialGuess()
   MFEM_VERIFY(nev > 0, "Must call SetNumModes before using SetInitialguess for nonlinear "
                        "eigenvalue solver!");
 
-  // Get eigenmodes initial guesses from linear eigensolver
+  // Get eigenmodes initial guesses from linear eigensolver, with λ = iω = i √μ for a
+  // linear eigenvalue problem in μ = -λ² = ω².
+  auto GetLinearEigenvalue = [this](int i)
+  {
+    const std::complex<double> l = linear_eigensolver_->GetEigenvalue(i);
+    return linear_squared ? std::complex<double>(0.0, 1.0) * std::sqrt(l) : l;
+  };
   eigenvalues.resize(nev_linear);
   eigenvectors.resize(nev_linear);
   for (int i = 0; i < nev_linear; i++)
   {
-    eigenvalues[i] = linear_eigensolver_->GetEigenvalue(i);
+    eigenvalues[i] = GetLinearEigenvalue(i);
     linear_eigensolver_->GetEigenvector(i, x1);
     eigenvectors[i] = x1;
   }
@@ -304,7 +310,7 @@ void QuasiNewtonSolver::SetInitialGuess()
   }
   for (int i = 0; i < nev_linear; i++)
   {
-    eigenvalues[i] = linear_eigensolver_->GetEigenvalue(indices[i]);
+    eigenvalues[i] = GetLinearEigenvalue(indices[i]);
     linear_eigensolver_->GetEigenvector(indices[i], x1);
     linalg::NormalizePhase(comm, x1);
     eigenvectors[i] = x1;
@@ -584,6 +590,7 @@ int QuasiNewtonSolver::Solve()
     // reuse the assembly from the accepted trial.
     std::unique_ptr<ComplexOperator> A2n;
     double res = compute_residual(eig, v, v2, u, u2, A2n);
+    double res_check = res;  // Residual at the previous preconditioner update check
 
     int it = 0, diverged_it = 0;
     while (it < nleps_it)
@@ -720,8 +727,18 @@ int QuasiNewtonSolver::Solve()
 
       // Lagged preconditioner update using the committed (post-line-search) eig.
       // Updating too close to an eigenvalue can cause numerical instability, so lag
-      // by preconditioner_lag iterations.
-      if (it > 0 && it % preconditioner_lag == 0 && res > preconditioner_tol)
+      // by preconditioner_lag iterations. Below preconditioner_tol, the operator of the
+      // last update is kept while the iteration converges fast enough with it: it then
+      // converges linearly, at a rate set by the distance of eig_opInv from the eigenvalue.
+      // It is updated if, at the rate since the previous check, the residual would not
+      // reach the tolerance within the next preconditioner_lag iterations.
+      bool update = false;
+      if (it > 0 && it % preconditioner_lag == 0)
+      {
+        update = (res > preconditioner_tol) || (res * (res / res_check) > rtol);
+        res_check = res;
+      }
+      if (update)
       {
         eig_opInv = eig;
         opA2 = (*funcA2)(eig_opInv);

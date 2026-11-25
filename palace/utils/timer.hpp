@@ -42,6 +42,8 @@ public:
     KSP_SETUP,             // Linear solver setup
     KSP_PRECONDITIONER,    // Linear solver preconditioner
     KSP_COARSE_SOLVE,      // Linear solver coarse-level solve
+    KSP_SUBDOMAIN_SOLVE,   // Linear solver subdomain solve (PML regions)
+    KSP_INITIAL_GUESS,     // Linear solver initial guess from previous solutions
     TS,                    // Time integrator
     EPS,                   // Eigenvalue problem solver
     DIV_FREE,              // Divergence-free projection
@@ -75,6 +77,8 @@ public:
       "  Setup",
       "  Preconditioner",
       "  Coarse Solve",
+      "  Subdomain Solve",
+      "  Initial Guess",
       "Time Stepping",
       "Eigenvalue Solve",
       "Div.-Free Projection",
@@ -244,6 +248,9 @@ private:
   }
 
 public:
+  BlockTimer(const BlockTimer &) = delete;
+  BlockTimer &operator=(const BlockTimer &) = delete;
+
   BlockTimer(Index i, bool count = true) : count(count)
   {
     // Start timing when entering the block, interrupting whatever we were timing before.

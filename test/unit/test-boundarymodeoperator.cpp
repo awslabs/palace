@@ -9,7 +9,9 @@
 #include <limits>
 #include <memory>
 #include <numbers>
+#include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -23,14 +25,12 @@
 #include "fixtures.hpp"
 #include "linalg/vector.hpp"
 #include "models/boundarymodeoperator.hpp"
-#include "models/farfieldboundaryoperator.hpp"
 #include "models/materialoperator.hpp"
 #include "models/modeeigensolver.hpp"
 #include "models/modeoperatorassembly.hpp"
-#include "models/surfaceconductivityoperator.hpp"
-#include "models/surfaceimpedanceoperator.hpp"
-#include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "models/waveportoperator.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
@@ -110,10 +110,7 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
   MaterialOperator mat_op(iodata, palace_mesh);
 
-  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, palace_mesh.Get());
-  FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceTerms surface_terms(iodata, mat_op, palace_mesh.Get());
 
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   {
@@ -138,11 +135,10 @@ ModeResult SolveRectangularModes(double width, double height, double freq_ghz,
   // ModeEigenSolver requires a positive Krylov subspace size (num_vec). Mirror the
   // formula used by IoData::CheckConfiguration for eigenmode.max_size.
   const int num_vec = std::max(2 * num_modes, num_modes + 15);
-  ModeEigenSolver mode_solver(mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-                              surf_rz_op, nd_fespace, h1_fespace, dbc_tdof_list, num_modes,
-                              num_vec, eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL,
-                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
-                              nd_fespace.GetComm());
+  ModeEigenSolver mode_solver(
+      mat_op, nullptr, surface_terms, nd_fespace, h1_fespace, dbc_tdof_list, num_modes,
+      num_vec, eig_tol, EigenvalueSolver::WhichType::LARGEST_REAL, iodata.solver.linear,
+      iodata.solver.boundary_mode.type, 0, nd_fespace.GetComm());
 
   auto target_at = [&](std::complex<double> w)
   { return w.real() * std::sqrt(1.1 * mat_op.GetMaxMuEpsilon()); };
@@ -290,10 +286,7 @@ private:
   std::unique_ptr<mfem::H1_FECollection> h1_fec;
   std::unique_ptr<FiniteElementSpace> nd_fespace, h1_fespace;
   std::unique_ptr<MaterialOperator> mat_op;
-  std::unique_ptr<SurfaceImpedanceOperator> surf_z_op;
-  std::unique_ptr<FarfieldBoundaryOperator> farfield_op;
-  std::unique_ptr<SurfaceConductivityOperator> surf_sigma_op;
-  std::unique_ptr<SurfaceRationalImpedanceOperator> surf_rz_op;
+  std::unique_ptr<SurfaceTerms> surface_terms;
   std::unique_ptr<mfem::HypreParMatrix> Atnr, Atni, Btnr, Bttr;
   mfem::Array<int> dbc_tdof_list;
   std::unique_ptr<mode_assembly::ModeOperatorModel> model;
@@ -340,12 +333,7 @@ public:
     nd_fespace = std::make_unique<FiniteElementSpace>(*mesh, nd_fec.get());
     h1_fespace = std::make_unique<FiniteElementSpace>(*mesh, h1_fec.get());
     mat_op = std::make_unique<MaterialOperator>(iodata, *mesh);
-    surf_z_op = std::make_unique<SurfaceImpedanceOperator>(iodata, *mat_op, mesh->Get());
-    farfield_op = std::make_unique<FarfieldBoundaryOperator>(iodata, *mat_op, mesh->Get());
-    surf_sigma_op =
-        std::make_unique<SurfaceConductivityOperator>(iodata, *mat_op, mesh->Get());
-    surf_rz_op =
-        std::make_unique<SurfaceRationalImpedanceOperator>(iodata, *mat_op, mesh->Get());
+    surface_terms = std::make_unique<SurfaceTerms>(iodata, *mat_op, mesh->Get());
 
     std::tie(Atnr, Atni) = mode_assembly::AssembleAtn(*nd_fespace, *h1_fespace, *mat_op);
     Btnr.reset(Atnr->Transpose());
@@ -367,13 +355,15 @@ public:
       }
     }
     model = std::make_unique<mode_assembly::ModeOperatorModel>(
-        *nd_fespace, *h1_fespace, *mat_op, nullptr, *surf_z_op, *farfield_op,
-        *surf_sigma_op, *surf_rz_op, *Bttr, Atnr.get(), Atni.get(), Btnr.get(),
-        dbc_tdof_list);
+        *nd_fespace, *h1_fespace, *mat_op, nullptr, *surface_terms, *Bttr, Atnr.get(),
+        Atni.get(), Btnr.get(), dbc_tdof_list);
   }
 
   const auto &GetModel() const { return *model; }
+  const auto &GetMaterialOp() const { return *mat_op; }
   const auto &GetDbcTDofList() const { return dbc_tdof_list; }
+  const auto &GetUnits() const { return iodata.units; }
+  const auto &GetSurfaceTerms() const { return *surface_terms; }
 
   const mode_assembly::OperatorComponent &
   GetComponent(mode_assembly::CoefficientType type) const
@@ -407,9 +397,10 @@ public:
       E.GetTrueDofs(t);
       x.Real().SetVector(t, 0);
     }
+    auto *X = x.Real().HostReadWrite();
     for (int i = nd_size; i < nd_size + h1_size; i++)
     {
-      x.Real()[i] = en;
+      X[i] = en;
     }
     component.op->Mult(x, y);
     return {linalg::Dot(comm, x.Real(), y.Real()), linalg::Dot(comm, x.Real(), y.Imag())};
@@ -530,10 +521,7 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
   FiniteElementSpace nd_fespace(palace_mesh, nd_fec.get());
   FiniteElementSpace h1_fespace(palace_mesh, h1_fec.get());
   MaterialOperator mat_op(iodata, palace_mesh);
-  SurfaceImpedanceOperator surf_z_op(iodata, mat_op, palace_mesh.Get());
-  FarfieldBoundaryOperator farfield_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceConductivityOperator surf_sigma_op(iodata, mat_op, palace_mesh.Get());
-  SurfaceRationalImpedanceOperator surf_rz_op(iodata, mat_op, palace_mesh.Get());
+  SurfaceTerms surface_terms(iodata, mat_op, palace_mesh.Get());
 
   mfem::Array<int> nd_dbc_tdof_list, h1_dbc_tdof_list;
   {
@@ -556,11 +544,10 @@ double SolveLondonSlabMode(double w, double h, double d, double lambda, bool pec
       iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(freq_ghz);
   // Shift-and-invert about the target, as in BoundaryModeSolver with a target n_eff.
   const int num_vec = 16;
-  ModeEigenSolver mode_solver(mat_op, nullptr, surf_z_op, farfield_op, surf_sigma_op,
-                              surf_rz_op, nd_fespace, h1_fespace, dbc_tdof_list, 1, num_vec,
-                              1.0e-12, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE,
-                              iodata.solver.linear, iodata.solver.boundary_mode.type, 0,
-                              nd_fespace.GetComm());
+  ModeEigenSolver mode_solver(
+      mat_op, nullptr, surface_terms, nd_fespace, h1_fespace, dbc_tdof_list, 1, num_vec,
+      1.0e-12, EigenvalueSolver::WhichType::LARGEST_MAGNITUDE, iodata.solver.linear,
+      iodata.solver.boundary_mode.type, 0, nd_fespace.GetComm());
   const double kn_target = omega * n_target;
   auto result = mode_solver.Solve(omega, -kn_target * kn_target);
   REQUIRE(result.num_converged >= 1);
@@ -708,6 +695,43 @@ TEST_CASE("ModeEigenSolver PEC", "[boundarymodeoperator][Serial]")
   //   kn ≈ 20708 1/m → nondimensional (×Lc where Lc = 1e-6 m) ≈ 0.02071
   // Allow 5% tolerance for the coarse 10×5 mesh at order 2.
   CHECK_THAT(kn_real, WithinRel(0.02071, 0.05));
+}
+
+TEST_CASE("ModeEigenSolver dispersive material in an oblique cross-section frame",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // A port on an oblique plane rotates the materials into the frame of its cross-section
+  // (RotateMaterialDefinitions). A scalar dispersive substrate gives the same mode as in
+  // the axis-aligned frame, to the tolerance of the two eigenvalue solves (the default of
+  // SolveRectangularModes); an anisotropic one is still rejected.
+  constexpr double eig_tol = 1.0e-8;
+  auto configure = [](const std::array<mfem::Vector, 3> *frame, double eps_zz)
+  {
+    return [frame, eps_zz](IoData &iodata)
+    {
+      const double rate = electromagnetics::c0_ / iodata.model.L0;
+      auto &material = iodata.domains.materials[0];
+      material.epsilon_r.s = {4.0, 4.0, eps_zz};
+      material.permittivity_terms.push_back(config::DebyeData{0.5, 1.0 / rate});
+      if (frame)
+      {
+        RotateMaterialDefinitions(iodata.domains.materials, (*frame)[0], (*frame)[1],
+                                  (*frame)[2]);
+      }
+    };
+  };
+  const auto ref =
+      SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure(nullptr, 4.0));
+  REQUIRE(ref.num_converged >= 1);
+  for (const auto &frame : test::ObliqueFrames(2))
+  {
+    const auto rotated =
+        SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure(&frame, 4.0));
+    REQUIRE(rotated.num_converged >= 1);
+    CHECK(std::abs(rotated.kn[0] - ref.kn[0]) <= eig_tol * std::abs(ref.kn[0]));
+    CHECK_THROWS(
+        SolveRectangularModes(1000.0, 500.0, 500.0, 4.0, 2, 1, configure(&frame, 4.5)));
+  }
 }
 
 TEST_CASE("ModeEigenSolver guarded reduced real-frequency solve",
@@ -1044,6 +1068,85 @@ TEST_CASE("ModeEigenSolver preconditioners of lossy modes",
   }
 }
 
+TEST_CASE("ModeEigenSolver multigrid preconditioners of impedance sheets",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The p-multigrid preconditioners of the in-plane (ND) and out-of-plane (H1) blocks have
+  // the terms of the impedance boundaries of the system matrix. Here oxide between two
+  // sheets of 1 mOhm per square in parallel with 10 fH per square (impedance boundaries, or
+  // rational impedance boundaries of the same parallel RL admittance), whose terms dominate
+  // the boundary terms of the system matrix. A preconditioner without them stagnates the
+  // Krylov solver (in-plane block) or doubles its number of iterations (out-of-plane block;
+  // here about 17 per solve with the complex and 24 with the real-valued preconditioner).
+  // The same holds for finite conductivity boundaries of the same surface resistance. The
+  // solutions are compared to the solution with the exact complex sparse direct
+  // preconditioner.
+  constexpr double t = 2.0, d = 3.0, freq_ghz = 10.0, eps_d = 3.9, Rs = 1.0e-3,
+                   Ls = 1.0e-14;
+  const double n_target = std::sqrt(1.1 * eps_d);
+  auto check = [&](const std::function<void(IoData &)> &configure_sheets)
+  {
+    auto configure = [&](IoData &iodata)
+    {
+      auto &oxide = iodata.domains.materials.emplace_back();
+      oxide.attributes = {1, 2};
+      oxide.epsilon_r.s = {eps_d, eps_d, eps_d};
+      iodata.boundaries.pmc.attributes = {2, 4};
+      configure_sheets(iodata);
+    };
+    const auto ref =
+        SolveParallelPlateMode(t, d, freq_ghz, n_target, 1, false, true, configure);
+    for (bool pc_mat_real : {false, true})
+    {
+      const auto result = SolveParallelPlateMode(t, d, freq_ghz, n_target, 2, pc_mat_real,
+                                                 !pc_mat_real, configure);
+      CAPTURE(pc_mat_real, result.n_eff, ref.n_eff, result.num_solves,
+              result.num_iterations);
+      REQUIRE(result.num_solves > 0);
+      CHECK(result.num_iterations <= 35 * result.num_solves);
+      CHECK(std::abs(result.n_eff - ref.n_eff) <= 1.0e-6 * std::abs(ref.n_eff));
+    }
+  };
+
+  SECTION("Impedance")
+  {
+    check(
+        [&](IoData &iodata)
+        {
+          auto &sheets = iodata.boundaries.impedance.emplace_back();
+          sheets.attributes = {1, 3};
+          sheets.Rs = Rs;
+          sheets.Ls = Ls;
+        });
+  }
+
+  SECTION("Rational impedance")
+  {
+    // Zs(s) = s Ls Rs / (s Ls + Rs).
+    check(
+        [&](IoData &iodata)
+        {
+          auto &sheets = iodata.boundaries.rational_impedance.emplace_back();
+          sheets.attributes = {1, 3};
+          sheets.num = {Ls * Rs, 0.0};
+          sheets.den = {Ls, Rs};
+        });
+  }
+
+  SECTION("Surface conductivity")
+  {
+    // Finite conductivity boundaries of the same surface resistance, 1 mOhm per square at
+    // 10 GHz (sqrt(mu0 omega / (2 sigma)) for sigma = 4e10 S/m).
+    check(
+        [&](IoData &iodata)
+        {
+          auto &sheets = iodata.boundaries.conductivity.emplace_back();
+          sheets.attributes = {1, 3};
+          sheets.sigma = 4.0e10;
+        });
+  }
+}
+
 TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
           "[boundarymodeoperator][Serial][Parallel]")
 {
@@ -1063,6 +1166,169 @@ TEST_CASE("ModeOperatorModel farfield damping uses the neighboring material",
   CHECK_THAT(pair_t.imag(), WithinRel(expected, 1.0e-12));
   CHECK(pair_n.real() == 0.0);
   CHECK_THAT(pair_n.imag(), WithinRel(-expected, 1.0e-12));
+}
+
+TEST_CASE("ModeOperatorModel impedance damping with an anisotropic absorbing boundary",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The absorbing side y = 0 lies along the substrate, here of permittivity diag(4, 9, 1),
+  // so its in-plane inverse impedance diag(2, 3) has the first entry of the conductance 2
+  // of the impedance side x = W. The impedance side must keep its own coefficient 2 I: a
+  // unit field ŷ, tangential to it and normal to the absorbing side, gives 2 H in the
+  // in-plane block, and 3 H with the tensor of the absorbing side.
+  using RMM = RectangleModeModel;
+  RMM rect(
+      [](IoData &iodata)
+      {
+        iodata.domains.materials[0].epsilon_r.s = {4.0, 9.0, 1.0};
+        iodata.boundaries.farfield.attributes = {1};
+        auto &imp = iodata.boundaries.impedance.emplace_back();
+        imp.attributes = {2};
+        imp.Rs = 0.5 * electromagnetics::Z0_;
+      });
+  const auto &component = rect.GetComponent(mode_assembly::CoefficientType::OMEGA);
+  const auto pair_t = rect.Pairing(component, 1.0, 0.0);
+  CHECK(pair_t.real() == 0.0);
+  CHECK_THAT(pair_t.imag(), WithinRel(2.0 * RMM::H, 1.0e-12));
+}
+
+TEST_CASE("ModeOperatorModel surface capacitance of impedance boundaries",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // The surface capacitance Cs of an impedance boundary adds -ω² Cs times the boundary mass
+  // of the in-plane (ND, tangential trace) field component and +ω² Cs times that of the
+  // out-of-plane (H1) component, with the sign of the H1 block, so for a unit field
+  // tangential to the impedance side x = W, the quadratic component differs by ∓Cs H from
+  // that of the cross-section without it (the frequency scalar ω² is applied separately).
+  using RMM = RectangleModeModel;
+  const double Cs = 2.0e-6 * electromagnetics::epsilon0_;  // F/sq
+  RMM bare([](IoData &) {});
+  RMM capacitive(
+      [&](IoData &iodata)
+      {
+        auto &imp = iodata.boundaries.impedance.emplace_back();
+        imp.attributes = {2};
+        imp.Cs = Cs;
+      });
+  const double expected =
+      capacitive.GetUnits().Nondimensionalize<Units::ValueType::CAPACITANCE>(Cs) * RMM::H;
+  const auto &bare_component =
+      bare.GetComponent(mode_assembly::CoefficientType::OMEGA_SQUARED);
+  const auto &component =
+      capacitive.GetComponent(mode_assembly::CoefficientType::OMEGA_SQUARED);
+  const auto pair_t =
+      capacitive.Pairing(component, 1.0, 0.0) - bare.Pairing(bare_component, 1.0, 0.0);
+  const auto pair_n =
+      capacitive.Pairing(component, 0.0, 1.0) - bare.Pairing(bare_component, 0.0, 1.0);
+  CHECK_THAT(pair_t.real(), WithinRel(-expected, 1.0e-10));
+  CHECK(pair_t.imag() == 0.0);
+  CHECK_THAT(pair_n.real(), WithinRel(expected, 1.0e-10));
+  CHECK(pair_n.imag() == 0.0);
+}
+
+TEST_CASE("ModeOperatorModel dispersive permittivity matches its value at the frequency",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // At any one frequency, a dispersive substrate is the constant material with ε = ε∞ +
+  // χ(iω), the imaginary part entering as a loss tangent, so the two assemble the same mode
+  // operator, at real and at complex ω. Rates are entered in rad/s and nondimensionalized
+  // by t_c = L₀/c₀: Debye, complex pole pair, and Djordjevic-Sarkar terms.
+  auto make_dispersive = [](IoData &iodata)
+  {
+    const double rate = electromagnetics::c0_ / iodata.model.L0;
+    iodata.problem.type = ProblemType::DRIVEN;
+    auto &substrate = iodata.domains.materials[0];
+    substrate.epsilon_r.s = {4.0, 4.0, 4.0};
+    substrate.permittivity_terms.push_back(
+        config::PermittivityPoleData{{-1.0 * rate, 0.0}, {1.5 * rate, 0.0}});
+    substrate.permittivity_terms.push_back(
+        config::PermittivityPoleData{{-0.1 * rate, 2.5 * rate}, {0.3 * rate, -0.2 * rate}});
+    substrate.permittivity_terms.push_back(
+        config::DjordjevicSarkarData{0.2, 0.01 * rate, 100.0 * rate});
+  };
+  const RectangleModeModel dispersive(make_dispersive);
+  REQUIRE(dispersive.GetMaterialOp().HasFrequencyDependentPermittivityA2(0));
+
+  for (const std::complex<double> omega :
+       {std::complex<double>(2.0, 0.0), std::complex<double>(2.0, 0.1)})
+  {
+    CAPTURE(omega);
+    const std::complex<double> s = std::complex<double>(0.0, 1.0) * omega;
+    const std::complex<double> chi =
+        dispersive.GetMaterialOp().EvaluateFrequencyDependentPermittivityA2(0, s) / (s * s);
+    const double eps = 4.0 + chi.real(), tandelta = -chi.imag() / eps;
+    const RectangleModeModel constant(
+        [eps, tandelta](IoData &iodata)
+        {
+          iodata.problem.type = ProblemType::DRIVEN;
+          auto &substrate = iodata.domains.materials[0];
+          substrate.epsilon_r.s = {eps, eps, eps};
+          substrate.tandelta.s = {tandelta, tandelta, tandelta};
+        });
+
+    const double sigma = -2.0e-1;
+    const auto A = dispersive.GetModel().Assemble(omega, sigma);
+    const auto B = constant.GetModel().Assemble(omega, sigma);
+    ComplexVector x(A->Width()), y(A->Height()), z(A->Height());
+    x.UseDevice(true);
+    y.UseDevice(true);
+    z.UseDevice(true);
+    linalg::SetRandom(Mpi::World(), x);
+    A->Mult(x, y);
+    B->Mult(x, z);
+    const double norm = linalg::Norml2(Mpi::World(), z);
+    z -= y;
+    CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
+  }
+}
+
+TEST_CASE("ModeOperatorModel dispersive permittivity at absorbing port edges",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  // Absorbing edges at x = 0 and x = W neighbor the substrate and vacuum. A lossless
+  // Lorentz substrate at real ω is the constant material ε(ω), whose absorbing condition
+  // uses √(ε(ω)/μ), so the two assemble the same mode operator.
+  const double eps_inf = 4.0, w0 = 3.0, delta = 0.7;
+  const double omega = 2.0;
+  const double eps = eps_inf + delta * w0 * w0 / (w0 * w0 - omega * omega);
+  auto make = [&](bool dispersive)
+  {
+    return [=](IoData &iodata)
+    {
+      const double rate = electromagnetics::c0_ / iodata.model.L0;  // Rates in rad/s
+      iodata.problem.type = ProblemType::DRIVEN;
+      iodata.boundaries.farfield.attributes = {2, 4};
+      iodata.boundaries.farfield.order = 1;
+      auto &substrate = iodata.domains.materials[0];
+      if (dispersive)
+      {
+        substrate.epsilon_r.s = {eps_inf, eps_inf, eps_inf};
+        substrate.permittivity_terms.push_back(config::LorentzData{delta, w0 * rate, 0.0});
+      }
+      else
+      {
+        substrate.epsilon_r.s = {eps, eps, eps};
+      }
+    };
+  };
+  const RectangleModeModel dispersive(make(true)), constant(make(false));
+  REQUIRE_THAT(dispersive.GetMaterialOp()
+                   .EvaluateFrequencyDependentPermittivity(0, {0.0, omega})
+                   .real(),
+               WithinRel(eps, 1.0e-12));
+  const double sigma = -2.0e-1;
+  const auto A = dispersive.GetModel().Assemble(omega, sigma);
+  const auto B = constant.GetModel().Assemble(omega, sigma);
+  ComplexVector x(A->Width()), y(A->Height()), z(A->Height());
+  x.UseDevice(true);
+  y.UseDevice(true);
+  z.UseDevice(true);
+  linalg::SetRandom(Mpi::World(), x);
+  A->Mult(x, y);
+  B->Mult(x, z);
+  const double norm = linalg::Norml2(Mpi::World(), z);
+  z -= y;
+  CHECK(linalg::Norml2(Mpi::World(), z) <= 1.0e-12 * norm);
 }
 
 TEST_CASE("ModeOperatorModel decouples essential DOFs in every component",
@@ -1139,7 +1405,8 @@ TEST_CASE("ModeOperatorModel boundary components on processes without the bounda
   // Surface conductivity and rational impedance boundaries contribute a unit boundary mass
   // component each (the frequency dependence is applied separately), which is assembled
   // collectively also by processes without elements on the boundary (all but the last
-  // here).
+  // here). The conductivity term comes first, scaled by its surface admittance iω/Z(ω),
+  // then the rational impedance term, scaled by its Robin coefficient iω/Zs(iω).
   using RMM = RectangleModeModel;
   RMM rect(
       [](IoData &iodata)
@@ -1152,10 +1419,25 @@ TEST_CASE("ModeOperatorModel boundary components on processes without the bounda
         rz.num = {1.0e-12, 50.0};
         rz.den = {1.0};
       });
-  for (auto type : {mode_assembly::CoefficientType::SURFACE_CONDUCTIVITY,
-                    mode_assembly::CoefficientType::RATIONAL_IMPEDANCE})
+  const std::complex<double> omega = 1.0e-2;
+  const auto &terms = rect.GetSurfaceTerms();
+  const std::complex<double> scales[] = {
+      terms.GetSurfaceConductivityOp().EvaluateScalar(0, omega),
+      terms.GetRationalImpedanceOp().EvalRobinCoefficient(
+          0, std::complex<double>(0.0, 1.0) * omega)};
+  REQUIRE(std::abs(scales[0] - scales[1]) > 1.0e-3 * std::abs(scales[0]));
+  std::vector<int> indices;
+  for (const auto &component : rect.GetModel().GetComponents())
   {
-    const auto &component = rect.GetComponent(type);
+    if (component.type != mode_assembly::CoefficientType::SURFACE_TERM)
+    {
+      continue;
+    }
+    CAPTURE(component.index);
+    indices.push_back(component.index);
+    REQUIRE((component.index == 0 || component.index == 1));
+    CHECK(rect.GetModel().EvaluateCoefficient(component, omega, 0.0) ==
+          scales[component.index]);
     const auto pair_t = rect.Pairing(component, 1.0, 0.0);
     const auto pair_n = rect.Pairing(component, 0.0, 1.0);
     CHECK_THAT(pair_t.real(), WithinRel(RMM::H, 1.0e-12));
@@ -1163,6 +1445,7 @@ TEST_CASE("ModeOperatorModel boundary components on processes without the bounda
     CHECK_THAT(pair_n.real(), WithinRel(-RMM::H, 1.0e-12));
     CHECK(pair_n.imag() == 0.0);
   }
+  CHECK(indices == std::vector<int>{0, 1});
 }
 
 TEST_CASE("ModeEigenSolver London slab", "[boundarymodeoperator][Serial][Parallel]")
@@ -1583,6 +1866,71 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
+// BoundaryMode cross-section of a 3D mesh crossed by an impedance, conductivity, or
+// rational impedance sheet, or by a sheet which is PEC only for the 2D solve (WavePortPEC):
+// the uncracked metal trace of cpw_wave_2dmode crossing its wave port face. Where the sheet
+// meets the cross-section, the 2D mesh has boundary elements with the attribute of the
+// sheet, the same as for a PEC trace, on which the 2D solve applies the boundary condition
+// of the sheet.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "BoundaryMode cross-section edges of impedance sheets",
+                 "[boundarymodeoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  constexpr int trace_attr = 11;
+  const auto cpw_dir = fs::path(PALACE_TEST_DATA_DIR) / "regression" / "input" / "cpw";
+  const std::string config =
+      PreprocessFile((cpw_dir / "cpw_wave_2dmode.json").string().c_str()).str();
+
+  // Numbers of boundary elements of the 2D mesh with the attribute of the trace, and of
+  // those in its interior, with the given boundary condition on the trace.
+  auto CountTraceEdges = [&](const std::string &type, const nlohmann::json &trace_bc)
+  {
+    auto setup = nlohmann::json::parse(config);
+    setup["Model"]["Mesh"] = (cpw_dir / setup["Model"]["Mesh"].get<std::string>()).string();
+    setup["Model"]["CrackInternalBoundaryElements"] = false;
+    setup["Problem"]["Output"] = temp_dir.string();
+    auto &boundaries = setup["Boundaries"];
+    REQUIRE(boundaries["PEC"]["Attributes"] == nlohmann::json({8, 9, trace_attr}));
+    if (type != "PEC")
+    {
+      boundaries["PEC"]["Attributes"] = {8, 9};
+      nlohmann::json bc = trace_bc;
+      bc["Attributes"] = nlohmann::json::array({trace_attr});
+      // WavePortPEC is one boundary, the other types are arrays of boundaries.
+      boundaries[type] = (type == "WavePortPEC") ? bc : nlohmann::json::array({bc});
+    }
+    IoData iodata(setup, /*print=*/false);
+    auto smesh = mesh::Load(iodata, comm);
+    BoundaryModeSolver solver(iodata, Mpi::Root(comm), Mpi::Size(comm), 1, nullptr);
+    solver.Preprocess(iodata, smesh, comm);
+    auto pmesh = mesh::Partition(iodata, std::move(smesh), comm);
+    std::array<int, 2> n = {0, 0};
+    for (int be = 0; be < pmesh->GetNBE(); be++)
+    {
+      if (pmesh->GetBdrAttribute(be) == trace_attr)
+      {
+        n[0]++;
+        n[1] += pmesh->FaceIsInterior(pmesh->GetBdrElementFaceIndex(be));
+      }
+    }
+    Mpi::GlobalSum(2, n.data(), comm);
+    return n;
+  };
+  const auto pec = CountTraceEdges("PEC", {});
+  CHECK(pec[1] > 0);
+  const std::pair<std::string, nlohmann::json> sheets[] = {
+      {"Impedance", {{"Rs", 1.0e-3}, {"Ls", 1.0e-12}}},
+      {"Conductivity", {{"Conductivity", 5.0e7}}},
+      {"RationalImpedance", {{"Numerator", {1.0e-12, 1.0e-3}}, {"Denominator", {1.0}}}},
+      {"WavePortPEC", {}}};
+  for (const auto &[type, bc] : sheets)
+  {
+    CAPTURE(type);
+    CHECK(CountTraceEdges(type, bc) == pec);
+  }
+}
+
 TEST_CASE("Mode target distance", "[boundarymodeoperator][Serial]")
 {
   using mode_assembly::TargetDistance;
@@ -1820,6 +2168,47 @@ TEST_CASE("ModeEigenSolver ranks lossy modes by complex target distance",
     CAPTURE(i, reduced.kn[i], exact.kn[i]);
     CHECK(std::abs(reduced.kn[i] - exact.kn[i]) <= 1.0e-5 * std::abs(exact.kn[i]));
   }
+}
+
+// The Poynting power of a boundary mode is the time average of its peak phasors,
+// P = 1/2 ∫ (Eₜ x Hₜ⋆) ⋅ ẑ with Hₜ = μ⁻¹ kₙ ẑ x Eₜ / ω for Eₙ = 0: a uniform field Eₜ = e x̂
+// in vacuum on the unit square carries P = 1/2 (kₙ⋆ / ω) |e|² (nondimensional, μ = 1). The
+// boundary mode solver normalizes its modes to |P| = 1, so this weight makes them carry 1
+// W.
+TEST_CASE("Boundary mode Poynting power is the time average",
+          "[boundarymodeoperator][Serial][Parallel]")
+{
+  const auto comm = Mpi::World();
+  IoData iodata(Units(0.013, 0.43));
+  iodata.problem.type = ProblemType::BOUNDARYMODE;
+  iodata.solver.order = 1;
+  iodata.solver.boundary_mode.freq = 2.0;
+  iodata.solver.boundary_mode.n = 1;
+  iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.CheckConfiguration();
+  auto serial = mfem::Mesh::MakeCartesian2D(2, 2, mfem::Element::QUADRILATERAL);
+  serial.EnsureNodes();
+  std::vector<std::unique_ptr<Mesh>> meshes;
+  meshes.push_back(std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, serial)));
+  MaterialOperator mat_op(iodata, *meshes.back());
+  BoundaryModeOperator mode_op(iodata, meshes, mat_op);
+  constexpr double e = 0.7, omega = 2.0;
+  const std::complex<double> kn(1.5, -0.2);
+  mfem::Vector field(2);
+  field = 0.0;
+  field(0) = e;
+  mfem::VectorConstantCoefficient coeff(field);
+  GridFunction E(mode_op.GetNDSpace(), true);
+  E.Real().ProjectCoefficient(coeff);
+  E.Imag() = 0.0;
+  ComplexVector et(mode_op.GetNDTrueVSize()), en(mode_op.GetH1TrueVSize());
+  E.Real().GetTrueDofs(et.Real());
+  et.Imag() = 0.0;
+  en = 0.0;
+  const std::complex<double> P = mode_op.ComputePoyntingPower(omega, kn, et, en);
+  const std::complex<double> expected = 0.5 * std::conj(kn) / omega * e * e;
+  CHECK_THAT(P.real(), WithinRel(expected.real(), 1.0e-12));
+  CHECK_THAT(P.imag(), WithinRel(expected.imag(), 1.0e-12));
 }
 
 }  // namespace palace

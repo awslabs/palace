@@ -4,6 +4,7 @@
 #include "basesolver.hpp"
 
 #include <array>
+#include <utility>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -12,6 +13,7 @@
 #include "fem/mesh.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
+#include "models/materialoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfacepostoperator.hpp"
@@ -126,19 +128,10 @@ json LoadMetadata(const fs::path &post_dir)
 
 void WriteMetadata(const fs::path &post_dir, const json &meta)
 {
-  // Write to a temporary file and atomically rename it into place so a concurrent reader
-  // (e.g. an external monitor polling palace.json mid-run) never observes a partial file.
-  std::string path = post_dir / "palace.json";
-  std::string tmp_path = post_dir / "palace.json.tmp";
-  {
-    std::ofstream fo(tmp_path);
-    if (!fo.is_open())
-    {
-      MFEM_ABORT("Unable to open metadata file \"" << tmp_path << "\"!");
-    }
-    fo << meta.dump(2) << '\n';
-  }
-  fs::rename(tmp_path, path);
+  // Replaced through a temporary file, so a concurrent reader (e.g. an external monitor
+  // polling palace.json mid-run) never observes a partial file.
+  WriteOutputFile(post_dir / "palace.json",
+                  [&](std::ostream &fo) { fo << meta.dump(2) << '\n'; });
 }
 
 // Map an MFEM geometry type to its lowercase JSON key used in the SavedAdaptedMesh block.
@@ -176,6 +169,65 @@ mfem::Array<int> MarkedElements(const Vector &e, double threshold)
     }
   }
   return ind;
+}
+
+// Adaptive mesh refinement keeps the PML of the initial mesh: the element sizes of the PML
+// blocks, from which their automatic conductivities are computed, are those of the initial
+// mesh in every iteration, also where the refinement splits PML elements (as conforming
+// refinement does to keep the mesh conforming, even with "AllowRefinement": false).
+void KeepPMLElementSize(const IoData &iodata, Mesh &mesh)
+{
+  if (iodata.domains.pml.empty() || (iodata.problem.type != ProblemType::DRIVEN &&
+                                     iodata.problem.type != ProblemType::EIGENMODE))
+  {
+    return;
+  }
+  const MaterialOperator mat_op(iodata, mesh);
+  for (const auto &layer : mat_op.GetPMLLayers())
+  {
+    mesh.SetPMLElementSize(layer.GetAttributes(), layer.GetStretch().element_size);
+  }
+}
+
+int MaskPMLRefinementIndicators(const IoData &iodata, const mfem::ParMesh &mesh, Vector &e)
+{
+  MFEM_VERIFY(e.Size() == mesh.GetNE(),
+              "Error indicator size does not match the number of local mesh elements!");
+  const int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
+  if (attr_max == 0)
+  {
+    return 0;
+  }
+
+  mfem::Array<int> marker(attr_max);
+  marker = 0;
+  for (const auto &pml : iodata.domains.pml)
+  {
+    if (pml.allow_refinement)
+    {
+      continue;
+    }
+    for (auto attr : pml.attributes)
+    {
+      if (attr > 0 && attr <= attr_max)
+      {
+        marker[attr - 1] = 1;
+      }
+    }
+  }
+
+  int masked = 0;
+  auto *E = e.HostReadWrite();
+  for (int i = 0; i < mesh.GetNE(); i++)
+  {
+    const int attr = mesh.GetAttribute(i);
+    if (attr > 0 && attr <= marker.Size() && marker[attr - 1])
+    {
+      E[i] = 0.0;
+      masked++;
+    }
+  }
+  return masked;
 }
 
 }  // namespace
@@ -242,12 +294,24 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     mesh.erase(mesh.begin(), mesh.end() - 1);
   }
   MPI_Comm comm = mesh.back()->GetComm();
+  if (use_amr)
+  {
+    KeepPMLElementSize(iodata, *mesh.back());
+  }
 
   // Perform initial solve and estimation.
   auto [indicators, ntdof] = Solve(mesh);
   MFEM_VERIFY(solve_converged_,
               "Initial solve did not converge; no converged result to fall back on!");
-  double err = indicators.Norml2(comm);
+  auto BuildRefinementIndicators = [&](const ErrorIndicator &current_indicators)
+  {
+    Vector refinement_indicators(current_indicators.Local());
+    int masked = MaskPMLRefinementIndicators(iodata, *mesh.back(), refinement_indicators);
+    Mpi::GlobalSum(1, &masked, comm);
+    return std::pair{std::move(refinement_indicators), masked};
+  };
+  auto [refinement_indicators, masked_pml_elements] = BuildRefinementIndicators(indicators);
+  double err = linalg::Norml2(comm, refinement_indicators);
 
   // True topological entity counts of the final adapted mesh.
   mesh::MeshEntityCounts mesh_counts;
@@ -292,19 +356,24 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
     }
 
     // Mark.
-    const auto marked_elements = [&comm, &refinement](const auto &indicators)
+    if (masked_pml_elements > 0)
     {
-      const auto [threshold, marked_error] = utils::ComputeDorflerThreshold(
-          comm, indicators.Local(), refinement.update_fraction);
-      const auto marked_elements = MarkedElements(indicators.Local(), threshold);
+      Mpi::Print(" {:d} PML element{} not marked for refinement\n", masked_pml_elements,
+                 masked_pml_elements == 1 ? "" : "s");
+    }
+    const auto marked_elements = [&comm, &refinement](const Vector &indicators)
+    {
+      const auto [threshold, marked_error] =
+          utils::ComputeDorflerThreshold(comm, indicators, refinement.update_fraction);
+      const auto marked_elements = MarkedElements(indicators, threshold);
       const auto [glob_marked_elements, glob_elements] =
-          linalg::GlobalSize2(comm, marked_elements, indicators.Local());
+          linalg::GlobalSize2(comm, marked_elements, indicators);
       Mpi::Print(
           " Marked {:d}/{:d} elements for refinement ({:.2f}% of the error, θ = {:.2f})\n",
           glob_marked_elements, glob_elements, 100 * marked_error,
           refinement.update_fraction);
       return marked_elements;
-    }(indicators);
+    }(refinement_indicators);
 
     // Refine.
     {
@@ -369,7 +438,9 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
       ntdof = prev_ntdof;
       break;
     }
-    err = indicators.Norml2(comm);
+    std::tie(refinement_indicators, masked_pml_elements) =
+        BuildRefinementIndicators(indicators);
+    err = linalg::Norml2(comm, refinement_indicators);
   }
 
   // The last converged solve is never archived: its output stays in post_dir. A failed

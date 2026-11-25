@@ -3,6 +3,7 @@
 
 #include "ksp.hpp"
 
+#include <vector>
 #include <mfem.hpp>
 #include "fem/fespace.hpp"
 #include "linalg/amg.hpp"
@@ -141,6 +142,87 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
   return linear.complex_coarse_solve && !linear.pc_mat_real;
 }
 
+// Sparse direct solver for the PML subdomain correction of the geometric multigrid
+// preconditioner: the solver specified by the "Type" option if it is a sparse direct
+// solver, otherwise the default sparse direct solver. The PML subdomain matrix is always
+// complex-valued, and is symmetric (but indefinite) unless the system matrix is not.
+// SuperLU_DIST, STRUMPACK, and MUMPS factor it in complex arithmetic (cuDSS as the
+// equivalent real-valued system of twice the size). The factorization is exact (never
+// compressed, in mixed precision, or with small entries dropped), and the accuracy of
+// SuperLU_DIST factorizations is checked (its static pivoting can be unstable for this
+// indefinite matrix, in which case tiny pivot replacement and iterative refinement are
+// used): approximate solves can lead the (left-preconditioned) Krylov solver to converge to
+// an inaccurate solution.
+std::unique_ptr<Solver<ComplexOperator>>
+ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
+                            MatrixSymmetry pc_mat_sym, int verbose, MPI_Comm comm)
+{
+  auto type =
+      (linear.type == LinearSolver::STRUMPACK_MP) ? LinearSolver::STRUMPACK : linear.type;
+  if (type != LinearSolver::SUPERLU && type != LinearSolver::STRUMPACK &&
+      type != LinearSolver::MUMPS && type != LinearSolver::CUDSS)
+  {
+    // Same preference as for frequency domain problems (IoData::CheckConfiguration).
+#if defined(MFEM_USE_STRUMPACK)
+    type = LinearSolver::STRUMPACK;
+#elif defined(MFEM_USE_SUPERLU)
+    type = LinearSolver::SUPERLU;
+#elif defined(MFEM_USE_MUMPS)
+    type = LinearSolver::MUMPS;
+#else
+    MFEM_ABORT("PML subdomain correction requires building with STRUMPACK, SuperLU_DIST, "
+               "or MUMPS!");
+#endif
+  }
+  [[maybe_unused]] const auto sym =
+      (pc_mat_sym == MatrixSymmetry::UNSYMMETRIC) ? pc_mat_sym : MatrixSymmetry::SYMMETRIC;
+  [[maybe_unused]] constexpr bool drop_small_entries = false;
+  [[maybe_unused]] const int print = verbose - 1;
+  std::unique_ptr<Solver<ComplexOperator>> pc;
+  switch (type)
+  {
+    case LinearSolver::SUPERLU:
+#if defined(MFEM_USE_SUPERLU)
+      // On a 2D process grid, for the accuracy check of the factorization.
+      pc = std::make_unique<SuperLUComplexSolver>(comm, linear.sym_factorization, false,
+                                                  drop_small_entries, linear.reorder_reuse,
+                                                  print, true);
+#endif
+      break;
+    case LinearSolver::STRUMPACK:
+#if defined(MFEM_USE_STRUMPACK)
+      pc = std::make_unique<StrumpackComplexSolver>(
+          comm, linear.sym_factorization, SparseCompression::NONE, linear.strumpack_lr_tol,
+          linear.strumpack_butterfly_l, linear.strumpack_lossy_precision,
+          drop_small_entries, linear.reorder_reuse, print);
+#endif
+      break;
+    case LinearSolver::MUMPS:
+#if defined(MFEM_USE_MUMPS)
+      pc = std::make_unique<MumpsComplexSolver>(comm, sym, linear.sym_factorization, 0.0,
+                                                drop_small_entries, linear.reorder_reuse,
+                                                print);
+#endif
+      break;
+    case LinearSolver::CUDSS:
+#if defined(MFEM_USE_CUDSS)
+      {
+        auto linear_pml = linear;
+        linear_pml.complex_coarse_solve = true;
+        linear_pml.drop_small_entries = drop_small_entries;
+        pc = MakeWrapperSolver<ComplexOperator, CuDSSSolver>(
+            linear_pml, comm, sym, linear.sym_factorization, linear.reorder_reuse, print);
+      }
+#endif
+      break;
+    default:
+      break;
+  }
+  MFEM_VERIFY(pc, "Unable to construct the sparse direct solver for the PML subdomain "
+                  "correction!");
+  return pc;
+}
+
 template <OperatorType OperType>
 std::unique_ptr<Solver<OperType>>
 ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
@@ -156,14 +238,29 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
   switch (type)
   {
     case LinearSolver::AMS:
-      // Can either be the coarse solve for geometric multigrid or the solver at the finest
-      // space (in which case fespaces.GetNumLevels() == 1).
-      MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
-                                "and auxiliary spaces for construction!");
-      pc = MakeWrapperSolver<OperType, HypreAmsSolver>(
-          linear, fespaces.GetFESpaceAtLevel(0), aux_fespaces->GetFESpaceAtLevel(0),
-          coarse_solver ? linear.ams_max_it : linear.mg_cycle_it, linear.mg_smooth_it,
-          linear.ams_vector_interp, linear.ams_singular_op, linear.amg_agg_coarsen, print);
+      {
+        // Can either be the coarse solve for geometric multigrid or the solver at the
+        // finest space (in which case fespaces.GetNumLevels() == 1).
+        MFEM_VERIFY(aux_fespaces, "AMS solver relies on both primary space "
+                                  "and auxiliary spaces for construction!");
+        int smooth_it = linear.mg_smooth_it;
+        if (coarse_solver && linear.ams_singular_op)
+        {
+          // The coarse solve of a singular operator takes more smoothing sweeps, chosen
+          // from the sizes of the multigrid levels.
+          std::vector<HYPRE_BigInt> level_sizes(fespaces.GetNumLevels());
+          for (std::size_t l = 0; l < level_sizes.size(); l++)
+          {
+            level_sizes[l] = fespaces.GetFESpaceAtLevel(l).GlobalTrueVSize();
+          }
+          smooth_it = GetAmsSingularCoarseSmoothIts(level_sizes, linear.mg_smooth_it);
+        }
+        pc = MakeWrapperSolver<OperType, HypreAmsSolver>(
+            linear, fespaces.GetFESpaceAtLevel(0), aux_fespaces->GetFESpaceAtLevel(0),
+            coarse_solver ? linear.ams_max_it : linear.mg_cycle_it, smooth_it,
+            linear.ams_vector_interp, linear.ams_singular_op, linear.amg_agg_coarsen,
+            linear.ams_agglomeration_target, print);
+      }
       break;
     case LinearSolver::BOOMER_AMG:
       pc = MakeWrapperSolver<OperType, BoomerAmgSolver>(
@@ -338,6 +435,14 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       }
     }();
     gmg->EnableTimer();  // Enable timing for primary geometric multigrid solver
+    if constexpr (std::is_same_v<OperType, ComplexOperator>)
+    {
+      if (linear.pml_subdomain_solver == PMLSubdomainSolver::DIRECT)
+      {
+        gmg->SetSubdomainSolver(
+            ConfigurePMLSubdomainSolver(linear, pc_mat_sym, verbose, comm));
+      }
+    }
     return gmg;
   }
   else
@@ -348,21 +453,29 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
 
 }  // namespace
 
+bool UseRealCoarseApproximation(const config::LinearSolverData &linear)
+{
+  // ConfigurePreconditionerSolver builds Jacobi, which applies the complex-valued diagonal,
+  // a ComplexCoarseSolver, or an MfemWrapperSolver, which is given the complex-valued
+  // matrix with ComplexCoarseSolve and Br + Bi otherwise (see MakeWrapperSolver).
+  return !linear.complex_coarse_solve && linear.type != LinearSolver::JACOBI;
+}
+
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
 {
-  // Mirrors the prior derivation that used to be stored on LinearSolverData::pc_mat_sym.
+  // The Floquet terms are not symmetric, also for a shifted preconditioner matrix.
   const auto &linear = iodata.solver.linear;
+  if (iodata.boundaries.periodic.wave_vector != std::array<double, 3>{0.0, 0.0, 0.0})
+  {
+    return MatrixSymmetry::UNSYMMETRIC;
+  }
   if (linear.pc_mat_shifted || iodata.problem.type == ProblemType::TRANSIENT ||
       iodata.problem.type == ProblemType::ELECTROSTATIC ||
       iodata.problem.type == ProblemType::MAGNETOSTATIC)
   {
     return MatrixSymmetry::SPD;
   }
-  if (iodata.boundaries.periodic.wave_vector == std::array<double, 3>{0.0, 0.0, 0.0})
-  {
-    return MatrixSymmetry::SYMMETRIC;
-  }
-  return MatrixSymmetry::UNSYMMETRIC;
+  return MatrixSymmetry::SYMMETRIC;
 }
 
 template <OperatorType OperType>
@@ -443,6 +556,22 @@ void BaseKspSolver<OperType>::SetAutoMultigridCycle(
 }
 
 template <OperatorType OperType>
+void BaseKspSolver<OperType>::SetMaxRelativeCorrection(double tol)
+{
+  if (auto *gmres = dynamic_cast<GmresSolver<OperType> *>(ksp.get()))
+  {
+    gmres->SetMaxRelativeCorrection(tol);
+  }
+}
+
+template <OperatorType OperType>
+bool BaseKspSolver<OperType>::GetCorrectionExceeded() const
+{
+  const auto *gmres = dynamic_cast<const GmresSolver<OperType> *>(ksp.get());
+  return gmres && gmres->GetCorrectionExceeded();
+}
+
+template <OperatorType OperType>
 void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
 {
   BlockTimer bt(Timer::KSP, use_timer);
@@ -459,7 +588,7 @@ void BaseKspSolver<OperType>::Mult(const VecType &x, VecType &y) const
     initial_res = ksp->GetInitialRes();
     ksp_mult_it += ksp->GetNumIterations();
   }
-  if (!converged)
+  if (!converged && !GetCorrectionExceeded())
   {
     Mpi::Warning(
         ksp->GetComm(),

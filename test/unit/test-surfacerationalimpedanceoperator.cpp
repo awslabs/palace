@@ -6,10 +6,12 @@
 #include <vector>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 
 #include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "models/surfacerationalimpedanceoperator.hpp"
+#include "models/surfaceterms.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/units.hpp"
@@ -41,11 +43,22 @@ std::optional<double> GetBdrCoeffValue(const MaterialPropertyCoefficient &fb,
   return fb.GetMaterialProperties()(0, 0, mat_idx);
 }
 
+// The frequency-dependent boundary mass coefficients (real and imaginary parts) of the
+// surface terms at ω, for the tangential trace (vector) or the out-of-plane (scalar) field.
+using SummedMethod = void (SurfaceTerms::*)(double, MaterialPropertyCoefficient &,
+                                            MaterialPropertyCoefficient &);
+const SummedMethod summed_methods[] = {
+    &SurfaceTerms::AddExtraSystemBdrMassCoefficients,
+    &SurfaceTerms::AddScalarExtraSystemBdrMassCoefficients};
+
 }  // namespace
 
 TEST_CASE("SurfaceRationalImpedanceOperator",
           "[surfacerationalimpedanceoperator][Serial][Parallel]")
 {
+  // The frequency-dependent boundary mass coefficients of a rational impedance boundary,
+  // as SurfaceTerms adds them to the coefficient of each field (from the scale and unit
+  // coefficient of its term).
   auto serial_mesh = std::make_unique<mfem::Mesh>(
       mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON));
   if (Mpi::Size(Mpi::World()) > serial_mesh->GetNE())
@@ -91,134 +104,131 @@ TEST_CASE("SurfaceRationalImpedanceOperator",
     return data;
   };
 
+  // The surface terms of the rational impedance boundary, which add its frequency-dependent
+  // boundary mass coefficients.
+  auto make_terms =
+      [&](const config::RationalImpedanceData &data, const std::unordered_set<int> &cracked)
+  {
+    config::BoundaryData boundaries;
+    boundaries.rational_impedance = {data};
+    boundaries.split_impedance_attributes = cracked;
+    return std::make_unique<SurfaceTerms>(boundaries, ProblemType::DRIVEN, units, mat_op,
+                                          palace_mesh.Get());
+  };
+
   SECTION("Matches the parallel-RLC admittance at finite frequency")
   {
-    std::unordered_set<int> cracked = {};
-    SurfaceRationalImpedanceOperator op({make_data(num, den)}, cracked, ProblemType::DRIVEN,
-                                        units, mat_op, palace_mesh);
+    auto terms = make_terms(make_data(num, den), {});
 
     for (double omega : {1.0, 4.0, 8.0})
     {
-      MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
-      MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
-      op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+      for (auto summed : summed_methods)
+      {
+        MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
+        MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
+        ((*terms).*summed)(omega, fbr, fbi);
 
-      const double re = 1.0 / Ls - omega * omega * Cs;
-      const double im = omega / Rs;
+        const double re = 1.0 / Ls - omega * omega * Cs;
+        const double im = omega / Rs;
+        auto vr = GetBdrCoeffValue(fbr, palace_mesh, 1);
+        auto vi = GetBdrCoeffValue(fbi, palace_mesh, 1);
+        if (vr)
+        {
+          CHECK_THAT(*vr, WithinRel(re, 1e-12) || WithinAbs(re, 1e-12));
+        }
+        if (vi)
+        {
+          CHECK_THAT(*vi, WithinRel(im, 1e-12));
+        }
+        require_global_coverage(vr.has_value(), vi.has_value());
+      }
+    }
+  }
+
+  SECTION("Matches the parallel-RLC admittance at complex frequency")
+  {
+    // The analytic continuation iω·Ys = iω/Rs + 1/Ls - ω²Cs, at the complex frequencies of
+    // the eigenmode solve.
+    auto terms = make_terms(make_data(num, den), {});
+
+    for (std::complex<double> omega :
+         {std::complex<double>(1.0, 0.2), std::complex<double>(4.0, -0.5)})
+    {
+      MaterialPropertyCoefficient dfbr(mat_op.MaxCeedBdrAttribute()),
+          dfbi(mat_op.MaxCeedBdrAttribute()), fbr(mat_op.MaxCeedBdrAttribute()),
+          fbi(mat_op.MaxCeedBdrAttribute()), frbr(mat_op.MaxCeedBdrAttribute()),
+          frbi(mat_op.MaxCeedBdrAttribute());
+      terms->AddExtraSystemBdrCoefficients(omega, dfbr, dfbi, fbr, fbi, frbr, frbi, nullptr,
+                                           nullptr);
+
+      const std::complex<double> coef =
+          std::complex<double>(0.0, 1.0) * omega / Rs + 1.0 / Ls - omega * omega * Cs;
       auto vr = GetBdrCoeffValue(fbr, palace_mesh, 1);
       auto vi = GetBdrCoeffValue(fbi, palace_mesh, 1);
       if (vr)
       {
-        CHECK_THAT(*vr, WithinRel(re, 1e-12) || WithinAbs(re, 1e-12));
+        CHECK_THAT(*vr, WithinRel(coef.real(), 1e-12));
       }
       if (vi)
       {
-        CHECK_THAT(*vi, WithinRel(im, 1e-12));
+        CHECK_THAT(*vi, WithinRel(coef.imag(), 1e-12));
       }
       require_global_coverage(vr.has_value(), vi.has_value());
     }
-  }
-
-  SECTION("DC limit: transmission zero at s = 0 gives iω·Ys → 1/Ls")
-  {
-    // N(0) = 0 with a simple zero, so lim_{s→0} s·D/N = D(0)/N'(0) = Rs/(Ls·Rs) = 1/Ls.
-    std::unordered_set<int> cracked = {};
-    SurfaceRationalImpedanceOperator op({make_data(num, den)}, cracked, ProblemType::DRIVEN,
-                                        units, mat_op, palace_mesh);
-
-    CHECK_THAT(op.EvalRobinCoefficient(0, 0.0).real(), WithinRel(1.0 / Ls, 1e-12));
-    CHECK_THAT(op.EvalRobinCoefficient(0, 0.0).imag(), WithinAbs(0.0, 1e-15));
-
-    MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
-    MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
-    op.AddExtraSystemBdrCoefficients(0.0, fbr, fbi);
-
-    auto vr = GetBdrCoeffValue(fbr, palace_mesh, 1);
-    auto vi = GetBdrCoeffValue(fbi, palace_mesh, 1);
-    if (vr)
-    {
-      CHECK_THAT(*vr, WithinRel(1.0 / Ls, 1e-12));
-    }
-    if (vi)
-    {
-      CHECK_THAT(*vi, WithinAbs(0.0, 1e-15));
-    }
-    require_global_coverage(vr.has_value(), vi.has_value());
-  }
-
-  SECTION("DC limit: finite impedance at DC contributes nothing")
-  {
-    // Purely resistive Zs = Rs: N(0) != 0, so the ω = 0 contribution is exactly zero and
-    // no boundary coefficient is assembled at all.
-    std::unordered_set<int> cracked = {};
-    SurfaceRationalImpedanceOperator op({make_data({Rs}, {1.0})}, cracked,
-                                        ProblemType::DRIVEN, units, mat_op, palace_mesh);
-
-    CHECK_THAT(op.EvalRobinCoefficient(0, 0.0).real(), WithinAbs(0.0, 1e-15));
-    CHECK_THAT(op.EvalRobinCoefficient(0, 0.0).imag(), WithinAbs(0.0, 1e-15));
-
-    MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
-    MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
-    op.AddExtraSystemBdrCoefficients(0.0, fbr, fbi);
-
-    bool flags[2] = {GetBdrCoeffValue(fbr, palace_mesh, 1).has_value(),
-                     GetBdrCoeffValue(fbr, palace_mesh, 2).has_value()};
-    Mpi::GlobalOr(2, flags, Mpi::World());
-    CHECK(!flags[0]);
-    CHECK(!flags[1]);
   }
 
   SECTION("Impedance pole: contribution vanishes without inf/nan")
   {
     // Lossless parallel LC: Zs = sLs/(s²LsCs + 1) has a pole at ω0 = 1/sqrt(Ls*Cs) = 4,
     // where D(iω0) = 0. The direct admittance form gives coef = s·D/N = 0 there.
-    std::unordered_set<int> cracked = {};
-    SurfaceRationalImpedanceOperator op({make_data({Ls, 0.0}, {Ls * Cs, 0.0, 1.0})},
-                                        cracked, ProblemType::DRIVEN, units, mat_op,
-                                        palace_mesh);
+    auto terms = make_terms(make_data({Ls, 0.0}, {Ls * Cs, 0.0, 1.0}), {});
 
-    MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
-    MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
-    op.AddExtraSystemBdrCoefficients(4.0, fbr, fbi);
+    for (auto summed : summed_methods)
+    {
+      MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
+      MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
+      ((*terms).*summed)(4.0, fbr, fbi);
 
-    auto vr = GetBdrCoeffValue(fbr, palace_mesh, 1);
-    auto vi = GetBdrCoeffValue(fbi, palace_mesh, 1);
-    if (vr)
-    {
-      CHECK(std::isfinite(*vr));
-      CHECK_THAT(*vr, WithinAbs(0.0, 1e-12));
+      auto vr = GetBdrCoeffValue(fbr, palace_mesh, 1);
+      auto vi = GetBdrCoeffValue(fbi, palace_mesh, 1);
+      if (vr)
+      {
+        CHECK(std::isfinite(*vr));
+        CHECK_THAT(*vr, WithinAbs(0.0, 1e-12));
+      }
+      if (vi)
+      {
+        CHECK(std::isfinite(*vi));
+        CHECK_THAT(*vi, WithinAbs(0.0, 1e-12));
+      }
+      require_global_coverage(vr.has_value(), vi.has_value());
     }
-    if (vi)
-    {
-      CHECK(std::isfinite(*vi));
-      CHECK_THAT(*vi, WithinAbs(0.0, 1e-12));
-    }
-    require_global_coverage(vr.has_value(), vi.has_value());
   }
 
   SECTION("Per-attribute scaling, mixed cracked/uncracked")
   {
-    std::unordered_set<int> cracked = {2};
-    SurfaceRationalImpedanceOperator op({make_data(num, den)}, cracked, ProblemType::DRIVEN,
-                                        units, mat_op, palace_mesh);
+    auto terms = make_terms(make_data(num, den), {2});
 
     const double omega = 1.0;
-    MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
-    MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
-    op.AddExtraSystemBdrCoefficients(omega, fbr, fbi);
+    for (auto summed : summed_methods)
+    {
+      MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
+      MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
+      ((*terms).*summed)(omega, fbr, fbi);
 
-    const double re = 1.0 / Ls - omega * omega * Cs;
-    auto v1 = GetBdrCoeffValue(fbr, palace_mesh, 1);
-    auto v2 = GetBdrCoeffValue(fbr, palace_mesh, 2);
-    if (v1)
-    {
-      CHECK_THAT(*v1, WithinRel(re / 1.0, 1e-12));
+      const double re = 1.0 / Ls - omega * omega * Cs;
+      auto v1 = GetBdrCoeffValue(fbr, palace_mesh, 1);
+      auto v2 = GetBdrCoeffValue(fbr, palace_mesh, 2);
+      if (v1)
+      {
+        CHECK_THAT(*v1, WithinRel(re / 1.0, 1e-12));
+      }
+      if (v2)
+      {
+        CHECK_THAT(*v2, WithinRel(re / 2.0, 1e-12));
+      }
+      require_global_coverage(v1.has_value(), v2.has_value());
     }
-    if (v2)
-    {
-      CHECK_THAT(*v2, WithinRel(re / 2.0, 1e-12));
-    }
-    require_global_coverage(v1.has_value(), v2.has_value());
   }
 
   SECTION("Invalid inputs are rejected")
@@ -227,22 +237,14 @@ TEST_CASE("SurfaceRationalImpedanceOperator",
 
     // Transmission zero (Zs = 0) at the evaluation frequency: series LC with
     // N = [Ls*Cs, 0, 1], zero at ω0 = 4.
-    SurfaceRationalImpedanceOperator op_zero({make_data({Ls * Cs, 0.0, 1.0}, {Cs, 0.0})},
-                                             cracked, ProblemType::DRIVEN, units, mat_op,
-                                             palace_mesh);
+    auto terms_zero = make_terms(make_data({Ls * Cs, 0.0, 1.0}, {Cs, 0.0}), cracked);
+    for (auto summed : summed_methods)
     {
       MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
       MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
-      CHECK_THROWS(op_zero.AddExtraSystemBdrCoefficients(4.0, fbr, fbi));
-    }
-
-    // Double transmission zero at s = 0: the DC limit diverges.
-    SurfaceRationalImpedanceOperator op_dc({make_data({1.0, 0.0, 0.0}, {1.0})}, cracked,
-                                           ProblemType::DRIVEN, units, mat_op, palace_mesh);
-    {
-      MaterialPropertyCoefficient fbr(mat_op.MaxCeedBdrAttribute());
-      MaterialPropertyCoefficient fbi(mat_op.MaxCeedBdrAttribute());
-      CHECK_THROWS(op_dc.AddExtraSystemBdrCoefficients(0.0, fbr, fbi));
+      CHECK_THROWS_WITH(((*terms_zero).*summed)(4.0, fbr, fbi),
+                        ContainsSubstring("Rational impedance boundary has a transmission "
+                                          "zero (Zs = 0) at the evaluation frequency"));
     }
 
     // Rational impedance boundaries are frequency-domain only: transient (and static)

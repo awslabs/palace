@@ -20,6 +20,7 @@
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/constants.hpp"
+#include "utils/permittivitymodel.hpp"
 #include "utils/units.hpp"
 
 namespace palace
@@ -84,7 +85,7 @@ TEST_CASE("DomainPostOperator - Electric Energy Units", "[domainpostoperator][Se
   E_field->Real().ProjectCoefficient(E_coeff);
 
   // Compute electric field energy.
-  double energy_nondim = dom_post_op.GetElectricFieldEnergy(*E_field);
+  double energy_nondim = dom_post_op.GetElectricFieldEnergy(*E_field, 0.0);
   double energy_SI = units.Dimensionalize<Units::ValueType::ENERGY>(energy_nondim);
 
   // Expected: U = (ε₀ * E₀² * sx * sy * sz) / 2.
@@ -97,13 +98,176 @@ TEST_CASE("DomainPostOperator - Electric Energy Units", "[domainpostoperator][Se
   CHECK_THAT(energy_SI, WithinRel(expected_energy_SI, 0.01));
 }
 
+TEST_CASE("DomainPostOperator - PML Regions", "[domainpostoperator][pml][Serial][Parallel]")
+{
+  // Box [0, 1] x [0, 1] x [0, 2] with a PML region z > 1 (attribute 2, εᵣ = 4) on top of
+  // the physical region (attribute 1, εᵣ = 1), and a uniform field. The total energy
+  // excludes the PML region, whose energies (of the domain postprocessing and of the PML
+  // regions) are computed with the background material of the layer.
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  MPI_Comm comm = Mpi::World();
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(2, 2, 4, mfem::Element::HEXAHEDRON, 1.0, 1.0, 2.0);
+  for (int i = 0; i < serial_mesh.GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh.GetElementCenter(i, center);
+    serial_mesh.SetAttribute(i, (center(2) > 1.0) ? 2 : 1);
+  }
+  serial_mesh.SetAttributes();
+  Mesh palace_mesh(std::make_unique<mfem::ParMesh>(comm, serial_mesh));
+
+  config::MaterialData vacuum, substrate;
+  vacuum.attributes = {1};
+  substrate.attributes = {2};
+  substrate.epsilon_r = 4.0;
+  config::PMLData pml;
+  pml.attributes = {2};
+  pml.autodetect_geometry = false;
+  pml.directions = {false, false, false, false, false, true};
+  pml.thickness = {0.0, 0.0, 0.0, 0.0, 0.0, 1.0};
+  pml.reference_frequency = 1.0;
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator mat_op({vacuum, substrate}, periodic, ProblemType::DRIVEN, palace_mesh,
+                          {pml}, order);
+  REQUIRE(mat_op.HasPML());
+
+  config::DomainPostData postpro;
+  config::DomainEnergyData energy_1, energy_2;
+  energy_1.attributes = {1};
+  energy_2.attributes = {2};
+  postpro.energy = {{1, energy_1}, {2, energy_2}};
+
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace rt_fespace(palace_mesh, &rt_fec);
+  DomainPostOperator dom_post_op(postpro, mat_op, nd_fespace, rt_fespace);
+  REQUIRE(dom_post_op.HasPML());
+
+  // Uniform fields E = (1, 2, 0) (complex, with E_imag = E_real / 2) and B = (0, 0, 3).
+  auto E = std::make_unique<GridFunction>(nd_fespace, true);
+  mfem::Vector e_vec({1.0, 2.0, 0.0});
+  mfem::VectorConstantCoefficient e_coeff(e_vec);
+  E->Real().ProjectCoefficient(e_coeff);
+  E->Imag() = E->Real();
+  E->Imag() *= 0.5;
+  auto B = std::make_unique<GridFunction>(rt_fespace, false);
+  mfem::Vector b_vec({0.0, 0.0, 3.0});
+  mfem::VectorConstantCoefficient b_coeff(b_vec);
+  B->Real().ProjectCoefficient(b_coeff);
+
+  // The time-averaged E_elec = 1/4 εᵣ |E|² V of the complex phasor E, and the energy
+  // E_mag = 1/2 |B|² V of the real field B (unit volumes, μᵣ = 1). The materials do not
+  // depend on frequency.
+  const double e2 = 1.25 * 5.0, b2 = 9.0, omega = 1.0;
+  CHECK_THAT(dom_post_op.GetElectricFieldEnergy(*E, omega), WithinRel(0.25 * e2, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetDomainElectricFieldEnergy(1, *E, omega),
+             WithinRel(0.25 * e2, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetDomainElectricFieldEnergy(2, *E, omega),
+             WithinRel(0.25 * 4.0 * e2, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetPMLElectricFieldEnergy(*E),
+             WithinRel(0.25 * 4.0 * e2, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetMagneticFieldEnergy(*B), WithinRel(0.5 * b2, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetDomainMagneticFieldEnergy(2, *B), WithinRel(0.5 * b2, 1.0e-12));
+  CHECK_THAT(dom_post_op.GetPMLMagneticFieldEnergy(*B), WithinRel(0.5 * b2, 1.0e-12));
+}
+
+TEST_CASE("DomainPostOperator - Frequency-dependent electric energy",
+          "[domainpostoperator][Serial][Parallel]")
+{
+  // A frequency-dependent material stores the electric energy of a constant permittivity
+  // ε∞ + w(ω), with w the stored-energy susceptibility of its model, over the entire domain
+  // and over a postprocessing domain that covers it in part. Its field energy at the
+  // material's permittivity is that of the constant ε∞ + Re χ(iω).
+  constexpr int order = 1;
+  fem::DefaultIntegrationOrder::p_trial = order;
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(4, 2, 2, mfem::Element::HEXAHEDRON, 2.0, 1.0, 1.0));
+  for (int i = 0; i < serial_mesh->GetNE(); i++)
+  {
+    mfem::Vector center;
+    serial_mesh->GetElementCenter(i, center);
+    serial_mesh->SetAttribute(i, 1 + static_cast<int>(2.0 * center(0)));  // 1 to 4
+  }
+  serial_mesh->SetAttributes();
+  Mesh palace_mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), *serial_mesh));
+  mfem::ND_FECollection nd_fec(order, 3);
+  FiniteElementSpace nd_fespace(palace_mesh, &nd_fec);
+  mfem::RT_FECollection rt_fec(order - 1, 3);
+  FiniteElementSpace rt_fespace(palace_mesh, &rt_fec);
+
+  // Attributes 1 and 2 are a Drude and Lorentz material, with ω between their rates, and 3
+  // and 4 a constant one. The postprocessing domain is attributes 2 and 3.
+  const double omega = 1.7;
+  config::MaterialData dispersive, constant;
+  dispersive.attributes = {1, 2};
+  dispersive.epsilon_r = config::SymmetricMatrixData<3>(2.0);
+  dispersive.permittivity_terms = {config::DrudeData{3.0, 0.2},
+                                   config::LorentzData{0.8, 2.5, 0.3}};
+  constant.attributes = {3, 4};
+  constant.epsilon_r = config::SymmetricMatrixData<3>(3.0);
+  auto reference = dispersive;
+  reference.permittivity_terms.clear();
+  using ElectricEnergy = DomainPostOperator::ElectricEnergy;
+  const auto type = GENERATE(ElectricEnergy::STORED, ElectricEnergy::MATERIAL);
+  CAPTURE(static_cast<int>(type));
+  const double w =
+      (type == ElectricEnergy::STORED)
+          ? permittivity::StoredEnergySusceptibility(dispersive.permittivity_terms, omega)
+          : permittivity::Susceptibility(dispersive.permittivity_terms, {0.0, omega})
+                .real();
+  REQUIRE(w != 0.0);
+  reference.epsilon_r = config::SymmetricMatrixData<3>(2.0 + w);
+  config::DomainPostData postpro;
+  postpro.energy[1].attributes = {2, 3};
+  config::PeriodicBoundaryData periodic;
+  MaterialOperator dispersive_op({dispersive, constant}, periodic, ProblemType::DRIVEN,
+                                 palace_mesh);
+  MaterialOperator reference_op({reference, constant}, periodic, ProblemType::DRIVEN,
+                                palace_mesh);
+  DomainPostOperator dispersive_post(postpro, dispersive_op, nd_fespace, rt_fespace);
+  DomainPostOperator reference_post(postpro, reference_op, nd_fespace, rt_fespace);
+
+  GridFunction E(nd_fespace, true);
+  mfem::VectorFunctionCoefficient Er(3,
+                                     [](const mfem::Vector &x, mfem::Vector &v)
+                                     {
+                                       v(0) = 1.0 + x(1);
+                                       v(1) = x(0) * x(2);
+                                       v(2) = std::sin(x(0));
+                                     }),
+      Ei(3,
+         [](const mfem::Vector &x, mfem::Vector &v)
+         {
+           v(0) = x(2);
+           v(1) = 0.5;
+           v(2) = x(0) - x(1);
+         });
+  E.Real().ProjectCoefficient(Er);
+  E.Imag().ProjectCoefficient(Ei);
+  const double total = reference_post.GetElectricFieldEnergy(E, omega);
+  const double domain = reference_post.GetDomainElectricFieldEnergy(1, E, omega);
+  CHECK_THAT(dispersive_post.GetElectricFieldEnergy(E, omega, type),
+             WithinRel(total, 1.0e-12));
+  CHECK_THAT(dispersive_post.GetDomainElectricFieldEnergy(1, E, omega, type),
+             WithinRel(domain, 1.0e-12));
+  // The ε∞ energy alone differs.
+  auto bare = dispersive;
+  bare.permittivity_terms.clear();
+  MaterialOperator bare_op({bare, constant}, periodic, ProblemType::DRIVEN, palace_mesh);
+  DomainPostOperator bare_post(postpro, bare_op, nd_fespace, rt_fespace);
+  CHECK(std::abs(bare_post.GetElectricFieldEnergy(E, omega, type) - total) > 0.1 * total);
+}
+
 TEST_CASE("DomainPostOperator - 2D Magnetic Energy",
           "[domainpostoperator][Serial][Parallel]")
 {
   // In 2D, B = curl E is a scalar in an L2 space with INTEGRAL map type, B = B̂ / |J|. The
-  // magnetic energy 1/2 ∫ μ⁻¹ |B|² dA must not depend on the element Jacobians. The
-  // rectangle [0, 1] x [0, 0.5] has μ_r = 1 for x < 1/2 (attribute 1, also the energy
-  // region) and μ_r = 2 for x > 1/2 (attribute 2).
+  // time-averaged magnetic energy 1/4 ∫ μ⁻¹ |B|² dA of the complex phasor B must not depend
+  // on the element Jacobians. The rectangle [0, 1] x [0, 0.5] has μ_r = 1 for x < 1/2
+  // (attribute 1, also the energy region) and μ_r = 2 for x > 1/2 (attribute 2).
   const int n = GENERATE(2, 4);
   const bool distort = GENERATE(false, true);
   CAPTURE(n, distort);
@@ -153,21 +317,21 @@ TEST_CASE("DomainPostOperator - 2D Magnetic Energy",
   if (!distort)
   {
     // Project the physical field B = 1 + i x, which the space represents exactly on
-    // parallelograms. Region 1: 1/2 ∫ (1 + x²) dA = 1/8 + 1/96. Region 2: 1/4 ∫ (1 + x²) dA
-    // = 1/16 + 7/192.
+    // parallelograms. Region 1: 1/4 ∫ (1 + x²) dA = 1/16 + 1/192. Region 2: 1/8 ∫ (1 + x²)
+    // dA = 1/32 + 7/384.
     GridFunction B(l2_fespace, true);
     mfem::ConstantCoefficient one(1.0);
     mfem::FunctionCoefficient x([](const mfem::Vector &x) { return x(0); });
     B.Real().ProjectCoefficient(one);
     B.Imag().ProjectCoefficient(x);
-    const double region = 1.0 / 8.0 + 1.0 / 96.0;
-    const double total = region + 1.0 / 16.0 + 7.0 / 192.0;
+    const double region = 1.0 / 16.0 + 1.0 / 192.0;
+    const double total = region + 1.0 / 32.0 + 7.0 / 384.0;
     CHECK_THAT(dom_post_op.GetMagneticFieldEnergy(B), WithinRel(total, 1.0e-12));
     CHECK_THAT(dom_post_op.GetDomainMagneticFieldEnergy(1, B), WithinRel(region, 1.0e-12));
   }
 
-  // The energy of B = curl E must match the curl-curl quadratic 1/2 Eᴴ K E of the system
-  // matrix on any mesh.
+  // The energy of B = curl E must match the time-averaged curl-curl quadratic 1/4 Eᴴ K E of
+  // the system matrix on any mesh.
   GridFunction E(nd_fespace, true), B(l2_fespace, true);
   mfem::VectorFunctionCoefficient Er(2,
                                      [](const mfem::Vector &x, mfem::Vector &v)
@@ -209,7 +373,7 @@ TEST_CASE("DomainPostOperator - 2D Magnetic Energy",
     K->Mult(E.Imag(), KE);
     dot += linalg::LocalDot(E.Imag(), KE);
     Mpi::GlobalSum(1, &dot, Mpi::World());
-    return 0.5 * dot;
+    return 0.25 * dot;
   };
   const double total = CurlCurlEnergy(false), region = CurlCurlEnergy(true);
   REQUIRE(region > 0.0);
@@ -217,5 +381,4 @@ TEST_CASE("DomainPostOperator - 2D Magnetic Energy",
   CHECK_THAT(dom_post_op.GetMagneticFieldEnergy(B), WithinRel(total, 1.0e-12));
   CHECK_THAT(dom_post_op.GetDomainMagneticFieldEnergy(1, B), WithinRel(region, 1.0e-12));
 }
-
 }  // namespace palace

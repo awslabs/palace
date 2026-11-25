@@ -329,11 +329,12 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     # As in the superbuild, https://github.com/hypre-space/hypre/pull/1651 (hybrid
     # Gauss-Seidel relaxation without the halo exchange of a zero initial guess), the
     # implementation of https://github.com/hypre-space/hypre/pull/1652, with fixes
-    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination), and the copy
-    # in extern/patch/hypre of the patch for AMS with a fixed number of iterations (no
+    # (multicomponent vectors in hybrid Gauss-Seidel and Gaussian elimination), and the
+    # copies in extern/patch/hypre of the patch for AMS with a fixed number of iterations (no
     # residual norms with a zero tolerance, and the zero flag of the initial guess used and
-    # maintained). Kept off the `with` blocks so the Palace variants are not folded into the
-    # patch conditions.
+    # maintained) and of the patch for the AMS coarse-level agglomeration (a prototype for
+    # https://github.com/hypre-space/hypre/issues/1654), which applies after it. Kept off
+    # the `with` blocks so the Palace variants are not folded into the patch conditions.
     depends_on(
         "hypre",
         when="@develop",
@@ -356,6 +357,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 "a8da5d214eb2992c225fc601b640a097b8766e39/extern/patch/hypre/"
                 "hypre_ams_fixed_iterations.diff",
                 sha256="441d1709c745fc74707087511f3f1bdb2a2924e1502305586ab945f24639bb54",
+                when="@3.2.0:3.2.1",
+            ),
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "d67d010416475b56381e565001ad168568df15ac/extern/patch/hypre/"
+                "hypre_ams_coarse_agglomeration.diff",
+                sha256="e72059250253adc29275a936a0ab322b9d8f231aa72a486c8c74755dfb2f152c",
                 when="@3.2.0:3.2.1",
             ),
         ],
@@ -580,20 +588,38 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 when="@4.10:",
             ),
             # https://github.com/mfem/mfem/pull/5731: setters for the supernode sizes of
-            # SuperLUSolver (narrow to @4.10.0 once merged upstream and Lookahead flags it)
+            # SuperLUSolver
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "67dd11d697fafba16d8826172343a42e7a0c5df1.diff?full_index=1",
                 sha256="96ef4106945e25b4f262d7ae2a8f5034e1b08d3276c09615ed429fd0b4c7268b",
-                when="@4.10:",
+                when="@4.10.0",
             ),
             # https://github.com/mfem/mfem/pull/5732: SuperLUSolver frees the factors on all
-            # the layers of a 3D process grid (narrow to @4.10.0 once merged upstream and
-            # Lookahead flags it)
+            # the layers of a 3D process grid
             patch(
                 "https://github.com/mfem/mfem/commit/"
                 "5e9a26308ef95e6a8337f7b266e9a92914adcca0.diff?full_index=1",
                 sha256="2f30df267053a925d4fc53513c53b4d75bf3f1dde07c706ab5afd3d59adcac41",
+                when="@4.10.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5686: DeviceGroupCommunicator::Exchange
+            # synchronizes the device stream before the GPU-aware MPI exchange
+            patch(
+                "https://github.com/mfem/mfem/commit/"
+                "5bee0d22ad3a88626bf577778aa7b31b28e87db0.diff",
+                sha256="da325c815dc513f0bc9fc32c17757e82144eaeee5ad734d8b537e816e630c856",
+                when="@4.10.0",
+            ),
+            # https://github.com/mfem/mfem/pull/5780: without GPU support in hypre,
+            # HypreParVector wraps the host data of hypre as MemoryType::HOST, so that the
+            # debug device does not protect its pages (narrow to @4.10.0 once merged
+            # upstream and Lookahead flags it)
+            patch(
+                "https://raw.githubusercontent.com/awslabs/palace/"
+                "48f86fa81ed110995e8bf6eda738650673077b2c/extern/patch/mfem/"
+                "mfem_pr5780.diff",
+                sha256="07c7214581cb5c11a4999e7bc473a67a16ae6a400c7220e1b2d743600fdee6f4",
                 when="@4.10:",
             ),
         ],
@@ -690,9 +716,11 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
     depends_on("mfem cxxstd=20", when="@0.19: +rocm")
 
     with when("+cuda"):
-        # GPU-aware MPI
+        # GPU-aware MPI. From 0.20, Palace enables it at runtime when MPI supports it, this
+        # only sets hypre's default (and lets MFEM compile its GPU-aware hypre communication).
+        depends_on("hypre+gpu-aware-mpi", when="@0.20:")
         for var in ["openmpi", "mpich", "mvapich-plus"]:
-            depends_on("hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+cuda")
+            depends_on("hypre+gpu-aware-mpi", when=f"@:0.19 ^[virtuals=mpi] {var}+cuda")
 
         # We need https://github.com/llnl/blt/pull/735, which is not available
         # in blt <= 0.7.1
@@ -714,9 +742,10 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
             depends_on(f"strumpack{cuda_variant}", when=f"+strumpack{cuda_variant}")
 
     with when("+rocm"):
+        # GPU-aware MPI, as for CUDA
+        depends_on("hypre+gpu-aware-mpi", when="@0.20:")
         for var in ["openmpi@5:", "mpich", "mvapich-plus"]:
-            # GPU-aware MPI
-            depends_on("hypre+gpu-aware-mpi", when=f"^[virtuals=mpi] {var}+rocm")
+            depends_on("hypre+gpu-aware-mpi", when=f"@:0.19 ^[virtuals=mpi] {var}+rocm")
 
         for arch in ROCmPackage.amdgpu_targets:
             rocm_variant = f"+rocm amdgpu_target={arch}"
@@ -953,12 +982,13 @@ class Palace(CMakePackage, CudaPackage, ROCmPackage):
                 )
             )
 
-        palace_with_gpu_aware_mpi = any(
-            self.spec.satisfies(f"^{var}+cuda") or self.spec.satisfies(f"^{var}+rocm")
-            for var in ["openmpi", "mpich", "mvapich-plus"]
-        )
-
-        args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
+        # From 0.20, Palace asks MPI at runtime whether it is GPU aware
+        if self.spec.satisfies("@:0.19"):
+            palace_with_gpu_aware_mpi = any(
+                self.spec.satisfies(f"^{var}+cuda") or self.spec.satisfies(f"^{var}+rocm")
+                for var in ["openmpi", "mpich", "mvapich-plus"]
+            )
+            args.append(self.define("PALACE_WITH_GPU_AWARE_MPI", palace_with_gpu_aware_mpi))
 
         # Pass down external BLAS/LAPACK
         args.extend(

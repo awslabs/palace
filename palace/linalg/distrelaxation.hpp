@@ -5,6 +5,7 @@
 #define PALACE_LINALG_DIST_RELAXATION_SMOOTHER_HPP
 
 #include <memory>
+#include <vector>
 #include "linalg/operator.hpp"
 #include "linalg/solver.hpp"
 #include "linalg/vector.hpp"
@@ -64,6 +65,10 @@ public:
 
   // Change the order of the Chebyshev smoothers of both spaces.
   void SetOrder(int cheby_order);
+
+  // Set the local true DOFs of the primary and auxiliary spaces which are not updated by
+  // the smoothers, used at the next call to SetOperators.
+  void SetMasks(const std::vector<int> &tdofs, const std::vector<int> &tdofs_G);
 
   void Mult(const VecType &x, VecType &y) const override
   {
