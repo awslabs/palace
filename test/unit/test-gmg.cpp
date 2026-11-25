@@ -129,6 +129,21 @@ double RelativeDifference(MPI_Comm comm, const VecType &x, const VecType &y)
 
 }  // namespace
 
+TEST_CASE("Geometric multigrid one-sided V-cycle smoothing orders", "[gmg][Serial]")
+{
+  // With the default smoothing order of symmetric V-cycles, max(2 p, 4) for the finest order
+  // p, one-sided V-cycles smooth each level at twice its own default order, max(4 p_l, 8).
+  using V = std::vector<int>;
+  CHECK(GetOneSidedSmoothOrders({1, 2, 4}, 8) == V{8, 8, 16});
+  CHECK(GetOneSidedSmoothOrders({1, 2, 3}, 6) == V{8, 8, 12});
+  CHECK(GetOneSidedSmoothOrders({1, 1, 2}, 4) == V{8, 8, 8});
+  CHECK(GetOneSidedSmoothOrders({1, 1}, 4) == V{8, 8});
+
+  // With another smoothing order, twice it on every level.
+  CHECK(GetOneSidedSmoothOrders({1, 2, 4}, 6) == V{12, 12, 12});
+  CHECK(GetOneSidedSmoothOrders({1, 2, 4}, 16) == V{32, 32, 32});
+}
+
 TEST_CASE("Geometric multigrid one-sided V-cycles", "[gmg][Serial][Parallel][GPU]")
 {
   // One-sided V-cycles, with twice the smoothing order, make a nonsymmetric preconditioner

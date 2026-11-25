@@ -16,15 +16,30 @@
 namespace palace
 {
 
+std::vector<int> GetOneSidedSmoothOrders(const std::vector<int> &level_orders,
+                                         int smooth_order)
+{
+  std::vector<int> orders(level_orders.size(), 2 * smooth_order);
+  if (!level_orders.empty() && smooth_order == std::max(2 * level_orders.back(), 4))
+  {
+    for (std::size_t l = 0; l < level_orders.size(); l++)
+    {
+      orders[l] = std::max(4 * level_orders[l], 8);
+    }
+  }
+  return orders;
+}
+
 template <OperatorType OperType>
 GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
     MPI_Comm comm, std::unique_ptr<Solver<OperType>> &&coarse_solver,
     const std::vector<const Operator *> &P, const std::vector<const Operator *> *G,
     int cycle_it, int smooth_it, int cheby_order, double cheby_sf_max, double cheby_sf_min,
-    bool cheby_4th_kind, bool one_sided)
+    bool cheby_4th_kind, bool one_sided, const std::vector<int> &one_sided_orders)
   : Solver<OperType>(), pc_it(cycle_it), P(P.begin(), P.end()), A(P.size() + 1),
     dbc_tdof_lists(P.size()), B(P.size() + 1), X(P.size() + 1), Y(P.size() + 1),
-    R(P.size() + 1), use_timer(false), smooth_order(cheby_order), one_sided(one_sided)
+    R(P.size() + 1), use_timer(false), smooth_order(cheby_order), one_sided(one_sided),
+    one_sided_orders(one_sided_orders)
 {
   // Configure levels of geometric coarsening. Multigrid vectors will be configured at first
   // call to Mult. The multigrid operator size is set based on the finest space dimension.
@@ -34,15 +49,17 @@ GeometricMultigridSolver<OperType>::GeometricMultigridSolver(
   MFEM_VERIFY(!G || G->size() == n_levels,
               "Invalid input for distributive relaxation smoother auxiliary space transfer "
               "operators (mismatch in number of levels)!");
+  MFEM_VERIFY(one_sided_orders.empty() || one_sided_orders.size() == n_levels,
+              "Invalid one-sided V-cycle smoothing orders (mismatch in number of levels)!");
 
   // Use the supplied level 0 (coarse) solver.
   B[0] = std::move(coarse_solver);
 
   // Configure level smoothers. Use distributive relaxation smoothing if an auxiliary
   // finite element space was provided.
-  const int order = one_sided ? 2 * cheby_order : cheby_order;
   for (std::size_t l = 1; l < n_levels; l++)
   {
+    const int order = one_sided ? GetOneSidedOrder(l) : cheby_order;
     if (G)
     {
       const int cheby_smooth_it = 1;
@@ -74,9 +91,9 @@ void GeometricMultigridSolver<OperType>::SetOneSided(bool one_sided_cycle)
   {
     return;
   }
-  const int order = one_sided_cycle ? 2 * smooth_order : smooth_order;
   for (std::size_t l = 1; l < B.size(); l++)
   {
+    const int order = one_sided_cycle ? GetOneSidedOrder(l) : smooth_order;
     if (auto *dist_smoother = dynamic_cast<DistRelaxationSmoother<OperType> *>(B[l].get()))
     {
       dist_smoother->SetOrder(order);

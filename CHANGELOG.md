@@ -36,16 +36,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - The geometric multigrid preconditioners of eigenmode simulations now choose their
     V-cycles on the first linear solve: it is solved with symmetric V-cycles and again with
     one-sided ones, which are kept if they need at most as many iterations. One-sided
-    V-cycles pre-smooth but do not post-smooth, at twice the smoothing order, apart from
-    the auxiliary space correction of distributive relaxation, which follows the
-    coarse-grid correction. They are kept on most production models, where eigenmode
-    simulations take up to 44% less time, and symmetric V-cycles for linear solves that
-    converge in a few iterations and for problems dominated by radiation. The new
-    `config["Solver"]["Linear"]["MGCycleType"]` (`"Symmetric"`, `"OneSided"` or `"Auto"`)
-    defaults to `"Auto"` for eigenmode simulations with GMRES or FGMRES and without an
-    explicit `"MGSmoothOrder"`, which keeps the V-cycles of existing configurations, and to
-    `"Symmetric"` otherwise. `"OneSided"` and `"Auto"` are an error with CG. Results change
-    at the level of the linear solver tolerance. SchemaVer 6-2-0
+    V-cycles pre-smooth but do not post-smooth, at twice the default smoothing order of each
+    multigrid level (twice `"MGSmoothOrder"` when it is set), apart from the auxiliary space
+    correction of distributive relaxation, which follows the coarse-grid correction. They
+    are kept on most production models, where eigenmode simulations take up to 44% less
+    time, and symmetric V-cycles for linear solves that converge in a few iterations and for
+    problems dominated by radiation. The new `config["Solver"]["Linear"]["MGCycleType"]`
+    (`"Symmetric"`, `"OneSided"` or `"Auto"`) defaults to `"Auto"` for eigenmode simulations
+    with GMRES or FGMRES and without an explicit `"MGSmoothOrder"`, which keeps the V-cycles
+    of existing configurations, and to `"Symmetric"` otherwise. `"OneSided"` and `"Auto"`
+    are an error with CG. Results change at the level of the linear solver tolerance.
+    SchemaVer 6-2-0
     [PR 1233](https://github.com/awslabs/palace/pull/1233).
 
 #### Bug Fixes
