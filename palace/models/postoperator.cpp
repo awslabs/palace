@@ -2123,9 +2123,9 @@ void PostOperator<solver_t>::MeasureSParameter() const
             ? fem_op->GetLumpedPortOp().GetPort(drive_port_idx).GetExcitationWeight()
             : std::complex<double>{1.0, 0.0};
     // Per-side wave-port de-embedding factor: exp(i·kₙ·d_offset) when the port is a
-    // wave port with a non-zero offset; 1 otherwise (lumped ports have no offset).
-    // Applied independently on the source and observation sides, so cross-type S
-    // (lumped↔wave) gets the correct single-sided phase.
+    // wave port with a non-zero offset; 1 otherwise (lumped and Floquet ports have no
+    // offset). Applied independently on the source and observation sides, so cross-type S
+    // (lumped↔wave, Floquet↔wave) gets the correct single-sided phase.
     const std::complex<double> src_deembed =
         (drive_port_type == PortType::WavePort)
             ? std::exp(1i * fem_op->GetWavePortOp().GetPort(drive_port_idx).kn0 *
@@ -2167,12 +2167,14 @@ void PostOperator<solver_t>::MeasureSParameter() const
                  Measurement::Magnitude(vi.S), Measurement::Phase(vi.S));
     }
 
-    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts).
+    // Floquet port S-parameters (already post-processed in MeasureFloquetPorts). Floquet
+    // observation has no d_offset — only the source-side factor applies.
     for (auto &[port_idx, S_map] : measurement_cache.floquet_port_s)
     {
       for (auto &[key, S] : S_map)
       {
         S /= drive_weight;
+        S *= src_deembed;
         auto [m, n, is_te] = key;
         auto pol = measurement_cache.floquet_circular_output ? (is_te ? "RHC" : "LHC")
                                                              : (is_te ? "TE" : "TM");
@@ -2690,9 +2692,26 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
       (omega == 0.0) ? mfem::infinity() : 0.5 * std::abs(omega) / std::abs(omega.imag());
   measurement_cache.error_abs = error_abs;
   measurement_cache.error_bkwd = error_bkwd;
+  MeasureAllImpl();
 
-  // Mini pretty-print table of eig summaries: always print with header since other
-  // measurements may log their results.
+  // Fraction of the field energy in the PML regions, which identifies the modes of the PML
+  // (with the material properties of the background medium in the layer, see
+  // DomainPostOperator). The electric energy outside of the PML regions is the stored
+  // energy, or the energy at the permittivity of the frequency-dependent materials if a
+  // material has no stored energy.
+  const bool has_pml = dom_post_op.HasPML();
+  if (has_pml)
+  {
+    const double energy_pml = dom_post_op.GetPMLElectricFieldEnergy(*E) +
+                              dom_post_op.GetPMLMagneticFieldEnergy(*B);
+    const double energy_all = measurement_cache.domain_E_field_energy_all.value_or(
+                                  measurement_cache.domain_E_field_energy_material) +
+                              measurement_cache.domain_H_field_energy_all + energy_pml;
+    measurement_cache.pml_energy_fraction =
+        (energy_all > 0.0) ? energy_pml / energy_all : 0.0;
+  }
+
+  // Mini pretty-print table of eig summaries.
   if (Mpi::Root(fem_op->GetComm()))
   {
     Table table;
@@ -2708,10 +2727,13 @@ std::optional<double> PostOperator<solver_t>::MeasureAndPrintAll(
     table.insert(Column("q", "Q") << measurement_cache.eigenmode_Q);
     table.insert(Column("err_back", "Error (Bkwd.)") << error_bkwd);
     table.insert(Column("err_abs", "Error (Abs.)") << error_abs);
+    if (has_pml)
+    {
+      table.insert(Column("pml", "PML fraction") << measurement_cache.pml_energy_fraction);
+    }
     table[0].print_as_int = true;
     Mpi::Print("{}", (step == 0) ? table.format_table() : table.format_row(0));
   }
-  MeasureAllImpl();
 
   int print_idx = step + 1;
   post_op_csv.PrintAllCSVData(*this, measurement_cache, print_idx, step);
