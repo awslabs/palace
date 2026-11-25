@@ -63,8 +63,6 @@ private:
   };
 
   std::string pvd_datasets;  // the <DataSet> lines of the collection file
-  // Whether the data sets of an existing collection file were read, in restart mode.
-  bool pvd_restarted = false;
   std::map<std::string, PointField> boundary_point_fields;
   std::map<std::string, PointField> domain_point_fields;
   std::map<std::string, CellField> domain_cell_fields;
@@ -150,6 +148,10 @@ public:
   static long long AvoidedSliceCopyBytes();
 
   void Save() override;
+
+  // Release the mesh of the VTU files cached for the next saves, which write it again (for
+  // a collection kept while another one of the same mesh is written, see PostOperator).
+  void ReleaseMeshCache();
 
 private:
   static std::atomic<long long> individual_evaluator_calls;

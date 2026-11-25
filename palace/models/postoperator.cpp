@@ -426,10 +426,10 @@ fs::path PostOperator<solver_t>::ExcitationSubFolder(int ex_idx) const
 }
 
 template <ProblemType solver_t>
-void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx, bool restart)
+void PostOperator<solver_t>::InitializeParaviewDataCollection(int ex_idx)
   requires(solver_t == ProblemType::DRIVEN)
 {
-  InitializeParaviewDataCollection(ExcitationSubFolder(ex_idx), restart);
+  InitializeParaviewDataCollection(ExcitationSubFolder(ex_idx));
 }
 
 template <ProblemType solver_t>
@@ -867,16 +867,29 @@ void PostOperator<solver_t>::EnsureParaviewDataCollection()
 
 template <ProblemType solver_t>
 void PostOperator<solver_t>::InitializeParaviewDataCollection(
-    const fs::path &sub_folder_name, bool restart)
+    const fs::path &sub_folder_name)
 {
   EnsureFieldCoefficientsSetup();
   if (!ShouldWriteParaviewFields())
   {
     return;
   }
-  // Close any files held by the previous collection before switching output paths.
-  paraview.reset();
-  paraview_bdr.reset();
+  // The collections kept write the mesh again at their next save, so that only the current
+  // ones hold it.
+  if (paraview)
+  {
+    paraview->ReleaseMeshCache();
+    paraview_bdr->ReleaseMeshCache();
+  }
+  auto [it, added] = paraview_collections.try_emplace(sub_folder_name);
+  auto &collections = it->second;
+  paraview_max_cycle = &collections.max_cycle;
+  if (!added)
+  {
+    paraview = collections.domain.get();
+    paraview_bdr = collections.boundary.get();
+    return;
+  }
 
   auto paraview_root = post_dir / "paraview";
   fs::path paraview_dir_v = paraview_root / OutputFolderName(solver_t);
@@ -888,10 +901,12 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     paraview_dir_b /= sub_folder_name;
   }
   // Set up postprocessing for output to disk.
-  paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
-  paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
-  paraview->UseRestartMode(restart);
-  paraview_bdr->UseRestartMode(restart);
+  collections.domain = std::make_unique<CeedParaViewDataCollection>(
+      paraview_dir_v, &fem_op->GetNDSpace().GetParMesh());
+  collections.boundary = std::make_unique<CeedParaViewDataCollection>(
+      paraview_dir_b, &fem_op->GetNDSpace().GetParMesh());
+  paraview = collections.domain.get();
+  paraview_bdr = collections.boundary.get();
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
   const bool use_ho = true;
@@ -905,7 +920,6 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
-  paraview_max_cycle = -1;
   paraview->SetDataFormat(format);
   MFEM_VERIFY(use_ceed_domain_paraview,
               "ParaView domain output requires the libCEED point-field path!");
@@ -1381,7 +1395,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
         units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * std::numbers::pi);
   }
   paraview->SetCycle(step);
-  paraview_max_cycle = std::max(paraview_max_cycle, step);
+  *paraview_max_cycle = std::max(*paraview_max_cycle, step);
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
@@ -1416,7 +1430,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   // non-used value to make the step identifiable within the data collection.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  paraview->SetCycle(paraview_max_cycle + 1);
+  paraview->SetCycle(*paraview_max_cycle + 1);
   if (paraview->GetTime() < 1.0)
   {
     paraview->SetTime(99.0);

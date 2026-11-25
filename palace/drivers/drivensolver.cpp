@@ -364,19 +364,11 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
           E, B, space_op.GetMaterialOp().HasFloquetFrequencyScaling() ? 1.0 : 1.0 / omega);
     }
 
-    if (!by_frequency || n_ex == 1)
+    if (excitation_starts || by_frequency)
     {
-      if (excitation_starts)
-      {
-        // Switch ParaView subfolders once per excitation, after the first solve.
-        post_op.InitializeParaviewDataCollection(excitation_idx);
-      }
-    }
-    else if (post_op.WillWriteFields(static_cast<int>(omega_i)))
-    {
-      // The fields of each excitation go to its own ParaView collection, continued at each
-      // frequency.
-      post_op.InitializeParaviewDataCollection(excitation_idx, true);
+      // Switch ParaView subfolders once per excitation, after the first solve, or to those
+      // of the excitation at each solve of a sweep by frequency (which keeps them).
+      post_op.InitializeParaviewDataCollection(excitation_idx);
     }
     SetEnvironmentPorts(space_op, post_op, excitation_idx, omega, E);
     auto total_domain_energy =
