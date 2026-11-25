@@ -656,6 +656,13 @@ void RefineMesh(const IoData &iodata, std::vector<std::unique_ptr<mfem::ParMesh>
 void PrintMeshInfo(mfem::ParMesh &mesh, const IoData &iodata, bool full,
                    const std::string &prefix)
 {
+  if (!full && iodata.problem.verbose <= 0)
+  {
+    const auto elements = mesh.GetGlobalNE();
+    Mpi::Print(mesh.GetComm(), "\n{}Mesh elements: {}\n", prefix, elements);
+    return;
+  }
+
   if (full)
   {
     mfem::Vector bbmin, bbmax;

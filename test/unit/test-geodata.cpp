@@ -82,6 +82,28 @@ void CheckVertex(const mfem::Mesh &mesh, int v, const std::array<double, 3> &coo
 
 }  // namespace
 
+TEST_CASE("Mesh statistics respect quiet refinement reporting", "[geodata][Serial]")
+{
+  auto serial_mesh = mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::TETRAHEDRON);
+  mfem::ParMesh parallel_mesh(MPI_COMM_SELF, serial_mesh);
+  IoData iodata(Units(1.0, 1.0));
+
+  auto report = [&](int verbosity, bool full)
+  {
+    iodata.problem.verbose = verbosity;
+    std::ostringstream output;
+    auto *old_buffer = mfem::out.rdbuf(output.rdbuf());
+    mesh::PrintMeshInfo(parallel_mesh, iodata, full);
+    mfem::out.rdbuf(old_buffer);
+    return output.str();
+  };
+
+  // The capture covers the MFEM quality report. The element count goes to stdout.
+  CHECK(report(0, false).empty());
+  CHECK(report(1, false).find("Parallel Mesh Stats") != std::string::npos);
+  CHECK(report(0, true).find("Parallel Mesh Stats") != std::string::npos);
+}
+
 // TODO: Add this test when we can access MFEM_DATA_PATH from Spack
 // This requires MFEM to move to a CMake-based build system for spack.
 // Waiting on https://github.com/spack/spack-packages/pull/143
