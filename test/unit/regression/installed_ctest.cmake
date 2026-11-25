@@ -80,17 +80,20 @@ function(_palace_register)
   # Discover on the processes the cases run on, as catch_discover_tests does: the binary
   # selects [Serial] cases on one process and [Parallel] ones on more. Discover via a file,
   # not OUTPUT_VARIABLE: ctest's script interpreter truncates large execute_process
-  # captures, but file output is complete.
-  set(_xml_file "${_palace_tmp}/palace-ctest-${arg_PREFIX}.xml")
+  # captures, but file output is complete. The random name keeps concurrent ctest runs from
+  # reading each other's files.
+  string(RANDOM LENGTH 16 _rand)
+  set(_xml_file "${_palace_tmp}/palace-ctest-${arg_PREFIX}-${_rand}.xml")
   execute_process(
     COMMAND "${_palace_mpiexec}" "-n" "${arg_NUMPROC}" "${_palace_bin}" "${arg_SPEC}"
       --list-tests --reporter xml
     OUTPUT_FILE "${_xml_file}"
     RESULT_VARIABLE _rc)
+  file(READ "${_xml_file}" _xml)
+  file(REMOVE "${_xml_file}")
   if(NOT _rc EQUAL 0)
     message(FATAL_ERROR "Failed to list '${arg_SPEC}' cases from ${_palace_bin} (${_rc})")
   endif()
-  file(READ "${_xml_file}" _xml)
   string(REGEX MATCHALL "<Name>[^<]*</Name>" _names "${_xml}")
   set(_seen "")
   foreach(_tag IN LISTS _names)

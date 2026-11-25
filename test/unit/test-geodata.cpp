@@ -468,7 +468,8 @@ TEST_CASE("PeriodicGmsh", "[geodata][Serial]")
               .empty());
 }
 
-TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
+TEST_CASE_METHOD(palace::test::SharedTempDir, "Interior boundary mesh cracking",
+                 "[geodata][Serial]")
 {
   // Unit cube hexahedral mesh with interior boundary elements (attribute 7) on z = 0.5,
   // spanning the domain (exterior boundary attributes 1-6).
@@ -514,7 +515,7 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   mesh.FinalizeTopology();
   mesh.Finalize();
   mesh.SetAttributes();
-  const auto mesh_path = fs::temp_directory_path() / "palace-test-interior-sheet.mesh";
+  const auto mesh_path = temp_dir / "interior-sheet.mesh";
   {
     std::ofstream fo(mesh_path);
     mesh.Print(fo);
@@ -646,9 +647,8 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
     m.Print(fo);
     return m.GetNV();
   };
-  const auto nc_path = fs::temp_directory_path() / "palace-test-interior-sheet-nc.mesh";
-  const auto nc_cut_path =
-      fs::temp_directory_path() / "palace-test-interior-sheet-nc-cracked.mesh";
+  const auto nc_path = temp_dir / "interior-sheet-nc.mesh";
+  const auto nc_cut_path = temp_dir / "interior-sheet-nc-cracked.mesh";
   WriteNonconformal(mfem::Mesh(mesh), nc_path);
   const int nv_nc_cut = WriteNonconformal(
       std::move(*LoadMesh(Impedance(true), none, mesh_path)), nc_cut_path);
@@ -662,9 +662,6 @@ TEST_CASE("Interior boundary mesh cracking", "[geodata][Serial]")
   CHECK(LoadMesh(Impedance(true), none, nc_cut_path)->GetNV() == nv_nc_cut);
   CHECK(LoadMesh({{"PMC", {{"Attributes", {7}}}}}, none, nc_cut_path)->GetNV() ==
         nv_nc_cut);
-  fs::remove(nc_path);
-  fs::remove(nc_cut_path);
-  fs::remove(mesh_path);
 }
 
 TEST_CASE("Default conductivity sheet warning", "[geodata][Serial]")
@@ -762,7 +759,8 @@ TEST_CASE("Default conductivity sheet warning", "[geodata][Serial]")
 // MFEM identifies a face by its three smallest vertex numbers. A cracked quadrilateral with
 // three vertices on the crack front (at a corner of the crack) merges with its twin and the
 // crack closes there, unless the front vertices are numbered last.
-TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
+TEST_CASE_METHOD(palace::test::SharedTempDir, "CrackQuadrilateralCorners",
+                 "[geodata][Serial]")
 {
   // Hexahedral mesh with an interior boundary (attribute 7) made of the four quadrilaterals
   // of z = 0.5 around the center of the domain: each has three vertices on the crack front
@@ -811,7 +809,7 @@ TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
   mesh.FinalizeTopology();
   mesh.Finalize();
   mesh.SetAttributes();
-  const auto mesh_path = fs::temp_directory_path() / "palace-test-crack-quad-corners.mesh";
+  const auto mesh_path = temp_dir / "crack-quad-corners.mesh";
   {
     std::ofstream fo(mesh_path);
     mesh.Print(fo);
@@ -847,7 +845,6 @@ TEST_CASE("CrackQuadrilateralCorners", "[geodata][Serial]")
   }
   CHECK(n_crack == 8);
   CHECK(n_merged == 0);
-  fs::remove(mesh_path);
 }
 
 TEST_CASE("Default IOData", "[iodata][Serial]")

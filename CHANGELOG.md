@@ -32,10 +32,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Build system
 
-  - Concurrent runs of a regression case no longer delete each other's staged inputs and
-    outputs, which made them fail or hang. Without `--regression-run-dir`, each run of
-    `palace-unit-tests` stages its regression cases in a new temporary directory, removed
-    if all tests pass and kept otherwise.
+  - Concurrent runs of the tests no longer overwrite or delete each other's temporary
+    files, which made them fail or hang, or register fewer installed tests. Without
+    `--regression-run-dir`, each run of `palace-unit-tests` stages its regression cases in
+    a new temporary directory, which keeps only the stages of failing cases.
     [PR 1307](https://github.com/awslabs/palace/pull/1307).
 
 ## [0.20.0] - 2026-11-23
