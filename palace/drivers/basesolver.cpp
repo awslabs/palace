@@ -193,6 +193,11 @@ void KeepPMLElementSize(const IoData &iodata, Mesh &mesh)
 
 int MaskPMLRefinementIndicators(const IoData &iodata, const mfem::ParMesh &mesh, Vector &e)
 {
+  // A solve without error estimation (substructuring without adaptation) gives none.
+  if (e.Size() == 0)
+  {
+    return 0;
+  }
   MFEM_VERIFY(e.Size() == mesh.GetNE(),
               "Error indicator size does not match the number of local mesh elements!");
   const int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
