@@ -30,6 +30,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-amg.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-ams.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-basesolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-blockcyclic.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-boundarymodeoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-brokenspace.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-coefficient.cpp
@@ -67,6 +68,7 @@ add_executable(unit-tests
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-postoperatorcsv.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-rap.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test-regionsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-romoperator.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schema.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test-schursolver.cpp

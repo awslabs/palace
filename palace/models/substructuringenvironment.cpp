@@ -230,15 +230,8 @@ void SubstructuringSolver::Impl::EnsureEnv()
     keep[i] = is_env_int[i] || is_gamma[i];
   }
   SideSystem side({&Aenv()}, keep);
-  const LinearSolver type = DirectSolverFor(iodata.solver.substructuring->direct_solver,
-                                            Factorization::SCHUR_COMPLEMENT);
-#if defined(PALACE_WITH_STRUMPACK_SCHUR)
-  const bool partial = (type != LinearSolver::SUPERLU);
-#else
-  const bool partial = (type == LinearSolver::MUMPS);
-#endif
-  env_factorization = std::string(DirectSolverName(type)) +
-                      (partial ? " partial factorization" : " factorization");
+  const LinearSolver type = SchurSolverFor(iodata.solver.substructuring->direct_solver);
+  env_factorization = SchurFactorizationName(type);
   const auto gamma = side.Indices(InterfaceTrueDofs());
   env_schur = MakeSchurFactorization<double>(
       type, iodata.solver.linear.sym_factorization, parent_fes.GetComm(), side.n_glob,

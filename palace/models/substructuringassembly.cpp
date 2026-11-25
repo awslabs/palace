@@ -4,7 +4,6 @@
 #include "substructuringsolverimpl.hpp"
 
 #include <cmath>
-#include <limits>
 #include <optional>
 #include <set>
 #include <utility>
@@ -696,43 +695,6 @@ SubstructuringSolver::Impl::AssembleSelection(const std::vector<char> &mark) con
   return std::make_unique<mfem::HypreParMatrix>(
       comm, nt, SolutionSpace().GlobalTrueVSize(), static_cast<HYPRE_BigInt>(nglob),
       I.data(), J.data(), V.data(), SolutionSpace().GetTrueDofOffsets(), cols.data());
-}
-
-std::unique_ptr<mfem::HypreParMatrix>
-SubstructuringSolver::Impl::AssembleDenseInterface() const
-{
-  const int nG = nG_global, nloc = gamma_nloc;
-  // The rows of a hypre matrix are offset by int.
-  const long long entries = static_cast<long long>(nloc) * nG;
-  MFEM_VERIFY(entries <= std::numeric_limits<int>::max(),
-              "The substructuring interface puts "
-                  << entries
-                  << " entries of S_E on one process, more than 2^31 - 1: run on more "
-                     "processes!");
-  const std::vector<HYPRE_BigInt> g2t = InterfaceTrueDofs();
-  std::vector<int> I(nt + 1, 0);
-  std::vector<HYPRE_BigInt> J;
-  std::vector<double> V;
-  J.reserve(static_cast<std::size_t>(nloc) * nG);
-  V.reserve(static_cast<std::size_t>(nloc) * nG);
-  for (int i = 0; i < nt; i++)
-  {
-    if (is_gamma[i])
-    {
-      const double *row =
-          &S_rows[static_cast<std::size_t>(gamma_global[i] - gamma_off) * nG];
-      for (int j = 0; j < nG; j++)
-      {
-        J.push_back(g2t[j]);
-        V.push_back(row[j]);
-      }
-    }
-    I[i + 1] = static_cast<int>(J.size());
-  }
-  const HYPRE_BigInt glob = SolutionSpace().GlobalTrueVSize();
-  return std::make_unique<mfem::HypreParMatrix>(
-      parent_fes.GetComm(), nt, glob, glob, I.data(), J.data(), V.data(),
-      SolutionSpace().GetTrueDofOffsets(), SolutionSpace().GetTrueDofOffsets());
 }
 
 void SubstructuringSolver::Impl::EnumerateInterface()

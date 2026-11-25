@@ -2523,11 +2523,11 @@ TEST_CASE("SubstructuringSolver grounded PEC boundaries",
 TEST_CASE("SubstructuringSolver sparse direct solver choice",
           "[substructure][Serial][Parallel]")
 {
-  // Solver.Linear.Type names the sparse direct solver of the factorizations, else Palace
-  // prefers STRUMPACK, MUMPS, then SuperLU_DIST for a system, and MUMPS, STRUMPACK, then
-  // SuperLU_DIST for the condensation of the environment (by the partial factorization of
-  // MUMPS, or of STRUMPACK with its Schur complement interface, and otherwise by solves).
-  // The capacitance matrix does not depend on it.
+  // Solver.Linear.Type names the sparse direct solver of the factorizations for the Schur
+  // complements of the environment and of the region, else Palace prefers MUMPS,
+  // STRUMPACK, then SuperLU_DIST (the partial factorization of MUMPS, or of STRUMPACK with
+  // its Schur complement interface, and otherwise one solve per interface DOF). The
+  // capacitance matrix does not depend on it.
   auto config = [](const std::string &type)
   {
     return json{{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -2579,23 +2579,19 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   {
     CAPTURE(type);
     IoData iodata(config(type), false);
-    const LinearSolver requested = iodata.solver.substructuring->direct_solver;
-    const std::string direct =
-        DirectSolverName(DirectSolverFor(requested, Factorization::SYSTEM));
     const LinearSolver schur_type =
-        DirectSolverFor(requested, Factorization::SCHUR_COMPLEMENT);
-    std::string direct_ref = (type == "SuperLU") ? "SuperLU_DIST" : type,
-                schur_ref = direct_ref;
+        SchurSolverFor(iodata.solver.substructuring->direct_solver);
+    std::string schur_ref = (type == "SuperLU") ? "SuperLU_DIST" : type;
     if (type == "Default")
     {
-      direct_ref = (types[0] == "SuperLU") ? "SuperLU_DIST" : types[0];
 #if defined(MFEM_USE_MUMPS)
       schur_ref = "MUMPS";
+#elif defined(MFEM_USE_STRUMPACK)
+      schur_ref = "STRUMPACK";
 #else
-      schur_ref = direct_ref;
+      schur_ref = "SuperLU_DIST";
 #endif
     }
-    CHECK(direct == direct_ref);
     CHECK(std::string(DirectSolverName(schur_type)) == schur_ref);
     {
       SideSystem side({A.get()}, std::vector<char>(A->Height(), 1));
@@ -2610,18 +2606,6 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
                 { return g >= A->GetRowStarts()[0] && g < A->GetRowStarts()[1]; })) *
                 schur_vars.size());
     }
-    const auto solver = substructuring::MakeDirectSolver(iodata, Mpi::World());
-    std::string made;
-#if defined(MFEM_USE_STRUMPACK)
-    made = dynamic_cast<StrumpackSolver *>(solver.get()) ? "STRUMPACK" : made;
-#endif
-#if defined(MFEM_USE_MUMPS)
-    made = dynamic_cast<substructuring::MumpsDirectSolver *>(solver.get()) ? "MUMPS" : made;
-#endif
-#if defined(MFEM_USE_SUPERLU)
-    made = dynamic_cast<SuperLUSolver *>(solver.get()) ? "SuperLU_DIST" : made;
-#endif
-    CHECK(made == direct_ref);
   }
 
   // The capacitance of each choice, against a monolith: the grounded boundaries of the

@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <memory>
 #include <optional>
 #include <span>
 #include <string>
@@ -166,12 +165,6 @@ std::vector<T> SignatureMap::DualMatrix(int g0, int m, ReadRow &&read_row) const
 // shared between ranks is marked on its owner).
 std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
                                    const std::vector<int> &bdr_attributes);
-
-// A with the rows and columns of the given local true DOFs replaced by the identity. The
-// identity is added rather than set by the elimination: a matrix assembled on the device
-// stores no diagonal entry in a row without element contributions.
-std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMatrix &A,
-                                                          const mfem::Array<int> &dofs);
 
 // The boundary attributes of the mesh whose elements all border elements of the region
 // only, so that a field known in the region determines quantities on them. Collective.

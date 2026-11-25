@@ -5,6 +5,7 @@
 
 #include <array>
 #include <complex>
+#include "linalg/blockcyclic.hpp"
 #include "linalg/directschur.hpp"
 #include "linalg/mumpsschur.hpp"
 
@@ -37,17 +38,14 @@ bool Built(LinearSolver type)
 
 }  // namespace
 
-LinearSolver DirectSolverFor(LinearSolver requested, Factorization kind)
+LinearSolver SchurSolverFor(LinearSolver requested)
 {
   if (Built(requested))
   {
     return requested;
   }
-  const auto order =
-      (kind == Factorization::SYSTEM)
-          ? std::array{LinearSolver::STRUMPACK, LinearSolver::MUMPS, LinearSolver::SUPERLU}
-          : std::array{LinearSolver::MUMPS, LinearSolver::STRUMPACK, LinearSolver::SUPERLU};
-  for (const auto type : order)
+  for (const auto type :
+       std::array{LinearSolver::MUMPS, LinearSolver::STRUMPACK, LinearSolver::SUPERLU})
   {
     if (Built(type))
     {
@@ -72,24 +70,41 @@ const char *DirectSolverName(LinearSolver type)
   }
 }
 
+std::string SchurFactorizationName(LinearSolver type)
+{
+#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+  const bool partial = (type != LinearSolver::SUPERLU);
+#else
+  const bool partial = (type == LinearSolver::MUMPS);
+#endif
+  return std::string(DirectSolverName(type)) +
+         (partial ? " partial factorization" : " factorization");
+}
+
 template <typename T>
 std::unique_ptr<SchurFactorization<T>>
 MakeSchurFactorization(LinearSolver type, SymbolicFactorization ordering, MPI_Comm comm,
                        HYPRE_BigInt n_glob, int n_loc,
                        typename SchurFactorization<T>::Coo &&coo,
                        const std::vector<HYPRE_BigInt> &schur_vars, std::vector<int> rows,
-                       bool spd, bool refactor)
+                       bool spd, bool refactor, const BlockCyclicGrid *grid)
 {
 #if defined(MFEM_USE_MUMPS)
   if (type == LinearSolver::MUMPS)
   {
-    return std::make_unique<MumpsSchurSolverT<T>>(comm, n_glob, n_loc, std::move(coo),
-                                                  schur_vars, kBlrTol, refactor, spd,
-                                                  std::move(rows), ordering);
+    return grid
+               ? std::make_unique<MumpsSchurSolverT<T>>(
+                     comm, n_glob, n_loc, std::move(coo), schur_vars, kBlrTol, refactor,
+                     spd, std::move(rows), ordering, grid->BlockSize(),
+                     grid->NumProcessRows(), grid->NumProcessCols())
+               : std::make_unique<MumpsSchurSolverT<T>>(comm, n_glob, n_loc, std::move(coo),
+                                                        schur_vars, kBlrTol, refactor, spd,
+                                                        std::move(rows), ordering);
   }
 #else
   MFEM_CONTRACT_VAR(spd);
   MFEM_CONTRACT_VAR(refactor);
+  MFEM_CONTRACT_VAR(grid);
 #endif
   return std::make_unique<DirectSchurSolverT<T>>(
       comm, n_glob, n_loc, std::move(coo), schur_vars, std::move(rows), type, ordering);
@@ -99,11 +114,11 @@ template std::unique_ptr<SchurFactorization<double>>
 MakeSchurFactorization<double>(LinearSolver, SymbolicFactorization, MPI_Comm, HYPRE_BigInt,
                                int, SchurFactorization<double>::Coo &&,
                                const std::vector<HYPRE_BigInt> &, std::vector<int>, bool,
-                               bool);
+                               bool, const BlockCyclicGrid *);
 template std::unique_ptr<SchurFactorization<std::complex<double>>>
 MakeSchurFactorization<std::complex<double>>(
     LinearSolver, SymbolicFactorization, MPI_Comm, HYPRE_BigInt, int,
     SchurFactorization<std::complex<double>>::Coo &&, const std::vector<HYPRE_BigInt> &,
-    std::vector<int>, bool, bool);
+    std::vector<int>, bool, bool, const BlockCyclicGrid *);
 
 }  // namespace palace

@@ -7,12 +7,14 @@
 #include <cmath>
 #include <limits>
 #include <map>
+#include <numeric>
 #include <set>
 #include <utility>
 #include "fem/gridfunction.hpp"
 #include "fem/interpolator.hpp"
 #include "fem/multigrid.hpp"
 #include "linalg/errorestimator.hpp"
+#include "linalg/lowertriangle.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/geodata.hpp"
 #include "utils/timer.hpp"
@@ -488,40 +490,40 @@ SubstructuringSolver::Impl::Impl(const IoData &iodata,
   AssembleRegion();
 }
 
-void SubstructuringSolver::Impl::EnsureRegionFactor(int n)
+void SubstructuringSolver::Impl::EnsureRegionSolver()
 {
-  if (reg_lu)
+  if (region_solver)
   {
     return;
   }
   BlockTimer bt(Timer::KSP_SETUP);
-  reg_lu = std::make_unique<substructuring::BlockedDirectSolver>(
-      substructuring::MakeDirectSolver(iodata, parent_fes.GetComm()),
-      std::min(substructuring::BlockedDirectSolver::kMaxBlock, std::max(n, 1)));
-  std::unique_ptr<mfem::HypreParMatrix> A;
-  if (nG_global > 0)
-  {
-    A.reset(mfem::ParAdd(A_region_free.get(), AssembleDenseInterface().get()));
-  }
-  const std::unique_ptr<mfem::HypreParMatrix> E = AssembleSelection(is_region_free);
-  const std::unique_ptr<mfem::HypreParMatrix> P(
-      mfem::RAP(A ? A.get() : A_region_free.get(), E.get()));
-  reg_lu->SetOperator(*P);  // the factor keeps its own copy of P
+  // The system on the region-free DOFs, in the order of the vectors of SolveRegion.
+  SideSystem side({A_region.get()}, is_region_free);
+  const int n_rf = static_cast<int>(side.rows.size());
+  MFEM_ASSERT(n_rf == rf_idx.Size(), "The region's system is not on its free DOFs!");
+  std::vector<int> rows(n_rf);
+  std::iota(rows.begin(), rows.end(), 0);
+  region_solver = std::make_unique<RegionSolver<double>>(
+      *gamma_grid, SchurSolverFor(iodata.solver.substructuring->direct_solver),
+      iodata.solver.linear.sym_factorization, side.n_glob, n_rf,
+      SchurFactorization<double>::Coo{std::move(side.irn), std::move(side.jcn),
+                                      std::move(side.parts[0])},
+      side.Indices(InterfaceTrueDofs()), std::move(rows), [this](std::vector<double> &C)
+      { gamma_grid->AddFromRows(S_rows, gamma_off, gamma_nloc, C); });
 }
 
 void SubstructuringSolver::Impl::SolveRegion(std::vector<mfem::Vector> &x)
 {
-  const int n = static_cast<int>(x.size());
-  EnsureRegionFactor(n);
+  EnsureRegionSolver();
   BlockTimer bt(Timer::KSP);
-  std::vector<const mfem::Vector *> X(n);
-  std::vector<mfem::Vector *> Y(n);
-  for (int k = 0; k < n; k++)
+  std::vector<const mfem::Vector *> X(x.size());
+  std::vector<mfem::Vector *> Y(x.size());
+  for (std::size_t k = 0; k < x.size(); k++)
   {
     X[k] = &x[k];
     Y[k] = &x[k];
   }
-  reg_lu->Mult(X, Y);
+  region_solver->Mult(X, Y);
 }
 
 mfem::Vector SubstructuringSolver::Impl::DirichletField(const mfem::Vector &xd) const
@@ -821,20 +823,10 @@ SubstructuringSolver::~SubstructuringSolver() = default;
 
 void SubstructuringSolver::CondenseEnvironment()
 {
-  // A_region restricted to region-free true DOFs (non-region-free pinned to identity).
-  mfem::Array<int> non_rfree;
-  for (int i = 0; i < impl->nt; i++)
-  {
-    if (!impl->is_region_free[i])
-    {
-      non_rfree.Append(i);
-    }
-  }
-  impl->A_region_free = EliminateToIdentity(*impl->A_region, non_rfree);
-
   impl->EnumerateInterface();
   MPI_Comm comm = impl->parent_fes.GetComm();
   const int nG = impl->nG_global;
+  impl->gamma_grid = std::make_unique<BlockCyclicGrid>(comm, nG);
 
   // Interface true-DOF geometric signature (replicated), to re-order a saved S_E onto the
   // current interface after re-meshing or re-partitioning the region (with the side moments
@@ -911,10 +903,14 @@ void SubstructuringSolver::CondenseEnvironment()
         impl->SKin_rows, impl->gamma_off, impl->gamma_global, impl->nG_global, comm);
   }
 
-  const std::string region_solver = fmt::format(
-      "{} factorization",
-      DirectSolverName(DirectSolverFor(impl->iodata.solver.substructuring->direct_solver,
-                                       Factorization::SYSTEM)));
+  std::string region_solver = SchurFactorizationName(
+      SchurSolverFor(impl->iodata.solver.substructuring->direct_solver));
+  if (nG > 0)
+  {
+    region_solver +=
+        fmt::format(", dense Cholesky on a {:d} x {:d} process grid",
+                    impl->gamma_grid->NumProcessRows(), impl->gamma_grid->NumProcessCols());
+  }
 
   // Summary: the sizes, and how the environment was condensed and the region is solved.
   std::string env_solver;
