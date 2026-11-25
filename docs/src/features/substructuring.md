@@ -471,15 +471,14 @@ palace cpw_resonator_grid_online_region.json  # the same on the mesh of the regi
 palace cpw_resonator_grid_redesign.json       # region substrate permittivity 0.4% higher
 ```
 
-The sweep resolves the resonance of resonator 6 near 18.28 GHz in the transmission between the
-ports of the middle feedline (`port-S.csv`), and the runs agree to the tolerance of the regular
-simulation's linear solver. The redesign moves the resonance to 18.25 GHz, as a regular
-simulation of the redesigned device does. Each online frequency factors only the region: on a
-192-core node, an online sweep is about 6 times faster than a regular one at the example's
-linear solver tolerance and 4 times at Palace's default, and about 8 and 5 times on the mesh of
-the region. The mesh has about 1.3 million unknowns, so the runs are best on a cluster node. The
-mesh, and so these frequencies, depend on the versions of DeviceLayout.jl and Gmsh, which
-`examples/Manifest.toml` pins.
+The sweep resolves the resonance of resonator 6 near 18.28 GHz in the transmission between the ports
+of the middle feedline (`port-S.csv`), and the runs agree to the tolerance of the regular
+simulation's linear solver. The redesign moves the resonance to 18.25 GHz, as a regular simulation
+of the redesigned device does. Each online frequency factors only the region: on a 192-core node, an
+online sweep is about 5 times faster than a regular one at the example's linear solver tolerance and
+4 times at Palace's default, and about 6 times on the mesh of the region. The mesh has about 1.3
+million unknowns, so the runs are best on a cluster node. The mesh, and so these frequencies, depend
+on the versions of DeviceLayout.jl and Gmsh, which `examples/Manifest.toml` pins.
 
 The script also writes `cpw_resonator_grid_offline_adaptive.json` and
 `cpw_resonator_grid_online_adaptive.json`, which sample a rational model of the environment over
