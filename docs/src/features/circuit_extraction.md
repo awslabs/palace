@@ -153,7 +153,8 @@ of the driven solver as well as the following additional files:
     `"Impedance"` boundaries, while ``U_{E}`` includes every capacitive boundary term. With a
     frequency-dependent permittivity in the model, ``U_{E}`` is the energy of its
     high-frequency permittivity ``\varepsilon_\infty``, without the polarization energy of the
-    material, which the auxiliary states carry, so that ``p_{\Gamma}`` differs from
+    material, which the auxiliary states carry, and with PML regions, ``U_{E}`` includes their
+    energy, which `surface-Q.csv` leaves out: in both cases, ``p_{\Gamma}`` differs from
     `surface-Q.csv` for every interface (the loss of the circuit does not involve ``U_{E}``).
     Like ``\widehat{\bm{C}}``, the matrix of an `"MS"` interface next to a frequency-dependent
     substrate uses ``\varepsilon_\infty`` of the substrate, where `surface-Q.csv` uses

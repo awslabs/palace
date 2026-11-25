@@ -3558,14 +3558,23 @@ void RomOperator::PrintPROMMatrices(
       const auto &y = eigs[k].eigvec;
       energies[k] = (y.adjoint() * C_re * y)(0).real();
     }
+    std::vector<std::string> causes;
     if (space_op.GetMaterialOp().HasFrequencyDependentPermittivity())
     {
-      Mpi::Warning(
-          space_op.GetComm(),
-          "The interface participations of the synthesized eigenvectors are "
-          "relative to the electric energy of rom-C-re.csv, with the high-frequency "
-          "permittivity of the frequency-dependent materials and without their "
-          "polarization energy, so they differ from those of surface-Q.csv!\n");
+      causes.emplace_back("with the high-frequency permittivity of the frequency-dependent "
+                          "materials and without their polarization energy");
+    }
+    if (space_op.GetMaterialOp().HasPML())
+    {
+      causes.emplace_back("with the energy of the PML regions");
+    }
+    if (!causes.empty())
+    {
+      Mpi::Warning(space_op.GetComm(),
+                   "The interface participations of the synthesized eigenvectors are "
+                   "relative to the electric energy of rom-C-re.csv, {}, so they differ "
+                   "from those of surface-Q.csv!\n",
+                   fmt::join(causes, ", and "));
     }
     for (const auto &[idx, B] : interface_forms)
     {
