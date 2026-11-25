@@ -191,11 +191,13 @@ ConfigurePMLSubdomainSolver(const config::LinearSolverData &linear,
       break;
     case LinearSolver::STRUMPACK:
 #if defined(MFEM_USE_STRUMPACK)
-      // Also maps the elimination tree by factor size, which does not change the accuracy.
+      // Without selective inversion (products with inverted factors are less accurate than
+      // triangular solves), and with the elimination tree mapped by factor size, which
+      // does not change the accuracy.
       pc = std::make_unique<StrumpackComplexSolver>(
           comm, linear.sym_factorization, SparseCompression::NONE, linear.strumpack_lr_tol,
           linear.strumpack_butterfly_l, linear.strumpack_lossy_precision,
-          drop_small_entries, linear.reorder_reuse, print);
+          drop_small_entries, linear.reorder_reuse, false, print);
 #endif
       break;
     case LinearSolver::MUMPS:
@@ -311,7 +313,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                     linear, comm, linear.sym_factorization,
                     linear.strumpack_compression_type, linear.strumpack_lr_tol,
                     linear.strumpack_butterfly_l, linear.strumpack_lossy_precision,
-                    linear.reorder_reuse, print);
+                    linear.reorder_reuse, linear.strumpack_selective_inversion > 0, print);
               },
               [linear, comm, print]()
               {
@@ -319,7 +321,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                     comm, linear.sym_factorization, linear.strumpack_compression_type,
                     linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
                     linear.strumpack_lossy_precision, linear.drop_small_entries,
-                    linear.reorder_reuse, print);
+                    linear.reorder_reuse, linear.strumpack_selective_inversion > 0, print);
               },
               verbose > 0);
           break;
@@ -328,7 +330,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       pc = MakeWrapperSolver<OperType, StrumpackSolver>(
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+          linear.strumpack_lossy_precision, linear.reorder_reuse,
+          linear.strumpack_selective_inversion > 0, print);
 #endif
       break;
     case LinearSolver::STRUMPACK_MP:
@@ -336,7 +339,8 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
       pc = MakeWrapperSolver<OperType, StrumpackMixedPrecisionSolver>(
           linear, comm, linear.sym_factorization, linear.strumpack_compression_type,
           linear.strumpack_lr_tol, linear.strumpack_butterfly_l,
-          linear.strumpack_lossy_precision, linear.reorder_reuse, print);
+          linear.strumpack_lossy_precision, linear.reorder_reuse,
+          linear.strumpack_selective_inversion > 0, print);
 #endif
       break;
     case LinearSolver::MUMPS:

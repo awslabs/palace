@@ -11,6 +11,7 @@
 #include <numbers>
 #include <set>
 #include <string>
+#include <tuple>
 #include <variant>
 #include <vector>
 #include <unistd.h>
@@ -2478,6 +2479,72 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(j_eigen["MassOrthogonal"].get<bool>() == false);
   }
 
+  SECTION("STRUMPACKSelectiveInversion resolves from the problem type")
+  {
+    // Solver section required by each problem type, and the default: true only for
+    // eigenmode and transient problems.
+    const auto row = GENERATE(table<std::string, json, bool>(
+        {{"Electrostatic", json::object(), false},
+         {"Magnetostatic", json::object(), false},
+         {"Driven",
+          {{"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.1}}}},
+          false},
+         {"Eigenmode", {{"Eigenmode", {{"Target", 1.0}}}}, true},
+         {"BoundaryMode", {{"BoundaryMode", {{"Freq", 10.0}}}}, false},
+         {"Transient",
+          {{"Transient",
+            {{"Excitation", "Sinusoidal"}, {"MaxTime", 1.0}, {"TimeStep", 0.01}}}},
+          true}}));
+    const std::string &type = std::get<0>(row);
+    const json &solver = std::get<1>(row);
+    const bool expected = std::get<2>(row);
+    CAPTURE(type);
+    auto make_config = [&](const json &linear)
+    {
+      json config = {{"Problem", {{"Type", type}, {"Output", "test_output"}}},
+                     {"Model", {{"Mesh", "test.msh"}}},
+                     {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                     {"Boundaries", json::object()},
+                     {"Solver", solver}};
+      if (!linear.empty())
+      {
+        config["Solver"]["Linear"] = linear;
+      }
+      return config;
+    };
+
+    // Omitted: the default of the problem type, written to the resolved configuration,
+    // which validates and parses to the same value.
+    {
+      json config = make_config(json::object());
+      IoData iodata(config, false);
+      CHECK(iodata.solver.linear.strumpack_selective_inversion == (expected ? 1 : 0));
+      config = IoData::ConcretizeDefaults(iodata, config);
+      const auto &j_linear = config["Solver"]["Linear"];
+      REQUIRE(j_linear["STRUMPACKSelectiveInversion"].is_boolean());
+      CHECK(j_linear["STRUMPACKSelectiveInversion"].get<bool>() == expected);
+      std::string err = ValidateConfig(config);
+      INFO("schema validation error: " << err);
+      CHECK(err.empty());
+      IoData iodata2(config, false);
+      CHECK(iodata2.solver.linear.strumpack_selective_inversion == (expected ? 1 : 0));
+    }
+
+    // Explicit values are kept for every problem type.
+    for (bool value : {false, true})
+    {
+      json config = make_config({{"STRUMPACKSelectiveInversion", value}});
+      CHECK(ValidateConfig(config).empty());
+      IoData iodata(config, false);
+      CHECK(iodata.solver.linear.strumpack_selective_inversion == (value ? 1 : 0));
+      config = IoData::ConcretizeDefaults(iodata, config);
+      CHECK(config["Solver"]["Linear"]["STRUMPACKSelectiveInversion"].get<bool>() == value);
+    }
+
+    // The key is a boolean.
+    CHECK_FALSE(ValidateConfig(make_config({{"STRUMPACKSelectiveInversion", 1}})).empty());
+  }
+
   SECTION("ComplexCoarseSolve is disabled with AMS and BoomerAMG")
   {
     // AMS and BoomerAMG cannot be given the complex-valued coarse matrix as a real-valued
@@ -2617,6 +2684,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(l2.max_size == l1.max_size);
     CHECK(l2.initial_guess == l1.initial_guess);
     CHECK(l2.pc_mat_shifted == l1.pc_mat_shifted);
+    CHECK(l2.strumpack_selective_inversion == l1.strumpack_selective_inversion);
     CHECK(l2.mg_smooth_aux == l1.mg_smooth_aux);
     CHECK(l2.mg_smooth_order == l1.mg_smooth_order);
     CHECK(l2.mg_cycle_it == l1.mg_cycle_it);
