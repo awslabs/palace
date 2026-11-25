@@ -3778,8 +3778,15 @@ nothing is solved; a wave port's boundary-mode matrices are built with the space
 and prints the same knots and PREFLIGHT lines, writes the same
 `surface-response-resolution-patches.csv` (with `"PatchEnergy": true`) and the same
 `SurfaceResponse.Resolution` block of `palace.json` (`Knots`, `Preflight` and the bars;
-`"Cells": 0`, `"NoCellsReason": "PreflightOnly: no solve"`). The energy-weighted census
-(`surface-response-resolution.csv`, the banner) needs the solved field and is not written.
+`"Cells": 0`, `"NoCellsReason": "PreflightOnly: no solve"`) and, where the impedance-metal
+rule acts, the same `SurfaceResponse.ImpedanceMetalRule` record (its regime and served-`Ls`
+lines). The energy-weighted census (`surface-response-resolution.csv`, the banner) needs the
+solved field and is not written. On a designers' chip (31,759 features, 1.6 million
+patches, 115 million unknowns, one node of 192 cores) the census was printed about 114
+minutes after the start, against 72 to 76 minutes for a solve-form run to reach the same
+census: the manifest pass comes first (about 100 minutes, 36 of them its knife-edge census,
+a preflight-only diagnostic), and the census operator reuses that pass's identification
+(about 12 minutes more).
 A preflight that ends by its default `GeometryFailurePolicy` (`FailClosed` with the key
 absent; exit status 3) prints its summary line as before, then builds this census as a
 solve-form run builds it under its own default `RecordRaw` (raw recorded for the failed
@@ -3921,7 +3928,8 @@ unknowns), `point` and `exc` 0, one row per target interface and its `Type` tota
 which every number is `nan`, `resolution` reads `PREFLIGHT <word>` (the `Type`'s all-planes
 word of the census PREFLIGHT line, by cell length against the census bars; a `region` row
 `PREFLIGHT NOT-EVALUATED`), `coverage`, `regime`, `confidence` and `convergence` read
-`NOT-COMPUTED`, `flags` reads `PREFLIGHT-ONLY` and `reason` says why
+`NOT-COMPUTED`, `flags` reads `PREFLIGHT-ONLY` (no `Ls` sheet word: those words qualify a
+value) and `reason` says why
 (`PREFLIGHT-ONLY: geometric census by cell length against the census bars; no solve; values not computed; the table's resolution verdict (energy-weighted; bars of the rule) needs a solve`);
 `SurfaceResponse.ParticipationTable` records `"PreflightOnly": true`. The PREFLIGHT word
 and the table's resolution word are different readings (length against energy weights,

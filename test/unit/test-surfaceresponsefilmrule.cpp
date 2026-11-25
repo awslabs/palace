@@ -819,6 +819,35 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const IoData off(WithKeys({{"ImpedanceMetalRule", "Off"}}, false), false);
   CHECK(off.solver.surface_response_correction->impedance_metal_rule ==
         ResponseCorrectionData::ImpedanceMetalRule::OFF);
+  // CUT-PLAN step 4b (lane v1step4b) with step 3: PreflightOnly refuses and accepts these
+  // keys exactly as the solve form, the same message without "Developer" and the same
+  // developer options with it.
+  for (const auto &keys : {record, overrides, larger})
+  {
+    INFO(keys.dump());
+    json preflight_keys = keys;
+    preflight_keys["PreflightOnly"] = true;
+    auto Refusal = [&](const json &run)
+    {
+      try
+      {
+        IoData iodata(run, false);
+      }
+      catch (const std::exception &error)
+      {
+        return std::string(error.what());
+      }
+      return std::string();
+    };
+    const std::string refusal = Refusal(WithKeys(keys, false));
+    CHECK_THAT(refusal, ContainsSubstring(switch_text));
+    CHECK(Refusal(WithKeys(preflight_keys, false)) == refusal);
+    const IoData solve(WithKeys(keys, true), false);
+    const IoData preflight(WithKeys(preflight_keys, true), false);
+    CHECK(preflight.solver.surface_response_correction->preflight_only);
+    CHECK(preflight.solver.surface_response_correction->developer_options ==
+          solve.solver.surface_response_correction->developer_options);
+  }
 }
 
 // t2 / t3 / t5 and the negative laws (STAGEA-NOTE s6): the candidate operator on the convex

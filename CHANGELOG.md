@@ -100,7 +100,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     refuses, an explicit `"GeometryFailurePolicy": "FailClosed"` with a fallback) no
     census is built, one line says why (also kept as
     `SurfaceResponse.ResolutionCensusNotEvaluated` of `palace.json`), and the exit status
-    is the one the preflight had before. Corrected solve runs are unchanged.
+    is the one the preflight had before. Corrected solve runs are unchanged. The census
+    reuses the manifest pass's identification: on a designers' chip (one node of 192 cores)
+    it was printed about 114 minutes after the start, against 72 to 76 minutes for a
+    solve-form run to reach the same census.
   - Added the configuration keys of the surface-response correction and of the features
     below to the schema, all optional (a configuration accepted before is accepted with the
     same meaning): `Solver.SurfaceResponseCorrection`; `Solver.Electrostatic`
