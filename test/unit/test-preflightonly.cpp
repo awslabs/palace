@@ -420,21 +420,24 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     MakeOutputFolder(iodata, comm);
     BlockTimer::Reset();
     int status = 0;
+    std::string log;
     if (preflight)
     {
-      status = RunSurfaceResponsePreflight(iodata, comm, utils::ConfigureOmp());
+      log = test::CaptureStdout(
+          [&]
+          { status = RunSurfaceResponsePreflight(iodata, comm, utils::ConfigureOmp()); });
     }
     else
     {
       palace::Run(iodata, comm, utils::ConfigureOmp());
     }
     Mpi::Barrier(comm);
-    return std::pair{output, status};
+    return std::tuple{output, status, log};
   };
-  const auto [solve, solve_status] = Run(false, "");
-  const auto [absent, absent_status] = Run(true, "");
-  const auto [closed, closed_status] = Run(true, "FailClosed");
-  const auto [raw, raw_status] = Run(true, "RecordRaw");
+  const auto [solve, solve_status, solve_log] = Run(false, "");
+  const auto [absent, absent_status, absent_log] = Run(true, "");
+  const auto [closed, closed_status, closed_log] = Run(true, "FailClosed");
+  const auto [raw, raw_status, raw_log] = Run(true, "RecordRaw");
   CHECK(absent_status == kSurfaceResponsePreflightFailClosedExitStatus);
   CHECK(closed_status == kSurfaceResponsePreflightFailClosedExitStatus);
   CHECK(raw_status == 0);
@@ -442,6 +445,17 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     return;
   }
+  // The order of the lines of the default fail-closed exit (R2): the preflight's summary,
+  // then the census, then the line that names how the census was built.
+  const auto summary =
+      absent_log.find("Surface-response preflight ended: GeometryFailurePolicy FailClosed");
+  const auto knots = absent_log.find("Resolution census: ");
+  const auto built = absent_log.find("The resolution census above");
+  REQUIRE(summary != std::string::npos);
+  REQUIRE(knots != std::string::npos);
+  REQUIRE(built != std::string::npos);
+  CHECK(summary < knots);
+  CHECK(knots < built);
   auto Response = [](const fs::path &dir)
   {
     return json::parse(ReadBytes(dir / "palace.json"))
@@ -483,7 +497,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 // key absent build the census); (b) a library with no model (the solve form's reader
 // refuses it); (c) an explicit "GeometryFailurePolicy": "FailClosed" on a library that
 // matches nothing (the solve form's NoMatchedFeature, recorded at the operator's
-// construction only, ends it there; RecordRaw gives the raw-fallback line).
+// construction only, ends it there; RecordRaw gives the raw-fallback line). (f)-(h) pin
+// the class the supervisor ruled into the named exception (STEP 4c, a non-aborting reader
+// of the model files): a library file the operator's model loop refuses stops
+// PreflightOnly after the manifest is written, with the solve form's message.
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "PreflightOnly builds no resolution census where a solve-form run stops "
                  "before it",
@@ -505,6 +522,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const fs::path negative_mode = temp.temp_dir / (stem + "-negative-mode.json");
   const fs::path no_file = temp.temp_dir / (stem + "-no-file.json");
   const fs::path absent_matrix = temp.temp_dir / (stem + "-absent-fabricated.csv");
+  const fs::path surface_absent = temp.temp_dir / (stem + "-surface-absent.json");
+  const fs::path absent_surface = temp.temp_dir / (stem + "-absent-surface.csv");
+  const fs::path points_absent = temp.temp_dir / (stem + "-points-absent.json");
+  const fs::path absent_points = temp.temp_dir / (stem + "-absent-points.csv");
+  const fs::path no_surface = temp.temp_dir / (stem + "-no-surface.json");
   if (Mpi::Root(comm))
   {
     mfem::Mesh serial = MakeSerialIslandMesh();
@@ -598,6 +620,25 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     unreadable["Models"][0]["FabricatedMatrix"] = absent_matrix.string();
     std::ofstream(negative_mode) << negative.dump(2) << "\n";
     std::ofstream(no_file) << unreadable.dump(2) << "\n";
+    // (f) / (g) / (h): every model's fabricated surface matrix or basis-point file absent;
+    // every model without surface matrices, its interface mappings kept.
+    json surface = sa, points = sa, mappings = sa;
+    for (auto &model : surface["Models"])
+    {
+      model["FabricatedSurfaceMatrix"] = absent_surface.string();
+    }
+    for (auto &model : points["Models"])
+    {
+      model["BasisPoints"] = absent_points.string();
+    }
+    for (auto &model : mappings["Models"])
+    {
+      model.erase("FabricatedSurfaceMatrix");
+      model.erase("ThinSurfaceMatrix");
+    }
+    std::ofstream(surface_absent) << surface.dump(2) << "\n";
+    std::ofstream(points_absent) << points.dump(2) << "\n";
+    std::ofstream(no_surface) << mappings.dump(2) << "\n";
   }
   Mpi::Barrier(comm);
   json config = electrostatic ? ConvexIslandConfig(test::CrackPolicy::Default)
@@ -765,6 +806,65 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       "Unable to read response matrix file \"" + absent_matrix.string() + "\"!";
   NoCensus(Run(no_file, "", ""), unreadable_message + " (a solve-form run stops there)\n");
   SolveFormStops(no_file, unreadable_message);
+  // (f)-(h) The class ruled into the named exception (STEP 4c): PreflightOnly stops after
+  // the manifest is written, before any census, with the solve form's message (an abort
+  // with a non-zero exit status in a production run; a preflight without the census ended
+  // with 0). These rows pin that behaviour; (g) and (h) are the Maxwell configs of the
+  // second review (on Electrostatic a missing basis-point file stops main's preflight too).
+  auto PreflightStops = [&](const fs::path &library, const std::string &message)
+  {
+    json run = config;
+    const fs::path dir = temp.temp_dir / (stem + "-" + library.stem().string() + "-stop");
+    run["Problem"]["Output"] = dir.string();
+    run[correction_key]["Library"] = library.string();
+    run[correction_key].erase("UnmatchedPolicy");
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    bool thrown = false;
+    std::string what;
+    test::CaptureStdout(
+        [&]
+        {
+          try
+          {
+            RunSurfaceResponsePreflight(iodata, comm, utils::ConfigureOmp());
+          }
+          catch (const std::exception &e)
+          {
+            thrown = true;
+            what = e.what();
+          }
+        });
+    Mpi::Barrier(comm);
+    INFO("run " << dir.filename().string());
+    CHECK(thrown);
+    if (Mpi::Root(comm))
+    {
+      CHECK_THAT(what, ContainsSubstring(message));
+      CHECK(fs::is_regular_file(dir / "surface-response-requirements.json"));
+      CHECK_FALSE(fs::exists(dir / patches));
+      CHECK_FALSE(fs::exists(dir / kSurfaceParticipationFile));
+    }
+    SolveFormStops(library, message);
+  };
+  // (f) A surface-matrix file that cannot be read: ReadTable's message.
+  PreflightStops(surface_absent, "Unable to read response matrix file \"" +
+                                     absent_surface.string() + "\"!");
+  if (!electrostatic)
+  {
+    // (g) A basis-point file that cannot be opened. Serial only: in parallel one rank's
+    // reader stops while the others wait in a collective (a production run ends there, the
+    // stopped rank's abort ending the job), which a test program cannot observe and go on.
+    if (Mpi::Size(comm) == 1)
+    {
+      PreflightStops(points_absent, "Unable to open response-correction basis point file");
+    }
+    // (h) Interface mappings without surface matrices (ComputeSurfaceResponseMatrices).
+    PreflightStops(no_surface,
+                   "Response-correction interface mappings require surface response "
+                   "matrices!");
+  }
 #endif
 }
 
