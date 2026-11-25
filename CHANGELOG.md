@@ -30,6 +30,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     model and needs no incident wave: it reports the orders which carry power, if any.
     [PR 1289](https://github.com/awslabs/palace/pull/1289).
 
+#### Build system
+
+  - Concurrent runs of a regression case no longer delete each other's staged inputs and
+    outputs, which made them fail or hang. Without `--regression-run-dir`, each run of
+    `palace-unit-tests` stages its regression cases in a new temporary directory, removed
+    if all tests pass and kept otherwise.
+    [PR 1307](https://github.com/awslabs/palace/pull/1307).
+
 ## [0.20.0] - 2026-11-23
 
 #### New Features
