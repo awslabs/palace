@@ -368,12 +368,10 @@ private:
             std::vector<std::complex<double>> &val) const;
 };
 
-// The lumped ports on the environment side (and its wave ports, as -index), with the true
-// DOFs of its lumped ports and the attributes of each (see
-// DrivenSubstructureModel::port_attributes), aborting for a lumped port touching Γ (its
-// excitation and voltage would depend on both sides). Collective.
+// The lumped ports on the environment side (and its wave ports, as -index), with the
+// attributes of each (see DrivenSubstructureModel::port_attributes), aborting for a lumped
+// port touching Γ (its excitation and voltage would depend on both sides). Collective.
 std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
-                                  std::map<int, std::vector<char>> &port_dofs,
                                   std::vector<int> &port_attributes);
 
 // The index of x in y (relative tolerance tol), -1 if none.

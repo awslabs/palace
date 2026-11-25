@@ -54,60 +54,15 @@ ComplexVector WaveOverlapFunctional(SpaceOperator &space_op, int idx, double ome
   return l;
 }
 
-// The voltage functional of a lumped port as a true-DOF vector l (V = l^T E), evaluated
-// with the port's own voltage postprocessing on the unit vectors of the true DOFs it
-// touches.
-ComplexVector VoltageFunctional(SpaceOperator &space_op, int idx,
-                                const std::vector<char> &mark)
+// The voltage functional of a lumped port as a true-DOF vector l (V = l^T E, summed over
+// the processes), from its voltage linear form.
+ComplexVector VoltageFunctional(SpaceOperator &space_op, int idx)
 {
-  auto &nd = space_op.GetNDSpace();
-  const auto &fes = nd.Get();
-  MPI_Comm comm = space_op.GetComm();
-  const int nt = fes.GetTrueVSize();
-  const HYPRE_BigInt tstart = fes.GetMyTDofOffset();
-  std::vector<HYPRE_BigInt> mine, all;
-  for (int i = 0; i < nt; i++)
-  {
-    if (mark[i])
-    {
-      mine.push_back(tstart + i);
-    }
-  }
-  {
-    const int nranks = Mpi::Size(comm);
-    int nloc = static_cast<int>(mine.size());
-    std::vector<int> cnt(nranks), disp(nranks, 0);
-    MPI_Allgather(&nloc, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
-    for (int r = 1; r < nranks; r++)
-    {
-      disp[r] = disp[r - 1] + cnt[r - 1];
-    }
-    all.resize(disp[nranks - 1] + cnt[nranks - 1]);
-    MPI_Allgatherv(mine.data(), nloc, HYPRE_MPI_BIG_INT, all.data(), cnt.data(),
-                   disp.data(), HYPRE_MPI_BIG_INT, comm);
-  }
   const auto &port = space_op.GetLumpedPortOp().GetPort(idx);
-  GridFunction E(nd, true);
-  E.Imag() = 0.0;
-  Vector e(nt);
-  ComplexVector l(nt);
-  l = 0.0;
-  for (HYPRE_BigInt q : all)
-  {
-    const HYPRE_BigInt i = q - tstart;
-    const bool own = (i >= 0 && i < nt);
-    e = 0.0;
-    if (own)
-    {
-      e.HostReadWrite()[static_cast<int>(i)] = 1.0;
-    }
-    E.Real().SetFromTrueDofs(e);
-    const std::complex<double> V = port.GetVoltage(E);
-    if (own)
-    {
-      l.Real()(static_cast<int>(i)) = V.real();
-    }
-  }
+  const Vector v = port.GetVoltageFunctional(space_op.GetNDSpace().Get());
+  ComplexVector l(v.Size());
+  l.Real() = v;
+  l.Imag() = 0.0;
   return l;
 }
 
@@ -151,8 +106,7 @@ private:
   int nG = 0, n = 0;
   std::vector<int> ex_idx;
   std::vector<ComplexVector> rhs;
-  // The lumped ports of the environment (for a model).
-  std::map<int, std::vector<char>> port_dofs;
+  // The ports of the environment, and their attributes (for the model).
   std::vector<int> env_ports, env_port_attributes;
   // A restart continues the sweep in its order, all excitations at a frequency before the
   // next one: the records of the frequencies before that of solve "Restart" are kept.
@@ -185,7 +139,7 @@ private:
   // environment's ports h_j = Reduce(l_j), and with the condensed sources g_k and interior
   // solutions x_k = A_EE^-1 b_E,k (Γ held at 0) of the excitations with environment
   // sources, c_jk = l_j^T x_k, since l_j^T u_k = l_j^T x_k + h_j^T u_Γ,k.
-  Record EnvironmentRecord(double omega);
+  Record CondensedEnvironment(double omega);
   void ScaleRecord(std::vector<std::complex<double>> &x, bool inverse);
   // Adaptive: sample the environment for the rational model, and check its passivity.
   void SampleEnvironment();
@@ -220,7 +174,7 @@ DrivenSubstructuredSweep::DrivenSubstructuredSweep(const IoData &iodata,
   {
     rhs[k].UseDevice(true);
   }
-  env_ports = EnvironmentPorts(iodata, *ds, port_dofs, env_port_attributes);
+  env_ports = EnvironmentPorts(iodata, *ds, env_port_attributes);
   first_freq = (iodata.solver.driven.restart - 1) / n;
   SetUpModel();
   np = static_cast<int>(env_ports.size());
@@ -264,8 +218,7 @@ void DrivenSubstructuredSweep::SetUpModel()
   }
   for (int p : env_ports)
   {
-    port_l.push_back((p > 0) ? VoltageFunctional(space_op, p, port_dofs.at(p))
-                             : ComplexVector());
+    port_l.push_back((p > 0) ? VoltageFunctional(space_op, p) : ComplexVector());
   }
   if (save)
   {
@@ -367,7 +320,7 @@ std::vector<const ComplexVector *> DrivenSubstructuredSweep::PortFunctionals(dou
 // The record alone, from the environment (not factoring the region): with the condensed
 // sources g_k and interior solutions x_k = A_EE^-1 b_E,k (Γ held at 0) of the excitations
 // with environment sources, c_jk = l_j^T x_k, since l_j^T u_k = l_j^T x_k + h_j^T u_Γ,k.
-DrivenSubstructureModel::Record DrivenSubstructuredSweep::EnvironmentRecord(double omega)
+DrivenSubstructureModel::Record DrivenSubstructuredSweep::CondensedEnvironment(double omega)
 {
   std::vector<const ComplexVector *> B(ne);
   for (int e = 0; e < ne; e++)
@@ -448,7 +401,7 @@ void DrivenSubstructuredSweep::SampleEnvironment()
   // The relative error of the rational model at a new sample, before adding it.
   auto sample = [&](double omega)
   {
-    auto rec = EnvironmentRecord(omega);
+    auto rec = CondensedEnvironment(omega);
     if (save)
     {
       model.AppendRecord(model_path, rec, comm);
@@ -603,7 +556,7 @@ DrivenSubstructuredSweep::ExactModel(const std::shared_ptr<DrivenSubstructuredSw
       [self](std::size_t j)
       {
         BlockTimer bt(Timer::KSP);
-        auto rec = self->EnvironmentRecord(self->omega_sample[j]);
+        auto rec = self->CondensedEnvironment(self->omega_sample[j]);
         if (self->save)
         {
           self->model.AppendRecord(self->model_path, rec, self->comm);

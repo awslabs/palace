@@ -180,39 +180,19 @@ std::vector<int> DrivenSubstructure::EnvironmentWavePorts() const
 std::vector<std::pair<int, WavePortOperator::ModalCorrectionTerm>>
 DrivenSubstructure::ModalTerms(const Side &side, double omega)
 {
-  // The terms of all active wave ports, each assigned to the port that holds its support.
+  // The terms of the side's active wave ports (each term carries its port).
   std::vector<std::pair<int, WavePortOperator::ModalCorrectionTerm>> terms;
-  if (wave_port_dofs.empty())
+  if (side.wave_ports.empty())
   {
     return terms;
   }
   for (auto &term : space_op.GetWavePortOp().GetModalCorrectionTerms(
            omega, space_op.GetNDSpace(), space_op.GetNDDbcTDofLists().back()))
   {
-    const double *sr = term.s->Real().HostRead(), *si = term.s->Imag().HostRead();
-    std::vector<double> count;  // per port: support inside, outside
-    for (const auto &[idx, mark] : wave_port_dofs)
+    const int port = term.port;
+    if (std::ranges::find(side.wave_ports, port) != side.wave_ports.end())
     {
-      double c[2] = {0.0, 0.0};
-      for (std::size_t i = 0; i < mark.size(); i++)
-      {
-        c[mark[i] ? 0 : 1] += (sr[i] != 0.0 || si[i] != 0.0);
-      }
-      count.insert(count.end(), c, c + 2);
-    }
-    Mpi::GlobalSum(static_cast<int>(count.size()), count.data(), space_op.GetComm());
-    int idx = -1;
-    for (std::size_t p = 0; p < wave_port_dofs.size(); p++)
-    {
-      if (count[2 * p] > 0.0 && count[2 * p + 1] == 0.0)
-      {
-        idx = std::next(wave_port_dofs.begin(), static_cast<std::ptrdiff_t>(p))->first;
-      }
-    }
-    MFEM_VERIFY(idx >= 0, "A wave-port modal term outside of its port!");
-    if (std::ranges::find(side.wave_ports, idx) != side.wave_ports.end())
-    {
-      terms.emplace_back(idx, std::move(term));
+      terms.emplace_back(port, std::move(term));
     }
   }
   return terms;
@@ -379,6 +359,9 @@ void DrivenSubstructure::Setup(Side &side, double omega)
   const bool last = (Mpi::Rank(comm) == Mpi::Size(comm) - 1);
   side.n_dofs = side.n_sys;
   side.n_sys += nterm;
+  MFEM_VERIFY(side.n_sys <= std::numeric_limits<int>::max(),
+              "The system of the environment needs fewer than 2^31 unknowns (32-bit "
+              "indices)!");
   side.term_ports.clear();
   side.term_dofs.assign(nterm, {});
   for (int t = 0; t < nterm; t++)
@@ -1274,7 +1257,6 @@ std::vector<long long> DrivenSubstructureModel::RecordPositions(const std::strin
 }
 
 std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure &ds,
-                                  std::map<int, std::vector<char>> &port_dofs,
                                   std::vector<int> &port_attributes)
 {
   std::vector<int> env_ports;
@@ -1308,7 +1290,6 @@ std::vector<int> EnvironmentPorts(const IoData &iodata, const DrivenSubstructure
     if (n[0] > 0.0)
     {
       env_ports.push_back(idx);
-      port_dofs[idx] = std::move(mark);
       add(attrs);
     }
   }

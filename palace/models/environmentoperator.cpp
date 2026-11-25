@@ -96,9 +96,8 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
   }
   nG = ds->GetInterface().size;
   Mpi::Print("\nSubstructuring: |Γ| = {:d} interface unknowns\n", nG);
-  std::map<int, std::vector<char>> port_dofs;
   std::vector<int> port_attributes;
-  env_ports = EnvironmentPorts(iodata, *ds, port_dofs, port_attributes);
+  env_ports = EnvironmentPorts(iodata, *ds, port_attributes);
 
   // The interface, the local true DOFs of Γ in its order, and the pinned DOFs.
   iface = ds->GetInterface();
