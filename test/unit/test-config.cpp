@@ -2591,8 +2591,8 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
   SECTION("Multigrid V-cycles resolve from the problem and the Krylov solver")
   {
     // The first solve chooses the V-cycles by default for eigenmode problems with GMRES and
-    // FGMRES, unless the smoothing order is explicit. One-sided V-cycles, or the choice,
-    // are an error with CG. The smoothing order is that of symmetric V-cycles.
+    // FGMRES, also with an explicit smoothing order. One-sided V-cycles, or the choice, are
+    // an error with CG. The smoothing order is that of symmetric V-cycles.
     auto Resolve = [](const char *problem, json linear, int order = 2)
     {
       json solver = {{"Order", order}, {"Linear", std::move(linear)}};
@@ -2669,7 +2669,7 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
     CHECK(Resolve("Eigenmode", {{"MGCycleType", "OneSided"}}).mg_cycle ==
           MultigridCycle::ONE_SIDED);
     const auto explicit_order = Resolve("Eigenmode", {{"MGSmoothOrder", 6}});
-    CHECK(explicit_order.mg_cycle == MultigridCycle::SYMMETRIC);
+    CHECK(explicit_order.mg_cycle == MultigridCycle::AUTO);
     CHECK(explicit_order.mg_smooth_order == 6);
     CHECK(Resolve("Eigenmode", {{"MGSmoothOrder", 6}, {"MGCycleType", "Auto"}}).mg_cycle ==
           MultigridCycle::AUTO);

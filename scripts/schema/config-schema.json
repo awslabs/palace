@@ -3571,7 +3571,7 @@
         },
         "MGCycleType": {
           "$ref": "#/$defs/MultigridCycle",
-          "description": "Multigrid V-cycles. If omitted, Palace uses `\"Auto\"` for eigenmode simulations with GMRES or FGMRES and without an explicit [`\"MGSmoothOrder\"`](@ref config-solver-linear-mgsmoothorder), and `\"Symmetric\"` otherwise: one-sided V-cycles can slow down the strongly indefinite linear systems of some driven simulations and boundary mode solves.",
+          "description": "Multigrid V-cycles. If omitted, Palace uses `\"Auto\"` for eigenmode simulations with GMRES or FGMRES, and `\"Symmetric\"` otherwise: one-sided V-cycles can slow down the strongly indefinite linear systems of some driven simulations and boundary mode solves.",
           "x-palace-advanced": true
         },
         "PCMatReal": {

@@ -43,10 +43,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     time, and symmetric V-cycles for linear solves that converge in a few iterations and for
     problems dominated by radiation. The new `config["Solver"]["Linear"]["MGCycleType"]`
     (`"Symmetric"`, `"OneSided"` or `"Auto"`) defaults to `"Auto"` for eigenmode simulations
-    with GMRES or FGMRES and without an explicit `"MGSmoothOrder"`, which keeps the V-cycles
-    of existing configurations, and to `"Symmetric"` otherwise. `"OneSided"` and `"Auto"`
-    are an error with CG. Results change at the level of the linear solver tolerance.
-    SchemaVer 6-2-0
+    with GMRES or FGMRES, and to `"Symmetric"` otherwise. `"OneSided"` and `"Auto"` are an
+    error with CG. Results change at the level of the linear solver tolerance. SchemaVer
+    6-2-0
     [PR 1233](https://github.com/awslabs/palace/pull/1233).
 
 #### Bug Fixes
