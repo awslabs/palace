@@ -1495,12 +1495,16 @@ public:
   }
 };
 
-// The PML integrator T, with its stored quadrature data, against MFEM integrators with the
-// tensors of the same QFunction context evaluated on the host, on the elements of the
-// layer.
-template <typename T>
+// The form of the PML integrators Ts, with their stored quadrature data, against MFEM
+// integrators with the tensors of the same QFunction context evaluated on the host, on the
+// elements of the layer, and its transpose: the antisymmetric Floquet cross term has its
+// own transposed sub-operator with the opposite prefactor, and the symmetric terms of a
+// nonsymmetric form share theirs. With a coarse space, the transpose of the coarsened
+// operator is checked against its full assembly.
+template <typename... Ts>
 void CheckPMLIntegrator(const FiniteElementSpace &space, const pml::Layer &layer,
-                        const pml::ContextHeader &header, const Mesh &mesh, int q_order)
+                        const pml::ContextHeader &header, const Mesh &mesh, int q_order,
+                        const FiniteElementSpace *coarse_space = nullptr)
 {
   using Form = PMLTensorCoefficient::Form;
   const auto ctx = layer.PackContext(header);
@@ -1510,8 +1514,9 @@ void CheckPMLIntegrator(const FiniteElementSpace &space, const pml::Layer &layer
   const int ceed_attr = (it == mesh.GetCeedAttributes().end()) ? 0 : it->second;
 
   BilinearForm a(space);
-  a.AddDomainIntegratorOnAttributes<T>(layer.GetAttributes(), ctx.data(),
-                                       ctx.size() * sizeof(CeedIntScalar));
+  (a.AddDomainIntegratorOnAttributes<Ts>(layer.GetAttributes(), ctx.data(),
+                                         ctx.size() * sizeof(CeedIntScalar)),
+   ...);
   ParOperator A(a.PartialAssemble(), space);
 
   // MFEM reference.
@@ -1534,34 +1539,38 @@ void CheckPMLIntegrator(const FiniteElementSpace &space, const pml::Layer &layer
     integ->SetIntRule(&ir);
     a_ref.AddDomainIntegrator(integ, marker);
   };
-  if constexpr (std::is_same_v<T, CurlCurlPMLIntegrator> ||
-                std::is_same_v<T, CurlCurlMassPMLIntegrator>)
+  auto AddReference = [&]<typename T>()
   {
-    Add(new mfem::CurlCurlIntegrator(Coefficient(true, Form::TENSOR)));
-  }
-  if constexpr (std::is_same_v<T, VectorFEMassPMLIntegrator> ||
-                std::is_same_v<T, CurlCurlMassPMLIntegrator>)
-  {
-    Add(new mfem::VectorFEMassIntegrator(Coefficient(false, Form::TENSOR)));
-  }
-  if constexpr (std::is_same_v<T, DiffusionPMLIntegrator>)
-  {
-    Add(new mfem::DiffusionIntegrator(Coefficient(false, Form::TENSOR)));
-  }
-  if constexpr (std::is_same_v<T, FloquetMassPMLIntegrator>)
-  {
-    Add(new mfem::VectorFEMassIntegrator(Coefficient(true, Form::FLOQUET_MASS)));
-  }
-  if constexpr (std::is_same_v<T, FloquetDiffusionPMLIntegrator>)
-  {
-    Add(new mfem::DiffusionIntegrator(Coefficient(true, Form::FLOQUET_MASS)));
-  }
-  if constexpr (std::is_same_v<T, FloquetCrossPMLIntegrator>)
-  {
-    Add(new mfem::MixedVectorCurlIntegrator(Coefficient(true, Form::FLOQUET_CURL)));
-    Add(new mfem::MixedVectorWeakCurlIntegrator(
-        Coefficient(true, Form::FLOQUET_WEAK_CURL)));
-  }
+    if constexpr (std::is_same_v<T, CurlCurlPMLIntegrator> ||
+                  std::is_same_v<T, CurlCurlMassPMLIntegrator>)
+    {
+      Add(new mfem::CurlCurlIntegrator(Coefficient(true, Form::TENSOR)));
+    }
+    if constexpr (std::is_same_v<T, VectorFEMassPMLIntegrator> ||
+                  std::is_same_v<T, CurlCurlMassPMLIntegrator>)
+    {
+      Add(new mfem::VectorFEMassIntegrator(Coefficient(false, Form::TENSOR)));
+    }
+    if constexpr (std::is_same_v<T, DiffusionPMLIntegrator>)
+    {
+      Add(new mfem::DiffusionIntegrator(Coefficient(false, Form::TENSOR)));
+    }
+    if constexpr (std::is_same_v<T, FloquetMassPMLIntegrator>)
+    {
+      Add(new mfem::VectorFEMassIntegrator(Coefficient(true, Form::FLOQUET_MASS)));
+    }
+    if constexpr (std::is_same_v<T, FloquetDiffusionPMLIntegrator>)
+    {
+      Add(new mfem::DiffusionIntegrator(Coefficient(true, Form::FLOQUET_MASS)));
+    }
+    if constexpr (std::is_same_v<T, FloquetCrossPMLIntegrator>)
+    {
+      Add(new mfem::MixedVectorCurlIntegrator(Coefficient(true, Form::FLOQUET_CURL)));
+      Add(new mfem::MixedVectorWeakCurlIntegrator(
+          Coefficient(true, Form::FLOQUET_WEAK_CURL)));
+    }
+  };
+  (AddReference.template operator()<Ts>(), ...);
   a_ref.Assemble();
   a_ref.Finalize();
   std::unique_ptr<mfem::HypreParMatrix> A_ref(a_ref.ParallelAssemble());
@@ -1575,6 +1584,26 @@ void CheckPMLIntegrator(const FiniteElementSpace &space, const pml::Layer &layer
   A_ref->Mult(x, y_ref);
   CHECK_THAT(RelativeError(space.GetComm(), y, y_ref),
              Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+  A.MultTranspose(x, y);
+  A_ref->MultTranspose(x, y_ref);
+  CHECK_THAT(RelativeError(space.GetComm(), y, y_ref),
+             Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+
+  if (coarse_space)
+  {
+    auto op = a.PartialAssemble();
+    auto op_coarse = ceed::CeedOperatorCoarsen(*op, *coarse_space);
+    auto mat_coarse = BilinearForm::FullAssemble(*op_coarse, false);
+    Vector xc(op_coarse->Width()), yc(op_coarse->Height()), yc_ref(op_coarse->Height());
+    xc.UseDevice(true);
+    yc.UseDevice(true);
+    yc_ref.UseDevice(true);
+    xc.Randomize(43 + Mpi::Rank(space.GetComm()));
+    op_coarse->MultTranspose(xc, yc);
+    mat_coarse->MultTranspose(xc, yc_ref);
+    CHECK_THAT(RelativeError(space.GetComm(), yc, yc_ref),
+               Catch::Matchers::WithinAbs(0.0, 1.0e-12));
+  }
 }
 
 }  // namespace
@@ -1594,6 +1623,8 @@ TEST_CASE("SpaceOperator PML quadrature data matches an MFEM reference",
   REQUIRE(space_op->GetMaterialOp().GetPMLLayers()[0].GetStretch().extruded == extruded);
   const auto &layer = space_op->GetMaterialOp().GetPMLLayers()[0];
   const auto &nd = space_op->GetNDSpace(), &h1 = space_op->GetH1Space();
+  mfem::ND_FECollection nd_fec_coarse(1, 3);
+  FiniteElementSpace nd_coarse(*mesh[0], &nd_fec_coarse);
   const int q_order =
       fem::DefaultIntegrationOrder::Get(mesh[0]->Get(), mfem::Geometry::CUBE);
   pml::ContextHeader header;
@@ -1615,6 +1646,11 @@ TEST_CASE("SpaceOperator PML quadrature data matches an MFEM reference",
     CheckPMLIntegrator<FloquetCrossPMLIntegrator>(nd, layer, header, *mesh[0], q_order);
     CheckPMLIntegrator<DiffusionPMLIntegrator>(h1, layer, header, *mesh[0], q_order);
     CheckPMLIntegrator<FloquetDiffusionPMLIntegrator>(h1, layer, header, *mesh[0], q_order);
+
+    // The PML terms of a Floquet form, as assembled by SpaceOperator, with its coarsening.
+    CheckPMLIntegrator<CurlCurlMassPMLIntegrator, FloquetMassPMLIntegrator,
+                       FloquetCrossPMLIntegrator>(nd, layer, header, *mesh[0], q_order,
+                                                  &nd_coarse);
   }
 }
 

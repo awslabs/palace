@@ -5575,9 +5575,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // discretization of the source. After one nonconforming refinement of one element of the
   // layer, completed by the marking of the adaptive refinement to the whole layer on both
   // sides of S (PlaneWaveOperator::AddLayerToMarkedElements), both must be lower than on
-  // the initial mesh. The total-field region is the center block of 4 x 4 x 4 elements of a
-  // cube of 8 x 8 x 8 hexahedra, about a wavelength across.
-  const int n = 8;
+  // the initial mesh. The total-field region is the center block of 2 x 2 x 2 elements of a
+  // cube of 6 x 6 x 6 hexahedra, of size a quarter of the wavelength, with p = 2: refining
+  // only the layer outside of S raises the error in T instead (5.9e-3 to 1.7e-2 here). A
+  // single level of the preconditioner keeps the solve short (a direct one if available).
+  const int n = 6;
   json config;
   config["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
   config["Model"] = {{"Mesh", (temp_dir / "box.mesh").string()}, {"L0", 1.0}};
@@ -5591,16 +5593,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   config["Boundaries"] = {
       {"Absorbing", {{"Attributes", {1, 2, 3, 4, 5, 6}}, {"Order", 1}}}};
   config["Solver"] = {{"Order", 2},
-                      {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 1000}}},
-                      {"Driven", {{"Samples", {{{"Type", "Point"}, {"Freq", {0.6}}}}}}}};
+                      {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 1000}, {"MGMaxLevels", 1}}},
+                      {"Driven", {{"Samples", {{{"Type", "Point"}, {"Freq", {0.45}}}}}}}};
   mfem::Mesh serial_mesh =
       mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0, false);
   mfem::Vector c;
   for (int e = 0; e < serial_mesh.GetNE(); e++)
   {
     serial_mesh.GetElementCenter(e, c);
-    const bool tf = std::abs(c(0) - 0.5) < 0.25 && std::abs(c(1) - 0.5) < 0.25 &&
-                    std::abs(c(2) - 0.5) < 0.25;
+    const bool tf = std::abs(c(0) - 0.5) < 1.0 / n && std::abs(c(1) - 0.5) < 1.0 / n &&
+                    std::abs(c(2) - 0.5) < 1.0 / n;
     serial_mesh.SetAttribute(e, tf ? 1 : 2);
   }
   serial_mesh.SetAttributes();
@@ -5681,8 +5683,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   for (int e = 0; e < pmesh.GetNE(); e++)
   {
     pmesh.GetElementCenter(e, c);
-    if (std::abs(c(0) - 0.4375) < 1.0e-6 && std::abs(c(1) - 0.4375) < 1.0e-6 &&
-        std::abs(c(2) - 0.8125) < 1.0e-6)
+    if (std::abs(c(0) - 5.0 / 12.0) < 1.0e-6 && std::abs(c(1) - 5.0 / 12.0) < 1.0e-6 &&
+        std::abs(c(2) - 0.75) < 1.0e-6)
     {
       marked.Append(e);
     }
