@@ -47,7 +47,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     complement onto the interface with the condensed environment added, factored as a
     dense matrix across the processes (ScaLAPACK). A sparse direct solver that
     `config["Solver"]["Linear"]["Type"]` names factors both instead. Adds a driven example
-    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 6-2-0.
+    in `examples/substructuring` (a 3 x 4 grid of CPW resonators). SchemaVer 6-2-1.
     [PR 1044](https://github.com/awslabs/palace/pull/1044).
 
 #### Interface Changes
