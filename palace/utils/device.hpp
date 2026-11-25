@@ -17,6 +17,9 @@ inline constexpr const char *UMPIRE_DEVICE_POOL_NAME = "PALACE_DEVICE_POOL";
 // Return the number of devices available.
 int GetDeviceCount();
 
+// Return the node-local rank of this process set by the MPI launcher, or -1 if none is set.
+int GetLauncherLocalRank();
+
 // Select the device from the node-local rank set by the MPI launcher and create its
 // context, before MPI_Init. Return the device ID, or -1 if unavailable.
 int InitDeviceBeforeMpi();

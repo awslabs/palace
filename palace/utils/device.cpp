@@ -5,7 +5,9 @@
 #include "communication.hpp"
 #include "omp.hpp"
 
+#include <charconv>
 #include <cstdlib>
+#include <cstring>
 #include <mfem.hpp>
 #if defined(MFEM_USE_UMPIRE)
 #include <umpire/ResourceManager.hpp>
@@ -27,37 +29,55 @@ int GetDeviceCount()
 #endif
 }
 
-int InitDeviceBeforeMpi()
+int GetLauncherLocalRank()
 {
-#if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
   // Node-local rank set by Open MPI, MVAPICH, MPICH and Intel MPI, PMI, Slurm, Cray PALS,
-  // or Flux. Like GetDeviceId, assign devices round-robin over the processes of a node.
+  // or Flux.
   for (const char *name :
        {"OMPI_COMM_WORLD_LOCAL_RANK", "MV2_COMM_WORLD_LOCAL_RANK", "MPI_LOCALRANKID",
         "PMI_LOCAL_RANK", "SLURM_LOCALID", "PALS_LOCAL_RANKID", "FLUX_TASK_LOCAL_ID"})
   {
-    const char *local_rank = std::getenv(name);
-    if (!local_rank)
+    if (const char *value = std::getenv(name))
     {
-      continue;
+      const char *end = value + std::strlen(value);
+      int rank = -1;
+      const auto [ptr, ec] = std::from_chars(value, end, rank);
+      return (ec == std::errc() && ptr == end && rank >= 0) ? rank : -1;
     }
-    const int ngpu = GetDeviceCount();
-    if (ngpu <= 0)
-    {
-      return -1;
-    }
-    const int device_id = std::atoi(local_rank) % ngpu;
+  }
+  return -1;
+}
+
+int InitDeviceBeforeMpi()
+{
+#if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
+  const int local_rank = GetLauncherLocalRank();
+  if (local_rank < 0)
+  {
+    return -1;
+  }
+  // Like GetDeviceId, assign devices round-robin over the processes of a node. Errors, for
+  // example no visible device, only mean that the device is selected after MPI_Init.
+  int ngpu = 0;
 #if defined(MFEM_USE_CUDA)
-    MFEM_GPU_CHECK(cudaSetDevice(device_id));
-    MFEM_GPU_CHECK(cudaFree(nullptr));  // Creates the context
+  if (cudaGetDeviceCount(&ngpu) != cudaSuccess || ngpu == 0 ||
+      cudaSetDevice(local_rank % ngpu) != cudaSuccess || cudaFree(nullptr) != cudaSuccess)
+  {
+    (void)cudaGetLastError();
+    return -1;
+  }
 #else
-    MFEM_GPU_CHECK(hipSetDevice(device_id));
-    MFEM_GPU_CHECK(hipFree(nullptr));  // Creates the context
-#endif
-    return device_id;
+  if (hipGetDeviceCount(&ngpu) != hipSuccess || ngpu == 0 ||
+      hipSetDevice(local_rank % ngpu) != hipSuccess || hipFree(nullptr) != hipSuccess)
+  {
+    (void)hipGetLastError();
+    return -1;
   }
 #endif
+  return local_rank % ngpu;
+#else
   return -1;
+#endif
 }
 
 int GetDeviceId(MPI_Comm comm, int ngpu)
