@@ -135,10 +135,11 @@ private:
   void CheckSource(int k) const;
   // The functionals l_j of the environment's ports at ω.
   std::vector<const ComplexVector *> PortFunctionals(double omega);
-  // The record of the environment at ω (on rank 0): S_E, the condensed functionals of the
-  // environment's ports h_j = Reduce(l_j), and with the condensed sources g_k and interior
-  // solutions x_k = A_EE^-1 b_E,k (Γ held at 0) of the excitations with environment
-  // sources, c_jk = l_j^T x_k, since l_j^T u_k = l_j^T x_k + h_j^T u_Γ,k.
+  // The record of the environment at ω: the share of this process of S_E (see
+  // TriangleShare), and on rank 0 the condensed functionals of the environment's ports,
+  // h_j = Reduce(l_j), and with the condensed sources g_k and interior solutions
+  // x_k = A_EE^-1 b_E,k (Γ held at 0) of the excitations with environment sources,
+  // c_jk = l_j^T x_k, since l_j^T u_k = l_j^T x_k + h_j^T u_Γ,k.
   Record CondensedEnvironment(double omega);
   void ScaleRecord(std::vector<std::complex<double>> &x, bool inverse);
   // Adaptive: sample the environment for the rational model, and check its passivity.

@@ -41,8 +41,8 @@ class SpaceOperator;
 //   x̃(ω) = Σ_j a_j(ω) x_j,   a_j(ω) = (w_j / (ω - ω_j)) / Σ_k w_k / (ω - ω_k),
 // which interpolates the samples. The weights are those of the minimal rational interpolant
 // (MRI) of the snapshots {x_j, iω_j x_j}, as for the error indicator of the adaptive driven
-// solver (MinimalRationalInterpolation). The samples are distributed by rows over comm (the
-// local rows of each rank), and the weights are replicated.
+// solver (MinimalRationalInterpolation). The entries of the samples are distributed over
+// comm (each process holds its entries of every sample), and the weights are replicated.
 //
 class BarycentricInterpolant
 {
@@ -53,7 +53,7 @@ public:
   // weights.
   void AddSample(double omega, const std::vector<std::complex<double>> &x);
 
-  // The interpolant at ω (the local rows).
+  // The interpolant at ω (the entries of this process).
   std::vector<std::complex<double>> Evaluate(double omega) const;
 
   // The frequency between the outermost samples where the denominator Σ_j w_j / (ω - ω_j)
@@ -63,7 +63,7 @@ public:
   const std::vector<double> &Samples() const { return z; }
   const std::vector<std::complex<double>> &Weights() const { return w; }
 
-  // Sample j as added (the local rows), x_j = Σ_i R_ij q_i.
+  // Sample j as added (the entries of this process), x_j = Σ_i R_ij q_i.
   std::vector<std::complex<double>> Sample(std::size_t j) const;
 
   // The coefficients a_j(ω) of samples at z with weights w.
