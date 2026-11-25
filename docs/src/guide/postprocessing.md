@@ -77,9 +77,10 @@ excited port delivers 1 W of time-averaged incident power.
 
 Electrostatic and magnetostatic simulations write their excitations to `terminal-V.csv`
 (terminal voltages), `terminal-I.csv` (surface current sources), and `terminal-Phi.csv`
-(flux loops). A terminal voltage or source current is one unit in the non-dimensional unit
-system, about 19.41 V or 51.5 mA, and the energies and fields of each excitation are those of
-this voltage or current (see [Electrostatic problems](problem.md#Electrostatic-problems) and
+(the flux imposed by flux loops, in webers). A terminal voltage or source current is one
+unit in the non-dimensional unit system, about 19.41 V or 51.5 mA, and the energies and
+fields of each excitation are those of this voltage or current (see
+[Electrostatic problems](problem.md#Electrostatic-problems) and
 [Magnetostatic problems](problem.md#Magnetostatic-problems)).
 
 ## Domain postprocessing

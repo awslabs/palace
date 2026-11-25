@@ -217,7 +217,7 @@ impedance of free space. It is written to `terminal-V.csv`. The capacitances do 
 on it, but the energies, fields, and fluxes computed for each terminal (`domain-E.csv`,
 `probe-E.csv`, `surface-F.csv`, and the visualization output) are those of this voltage. To
 scale them to 1 V, divide fields and fluxes by ``V_{inc}/(1\text{ V}) \approx 19.41`` and
-energies by ``(V_{inc}/(1\text{ V}))^2 \approx 376.7``.
+energies and energy densities by ``(V_{inc}/(1\text{ V}))^2 \approx 376.7``.
 
 ## Magnetostatic problems
 
@@ -240,7 +240,7 @@ is not 1 A but one unit of current in the non-dimensional unit system,
 `terminal-I.csv`. The inductances do not depend on it, but the energies, fields, and fluxes
 computed for each source (`domain-E.csv`, `probe-B.csv`, `surface-F.csv`, and the
 visualization output) are those of this current. To scale them to 1 A, multiply fields and
-fluxes by ``(1\text{ A})/I_{inc} \approx 19.41`` and energies by
+fluxes by ``(1\text{ A})/I_{inc} \approx 19.41`` and energies and energy densities by
 ``((1\text{ A})/I_{inc})^2 \approx 376.7``.
 
 The treatment of the *inactive* current ports during each step of the sweep is controlled
