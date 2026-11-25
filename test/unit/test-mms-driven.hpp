@@ -37,11 +37,18 @@ inline constexpr std::array<double, 3> kAnisotropicEpsilonR = {4.0, 2.0, 3.0};
 // ND_p, where the operator is −ω²M. That gradient block is what the shifted AMS
 // preconditioner handles, so it is exercised at any ω > 0. Placing ω² above ω₁² would
 // only add a few negative curl modes, at the cost of a worse-conditioned solve.
+//
+// The Neumann-face problem makes x = 1 a PMC face. With PEC at x = 0 and PMC at x = 1 the
+// x wavenumber becomes (m + ½)π, so the x̂ sin πy sin πz mode above (tangential H on
+// x = 1) is gone. The lowest eigenvalue is then the (½, 1, 1) mode at ≈ 1.58, followed by
+// (½, 1, 0) at ≈ 1.92 and (½, 0, 1) at ≈ 2.71, so ω² = 1 is again below the first
+// resonance, at ω²/ω₁² ≈ 0.63.
 inline constexpr double kOmega = 1.0;
 
-// A manufactured electric field with n×E = 0 on the boundary, its curl ∇×E, the
-// curl-curl term ∇×(μ⁻¹∇×E) of the strong-form source (for this case's μ_r), and the
-// constant diagonal material properties and frequency of the driven solve.
+// A manufactured electric field with n×E = 0 on the PEC boundary (every face, except
+// x = 1 for the Neumann-face cases), its curl ∇×E, the curl-curl term ∇×(μ⁻¹∇×E) of the
+// strong-form source (for this case's μ_r), and the constant diagonal material properties
+// and frequency of the driven solve.
 struct MmsCase
 {
   VectorFunction electric_field;
@@ -58,13 +65,23 @@ namespace analytic
 const MmsCase &PolynomialCase();
 const MmsCase &TrigCase();
 
+// Fields for the Neumann-face problem: n×E = 0 on every face except x = 1, where both the
+// tangential trace of E and the Neumann data n×(μ⁻¹∇×E) are nonzero.
+const MmsCase &NeumannPolynomialCase();
+const MmsCase &NeumannTrigCase();
+
 }  // namespace analytic
 
-// Test 1 (mass projection): only electric_field, curl, and epsilon_r are used.
+// Mass projection (mass term only): only electric_field, curl, and epsilon_r are used.
 void CheckMassProjectionExactness(const MmsCase &polynomial);
 void CheckMassProjectionConvergence(const MmsCase &smooth);
 
-// Test 3 (curl-curl + mass).
+// Neumann-face problem (curl-curl + mass, x = 1 face natural/PMC): the case's electric
+// field need only vanish tangentially on the other five faces.
+void CheckNeumannExactness(const MmsCase &polynomial);
+void CheckNeumannConvergence(const MmsCase &smooth);
+
+// PEC problem (curl-curl + mass, every face PEC).
 void CheckPolynomialExactness(const MmsCase &polynomial);
 void CheckOptimalConvergence(const MmsCase &smooth);
 void CheckBackendAgreement(const MmsCase &candidate, const MmsCase &reference);

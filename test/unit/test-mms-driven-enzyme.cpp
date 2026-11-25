@@ -56,7 +56,8 @@ void CheckPointwiseAgreement(const MmsCase &enzyme, const MmsCase &analytic,
 }  // namespace
 
 // Enzyme backend: the manufactured fields and the cases generated from them, the
-// counterparts of analytic::PolynomialCase() and analytic::TrigCase(). File-local, since
+// counterparts of analytic::PolynomialCase(), analytic::TrigCase(), and the Neumann-face
+// analytic::NeumannPolynomialCase() and analytic::NeumannTrigCase(). File-local, since
 // only this file (compiled only with Enzyme) uses them.
 namespace enzyme
 {
@@ -83,8 +84,27 @@ MmsCoordinates TrigField(const MmsCoordinates &x)
   return {sy * sz + cx * sy * sz, sz * sx + sx * cy * sz, sx * sy + sx * sy * cz};
 }
 
+// Neumann-face fields, which vanish tangentially on every face except x = 1 (see
+// test-mms-driven-analytic.cpp): E = (a(y)a(z), x a(z), x a(y)), and the smooth field with
+// s = sin(πx/2) in place of sin πx plus the gradient of φ = s sin πy sin πz / π.
+MmsCoordinates NeumannPolynomialField(const MmsCoordinates &x)
+{
+  auto bubble = [](double t) { return t * (1.0 - t); };
+  return {bubble(x[1]) * bubble(x[2]), x[0] * bubble(x[2]), x[0] * bubble(x[1])};
+}
+
+MmsCoordinates NeumannTrigField(const MmsCoordinates &x)
+{
+  const double s = std::sin(0.5 * M_PI * x[0]), c = std::cos(0.5 * M_PI * x[0]);
+  const double sy = std::sin(M_PI * x[1]), sz = std::sin(M_PI * x[2]);
+  const double cy = std::cos(M_PI * x[1]), cz = std::cos(M_PI * x[2]);
+  return {sy * sz + 0.5 * c * sy * sz, s * sz + s * cy * sz, s * sy + s * sy * cz};
+}
+
 const EnzymeMmsVector<PolynomialField> kPolynomialMms(kAnisotropicMuR);
 const EnzymeMmsVector<TrigField> kTrigMms(kAnisotropicMuR);
+const EnzymeMmsVector<NeumannPolynomialField> kNeumannPolynomialMms(kAnisotropicMuR);
+const EnzymeMmsVector<NeumannTrigField> kNeumannTrigMms(kAnisotropicMuR);
 
 template <typename EnzymeMms>
 MmsCase MakeCase(const EnzymeMms &mms)
@@ -113,6 +133,18 @@ const MmsCase &TrigCase()
   return mms;
 }
 
+const MmsCase &NeumannPolynomialCase()
+{
+  static const MmsCase mms = MakeCase(kNeumannPolynomialMms);
+  return mms;
+}
+
+const MmsCase &NeumannTrigCase()
+{
+  static const MmsCase mms = MakeCase(kNeumannTrigMms);
+  return mms;
+}
+
 }  // namespace
 }  // namespace enzyme
 }  // namespace palace::testing::mms::driven
@@ -128,6 +160,20 @@ TEST_CASE("Driven MMS Enzyme quantities match the analytic cases",
       {0.17, 0.23, 0.31}, {0.38, 0.41, 0.62}, {0.73, 0.14, 0.87}};
   CheckPointwiseAgreement(enzyme::PolynomialCase(), analytic::PolynomialCase(), points);
   CheckPointwiseAgreement(enzyme::TrigCase(), analytic::TrigCase(), points);
+
+  // The Neumann-face fields, including a point on the natural face x = 1, where the curl
+  // supplies the Neumann data n×(μ⁻¹∇×E). This pointwise check is the only Enzyme
+  // coverage of the Neumann-face problem: CheckBackendAgreement below runs only the PEC
+  // problem, so the surface term never sees Enzyme data in a full solve. A second
+  // end-to-end Enzyme solve is deliberately omitted (one end-to-end backend check per
+  // operator, as for the electrostatic MMS); the analytic Neumann-face solve covers the
+  // surface term itself.
+  auto neumann_points = points;
+  neumann_points.push_back({1.0, 0.27, 0.58});
+  CheckPointwiseAgreement(enzyme::NeumannPolynomialCase(),
+                          analytic::NeumannPolynomialCase(), neumann_points);
+  CheckPointwiseAgreement(enzyme::NeumannTrigCase(), analytic::NeumannTrigCase(),
+                          neumann_points);
 }
 
 TEST_CASE("Driven MMS Enzyme reproduces the analytic errors",
