@@ -61,7 +61,6 @@
   },
   "Sensitivity":
   {
-    "Velocities": "velocities.csv",
-    "MaterialProperties": true
+    "Velocities": "velocities.csv"
   }
 }

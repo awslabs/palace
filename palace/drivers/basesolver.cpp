@@ -4,7 +4,6 @@
 #include "basesolver.hpp"
 
 #include <array>
-#include <filesystem>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
 #include "drivers/transientsolver.hpp"
@@ -15,6 +14,7 @@
 #include "models/domainpostoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
+#include "models/sensitivity.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/dorfler.hpp"
@@ -176,10 +176,11 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
                        const char *git_tag)
   : iodata(iodata), post_dir(iodata.problem.output), root(root)
 {
-  // The table of design velocities is read after the solves: check for it first.
-  const auto &velocities = iodata.sensitivity.velocities;
-  MFEM_VERIFY(!root || velocities.empty() || std::filesystem::exists(velocities),
-              "The design velocity table " << velocities << " does not exist!");
+  if (!iodata.sensitivity.velocities.empty())
+  {
+    BlockTimer bt(Timer::INIT);
+    input_velocities = std::make_unique<InputVelocities>(iodata, Mpi::World());
+  }
 
   // Initialize simulation metadata for this simulation.
   if (root)
@@ -200,6 +201,8 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
     WriteMetadata(post_dir, meta);
   }
 }
+
+BaseSolver::~BaseSolver() = default;
 
 void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
                             MPI_Comm comm) const

@@ -208,7 +208,7 @@ void ElectrostaticSolver::PostprocessSensitivities(
   // its derivatives are those of the form at fixed V_i and V_j, with no adjoint solve. With
   // respect to a relative change of the permittivity of a material, it is its share of the
   // form.
-  const DesignVelocities velocities(iodata, laplace_op.GetMesh());
+  const DesignVelocities velocities(input_velocities.get(), iodata, laplace_op.GetMesh());
   Mpi::Print("\nComputing the sensitivities of the capacitance matrix\n");
   const auto comm = laplace_op.GetComm();
   const double F = iodata.units.Dimensionalize<Units::ValueType::CAPACITANCE>(1.0);
@@ -236,22 +236,19 @@ void ElectrostaticSolver::PostprocessSensitivities(
       derivatives[velocities.GetNames()[p]] = ToJson(dC[p], F);
     }
   }
-  if (iodata.sensitivity.material_properties)
+  const auto &h1_fespace = laplace_op.GetH1Space();
+  std::vector<Vector> u(n);
+  for (int i = 0; i < n; i++)
   {
-    const auto &h1_fespace = laplace_op.GetH1Space();
-    std::vector<Vector> u(n);
-    for (int i = 0; i < n; i++)
-    {
-      u[i].SetSize(h1_fespace.GetVSize());
-      u[i].UseDevice(true);
-      h1_fespace.GetProlongationMatrix()->Mult(V[i], u[i]);
-    }
-    for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
-    {
-      const auto K_m = laplace_op.GetStiffness(iodata.domains.materials[m].attributes);
-      derivatives[MaterialDerivativeName(m, "Permittivity")] =
-          ToJson(GramMatrix(*K_m, u, comm), F);
-    }
+    u[i].SetSize(h1_fespace.GetVSize());
+    u[i].UseDevice(true);
+    h1_fespace.GetProlongationMatrix()->Mult(V[i], u[i]);
+  }
+  for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
+  {
+    const auto K_m = laplace_op.GetStiffness(iodata.domains.materials[m].attributes);
+    derivatives[MaterialDerivativeName(m, "Permittivity")] =
+        ToJson(GramMatrix(*K_m, u, comm), F);
   }
   std::vector<int> terminals;
   for (const auto &[idx, data] : terminal_sources)

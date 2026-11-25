@@ -1010,7 +1010,7 @@ void MagnetostaticSolver::PostprocessSensitivities(CurlCurlOperator &curlcurl_op
   // dM_ij = (b_i'(A_j) + b_j'(A_i) - K'(A_i, A_j) - T_ij - T_ji) / (I_i I_j). b' is at
   // fixed current densities: at fixed currents, the share b_ie of element e of source i
   // scales with the inverse of its width w_e, which gives T_ij = Σₑ b_ieᵀ A_j ∂log w_e.
-  const DesignVelocities velocities(iodata, curlcurl_op.GetMesh());
+  const DesignVelocities velocities(input_velocities.get(), iodata, curlcurl_op.GetMesh());
   Mpi::Print("\nComputing the sensitivities of the inductance matrix\n");
   const auto comm = curlcurl_op.GetComm();
   const double H = iodata.units.GetScaleFactor<Units::ValueType::INDUCTANCE>();
@@ -1085,30 +1085,27 @@ void MagnetostaticSolver::PostprocessSensitivities(CurlCurlOperator &curlcurl_op
       derivatives[velocities.GetNames()[p]] = ToJson(dM[p], H);
     }
   }
-  if (iodata.sensitivity.material_properties)
+  // K scales with the inverse permeability and its London mass L_m with the inverse square
+  // of the London depth, and the excitations with neither, so
+  // μ ∂M_ij/∂μ = A_jᵀ K_m A_i / (I_i I_j) and λ ∂M_ij/∂λ = 2 A_jᵀ L_m A_i / (I_i I_j).
+  const auto &nd_fespace = curlcurl_op.GetNDSpace();
+  std::vector<Vector> u(n);
+  for (int i = 0; i < n; i++)
   {
-    // K scales with the inverse permeability and its London mass L_m with the inverse
-    // square of the London depth, and the excitations with neither, so μ ∂M_ij/∂μ = A_jᵀ
-    // K_m A_i / (I_i I_j) and λ ∂M_ij/∂λ = 2 A_jᵀ L_m A_i / (I_i I_j).
-    const auto &nd_fespace = curlcurl_op.GetNDSpace();
-    std::vector<Vector> u(n);
-    for (int i = 0; i < n; i++)
+    u[i].SetSize(nd_fespace.GetVSize());
+    u[i].UseDevice(true);
+    nd_fespace.GetProlongationMatrix()->Mult(A[i], u[i]);
+    u[i] *= 1.0 / I_inc[i];
+  }
+  for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
+  {
+    const auto &material = iodata.domains.materials[m];
+    derivatives[MaterialDerivativeName(m, "Permeability")] =
+        ToJson(GramMatrix(*curlcurl_op.GetStiffness(material.attributes), u, comm), H);
+    if (material.lambda_L > 0.0)
     {
-      u[i].SetSize(nd_fespace.GetVSize());
-      u[i].UseDevice(true);
-      nd_fespace.GetProlongationMatrix()->Mult(A[i], u[i]);
-      u[i] *= 1.0 / I_inc[i];
-    }
-    for (std::size_t m = 0; m < iodata.domains.materials.size(); m++)
-    {
-      const auto &material = iodata.domains.materials[m];
-      derivatives[MaterialDerivativeName(m, "Permeability")] =
-          ToJson(GramMatrix(*curlcurl_op.GetStiffness(material.attributes), u, comm), H);
-      if (material.lambda_L > 0.0)
-      {
-        derivatives[MaterialDerivativeName(m, "LondonDepth")] = ToJson(
-            GramMatrix(*curlcurl_op.GetLondonMass(material.attributes), u, comm), 2.0 * H);
-      }
+      derivatives[MaterialDerivativeName(m, "LondonDepth")] = ToJson(
+          GramMatrix(*curlcurl_op.GetLondonMass(material.attributes), u, comm), 2.0 * H);
     }
   }
   std::vector<int> terminals;

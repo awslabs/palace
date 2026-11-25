@@ -56,8 +56,8 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
 // Convenience wrapper: Load followed by Partition with no Preprocess hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 
-// Read the input mesh on the calling process, as Load does before preprocessing it, with
-// the nodes of its file.
+// Read the input mesh on the calling process as Load does before preprocessing it, with
+// the curved nodes of its file.
 std::unique_ptr<mfem::Mesh> ReadInputMesh(const IoData &iodata);
 
 // Maximum axis-aligned bbox extent of the pre-partition serial mesh, reduced over

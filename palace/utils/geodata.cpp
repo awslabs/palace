@@ -3386,13 +3386,14 @@ namespace mesh
 
 std::unique_ptr<mfem::Mesh> ReadInputMesh(const IoData &iodata)
 {
-  auto mesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+  constexpr bool remove_curvature = false;
+  auto mesh = LoadMesh(iodata.model.mesh, remove_curvature, iodata.boundaries);
   // MFEM's reader moves the uniformly spaced nodes of a Gmsh mesh to the points of its
   // default basis (from the third order): restore those of the file.
   mfem::named_ifgzstream fi(iodata.model.mesh);
   std::string header;
   fi >> header;
-  if (header == "$MeshFormat" && !iodata.model.remove_curvature)
+  if (header == "$MeshFormat")
   {
     const auto &nodes = *mesh->GetNodes();
     auto *fec =

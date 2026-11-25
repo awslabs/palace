@@ -1523,7 +1523,8 @@ SpaceOperator::GetSystemShapeDerivative(std::complex<double> a0, std::complex<do
 
 std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemMaterialDerivative(
     MaterialProperty property, const std::vector<int> &attributes, std::complex<double> a0,
-    std::complex<double> a1, std::complex<double> a2, std::complex<double> omega)
+    std::complex<double> a1, std::complex<double> a2,
+    std::optional<std::complex<double>> omega)
 {
   using namespace std::complex_literals;
   MFEM_VERIFY(!mat_op.HasWaveVector() && wave_port_op.Size() == 0 &&
@@ -1603,8 +1604,11 @@ std::unique_ptr<ComplexOperator> SpaceOperator::GetSystemMaterialDerivative(
       frb2r(mat_op.MaxCeedBdrAttribute()), frb2i(mat_op.MaxCeedBdrAttribute());
   auto &farfield_op = surface_terms.GetFarfieldOp();
   farfield_op.AddDampingBdrCoefficients(1.0, fb1);
-  farfield_op.AddExtraSystemBdrCoefficients(omega, dfb2r, dfb2i, frb2r, frb2i, nullptr,
-                                            nullptr);
+  if (omega)
+  {
+    farfield_op.AddExtraSystemBdrCoefficients(*omega, dfb2r, dfb2i, frb2r, frb2i, nullptr,
+                                              nullptr);
+  }
   MFEM_VERIFY(frb2r.IsExactlyZero() && frb2i.IsExactlyZero(),
               "Material derivatives do not support Floquet absorbing boundary terms!");
   for (auto *Q : {&fb1, &dfb2r, &dfb2i})

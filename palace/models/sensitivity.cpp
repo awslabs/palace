@@ -7,7 +7,6 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
 #include <limits>
 #include <sstream>
 #include <unordered_map>
@@ -42,8 +41,8 @@ struct VelocityTable
 
 VelocityTable ReadVelocityTable(const std::string &path)
 {
-  std::ifstream fi(path);
-  MFEM_VERIFY(fi.is_open(), "Unable to open the design velocity table " << path << "!");
+  mfem::named_ifgzstream fi(path);
+  MFEM_VERIFY(fi.good(), "Unable to open the design velocity table " << path << "!");
   std::stringstream buffer;
   buffer << fi.rdbuf();
   Table table(buffer.str());
@@ -104,217 +103,151 @@ VelocityTable ReadVelocityTable(const std::string &path)
   return data;
 }
 
-// Points, found by their coordinates to within a tolerance.
-class PointHash
+// The key of a cell of a grid. Cells with equal keys share their points.
+std::uint64_t CellKey(const std::array<std::int64_t, 3> &cell)
 {
-private:
-  struct KeyHash
+  std::uint64_t key = 1469598103934665603u;
+  for (const auto c : cell)
   {
-    std::size_t operator()(const std::array<std::int64_t, 3> &key) const
-    {
-      std::size_t h = 0;
-      for (const auto k : key)
-      {
-        h = h * 1000003u ^ std::hash<std::int64_t>{}(k);
-      }
-      return h;
-    }
-  };
-
-  const std::vector<Point> &points;
-  double tol;
-  std::unordered_map<std::array<std::int64_t, 3>, std::vector<int>, KeyHash> cells;
-
-  std::array<std::int64_t, 3> Key(const Point &x) const
-  {
-    return {static_cast<std::int64_t>(std::floor(x[0] / tol)),
-            static_cast<std::int64_t>(std::floor(x[1] / tol)),
-            static_cast<std::int64_t>(std::floor(x[2] / tol))};
+    key = (key ^ static_cast<std::uint64_t>(c)) * 1099511628211u;
   }
+  return key;
+}
 
-public:
-  PointHash(const std::vector<Point> &points, double tol) : points(points), tol(tol)
-  {
-    for (std::size_t k = 0; k < points.size(); k++)
-    {
-      cells[Key(points[k])].push_back(static_cast<int>(k));
-    }
-  }
-
-  // The indices of the points within the tolerance of x in each coordinate.
-  std::vector<int> Find(const Point &x) const
-  {
-    std::vector<int> found;
-    const auto key = Key(x);
-    for (std::int64_t i = -1; i <= 1; i++)
-    {
-      for (std::int64_t j = -1; j <= 1; j++)
-      {
-        for (std::int64_t l = -1; l <= 1; l++)
-        {
-          const auto it = cells.find({key[0] + i, key[1] + j, key[2] + l});
-          if (it == cells.end())
-          {
-            continue;
-          }
-          for (const int k : it->second)
-          {
-            if (std::abs(points[k][0] - x[0]) <= tol &&
-                std::abs(points[k][1] - x[1]) <= tol &&
-                std::abs(points[k][2] - x[2]) <= tol)
-            {
-              found.push_back(k);
-            }
-          }
-        }
-      }
-    }
-    return found;
-  }
-};
-
-// The elements of a serial mesh containing points, from a grid of their bounding boxes.
-class ElementLocator
+std::array<std::int64_t, 3> Cell(const Point &x, double h)
 {
-private:
-  mfem::Mesh &mesh;
-  int dim;
-  Point lo, h;
-  std::array<int, 3> n;
-  std::vector<std::vector<int>> cells;
+  return {static_cast<std::int64_t>(std::floor(x[0] / h)),
+          static_cast<std::int64_t>(std::floor(x[1] / h)),
+          static_cast<std::int64_t>(std::floor(x[2] / h))};
+}
 
-  std::array<int, 3> Cell(const double *x) const
+}  // namespace
+
+InputVelocities::InputVelocities(const IoData &iodata, MPI_Comm comm)
+{
+#if !defined(MFEM_USE_GSLIB)
+  MFEM_ABORT("\"Sensitivity\" \"Velocities\" requires building with GSLIB!");
+#endif
+  if (Mpi::Root(comm))
   {
-    std::array<int, 3> cell = {0, 0, 0};
-    for (int c = 0; c < dim; c++)
+    const auto &path = iodata.sensitivity.velocities;
+    const auto table = ReadVelocityTable(path);
+    names = table.names;
+    input_mesh = mesh::ReadInputMesh(iodata);
+    input_mesh->EnsureNodes();
+    SetNodes();
+
+    // The velocity fields, from the table.
+    const auto &fespace = *input_mesh->GetNodes()->FESpace();
+    const int sdim = input_mesh->SpaceDimension();
+    fields.assign(names.size(),
+                  mfem::GridFunction(const_cast<mfem::FiniteElementSpace *>(&fespace)));
+    std::vector<double *> V;
+    for (auto &field : fields)
     {
-      cell[c] =
-          std::clamp(static_cast<int>(std::floor((x[c] - lo[c]) / h[c])), 0, n[c] - 1);
+      V.push_back(field.HostWrite());
+      std::fill_n(V.back(), field.Size(), 0.0);
     }
-    return cell;
-  }
-
-  int Index(const std::array<int, 3> &cell) const
-  {
-    return (cell[2] * n[1] + cell[1]) * n[0] + cell[0];
-  }
-
-public:
-  ElementLocator(mfem::Mesh &mesh) : mesh(mesh), dim(mesh.SpaceDimension())
-  {
-    // The bounding box of each element, from its nodes, with a margin for curved elements.
-    const auto &fespace = *mesh.GetNodes()->FESpace();
-    const auto *nodes = mesh.GetNodes()->HostRead();
-    std::vector<std::array<Point, 2>> boxes(mesh.GetNE());
-    mfem::Array<int> dofs;
-    lo.fill(std::numeric_limits<double>::max());
-    Point hi;
-    hi.fill(std::numeric_limits<double>::lowest());
-    for (int e = 0; e < mesh.GetNE(); e++)
+    std::size_t unmatched = 0;
+    std::string first_unmatched;
+    for (std::size_t k = 0; k < table.points.size(); k++)
     {
-      fespace.GetElementDofs(e, dofs);
-      auto &[bmin, bmax] = boxes[e];
-      bmin.fill(std::numeric_limits<double>::max());
-      bmax.fill(std::numeric_limits<double>::lowest());
-      for (const int d : dofs)
+      const auto found = FindNodes(table.points[k]);
+      if (found.empty() && unmatched++ == 0)
       {
-        for (int c = 0; c < dim; c++)
+        first_unmatched = fmt::format("({:.9e}, {:.9e}, {:.9e})", table.points[k][0],
+                                      table.points[k][1], table.points[k][2]);
+      }
+      for (const int i : found)
+      {
+        for (std::size_t p = 0; p < V.size(); p++)
         {
-          const double x = nodes[fespace.DofToVDof(d, c)];
-          bmin[c] = std::min(bmin[c], x);
-          bmax[c] = std::max(bmax[c], x);
-        }
-      }
-      double size = 0.0;
-      for (int c = 0; c < dim; c++)
-      {
-        size = std::max(size, bmax[c] - bmin[c]);
-      }
-      for (int c = 0; c < dim; c++)
-      {
-        bmin[c] -= 0.1 * size;
-        bmax[c] += 0.1 * size;
-        lo[c] = std::min(lo[c], bmin[c]);
-        hi[c] = std::max(hi[c], bmax[c]);
-      }
-    }
-
-    // About one cell per element.
-    const int n_cells = std::max(1, static_cast<int>(std::pow(mesh.GetNE(), 1.0 / dim)));
-    n.fill(1);
-    h.fill(1.0);
-    for (int c = 0; c < dim; c++)
-    {
-      n[c] = n_cells;
-      h[c] = std::max(hi[c] - lo[c], std::numeric_limits<double>::min()) / n[c];
-    }
-    cells.resize(n[0] * n[1] * n[2]);
-    for (int e = 0; e < mesh.GetNE(); e++)
-    {
-      const auto c0 = Cell(boxes[e][0].data()), c1 = Cell(boxes[e][1].data());
-      for (int k = c0[2]; k <= c1[2]; k++)
-      {
-        for (int j = c0[1]; j <= c1[1]; j++)
-        {
-          for (int i = c0[0]; i <= c1[0]; i++)
+          for (int c = 0; c < sdim; c++)
           {
-            cells[Index({i, j, k})].push_back(e);
+            V[p][fespace.DofToVDof(i, c)] = table.velocities[p][k][c];
           }
         }
       }
     }
-  }
+    MFEM_VERIFY(unmatched == 0,
+                unmatched << " of the " << table.points.size() << " rows of " << path
+                          << " are not nodes of the input mesh, the first at "
+                          << first_unmatched
+                          << ": the table must be at the nodes of the mesh file, in its "
+                             "length units, with full precision!");
 
-  // Find an element containing x, or the closest one within tol of it, and the reference
-  // coordinates of x in it.
-  bool Locate(const Point &x, double tol, int &elem, mfem::IntegrationPoint &ip) const
-  {
-    mfem::Vector xv(const_cast<double *>(x.data()), dim), y(dim);
-    double closest = std::numeric_limits<double>::max();
-    for (const int e : cells[Index(Cell(x.data()))])
+    // Without its curvature, the mesh moves with its vertices: interpolate their
+    // velocities.
+    if (iodata.model.remove_curvature && fespace.GetMaxElementOrder() > 1)
     {
-      auto &T = *mesh.GetElementTransformation(e);
-      mfem::InverseElementTransformation inv(&T);
-      inv.SetInitialGuessType(mfem::InverseElementTransformation::ClosestPhysNode);
-      mfem::IntegrationPoint ipe;
-      const int result = inv.Transform(xv, ipe);
-      if (result == mfem::InverseElementTransformation::Inside)
+      std::vector<std::vector<Point>> vertex(fields.size(),
+                                             std::vector<Point>(input_mesh->GetNV()));
+      mfem::Array<int> dofs;
+      for (int v = 0; v < input_mesh->GetNV(); v++)
       {
-        elem = e;
-        ip = ipe;
-        return true;
-      }
-      if (result == mfem::InverseElementTransformation::Outside)
-      {
-        // The reference point is projected onto the element.
-        T.Transform(ipe, y);
-        y -= xv;
-        if (y.Normlinf() < closest)
+        fespace.GetVertexDofs(v, dofs);
+        for (std::size_t p = 0; p < fields.size(); p++)
         {
-          closest = y.Normlinf();
-          elem = e;
-          ip = ipe;
+          for (int c = 0; c < sdim; c++)
+          {
+            vertex[p][v][c] = V[p][fespace.DofToVDof(dofs[0], c)];
+          }
+        }
+      }
+      input_mesh->SetCurvature(1);
+      SetNodes();
+      const auto &linear = *input_mesh->GetNodes()->FESpace();
+      for (std::size_t p = 0; p < fields.size(); p++)
+      {
+        fields[p].SetSpace(const_cast<mfem::FiniteElementSpace *>(&linear));
+        auto *h_V = fields[p].HostWrite();
+        for (int v = 0; v < input_mesh->GetNV(); v++)
+        {
+          linear.GetVertexDofs(v, dofs);
+          for (int c = 0; c < sdim; c++)
+          {
+            h_V[linear.DofToVDof(dofs[0], c)] = vertex[p][v][c];
+          }
         }
       }
     }
-    return closest <= tol;
+#if defined(MFEM_USE_GSLIB)
+    finder = std::make_unique<mfem::FindPointsGSLIB>(MPI_COMM_SELF);
+    finder->Setup(*input_mesh, 0.01, 1.0e-12);
+    finder->SetDefaultInterpolationValue(0.0);
+    finder->SetL2AvgType(mfem::FindPointsGSLIB::NONE);
+#endif
   }
-};
+  int n = static_cast<int>(names.size());
+  Mpi::Broadcast(1, &n, 0, comm);
+  names.resize(n);
+  for (auto &name : names)
+  {
+    int length = static_cast<int>(name.size());
+    Mpi::Broadcast(1, &length, 0, comm);
+    name.resize(length);
+    Mpi::Broadcast(length, name.data(), 0, comm);
+  }
+}
 
-// The velocities [p][3 k + c] of the design parameters at the points x_k, in mesh length
-// units: the input mesh's interpolant of the table, zero at the nodes it does not list.
-std::vector<std::vector<double>> EvaluateVelocities(const IoData &iodata,
-                                                    const VelocityTable &table,
-                                                    const std::vector<double> &x)
+InputVelocities::~InputVelocities()
 {
-  auto imesh = mesh::ReadInputMesh(iodata);
-  imesh->EnsureNodes();
-  const int sdim = imesh->SpaceDimension();
-  const auto &fespace = *imesh->GetNodes()->FESpace();
-  const auto *nodes = imesh->GetNodes()->HostRead();
+#if defined(MFEM_USE_GSLIB)
+  if (finder)
+  {
+    finder->FreeData();
+  }
+#endif
+}
 
-  // The positions of the nodes of the input mesh, and a tolerance relative to its size.
-  std::vector<Point> node_points(fespace.GetNDofs(), Point{0.0, 0.0, 0.0});
+void InputVelocities::SetNodes()
+{
+  // The positions of the nodes, by their cells in a grid of a spacing relative to the size
+  // of the mesh.
+  const auto &fespace = *input_mesh->GetNodes()->FESpace();
+  const auto *X = input_mesh->GetNodes()->HostRead();
+  const int sdim = input_mesh->SpaceDimension();
+  nodes.assign(fespace.GetNDofs(), Point{0.0, 0.0, 0.0});
   Point lo, hi;
   lo.fill(std::numeric_limits<double>::max());
   hi.fill(std::numeric_limits<double>::lowest());
@@ -322,9 +255,9 @@ std::vector<std::vector<double>> EvaluateVelocities(const IoData &iodata,
   {
     for (int c = 0; c < sdim; c++)
     {
-      node_points[i][c] = nodes[fespace.DofToVDof(i, c)];
-      lo[c] = std::min(lo[c], node_points[i][c]);
-      hi[c] = std::max(hi[c], node_points[i][c]);
+      nodes[i][c] = X[fespace.DofToVDof(i, c)];
+      lo[c] = std::min(lo[c], nodes[i][c]);
+      hi[c] = std::max(hi[c], nodes[i][c]);
     }
   }
   double extent = 0.0;
@@ -332,104 +265,131 @@ std::vector<std::vector<double>> EvaluateVelocities(const IoData &iodata,
   {
     extent = std::max(extent, hi[c] - lo[c]);
   }
-  const PointHash node_hash(node_points,
-                            std::max(1.0e-9 * extent, std::numeric_limits<double>::min()));
-
-  // The velocity fields on the input mesh, from the table.
-  std::vector<mfem::GridFunction> V(
-      table.names.size(),
-      mfem::GridFunction(const_cast<mfem::FiniteElementSpace *>(&fespace)));
-  std::vector<double *> h_V;
-  for (auto &v : V)
+  tol = std::max(1.0e-9 * extent, std::numeric_limits<double>::min());
+  cells.clear();
+  for (std::size_t i = 0; i < nodes.size(); i++)
   {
-    h_V.push_back(v.HostWrite());
-    std::fill_n(h_V.back(), v.Size(), 0.0);
+    cells[CellKey(Cell(nodes[i], tol))].push_back(static_cast<int>(i));
   }
-  std::size_t unmatched = 0;
-  std::string first_unmatched;
-  for (std::size_t k = 0; k < table.points.size(); k++)
+}
+
+std::vector<int> InputVelocities::FindNodes(const Point &x) const
+{
+  // The nodes within tol of x in each coordinate are in its cell or a neighbor.
+  std::vector<int> found;
+  const auto cell = Cell(x, tol);
+  for (std::int64_t i = -1; i <= 1; i++)
   {
-    const auto found = node_hash.Find(table.points[k]);
-    if (found.empty())
+    for (std::int64_t j = -1; j <= 1; j++)
     {
-      if (unmatched++ == 0)
+      for (std::int64_t l = -1; l <= 1; l++)
       {
-        first_unmatched = fmt::format("({:.9e}, {:.9e}, {:.9e})", table.points[k][0],
-                                      table.points[k][1], table.points[k][2]);
-      }
-      continue;
-    }
-    for (const int i : found)
-    {
-      for (std::size_t p = 0; p < V.size(); p++)
-      {
-        for (int c = 0; c < sdim; c++)
+        const auto it = cells.find(CellKey({cell[0] + i, cell[1] + j, cell[2] + l}));
+        if (it == cells.end())
         {
-          h_V[p][fespace.DofToVDof(i, c)] = table.velocities[p][k][c];
+          continue;
+        }
+        for (const int k : it->second)
+        {
+          if (std::abs(nodes[k][0] - x[0]) <= tol && std::abs(nodes[k][1] - x[1]) <= tol &&
+              std::abs(nodes[k][2] - x[2]) <= tol)
+          {
+            found.push_back(k);
+          }
         }
       }
     }
   }
-  MFEM_VERIFY(
-      unmatched == 0,
-      unmatched << " of the " << table.points.size()
-                << " points of the design velocity table are not nodes of the input "
-                   "mesh, the first at "
-                << first_unmatched
-                << ": the table must be at the nodes of the mesh file, in its "
-                   "length units, with full precision!");
+  std::ranges::sort(found);
+  found.erase(std::ranges::unique(found).begin(), found.end());
+  return found;
+}
 
-  // Evaluate them at each point: at a node of the input mesh, its value if the nodal basis
-  // interpolates, and otherwise the interpolant in the element containing the point.
+std::vector<std::vector<double>>
+InputVelocities::Evaluate(const std::vector<double> &x) const
+{
+  // At a node of the input mesh, the velocity is its value if the nodal basis interpolates.
+  // Elsewhere, it is the interpolant in the element containing the point.
+  const auto &fespace = *fields[0].FESpace();
+  const int sdim = input_mesh->SpaceDimension();
   const bool interpolatory =
       dynamic_cast<const mfem::NodalFiniteElement *>(fespace.GetFE(0)) != nullptr;
-  const std::size_t n_points = x.size() / 3;
-  std::vector<std::vector<double>> v(V.size(), std::vector<double>(x.size(), 0.0));
-  const ElementLocator locator(*imesh);
-  mfem::Vector value(sdim);
-  for (std::size_t k = 0; k < n_points; k++)
+  std::vector<const double *> V;
+  for (const auto &field : fields)
   {
-    const Point xk = {x[3 * k], x[3 * k + 1], x[3 * k + 2]};
-    if (const auto found = interpolatory ? node_hash.Find(xk) : std::vector<int>{};
-        !found.empty())
+    V.push_back(field.HostRead());
+  }
+  std::vector<std::vector<double>> v(fields.size(), std::vector<double>(x.size(), 0.0));
+  std::vector<std::size_t> search;
+  for (std::size_t k = 0; k < x.size() / 3; k++)
+  {
+    const auto found = interpolatory ? FindNodes({x[3 * k], x[3 * k + 1], x[3 * k + 2]})
+                                     : std::vector<int>{};
+    if (found.empty())
     {
-      for (std::size_t p = 0; p < V.size(); p++)
-      {
-        for (int c = 0; c < sdim; c++)
-        {
-          v[p][3 * k + c] = h_V[p][fespace.DofToVDof(found[0], c)];
-        }
-      }
+      search.push_back(k);
       continue;
     }
-    int e;
-    mfem::IntegrationPoint ip;
-    MFEM_VERIFY(locator.Locate(xk, 1.0e-9 * extent, e, ip),
-                fmt::format("The mesh node at ({:.9e}, {:.9e}, {:.9e}) is not in the input "
-                            "mesh, so the design velocities are not defined there!",
-                            xk[0], xk[1], xk[2]));
     for (std::size_t p = 0; p < V.size(); p++)
     {
-      V[p].GetVectorValue(e, ip, value);
       for (int c = 0; c < sdim; c++)
       {
-        v[p][3 * k + c] = value(c);
+        v[p][3 * k + c] = V[p][fespace.DofToVDof(found[0], c)];
       }
     }
   }
+  if (search.empty())
+  {
+    return v;
+  }
+#if defined(MFEM_USE_GSLIB)
+  const int m = static_cast<int>(search.size());
+  mfem::Vector xyz(m * sdim);
+  for (int i = 0; i < m; i++)
+  {
+    for (int c = 0; c < sdim; c++)
+    {
+      xyz(c * m + i) = x[3 * search[i] + c];
+    }
+  }
+  finder->FindPoints(xyz, mfem::Ordering::byNODES);
+  const auto &code = finder->GetCode();
+  const auto *dist = finder->GetDist().HostRead();
+  for (int i = 0; i < m; i++)
+  {
+    MFEM_VERIFY(code[i] < 2 && dist[i] <= tol,
+                fmt::format("The mesh node at ({:.9e}, {:.9e}, {:.9e}) is not in the input "
+                            "mesh, so the design velocities are not defined there!",
+                            x[3 * search[i]], x[3 * search[i] + 1], x[3 * search[i] + 2]));
+  }
+  mfem::Vector vals;
+  for (std::size_t p = 0; p < fields.size(); p++)
+  {
+    finder->Interpolate(fields[p], vals, mfem::Ordering::byVDIM);
+    const auto *h_vals = vals.HostRead();
+    for (int i = 0; i < m; i++)
+    {
+      for (int c = 0; c < sdim; c++)
+      {
+        v[p][3 * search[i] + c] = h_vals[i * sdim + c];
+      }
+    }
+  }
+#else
+  MFEM_ABORT("Design velocities require MFEM built with GSLIB!");
+#endif
   return v;
 }
 
-}  // namespace
-
-DesignVelocities::DesignVelocities(const IoData &iodata, const Mesh &mesh)
+DesignVelocities::DesignVelocities(const InputVelocities *input, const IoData &iodata,
+                                   const Mesh &mesh)
   : mesh(mesh.Get())
 {
-  const auto &path = iodata.sensitivity.velocities;
-  if (path.empty())
+  if (!input)
   {
     return;
   }
+  names = input->GetNames();
   const auto comm = mesh.GetComm();
   const auto &nodes = *this->mesh.GetNodes();
   const auto *nodal_fespace =
@@ -461,26 +421,13 @@ DesignVelocities::DesignVelocities(const IoData &iodata, const Mesh &mesh)
     x.insert(x.end(), xi.begin(), xi.end());
   }
 
-  // Read the table and evaluate the velocities at the nodes on the root, then scatter
-  // them one parameter at a time.
+  // Evaluate the velocities at the nodes on the root, and scatter them one parameter at a
+  // time.
   const auto x_root = Mpi::GatherOnRoot(x, comm);
-  VelocityTable table;
-  std::vector<std::vector<double>> v_root;
-  if (Mpi::Root(comm))
+  const auto v_root =
+      Mpi::Root(comm) ? input->Evaluate(x_root) : std::vector<std::vector<double>>{};
+  for (std::size_t p = 0; p < names.size(); p++)
   {
-    table = ReadVelocityTable(path);
-    v_root = EvaluateVelocities(iodata, table, x_root);
-  }
-  int n_params = static_cast<int>(table.names.size());
-  Mpi::Broadcast(1, &n_params, 0, comm);
-  for (int p = 0; p < n_params; p++)
-  {
-    int length = Mpi::Root(comm) ? static_cast<int>(table.names[p].size()) : 0;
-    Mpi::Broadcast(1, &length, 0, comm);
-    std::string name = Mpi::Root(comm) ? table.names[p] : std::string(length, ' ');
-    Mpi::Broadcast(length, name.data(), 0, comm);
-    names.push_back(name);
-
     const auto v = Mpi::ScatterFromRoot(Mpi::Root(comm) ? v_root[p] : std::vector<double>{},
                                         static_cast<int>(x.size()), comm);
     auto &V = velocities.emplace_back(nodal_fespace->GetTrueVSize());
@@ -497,10 +444,8 @@ DesignVelocities::DesignVelocities(const IoData &iodata, const Mesh &mesh)
   }
   long long int n_nodes = tdofs.size();
   Mpi::GlobalSum(1, &n_nodes, comm);
-  Mpi::Print(
-      comm,
-      "\nDesign velocities of {:d} parameter{} from {}, evaluated at {:d} mesh nodes\n",
-      names.size(), (names.size() > 1) ? "s" : "", path, n_nodes);
+  Mpi::Print(comm, "\nDesign velocities of {:d} parameter{} at {:d} mesh nodes\n",
+             names.size(), (names.size() > 1) ? "s" : "", n_nodes);
 }
 
 DesignVelocities::~DesignVelocities() = default;

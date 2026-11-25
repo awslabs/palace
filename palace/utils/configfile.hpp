@@ -1361,15 +1361,12 @@ public:
 struct SensitivityData
 {
 public:
-  // Table of the velocities of the design parameters at the nodes of the input mesh.
+  // Compute the derivatives with respect to the material properties, the lumped ports, and
+  // the design parameters of the table of their velocities at the input mesh's nodes.
+  bool enabled = false;
   std::string velocities = "";
 
-  // Compute the derivatives with respect to the properties of each material, and to the
-  // resistance, inductance and capacitance of each lumped port.
-  bool material_properties = false;
-  bool lumped_ports = false;
-
-  bool empty() const { return velocities.empty() && !material_properties && !lumped_ports; }
+  bool empty() const { return !enabled; }
 
   SensitivityData() = default;
   SensitivityData(const json &sensitivity);

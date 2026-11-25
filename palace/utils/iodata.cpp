@@ -1021,6 +1021,19 @@ void IoData::CheckConfiguration()
                                  { return material.HasFrequencyDependentPermittivity(); }),
         "\"Sensitivity\" is not available for eigenmode problems with "
         "frequency-dependent permittivities!");
+    // The divergence-free projection, which is with respect to the real permittivity, does
+    // not account for the conductivity of domains, nor do the eigenvalues it projects.
+    const auto IsNonzero = [](const auto &tensor)
+    { return std::ranges::any_of(tensor.s, [](double v) { return v != 0.0; }); };
+    MFEM_VERIFY(problem.type != ProblemType::EIGENMODE ||
+                    solver.linear.divfree_max_it == 0 ||
+                    std::ranges::any_of(domains.materials, [](const auto &material)
+                                        { return material.lambda_L > 0.0; }) ||
+                    std::ranges::none_of(domains.materials, [&](const auto &material)
+                                         { return IsNonzero(material.sigma); }),
+                "\"Sensitivity\" is not available for eigenmode problems with domain "
+                "conductivity and the divergence-free projection: set "
+                "\"Solver\"/\"Linear\"/\"DivFreeMaxIts\" to 0!");
     if (problem.type == ProblemType::MAGNETOSTATIC)
     {
       const bool short_ports =
@@ -1048,9 +1061,6 @@ void IoData::CheckConfiguration()
                   "\"Sensitivity\" \"Velocities\" is not available with coaxial surface "
                   "current sources!");
     }
-    MFEM_VERIFY(!sensitivity.lumped_ports || problem.type == ProblemType::EIGENMODE,
-                "\"Sensitivity\" \"LumpedPorts\" is only available for eigenmode "
-                "problems!");
     MFEM_VERIFY(sensitivity.velocities.empty() ||
                     boundaries.periodic.boundary_pairs.empty(),
                 "\"Sensitivity\" \"Velocities\" is not available with periodic "

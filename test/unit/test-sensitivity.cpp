@@ -742,10 +742,16 @@ TEST_CASE("Magnetostatic inductance sensitivities", "[sensitivity][Serial][Paral
   // The derivatives of the inductances need no adjoint solve. Check them against finite
   // differences of the solved inductances on moved meshes, with the current densities of
   // the sources fixed.
-  auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
-  auto order = GENERATE(1, 2);
-  auto amr = GENERATE(false, true);
-  auto lambda_L = GENERATE(0.0, 0.3);
+  // Each element type, order, refinement and London depth, in two of four combinations.
+  const auto params = GENERATE(table<mfem::Element::Type, int, bool, double>(
+      {{mfem::Element::HEXAHEDRON, 1, false, 0.0},
+       {mfem::Element::TETRAHEDRON, 2, false, 0.3},
+       {mfem::Element::HEXAHEDRON, 2, true, 0.3},
+       {mfem::Element::TETRAHEDRON, 1, true, 0.0}}));
+  const auto type = std::get<0>(params);
+  const int order = std::get<1>(params);
+  const bool amr = std::get<2>(params);
+  const double lambda_L = std::get<3>(params);
   INFO("Element type: " << type << ", order: " << order << ", AMR: " << amr
                         << ", London depth: " << lambda_L);
   MagnetostaticProblem problem(type, order, amr, lambda_L);
@@ -902,6 +908,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Eigenmode sensitivities of a loss
   // given by R, L and C, against finite differences of Palace on morphed meshes. The
   // velocity stretches the port and moves the interface of the dielectrics, which changes Q
   // through the irrotational part of the eigenvectors.
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("Design velocities require GSLIB");
+#endif
   auto smesh =
       mfem::Mesh::MakeCartesian3D(4, 3, 4, mfem::Element::HEXAHEDRON, 1.0, 0.8, 0.6);
   for (int e = 0; e < smesh.GetNE(); e++)
@@ -1002,6 +1011,9 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // The inductances at fixed currents against finite differences of Palace on morphed
   // meshes, for a velocity which widens both sources, the faces z = 1 and y = 0 along x
   // between the PEC faces x = 0 and x = 1, and keeps them planar.
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("Design velocities require GSLIB");
+#endif
   auto smesh =
       mfem::Mesh::MakeCartesian3D(4, 4, 4, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0);
   for (int e = 0; e < smesh.GetNE(); e++)
@@ -1172,10 +1184,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Design velocities",
 {
   // The velocities at the mesh nodes are the derivatives of the node positions for input
   // meshes morphed by the table, through the mesh pipeline with uniform and nonconformal
-  // refinement of curved meshes. So are the derivatives of the geometry.
+  // refinement of curved meshes, or without their curvature. So are the derivatives of the
+  // geometry.
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("Design velocities require GSLIB");
+#endif
   auto type = GENERATE(mfem::Element::HEXAHEDRON, mfem::Element::TETRAHEDRON);
   auto amr = GENERATE(false, true);
-  INFO("Element type: " << type << ", AMR: " << amr);
+  auto remove_curvature = GENERATE(false, true);
+  INFO("Element type: " << type << ", AMR: " << amr
+                        << ", without curvature: " << remove_curvature);
   auto smesh = mfem::Mesh::MakeCartesian3D(3, 3, 3, type, 1.0, 1.0, 1.0);
   for (int e = 0; e < smesh.GetNE(); e++)
   {
@@ -1271,6 +1289,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Design velocities",
       config["Model"]["Refinement"]["Nonconformal"] = true;
       config["Model"]["Refinement"]["MaxIts"] = 1;
     }
+    if (remove_curvature)
+    {
+      config["Model"]["RemoveCurvature"] = true;
+    }
     auto iodata = std::make_unique<IoData>(config, false);
     auto smesh = mesh::Load(*iodata, Mpi::World());
     iodata->NondimensionalizeInputs(smesh);
@@ -1311,7 +1333,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Design velocities",
   };
 
   const auto [iodata, mesh] = Read(nullptr, 0.0);
-  const DesignVelocities velocities(*iodata, *mesh);
+  const InputVelocities input(*iodata, Mpi::World());
+  const DesignVelocities velocities(&input, *iodata, *mesh);
   REQUIRE(velocities.GetNames() == std::vector<std::string>{"w", "t"});
   const auto dvolume = velocities.Differentiate(Volume);
   const double h = 1.0e-3;

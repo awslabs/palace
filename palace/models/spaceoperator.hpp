@@ -8,6 +8,7 @@
 #include <complex>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
@@ -530,13 +531,15 @@ public:
                            std::complex<double> a2, std::complex<double> omega);
 
   // Construct the derivative of the same form with respect to a relative change of a
-  // property of the material of the given domain attributes, and those with respect to
-  // relative changes of the R, L and C of element elem of lumped port idx, or of all its
-  // elements if elem < 0 (null for those of R, L and C it does not have).
+  // property of the material of the given domain attributes, without the terms of A2 if
+  // omega is not given, and those with respect to relative changes of the R, L and C of
+  // element elem of lumped port idx, or of all its elements if elem < 0 (null for those of
+  // R, L and C it does not have).
   std::unique_ptr<ComplexOperator>
   GetSystemMaterialDerivative(MaterialProperty property, const std::vector<int> &attributes,
                               std::complex<double> a0, std::complex<double> a1,
-                              std::complex<double> a2, std::complex<double> omega);
+                              std::complex<double> a2,
+                              std::optional<std::complex<double>> omega);
   std::array<std::unique_ptr<ComplexOperator>, 3>
   GetLumpedPortDerivatives(int idx, int elem, std::complex<double> a0,
                            std::complex<double> a1, std::complex<double> a2);

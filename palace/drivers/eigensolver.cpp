@@ -1074,8 +1074,7 @@ void EigenSolver::PostprocessSensitivities(
   // dλ = -xᵀ ∂T x / xᵀ T'(λ) x, and no adjoint solve is needed. At fixed R, L and C of the
   // lumped ports, the per-square values R q_e, L q_e and C / q_e of each element e change
   // with its shape, through q_e = n w_e / l_e (see LumpedPortData).
-  const DesignVelocities velocities(iodata, space_op.GetMesh());
-  const auto &sensitivity = iodata.sensitivity;
+  const DesignVelocities velocities(input_velocities.get(), iodata, space_op.GetMesh());
   const int n_modes = static_cast<int>(omega.size());
   Mpi::Print("\nComputing the sensitivities of {:d} mode{}\n", n_modes,
              (n_modes > 1) ? "s" : "");
@@ -1140,7 +1139,6 @@ void EigenSolver::PostprocessSensitivities(
   // xᵀ dT x for each port term is that of GetLumpedPortDerivatives at a0 = a1 = a2 = 1,
   // times λ, 1 or λ² for R, L or C.
   std::vector<std::unique_ptr<ComplexOperator>> port_ops(port_terms.size());
-  if (!dlogc.empty() || sensitivity.lumped_ports)
   {
     std::array<std::unique_ptr<ComplexOperator>, 3> dT;
     for (std::size_t t = 0; t < port_terms.size(); t++)
@@ -1159,42 +1157,57 @@ void EigenSolver::PostprocessSensitivities(
   // relative changes of the properties of each material and of the R, L and C of each
   // lumped port.
   std::vector<std::string> names = velocities.GetNames();
-  std::vector<std::vector<MaterialProperty>> properties;
-  if (sensitivity.material_properties)
+
+  // The derivatives of the K, C and M parts of T, which xᵀ dT x combines with 1, λ and λ²
+  // for each mode, and those of A2(ω) for each mode.
+  struct MaterialTerm
   {
-    for (std::size_t k = 0; k < iodata.domains.materials.size(); k++)
+    const std::vector<int> *attributes;
+    MaterialProperty property;
+    std::array<std::unique_ptr<ComplexOperator>, 3> parts;
+  };
+  std::vector<MaterialTerm> material_terms;
+  for (std::size_t k = 0; k < iodata.domains.materials.size(); k++)
+  {
+    const auto &material = iodata.domains.materials[k];
+    for (const auto property : GetMaterialProperties(material))
     {
-      properties.push_back(GetMaterialProperties(iodata.domains.materials[k]));
-      for (const auto property : properties.back())
+      auto &term = material_terms.emplace_back(&material.attributes, property);
+      for (int j = 0; j < 3; j++)
       {
-        names.push_back(MaterialDerivativeName(k, ToString(property)));
+        term.parts[j] = space_op.GetSystemMaterialDerivative(
+            property, material.attributes, (j == 0) ? 1.0 : 0.0, (j == 1) ? 1.0 : 0.0,
+            (j == 2) ? 1.0 : 0.0, std::nullopt);
       }
+      names.push_back(MaterialDerivativeName(k, ToString(property)));
     }
   }
   std::map<std::pair<int, int>, std::size_t> port_names;
-  if (sensitivity.lumped_ports)
+  for (const auto &term : port_terms)
   {
-    for (const auto &term : port_terms)
+    if (port_names.try_emplace({term.idx, term.element}, names.size()).second)
     {
-      if (port_names.try_emplace({term.idx, term.element}, names.size()).second)
-      {
-        names.push_back(LumpedPortDerivativeName(term.idx, port_elements[term.element]));
-      }
+      names.push_back(LumpedPortDerivativeName(term.idx, port_elements[term.element]));
     }
   }
   std::vector<std::vector<std::complex<double>>> domega(
       names.size(), std::vector<std::complex<double>>(n_modes, 0.0));
+  std::vector<bool> degenerate(n_modes, false);
   for (int m = 0; m < n_modes; m++)
   {
     for (int k = 0; k < n_modes; k++)
     {
       if (k != m && std::abs(omega[k] - omega[m]) < 1.0e-6 * std::abs(omega[m]))
       {
-        Mpi::Warning("Mode {:d} is degenerate, so its derivatives are not defined: the "
-                     "result is for its computed eigenvector!\n",
+        Mpi::Warning("Mode {:d} is degenerate, so its derivatives are not defined!\n",
                      m + 1);
+        degenerate[m] = true;
         break;
       }
+    }
+    if (degenerate[m])
+    {
+      continue;
     }
     const std::complex<double> lambda = 1i * omega[m], lambda2 = lambda * lambda;
     eigen.GetEigenvector(m, x);
@@ -1255,37 +1268,34 @@ void EigenSolver::PostprocessSensitivities(
         domega[k++][m] = c * std::complex<double>(dr[p], di[p]);
       }
     }
-    for (std::size_t j = 0; j < properties.size(); j++)
+    for (const auto &term : material_terms)
     {
-      for (const auto property : properties[j])
+      auto dw = Derivative(term.parts[0].get()) + lambda * Derivative(term.parts[1].get()) +
+                lambda2 * Derivative(term.parts[2].get());
+      if (has_A2)
       {
-        const auto dT = space_op.GetSystemMaterialDerivative(
-            property, iodata.domains.materials[j].attributes, 1.0, lambda, lambda2,
-            omega[m]);
-        domega[k++][m] = Derivative(dT.get());
+        const auto dA2 = space_op.GetSystemMaterialDerivative(
+            term.property, *term.attributes, 0.0, 0.0, 0.0, omega[m]);
+        dw += Derivative(dA2.get());
       }
+      domega[k++][m] = dw;
     }
-    if (!dlogc.empty() || sensitivity.lumped_ports)
+    const std::array<std::complex<double>, 3> port_scale = {lambda, 1.0, lambda2};
+    for (std::size_t t = 0; t < port_terms.size(); t++)
     {
-      const std::array<std::complex<double>, 3> port_scale = {lambda, 1.0, lambda2};
-      for (std::size_t t = 0; t < port_terms.size(); t++)
+      const auto &term = port_terms[t];
+      const auto dw = port_scale[term.element] * Derivative(port_ops[t].get());
+      for (std::size_t p = 0; p < dlogc.size(); p++)
       {
-        const auto &term = port_terms[t];
-        const auto dw = port_scale[term.element] * Derivative(port_ops[t].get());
-        for (std::size_t p = 0; p < dlogc.size(); p++)
-        {
-          domega[p][m] += dw * dlogc[p][t];
-        }
-        if (sensitivity.lumped_ports)
-        {
-          domega[port_names.at({term.idx, term.element})][m] += dw;
-        }
+        domega[p][m] += dw * dlogc[p][t];
       }
+      domega[port_names.at({term.idx, term.element})][m] += dw;
     }
   }
 
   // f = Re{ω} / 2π and Q = |ω| / 2 |Im{ω}|, with dQ = ar Re{dω} + ai Im{dω}. The quality
-  // factor of a mode without losses is not defined.
+  // factor of a mode without losses is not defined, nor are the derivatives of a degenerate
+  // mode.
   const double GHz = iodata.units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) /
                      (2.0 * std::numbers::pi);
   std::vector<int> modes(n_modes);
@@ -1314,8 +1324,15 @@ void EigenSolver::PostprocessSensitivities(
     for (int m = 0; m < n_modes; m++)
     {
       const auto dw = domega[k][m];
-      dfk.push_back(GHz * dw.real());
-      if (Q[m].is_null())
+      if (degenerate[m])
+      {
+        dfk.push_back(nullptr);
+      }
+      else
+      {
+        dfk.push_back(GHz * dw.real());
+      }
+      if (Q[m].is_null() || degenerate[m])
       {
         dQk.push_back(nullptr);
       }

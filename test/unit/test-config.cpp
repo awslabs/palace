@@ -1306,26 +1306,32 @@ TEST_CASE("Config Sensitivity", "[config][Serial]")
     IoData iodata(config, false);
     const auto &sensitivity = iodata.sensitivity;
     CHECK(sensitivity.velocities == "velocities.csv");
-    CHECK(!sensitivity.material_properties);
-    CHECK(!sensitivity.lumped_ports);
     CHECK(!sensitivity.empty());
-    CHECK(IoData(Config(json::object()), false).sensitivity.empty());
+    const IoData material_only(Config(json::object()), false);
+    CHECK(!material_only.sensitivity.empty());
+    CHECK(material_only.sensitivity.velocities.empty());
+    auto none = Config(json::object());
+    none.erase("Sensitivity");
+    CHECK(IoData(none, false).sensitivity.empty());
 
     const auto resolved = IoData::ConcretizeDefaults(iodata, config);
-    CHECK(resolved["Sensitivity"]["Velocities"] == "velocities.csv");
-    CHECK(resolved["Sensitivity"]["MaterialProperties"] == false);
-    CHECK(resolved["Sensitivity"]["LumpedPorts"] == false);
+    CHECK(resolved["Sensitivity"] == json{{"Velocities", "velocities.csv"}});
   }
 
   SECTION("Eigenmode problems")
   {
-    auto config = Config({{"MaterialProperties", true}, {"LumpedPorts", true}});
+    auto config = Config(json::object());
     config["Problem"]["Type"] = "Eigenmode";
     config["Boundaries"] = {{"PEC", {{"Attributes", {1}}}}};
     config["Solver"] = {{"Eigenmode", {{"N", 2}, {"Target", 1.0}}}};
-    IoData iodata(config, false);
-    CHECK(iodata.sensitivity.material_properties);
-    CHECK(iodata.sensitivity.lumped_ports);
+    CHECK(!IoData(config, false).sensitivity.empty());
+
+    // The divergence-free projection does not account for the conductivity of domains.
+    auto conductor = config;
+    conductor["Domains"]["Materials"][0]["Conductivity"] = 1.0;
+    CHECK_THROWS_WITH(IoData(conductor, false), ContainsSubstring("domain conductivity"));
+    conductor["Solver"]["Linear"] = {{"DivFreeMaxIts", 0}};
+    CHECK_NOTHROW(IoData(conductor, false));
 
     auto dispersive = config;
     dispersive["Domains"]["Materials"][0]["Permittivity"] = {
@@ -1334,12 +1340,6 @@ TEST_CASE("Config Sensitivity", "[config][Serial]")
          {{{"Type", "Debye"}, {"DeltaPermittivity", 1.5}, {"RelaxationTime", 0.02}}}}};
     CHECK_THROWS_WITH(IoData(dispersive, false),
                       ContainsSubstring("frequency-dependent permittivities"));
-
-    config["Problem"]["Type"] = "Electrostatic";
-    config["Boundaries"] = {{"Ground", {{"Attributes", {1}}}},
-                            {"Terminal", {{{"Index", 1}, {"Attributes", {2}}}}}};
-    CHECK_THROWS_WITH(IoData(config, false),
-                      ContainsSubstring("\"LumpedPorts\" is only available"));
   }
 
   SECTION("Magnetostatic problems")

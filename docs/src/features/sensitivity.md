@@ -31,7 +31,10 @@ refinement and the curving of the elements. A quantity ``J`` then changes by
 where ``\mathbf{g}_k`` is its gradient with respect to the position of node ``k``. The
 derivatives are those of the discrete quantities *Palace* computes on morphed input meshes,
 so they agree with finite differences of simulations on them, and none needs an adjoint
-solve: the cost is a few operator applications per quantity and parameter.
+solve. Their cost is the evaluation of the velocities at the mesh nodes, a point search in
+the input mesh on one process, and a few operator applications per quantity and
+parameter, plus one correction of the eigenvector of each mode of an eigenmode simulation
+with losses.
 
   - The capacitances are ``C_{ij} = V_j^T K V_i`` for the terminal potentials ``V_i``. As
     each ``V_i`` minimizes the field energy for its terminal voltages, the derivative is
@@ -54,16 +57,14 @@ dilation by ``1 + t`` scales the inductances by ``1 + t``.
 
 ## Configuration
 
-The [`config["Sensitivity"]`](../config/reference.md#config-sensitivity) section gives the
-table of the velocities, and whether to compute the derivatives with respect to the
-material and lumped port properties:
+The [`config["Sensitivity"]`](../config/reference.md#config-sensitivity) section requests
+the derivatives with respect to the material and lumped port properties, and to the design
+parameters of an optional table of velocities:
 
 ```json
 "Sensitivity":
 {
-  "Velocities": "velocities.csv",
-  "MaterialProperties": true,
-  "LumpedPorts": true
+  "Velocities": "velocities.csv"
 }
 ```
 
@@ -79,15 +80,18 @@ x, y, z, gap.x, gap.y, gap.z, radius.x, radius.y, radius.z
 
 Its rows must be nodes of the mesh file, with the full precision of their coordinates,
 including the high-order nodes of a curved mesh. The velocity is zero at the nodes it does
-not list.
+not list, and it may be compressed with gzip. With
+[`config["Model"]["RemoveCurvature"]`](../config/reference.md#config-model),
+the mesh moves with its vertices, so the velocities of the other nodes are ignored. The
+table is read when the simulation starts, and its evaluation requires *Palace* built with
+GSLIB.
 
-`"MaterialProperties"` requests the derivatives with respect to relative changes of the
-properties of each material, such as ``\varepsilon \, \partial J / \partial \varepsilon``:
-its `"Permittivity"` (electrostatic and eigenmode simulations), its `"Permeability"` and
+The derivatives with respect to the properties of each material are those with respect to
+relative changes, such as ``\varepsilon \, \partial J / \partial \varepsilon``, of its
+`"Permittivity"` (electrostatic and eigenmode simulations), its `"Permeability"` and
 `"LondonDepth"` (magnetostatic and eigenmode simulations), and its `"LossTan"` and
-`"Conductivity"` (eigenmode simulations), where nonzero. In eigenmode simulations,
-`"LumpedPorts"` requests the derivatives with respect to relative changes of the `"R"`,
-`"L"` and `"C"` of each lumped port.
+`"Conductivity"` (eigenmode simulations), where nonzero. Eigenmode simulations also give
+those with respect to relative changes of the `"R"`, `"L"` and `"C"` of each lumped port.
 
 ## Output
 
@@ -116,7 +120,8 @@ port property:
     `"Inductance"` matrix, in F and H, with the indices of their `"Terminals"` or
     `"SurfaceCurrent"` boundaries.
   - Eigenmode simulations write the `"Frequency"`, in GHz, and the `"QualityFactor"` of each
-    of the `"Modes"` of `eig.csv`, which is `null` for a mode without losses.
+    of the `"Modes"` of `eig.csv`. The quality factor of a mode without losses, and the
+    derivatives of a degenerate mode, are `null`.
 
 The derivatives with respect to a parameter are in the unit of the quantity per unit of
 the parameter, and those with respect to a property per relative change of it.
@@ -155,9 +160,11 @@ gmsh.finalize()
     sources, eigenmode sensitivities not with wave ports, Floquet ports, a Floquet wave
     vector or frequency-dependent permittivities, and magnetostatic ones not with flux
     loops, superconductors or shorted inactive ports.
-  - The derivatives of an eigenvalue are defined only if it is simple. For a degenerate
-    mode, *Palace* warns, and the result is for the eigenvector it computed. The quality
-    factor of a lossless mode is not defined.
+  - With domain conductivity, eigenmode sensitivities require the divergence-free
+    projection to be off (`config["Solver"]["Linear"]["DivFreeMaxIts"]` of 0), as it does
+    not account for it.
+  - The derivatives of an eigenvalue are defined only if it is simple: for a degenerate
+    mode, *Palace* warns and writes `null`.
   - A velocity must keep each lumped port and surface current source planar, and a source
     with its edges off conductors along its current, for its excitation to remain
     compatible.
