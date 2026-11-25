@@ -20,6 +20,8 @@ NonLinearEigenvalueSolver::NonLinearEigenvalueSolver(MPI_Comm comm, int print)
   : comm(comm), print(print)
 {
   // Initialization.
+  nev = n = 0;
+  rtol = 0.0;
   nleps_it = 0;
 
   gamma = delta = 1.0;
