@@ -175,6 +175,14 @@ void DrivenRegionSolver::Mult(const ComplexVector &x, ComplexVector &y) const
   }
 }
 
+namespace
+{
+
+// The iteration limit of the FGMRES of a substructured region (see MakeDrivenKspSolver).
+constexpr int kRegionMaxIts = 500;
+
+}  // namespace
+
 std::unique_ptr<ComplexKspSolver> MakeDrivenKspSolver(const IoData &iodata,
                                                       SpaceOperator &space_op)
 {
@@ -182,10 +190,13 @@ std::unique_ptr<ComplexKspSolver> MakeDrivenKspSolver(const IoData &iodata,
   {
     // FGMRES, whose solution combines the preconditioned vectors of its residual: near a
     // resonance of the region, where the region solver is nearly singular, GMRES applies it
-    // to a combination of its basis, which loses digits.
+    // to a combination of its basis, which loses digits. It then takes a few iterations
+    // with MUMPS's Schur complement, but tens with SuperLU_DIST's, so it has an iteration
+    // limit of its own, kRegionMaxIts or "MaxIts" if larger (its restart is "MaxSize").
     config::LinearSolverData linear = iodata.solver.linear;
     linear.krylov_solver = KrylovSolver::FGMRES;
     linear.pc_side = PreconditionerSide::DEFAULT;
+    linear.max_it = std::max(linear.max_it, kRegionMaxIts);
     return std::make_unique<ComplexKspSolver>(
         linear, iodata.problem.verbose, space_op.GetComm(),
         std::make_unique<DrivenRegionSolver>(iodata, space_op, *env));

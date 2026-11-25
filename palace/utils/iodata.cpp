@@ -718,7 +718,7 @@ void IoData::CheckConfiguration()
         solver.linear.type != LinearSolver::SUPERLU)
     {
       Mpi::Warning("Substructuring factors with STRUMPACK, MUMPS or SuperLU_DIST only: "
-                   "\"Solver.Linear.Type\" \"{}\" is not used!\n",
+                   "\"Solver.Linear.Type\" \"{}\" is not used for its factorizations!\n",
                    ToString(solver.linear.type));
     }
     // The factorizations are exact: of the options of the sparse direct solvers, they take
@@ -736,22 +736,40 @@ void IoData::CheckConfiguration()
     solver.substructuring->direct_solver = solver.linear.type;
 
     // A driven sweep solves the region as a driven problem with the dense S_E of the
-    // environment on Γ (see the SpaceOperator of an environment), preconditioned by the
-    // region solver: from the region's exact complex matrix on one level, factored for its
-    // Schur complement onto Γ by a sparse direct solver (see DrivenRegionSolver).
+    // environment on Γ (see the SpaceOperator of an environment), by FGMRES preconditioned
+    // by the region solver: from the region's exact complex matrix on one level, factored
+    // for its Schur complement onto Γ by a sparse direct solver (see MakeDrivenKspSolver),
+    // whatever the options of the multigrid preconditioner and the Krylov solver.
     if (problem.type == ProblemType::DRIVEN)
     {
       auto &linear = solver.linear;
-      if (linear.type != LinearSolver::STRUMPACK && linear.type != LinearSolver::MUMPS &&
-          linear.type != LinearSolver::SUPERLU)
+      auto unused = [](const char *key)
       {
-#if defined(MFEM_USE_STRUMPACK)
-        linear.type = LinearSolver::STRUMPACK;
-#elif defined(MFEM_USE_MUMPS)
-        linear.type = LinearSolver::MUMPS;
-#elif defined(MFEM_USE_SUPERLU)
-        linear.type = LinearSolver::SUPERLU;
-#endif
+        Mpi::Warning(
+            "Driven substructuring solves the region by FGMRES with a direct solve "
+            "of it: \"Solver.Linear.{}\" is not used!\n",
+            key);
+      };
+      if (linear.mg_max_levels > 1)
+      {
+        unused("MGMaxLevels");
+      }
+      if (linear.pc_mat_real)
+      {
+        unused("PCMatReal");
+      }
+      if (linear.pc_mat_shifted > 0)
+      {
+        unused("PCMatShifted");
+      }
+      if (linear.krylov_solver != KrylovSolver::DEFAULT &&
+          linear.krylov_solver != KrylovSolver::FGMRES)
+      {
+        unused("KSPType");
+      }
+      if (linear.pc_side != PreconditionerSide::DEFAULT)
+      {
+        unused("PCSide");
       }
       linear.mg_max_levels = 1;
       linear.pc_mat_real = false;

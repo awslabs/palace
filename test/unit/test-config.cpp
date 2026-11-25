@@ -202,7 +202,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     };
     using Catch::Matchers::ContainsSubstring;
     CHECK_THAT(output({{"Type", "AMS"}}),
-               ContainsSubstring("\"Solver.Linear.Type\" \"AMS\" is not used!"));
+               ContainsSubstring(
+                   "\"Solver.Linear.Type\" \"AMS\" is not used for its factorizations!"));
     CHECK_THAT(
         output({{"STRUMPACKCompressionType", "HSS"}}),
         ContainsSubstring("\"Solver.Linear.STRUMPACKCompressionType\" is not used!"));
@@ -326,6 +327,22 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     const json uniform = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}};
 #if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
     CHECK_NOTHROW(IoData(make_config(uniform, json::object()), false));
+    // The region is solved by FGMRES with a direct solve of it, whatever the options of the
+    // multigrid preconditioner and of the Krylov solver, which are not used (a warning).
+    for (const auto &[key, value] :
+         std::vector<std::pair<std::string, json>>{{"MGMaxLevels", 2},
+                                                   {"PCMatReal", true},
+                                                   {"PCMatShifted", true},
+                                                   {"KSPType", "GMRES"},
+                                                   {"PCSide", "Right"}})
+    {
+      CAPTURE(key);
+      json config = make_config(uniform, json::object());
+      config["Solver"]["Linear"] = {{key, value}};
+      CHECK_THAT(
+          CaptureStdout([&config]() { IoData iodata(config, false); }),
+          Catch::Matchers::ContainsSubstring("\"Solver.Linear." + key + "\" is not used!"));
+    }
 #endif
     json adaptive = uniform;
     adaptive["AdaptiveTol"] = 1.0e-3;
