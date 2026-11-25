@@ -8,8 +8,10 @@
 #include "fem/bilinearform.hpp"
 #include "fem/coefficient.hpp"
 #include "fem/integrator.hpp"
+#include "fem/lumpedelement.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "fem/shapederivativeform.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -666,6 +668,21 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
   // retrieve +J).
   SumVectorCoefficient fb(GetMesh().SpaceDimension());
   surf_j_op.AddExcitationBdrCoefficients(idx, fb);
+  AssembleCurrentExcitation(fb, RHS);
+}
+
+void CurlCurlOperator::GetCurrentExcitationVector(int idx, int elem, Vector &RHS)
+{
+  // The share of element elem of the excitation, as SurfaceCurrentOperator assembles it.
+  const auto &element = surf_j_op.GetSource(idx).elements.at(elem);
+  SumVectorCoefficient fb(GetMesh().SpaceDimension());
+  fb.AddCoefficient(element.source->GetModeCoefficient(-element.current_fraction /
+                                                       element.source->GetGeometryWidth()));
+  AssembleCurrentExcitation(fb, RHS);
+}
+
+void CurlCurlOperator::AssembleCurrentExcitation(SumVectorCoefficient &fb, Vector &RHS)
+{
   RHS.SetSize(GetSolutionNDSpace().GetTrueVSize());
   RHS.UseDevice(true);
   RHS = 0.0;
@@ -714,6 +731,87 @@ void CurlCurlOperator::GetCurrentExcitationVector(int idx, Vector &RHS)
     GetNDSpace().GetProlongationMatrix()->AddMultTranspose(rhs, RHS, -1.0);
   }
   linalg::SetSubVector(RHS, dbc_tdof_lists.back(), 0.0);
+}
+
+std::unique_ptr<Operator>
+CurlCurlOperator::GetStiffness(const std::vector<int> &attributes) const
+{
+  const auto ceed_attributes = mat_op.GetCeedAttributes(attributes);
+  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                         mat_op.GetCurlCurlInvPermeability());
+  muinv_func.RestrictCoefficient(ceed_attributes);
+  MaterialPropertyCoefficient london_func(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetInvLondonDepth());
+  london_func.RestrictCoefficient(ceed_attributes);
+  BilinearForm k(GetNDSpace());
+  if (mat_op.HasLondonDepth())
+  {
+    k.AddDomainIntegrator<CurlCurlMassIntegrator>(muinv_func, london_func);
+  }
+  else
+  {
+    k.AddDomainIntegrator<CurlCurlIntegrator>(muinv_func);
+  }
+  return k.PartialAssemble();
+}
+
+std::unique_ptr<Operator>
+CurlCurlOperator::GetLondonMass(const std::vector<int> &attributes) const
+{
+  MaterialPropertyCoefficient london_func(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetInvLondonDepth());
+  london_func.RestrictCoefficient(mat_op.GetCeedAttributes(attributes));
+  BilinearForm m(GetNDSpace());
+  m.AddDomainIntegrator<VectorFEMassIntegrator>(london_func);
+  return m.PartialAssemble();
+}
+
+std::unique_ptr<ShapeDerivativeOperator>
+CurlCurlOperator::GetStiffnessShapeDerivative() const
+{
+  MFEM_VERIFY(sc_sheet_op.empty() && !IsBroken(),
+              "Shape derivatives are not available with superconductor sheets!");
+  MaterialPropertyCoefficient muinv_func(mat_op.GetAttributeToMaterial(),
+                                         mat_op.GetCurlCurlInvPermeability());
+  MaterialPropertyCoefficient london_func(mat_op.GetAttributeToMaterial(),
+                                          mat_op.GetInvLondonDepth());
+  ShapeDerivativeForm dk(GetNDSpace());
+  dk.AddDomainIntegrator<CurlCurlShapeIntegrator>(muinv_func);
+  if (mat_op.HasLondonDepth())
+  {
+    dk.AddDomainIntegrator<VectorFEMassShapeIntegrator>(london_func);
+  }
+  return dk.Assemble();
+}
+
+std::unique_ptr<ShapeDerivativeOperator>
+CurlCurlOperator::GetCurrentExcitationShapeDerivative(int idx) const
+{
+  // The source +J of GetCurrentExcitationVector, in the first column of a coefficient.
+  MFEM_VERIFY(sc_sheet_op.empty() && !IsBroken(),
+              "Shape derivatives are not available with superconductor sheets!");
+  const int sdim = GetMesh().SpaceDimension();
+  MaterialPropertyCoefficient fb(mat_op.MaxCeedBdrAttribute());
+  for (const auto &elem : surf_j_op.GetSource(idx).elements)
+  {
+    const auto *source = dynamic_cast<const UniformElementData *>(elem.source.get());
+    MFEM_VERIFY(source, "Shape derivatives are only available for uniform surface current "
+                        "sources!");
+    mfem::DenseMatrix J(sdim);
+    J = 0.0;
+    for (int d = 0; d < sdim; d++)
+    {
+      J(d, 0) =
+          elem.current_fraction / source->GetGeometryWidth() * source->GetDirection()(d);
+    }
+    fb.AddMaterialProperty(mat_op.GetCeedBdrAttributes(source->GetAttrList()), J);
+  }
+  ShapeDerivativeForm db(GetNDSpace());
+  if (!fb.empty())
+  {
+    db.AddBoundaryIntegrator<VectorFEBoundaryLFShapeIntegrator>(fb);
+  }
+  return db.Assemble();
 }
 
 void CurlCurlOperator::EnsureSheetMass()

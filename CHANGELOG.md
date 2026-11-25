@@ -32,6 +32,16 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     normalized like `rom-C-re.csv`, so that `yᴴ C_Γ y / yᴴ Re{C} y` is the surface
     participation ratio of a field with synthesized coordinates `y`.
     [PR 1156](https://github.com/awslabs/palace/pull/1156).
+  - Added shape and material sensitivities. With the `"Sensitivity"` section, *Palace*
+    writes the derivatives of the capacitance and inductance matrices (electrostatic and
+    magnetostatic simulations), and of the frequencies and quality factors of the eigenmodes,
+    with respect to design parameters, the material properties and the lumped port elements
+    to `sensitivity.json`, with no adjoint solve. The design parameters are given by a table
+    of their velocities at the nodes of the input mesh, for example from DeviceLayout.jl,
+    which *Palace* carries through its refinement of the mesh, so that the derivatives are
+    those of simulations on morphed input meshes, at fixed lumped port elements and source
+    currents. SchemaVer 6-2-0.
+    [PR 1127](https://github.com/awslabs/palace/pull/1127).
 
 #### Interface Changes
 

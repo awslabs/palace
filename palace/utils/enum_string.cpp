@@ -156,6 +156,13 @@ PALACE_ENUM_STRING_DEFINE(Device, {{Device::CPU, "CPU"},
 PALACE_ENUM_STRING_DEFINE(InactivePortMode, {{InactivePortMode::OPEN, "Open"},
                                              {InactivePortMode::SHORT, "Short"}})
 
+PALACE_ENUM_STRING_DEFINE(MaterialProperty,
+                          {{MaterialProperty::PERMITTIVITY, "Permittivity"},
+                           {MaterialProperty::LOSS_TANGENT, "LossTan"},
+                           {MaterialProperty::CONDUCTIVITY, "Conductivity"},
+                           {MaterialProperty::PERMEABILITY, "Permeability"},
+                           {MaterialProperty::LONDON_DEPTH, "LondonDepth"}})
+
 #undef PALACE_ENUM_STRING_DEFINE
 
 }  // namespace palace

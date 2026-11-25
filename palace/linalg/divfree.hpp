@@ -48,11 +48,13 @@ private:
   // from being singular.
   std::vector<mfem::Array<int>> aux_tdof_lists;
 
-  // Linear solver for the projected linear system (Gᵀ M G) y = x.
+  // Linear solver for the projected linear system (Gᵀ M G) y = x, and its preconditioner.
   std::unique_ptr<BaseKspSolver<OperType>> ksp;
+  const Solver<OperType> *pc;
 
   // Workspace objects for solver application.
   mutable VecType psi, rhs;
+  MPI_Comm comm;
 
 public:
   DivFreeSolver(const MaterialOperator &mat_op, FiniteElementSpace &nd_fespace,
@@ -73,6 +75,10 @@ public:
     y = x;
     Mult(y);
   }
+
+  // Remove the irrotational part of y with respect to an operator B close to the mass
+  // operator of the permittivity, instead of the latter, so that Gᵀ B y = 0.
+  void Mult(const OperType &B, VecType &y) const;
 };
 
 }  // namespace palace

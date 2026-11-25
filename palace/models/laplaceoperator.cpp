@@ -8,6 +8,7 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fem/multigrid.hpp"
+#include "fem/shapederivativeform.hpp"
 #include "linalg/hypre.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -217,6 +218,27 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 
   print_hdr = false;
   return K;
+}
+
+std::unique_ptr<Operator>
+LaplaceOperator::GetStiffness(const std::vector<int> &attributes) const
+{
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal());
+  epsilon_func.RestrictCoefficient(mat_op.GetCeedAttributes(attributes));
+  BilinearForm k(GetH1Space());
+  k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
+  return k.PartialAssemble();
+}
+
+std::unique_ptr<ShapeDerivativeOperator>
+LaplaceOperator::GetStiffnessShapeDerivative() const
+{
+  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
+                                           mat_op.GetPermittivityReal());
+  ShapeDerivativeForm dk(GetH1Space());
+  dk.AddDomainIntegrator<DiffusionShapeIntegrator>(epsilon_func);
+  return dk.Assemble();
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,

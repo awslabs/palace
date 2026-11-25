@@ -3541,6 +3541,30 @@ bool SamePlane(const std::array<double, 4> &a, const std::array<double, 4> &b, d
 namespace mesh
 {
 
+std::unique_ptr<mfem::Mesh> ReadInputMesh(const IoData &iodata)
+{
+  constexpr bool remove_curvature = false;
+  auto mesh = LoadMesh(iodata.model.mesh, remove_curvature, iodata.boundaries);
+  // MFEM's reader moves the uniformly spaced nodes of a Gmsh mesh to the points of its
+  // default basis (from the third order): restore those of the file.
+  mfem::named_ifgzstream fi(iodata.model.mesh);
+  std::string header;
+  fi >> header;
+  if (header == "$MeshFormat")
+  {
+    const auto &nodes = *mesh->GetNodes();
+    auto *fec =
+        new mfem::H1_FECollection(nodes.FESpace()->GetMaxElementOrder(), mesh->Dimension(),
+                                  mfem::BasisType::ClosedUniform);
+    auto *fes = new mfem::FiniteElementSpace(mesh.get(), fec, mesh->SpaceDimension(),
+                                             nodes.FESpace()->GetOrdering());
+    auto *uniform = new mfem::GridFunction(fes);
+    uniform->MakeOwner(fec);
+    mesh->SetNodalGridFunction(uniform, true);
+  }
+  return mesh;
+}
+
 void ExtrudePML(std::unique_ptr<mfem::Mesh> &orig_mesh, config::DomainData &domains,
                 const config::BoundaryData &boundaries)
 {

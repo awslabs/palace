@@ -58,6 +58,10 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
 // Convenience wrapper: Load followed by Partition with no Preprocess hook.
 std::unique_ptr<mfem::ParMesh> ReadMesh(IoData &iodata, MPI_Comm comm);
 
+// Read the input mesh on the calling process as Load does before preprocessing it, with
+// the curved nodes of its file.
+std::unique_ptr<mfem::Mesh> ReadInputMesh(const IoData &iodata);
+
 // Extrude the PML regions of the entries of config["Boundaries"]["PML"] (the extruded
 // blocks of domains.pml, see config::PMLData::Extrusion) from boundaries of a serial 3D
 // mesh: the surface of each entry is split into parts, the geometry nodes of each face of a

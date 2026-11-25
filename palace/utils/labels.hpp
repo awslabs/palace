@@ -229,6 +229,16 @@ enum class InactivePortMode : char
   DEFAULT = OPEN
 };
 
+// Material properties of sensitivities.
+enum class MaterialProperty : char
+{
+  PERMITTIVITY,
+  LOSS_TANGENT,
+  CONDUCTIVITY,
+  PERMEABILITY,
+  LONDON_DEPTH
+};
+
 }  // namespace palace
 
 #endif  // PALACE_UTILS_LABELS_HPP

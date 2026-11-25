@@ -23,6 +23,9 @@ The configuration file has five required top-level sections:
 }
 ```
 
+The optional `"Sensitivity"` section requests the derivatives of results with respect to the
+geometry and the materials (see [Shape and Material Sensitivities](../features/sensitivity.md)).
+
 The complete reference for every configuration option is in the [Configuration File
 Reference](reference.md). Each entry shows the JSON key, type, default value, and description.
 Fields marked **required** have no default and must be supplied.

@@ -168,6 +168,15 @@ for the ``\text{TE}_{011}`` mode is shown below.
 </p>
 ```
 
+The configuration file
+[`cavity_sensitivity.json`](https://github.com/awslabs/palace/blob/main/examples/cylinder/cavity_sensitivity.json)
+solves the cavity with impedance walls at a lower order, and computes the derivatives of the
+frequencies and quality factors of its modes with respect to design parameters, from a table
+of their velocities (see [Shape and Material Sensitivities](../features/sensitivity.md)).
+With velocities which scale the radius and the height, these agree with the analytic
+derivatives, ``a\,\partial f/\partial a = -f`` for the ``\text{TM}_{010}`` mode for
+example, to the discretization error.
+
 ### Dispersive cavity material
 
 The compact

@@ -21,6 +21,7 @@ namespace palace
 {
 
 class FiniteElementSpaceHierarchy;
+class InputVelocities;
 class IoData;
 class Mesh;
 class Timer;
@@ -38,6 +39,9 @@ protected:
   // Parameters for writing postprocessing outputs.
   fs::path post_dir;
   bool root;
+
+  // The velocities of the design parameters of the sensitivities, on the input mesh.
+  std::unique_ptr<InputVelocities> input_velocities;
 
   // Performs a solve using the mesh sequence, then reports error indicators and the number
   // of global true dofs.
@@ -65,7 +69,7 @@ protected:
 public:
   BaseSolver(const IoData &iodata, bool root, int size = 0, int num_thread = 0,
              const char *git_tag = nullptr);
-  virtual ~BaseSolver() = default;
+  virtual ~BaseSolver();
 
   // Applying driver specific transformations to config data or mesh, including
   // nondimensionalization.

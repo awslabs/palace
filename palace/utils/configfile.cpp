@@ -2054,6 +2054,12 @@ SolverData::SolverData(const json &solver)
   linear = ParseOptional<LinearSolverData>(solver, "Linear");
 }
 
+SensitivityData::SensitivityData(const json &sensitivity)
+{
+  enabled = true;
+  velocities = sensitivity.value("Velocities", velocities);
+}
+
 int GetNumSteps(double start, double end, double delta)
 {
   MFEM_VERIFY(delta > 0.0 && end >= start,
