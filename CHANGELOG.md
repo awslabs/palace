@@ -35,6 +35,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     kinetic energy of the carriers. Finite conductivity boundaries take an optional
     `"Permittivity"` of the conductor, a number or a frequency-dependent permittivity, so
     that superconducting films can be modeled by their surface impedance. SchemaVer 6-2-0
+    [PR 1309](https://github.com/awslabs/palace/pull/1309).
 
 #### Interface Changes
 
@@ -77,6 +78,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added the superconducting line example, which reproduces the propagation of
     picosecond pulses on a Nb microstrip with the Mattis-Bardeen conductivity of the films,
     meshed or as surface impedance boundaries.
+    [PR 1309](https://github.com/awslabs/palace/pull/1309).
 
 ## [0.20.0] - 2026-11-23
 
