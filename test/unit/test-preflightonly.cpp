@@ -343,3 +343,127 @@ TEST_CASE_METHOD(
   CHECK_FALSE(Block(solve, "ParticipationTable").contains("PreflightOnly"));
 #endif
 }
+
+// CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling (b) of 2026-11-25): a design
+// whose preflight fails closed by default (GeometryFailurePolicy absent) still gets the
+// census a solve-form run (RecordRaw, its default) computes before its first solve, and
+// then ends with exit status 3; an explicit FailClosed builds none; an explicit RecordRaw
+// completes with it. The geometry fallback: InterfaceMappingConflict (R2A), the two
+// diagonal corners of the diagonal island whose arms carry the two SA targets 4 and 5
+// (test-geometryfallback.cpp).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "PreflightOnly builds the census of a design whose preflight fails closed "
+                 "by default",
+                 "[surfaceresponseoperator][preflightonly][geometryfallback][3d][Serial]"
+                 "[Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "preflight-census-diagonal-island.mesh";
+  const fs::path sa_library = temp.temp_dir / "preflight-census-convex-3d-sa.json";
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialDiagonalIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+    json library = json::parse(ReadBytes(convex_library_3d_path));
+    library["Name"] = "unit-test-process-convex-3d-sa";
+    for (auto &model : library["Models"])
+    {
+      model["Interfaces"] = {{{"Type", "SA"}, {"Coupon", 1}}};
+    }
+    std::ofstream(sa_library) << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = ConvexIslandConfig(test::CrackPolicy::Default);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Boundaries"]["Terminal"] = {{{"Index", 1}, {"Attributes", {9, 10}}}};
+  json &dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"];
+  json second = dielectric[0];
+  second["Index"] = 5;
+  second["Attributes"] = {10};
+  dielectric.push_back(second);
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["TargetInterfaces"] = {4, 5};
+  correction["Library"] = sa_library.string();
+  correction["UnmatchedPolicy"] = "Warn";
+  correction.erase("PatchConstruction");
+  correction["CorrectionMode"] = "PostprocessOnly";
+  correction["PatchEnergy"] = true;
+  // policy: "" = the key absent.
+  auto Run = [&](bool preflight, const std::string &policy)
+  {
+    json run = config;
+    const fs::path output =
+        temp.temp_dir /
+        ("preflight-census-fallback-" + std::string(preflight ? "preflight" : "solve") +
+         (policy.empty() ? "" : "-" + policy));
+    run["Problem"]["Output"] = output.string();
+    auto &request = run["Solver"]["Electrostatic"]["ResponseCorrection"];
+    request["PreflightOnly"] = preflight;
+    if (!policy.empty())
+    {
+      request["GeometryFailurePolicy"] = policy;
+    }
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    int status = 0;
+    if (preflight)
+    {
+      status = RunSurfaceResponsePreflight(iodata, comm, utils::ConfigureOmp());
+    }
+    else
+    {
+      palace::Run(iodata, comm, utils::ConfigureOmp());
+    }
+    Mpi::Barrier(comm);
+    return std::pair{output, status};
+  };
+  const auto [solve, solve_status] = Run(false, "");
+  const auto [absent, absent_status] = Run(true, "");
+  const auto [closed, closed_status] = Run(true, "FailClosed");
+  const auto [raw, raw_status] = Run(true, "RecordRaw");
+  CHECK(absent_status == kSurfaceResponsePreflightFailClosedExitStatus);
+  CHECK(closed_status == kSurfaceResponsePreflightFailClosedExitStatus);
+  CHECK(raw_status == 0);
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  auto Response = [](const fs::path &dir)
+  {
+    return json::parse(ReadBytes(dir / "palace.json"))
+        .value("SurfaceResponse", json::object());
+  };
+  const json solved = Response(solve).at("Resolution");
+  REQUIRE(solved.at("Knots").at("Located").get<long long int>() > 0);
+  const std::string patches = "surface-response-resolution-patches.csv";
+  REQUIRE(fs::is_regular_file(solve / patches));
+  for (const auto &dir : {absent, raw})
+  {
+    INFO("run " << dir.filename().string());
+    const json census = Response(dir).at("Resolution");
+    for (const char *member : kPreSolveResolutionMembers)
+    {
+      INFO("SurfaceResponse.Resolution." << member);
+      CHECK(census.at(member) == solved.at(member));
+    }
+    CHECK(census.at("NoCellsReason") == "PreflightOnly: no solve");
+    CHECK(ReadBytes(dir / patches) == ReadBytes(solve / patches));
+    const auto rows = CsvCells(dir / kSurfaceParticipationFile);
+    REQUIRE(rows.size() == 4);  // the SA Type total, interfaces 4 and 5
+    CHECK(rows[1].back() == kParticipationPreflightReason);
+  }
+  // The explicit FailClosed: the manifest only, no census output.
+  CHECK(fs::is_regular_file(closed / "surface-response-requirements.json"));
+  CHECK_FALSE(Response(closed).contains("Resolution"));
+  CHECK_FALSE(Response(closed).contains("ParticipationTable"));
+  CHECK_FALSE(fs::exists(closed / patches));
+  CHECK_FALSE(fs::exists(closed / kSurfaceParticipationFile));
+#endif
+}

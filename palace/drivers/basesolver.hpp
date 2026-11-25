@@ -42,6 +42,16 @@ struct RefinementData;
 //
 // Base driver class for all simulation types.
 //
+// CUT-PLAN step 4b (lane v1step4b): what PreflightResolutionCensus did: whether it
+// evaluated the census (false: the problem type has none, or the correction falls back to
+// the raw run) and the features of its operator's recorded geometry fallbacks (raw recorded
+// for them).
+struct PreflightCensusOutcome
+{
+  bool evaluated = false;
+  std::size_t fallback_features = 0;
+};
+
 class BaseSolver
 {
 protected:
@@ -92,12 +102,13 @@ protected:
   // dofs): the census Types and the PREFLIGHT line, surface-response-resolution-patches.csv
   // (PatchEnergy), the Resolution block of palace.json and the level-1 PREFLIGHT rows of
   // surface-participation.csv. Collective.
-  void WritePreflightResolutionCensus(SurfaceResponseOperator &response,
-                                      long long int unknowns, MPI_Comm comm) const;
+  PreflightCensusOutcome WritePreflightResolutionCensus(SurfaceResponseOperator &response,
+                                                        long long int unknowns,
+                                                        MPI_Comm comm) const;
 
   // PreflightResolutionCensus of the eigenmode and driven solvers: the space operator (no
   // matrix) and the Maxwell response operator as their PostOperator builds it.
-  void PreflightMaxwellResolutionCensus(
+  PreflightCensusOutcome PreflightMaxwellResolutionCensus(
       const std::vector<std::unique_ptr<Mesh>> &mesh,
       std::shared_ptr<const SurfaceResponseGeometry> *response_geometry) const;
 
@@ -128,7 +139,8 @@ public:
   // does before its first solve (no matrix assembly, no solve) and writes what that solve
   // form computes there (WritePreflightResolutionCensus). Electrostatic, eigenmode and
   // driven; any other problem type prints one line. Collective.
-  virtual void PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const;
+  virtual PreflightCensusOutcome
+  PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.

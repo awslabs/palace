@@ -3777,6 +3777,12 @@ prints the same knots and PREFLIGHT lines, writes the same
 `SurfaceResponse.Resolution` block of `palace.json` (`Knots`, `Preflight` and the bars;
 `"Cells": 0`, `"NoCellsReason": "PreflightOnly: no solve"`). The energy-weighted census
 (`surface-response-resolution.csv`, the banner) needs the solved field and is not written.
+A preflight that ends by its default `GeometryFailurePolicy` (`FailClosed` with the key
+absent; exit status 3) still builds this census first, as a solve-form run builds it under
+its own default `RecordRaw` (raw recorded for the failed geometry; the log names how many
+features), and then ends as before; with `"GeometryFailurePolicy": "FailClosed"` set (a
+solve-form run aborts too) no census is built and the log names `"RecordRaw"` as the value
+that gives it.
 
 ### The per-iteration table of the response correction
 

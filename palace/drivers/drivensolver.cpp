@@ -78,10 +78,11 @@ internal::DrivenSystemOperator internal::BuildDrivenSystemOperator(
   return system_op;
 }
 
-void DrivenSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const
+PreflightCensusOutcome
+DrivenSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   PrepareFirstLevelMesh(mesh);
-  PreflightMaxwellResolutionCensus(mesh, &response_geometry);
+  return PreflightMaxwellResolutionCensus(mesh, &response_geometry);
 }
 
 std::pair<ErrorIndicator, long long int>

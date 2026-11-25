@@ -70,7 +70,8 @@ public:
   using BaseSolver::BaseSolver;
 
   // CUT-PLAN step 4b (lane v1step4b): PreflightMaxwellResolutionCensus on the first mesh.
-  void PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const override;
+  PreflightCensusOutcome
+  PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const override;
 };
 
 }  // namespace palace

@@ -1199,14 +1199,16 @@ void BaseSolver::SaveSurfaceResponseMetadata(const std::string &key,
   }
 }
 
-void BaseSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const
+PreflightCensusOutcome
+BaseSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   Mpi::Print(mesh.back()->GetComm(),
              "\nResolution census: not evaluated in PreflightOnly for this problem type "
              "(PreflightOnly evaluates it for Electrostatic, Eigenmode and Driven)\n");
+  return {};
 }
 
-void BaseSolver::PreflightMaxwellResolutionCensus(
+PreflightCensusOutcome BaseSolver::PreflightMaxwellResolutionCensus(
     const std::vector<std::unique_ptr<Mesh>> &mesh,
     std::shared_ptr<const SurfaceResponseGeometry> *response_geometry) const
 {
@@ -1220,18 +1222,20 @@ void BaseSolver::PreflightMaxwellResolutionCensus(
   MFEM_VERIFY(response->IsRawFallback() || response->HasSurfaceResponse(),
               "Maxwell surface response correction requires fabricated and thin "
               "surface response matrices in the selected coupon models!");
-  WritePreflightResolutionCensus(*response, space_op.GlobalTrueVSize(), space_op.GetComm());
+  return WritePreflightResolutionCensus(*response, space_op.GlobalTrueVSize(),
+                                        space_op.GetComm());
 }
 
-void BaseSolver::WritePreflightResolutionCensus(SurfaceResponseOperator &response,
-                                                long long int unknowns, MPI_Comm comm) const
+PreflightCensusOutcome
+BaseSolver::WritePreflightResolutionCensus(SurfaceResponseOperator &response,
+                                           long long int unknowns, MPI_Comm comm) const
 {
   if (response.IsRawFallback())
   {
     // The solve form makes no census on a whole-run raw fallback either.
     Mpi::Print(comm, "\nResolution census: not evaluated: the correction falls back to "
                      "the raw run (RawFallback: no patch applied)\n");
-    return;
+    return {};
   }
   // The census Types of the solve form (PostOperator::GetInterfaceTypes over the coverage
   // interfaces: each entry's Type, read here from the configuration it copies).
@@ -1273,6 +1277,15 @@ void BaseSolver::WritePreflightResolutionCensus(SurfaceResponseOperator &respons
         PreflightParticipationRows(types, regions, record.preflight), unknowns, comm);
     SaveSurfaceResponseMetadata("ParticipationTable", surface_participation->Metadata());
   }
+  PreflightCensusOutcome outcome;
+  outcome.evaluated = true;
+  std::set<int> fallback_features;
+  for (const auto &fallback : response.GetGeometryFallbacks())
+  {
+    fallback_features.insert(fallback.features.begin(), fallback.features.end());
+  }
+  outcome.fallback_features = fallback_features.size();
+  return outcome;
 }
 
 void BaseSolver::SaveMaxSizeStopMetadata(const nlohmann::json &record) const
