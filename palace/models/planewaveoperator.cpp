@@ -11,6 +11,7 @@
 #include <string>
 #include <fmt/ranges.h>
 #include "fem/fespace.hpp"
+#include "fem/mesh.hpp"
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/geodata.hpp"
@@ -435,6 +436,132 @@ void PlaneWaveOperator::GetLayer(int idx, const FiniteElementSpace &nd_fespace,
   }
 }
 
+void PlaneWaveOperator::GetVertexNeighbors(int idx, mfem::ParMesh &mesh,
+                                           mfem::Array<int> &elements,
+                                           mfem::Array<int> &bdr_elements,
+                                           bool inside) const
+{
+  // Mark the vertices of the elements of the total-field region (or of the rest of the
+  // domain, inside = true) on an order-1 H1 space, and extend the marker through the
+  // prolongation to the vertices shared with other processes and to the hanging vertices
+  // which depend on them: |P| |P|ᵀ.
+  const auto &src = sources.at(idx);
+  mfem::H1_FECollection fec(1, mesh.Dimension());
+  mfem::ParFiniteElementSpace fes(&mesh, &fec);
+  mfem::HypreParMatrix &P = *fes.Dof_TrueDof_Matrix();
+  mfem::Array<int> l_v(fes.GetVSize()), t_v(fes.GetTrueVSize()), dofs;
+  l_v = 0;
+  auto InSource = [&](int e)
+  { return src.attr_marker[mesh.GetAttribute(e) - 1] != inside; };
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (InSource(e))
+    {
+      fes.GetElementDofs(e, dofs);
+      for (int d : dofs)
+      {
+        l_v[d] = 1;
+      }
+    }
+  }
+  P.BooleanMultTranspose(1, l_v.HostRead(), 0, t_v.HostWrite());
+  P.BooleanMult(1, t_v.HostRead(), 0, l_v.HostWrite());
+  auto Touches = [&l_v](const mfem::Array<int> &dofs)
+  { return std::ranges::any_of(dofs, [&l_v](int d) { return l_v[d] != 0; }); };
+  elements.SetSize(0);
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    if (!InSource(e))
+    {
+      fes.GetElementDofs(e, dofs);
+      if (Touches(dofs))
+      {
+        elements.Append(e);
+      }
+    }
+  }
+  bdr_elements.SetSize(0);
+  for (int be = 0; be < mesh.GetNBE(); be++)
+  {
+    fes.GetBdrElementDofs(be, dofs);
+    if (Touches(dofs))
+    {
+      bdr_elements.Append(be);
+    }
+  }
+}
+
+void PlaneWaveOperator::AddLayerToMarkedElements(Mesh &mesh,
+                                                 mfem::Array<int> &marked_elements) const
+{
+  // A nonconforming refinement of part of the layer of elements around the total-field
+  // region of a plane wave leaves hanging entities inside the layer, where the source is
+  // then not consistent with the incident field, and the solution degrades. Refining the
+  // whole layer whenever part of it is marked avoids this, at the cost of its elements.
+  // The layer here takes the elements on both sides of the boundary S of the region which
+  // touch it, also only at a vertex, so that S stays conforming: hanging entities on S
+  // would constrain the incident field of the refined side to its trace on the coarse
+  // side, which is no longer the interpolant of a plane wave in the refined elements, and
+  // this mismatch radiates into the scattered field. The hanging entities of the refined
+  // layer are then inside the region, or outside of the layer, where the source does not
+  // enter.
+  mfem::ND_FECollection nd_fec(1, mesh.Get().Dimension());
+  FiniteElementSpace nd_fespace(mesh, &nd_fec);
+  mfem::Array<int> marked(mesh.Get().GetNE()), tdofs, elements, coupling, layer,
+      bdr_neighbors;
+  marked = 0;
+  for (int e : marked_elements)
+  {
+    marked[e] = 1;
+  }
+  for (const auto &[idx, src] : sources)
+  {
+    GetLayer(idx, nd_fespace, tdofs, elements, &coupling);
+    {
+      mfem::Array<int> inner, in_layer(mesh.Get().GetNE());
+      GetVertexNeighbors(idx, mesh.Get(), layer, bdr_neighbors);
+      GetVertexNeighbors(idx, mesh.Get(), inner, bdr_neighbors, true);
+      in_layer = 0;
+      for (int e : layer)
+      {
+        in_layer[e] = 1;
+      }
+      for (const auto *list : {&coupling, &inner})
+      {
+        for (int e : *list)
+        {
+          if (!in_layer[e])
+          {
+            in_layer[e] = 1;
+            layer.Append(e);
+          }
+        }
+      }
+    }
+    int counts[2] = {0, layer.Size()};  // Marked and all elements of the layer
+    for (int e : layer)
+    {
+      counts[0] += marked[e];
+    }
+    Mpi::GlobalSum(2, counts, mesh.Get().GetComm());
+    if (counts[0] == 0 || counts[0] == counts[1])
+    {
+      continue;
+    }
+    for (int e : layer)
+    {
+      if (!marked[e])
+      {
+        marked[e] = 1;
+        marked_elements.Append(e);
+      }
+    }
+    Mpi::Print(" Plane wave {:d}: marked the whole layer of {:d} elements around the "
+               "boundary of the total-field region ({:d} of them were marked)\n",
+               idx, counts[1], counts[0]);
+  }
+}
+
 void PlaneWaveOperator::CheckBoundaries(const config::BoundaryData &boundaries,
                                         const FiniteElementSpace &nd_fespace) const
 {
@@ -443,7 +570,12 @@ void PlaneWaveOperator::CheckBoundaries(const config::BoundaryData &boundaries,
   // layer of elements around the total-field region, crossing its boundary or touching it
   // from inside or outside. PEC and PMC boundaries are accepted where the incident field
   // satisfies them, as symmetry planes along the direction of propagation: with the
-  // polarization (PEC) or the magnetic field (PMC) along the normal.
+  // polarization (PEC) or the magnetic field (PMC) along the normal. Boundaries inside the
+  // region which do not reach the layer are part of the scatterer, except absorbing
+  // boundaries and Floquet ports: they truncate the scattered field, so the total-field
+  // region must be separated from them by background elements. Where they touch the
+  // region, the total field is driven only by the residual of the incident field on the
+  // truncation outside of it, and it vanishes when the region encloses the rest.
   if (sources.empty())
   {
     return;
@@ -489,7 +621,24 @@ void PlaneWaveOperator::CheckBoundaries(const config::BoundaryData &boundaries,
       pmc[attr - 1] = 1;
     }
   }
-  mfem::Array<int> l_c, vdofs;
+  mfem::Array<int> truncation(bdr_attr_max);
+  truncation = 0;
+  auto MarkTruncation = [&](const std::vector<int> &attrs)
+  {
+    for (auto attr : attrs)
+    {
+      if (attr > 0 && attr <= bdr_attr_max)
+      {
+        truncation[attr - 1] = 1;
+      }
+    }
+  };
+  MarkTruncation(boundaries.farfield.attributes);
+  for (const auto &[port_idx, data] : boundaries.floquetport)
+  {
+    MarkTruncation(data.attributes);
+  }
+  mfem::Array<int> l_c, vdofs, neighbors, bdr_neighbors;
   mfem::Vector normal(3), h(3);
   for (const auto &[idx, src] : sources)
   {
@@ -545,7 +694,51 @@ void PlaneWaveOperator::CheckBoundaries(const config::BoundaryData &boundaries,
                                  "must be separated from the boundaries, except for PEC "
                                  "or PMC symmetry planes along the direction of "
                                  "propagation which the incident field satisfies.");
+
+    // Absorbing boundaries and Floquet ports must not touch the total-field region at all.
+    GetVertexNeighbors(idx, mesh, neighbors, bdr_neighbors);
+    std::fill(bad.begin(), bad.end(), 0);
+    for (int be : bdr_neighbors)
+    {
+      const int attr = mesh.GetBdrAttribute(be);
+      if (attr > 0 && attr <= bdr_attr_max && truncation[attr - 1])
+      {
+        bad[attr - 1] = 1;
+      }
+    }
+    Mpi::GlobalMax(bdr_attr_max, bad.data(), mesh.GetComm());
+    bad_attrs.clear();
+    for (int i = 0; i < bdr_attr_max; i++)
+    {
+      if (bad[i])
+      {
+        bad_attrs.push_back(i + 1);
+      }
+    }
+    MFEM_VERIFY(bad_attrs.empty(),
+                "Plane wave " << idx << ": the absorbing boundaries or Floquet ports with "
+                              << "attributes "
+                              << fmt::format("{}", fmt::join(bad_attrs, ", "))
+                              << " touch the total-field region: they truncate the "
+                                 "scattered field, so the total-field region must be "
+                                 "separated from them by a layer of background elements!");
   }
+}
+
+const ComplexVector &
+PlaneWaveOperator::GetLastIncidentField(int idx, double omega,
+                                        const FiniteElementSpace &nd_fespace) const
+{
+  auto &[last_idx, last_omega, g] = last_incident;
+  if (last_idx != idx || last_omega != omega || g.Size() != nd_fespace.GetTrueVSize())
+  {
+    g.SetSize(nd_fespace.GetTrueVSize());
+    g.UseDevice(true);
+    GetIncidentField(idx, omega, nd_fespace, g);
+    last_idx = idx;
+    last_omega = omega;
+  }
+  return g;
 }
 
 bool PlaneWaveOperator::AddExcitationVector(int idx, double omega, const ComplexOperator &A,
@@ -559,10 +752,9 @@ bool PlaneWaveOperator::AddExcitationVector(int idx, double omega, const Complex
   const Vector &tmark = GetTotalFieldMarker(idx, nd_fespace);
 
   const int n = nd_fespace.GetTrueVSize();
-  ComplexVector g(n), y(n);
-  g.UseDevice(true);
+  const ComplexVector &g = GetLastIncidentField(idx, omega, nd_fespace);
+  ComplexVector y(n);
   y.UseDevice(true);
-  GetIncidentField(idx, omega, nd_fespace, g);
 
   // b_T = -(A g_O)_T.
   ComplexVector gs(g);
@@ -622,9 +814,8 @@ void PlaneWaveOperator::SetUpBackground(const MaterialOperator &mat_op,
                                         const FiniteElementSpace &nd_fespace)
 {
   // The incident field only enters the right-hand side through the elements outside of the
-  // total-field region with a dof on its boundary, and it is the plane wave of a
-  // homogeneous medium: these elements must have one isotropic, lossless, non-dispersive
-  // material. Each
+  // total-field region which are coupled to it, and it is the plane wave of a homogeneous
+  // medium: these elements must have one isotropic, lossless, non-dispersive material. Each
   // process checks the attributes of its own elements, since the material operator only
   // knows the local attributes, and the results are reduced before any process aborts.
   constexpr double tol = 1.0e-12;
@@ -644,34 +835,20 @@ void PlaneWaveOperator::SetUpBackground(const MaterialOperator &mat_op,
   };
   const mfem::ParFiniteElementSpace &fes = nd_fespace.Get();
   const mfem::ParMesh &mesh = *fes.GetParMesh();
-  mfem::Array<int> lmark, vdofs;
+  mfem::Array<int> l_c, layer;
   for (auto &[idx, src] : sources)
   {
-    GetLocalTotalFieldMarker(idx, fes, lmark);
+    // The elements of the layer follow the prolongation (see GetCoupling): on a
+    // nonconforming mesh, a refined element outside of the region shares no local dof with
+    // the coarse elements of the region, and is coupled to them through the constraints of
+    // its hanging faces and edges.
+    GetCoupling(idx, nd_fespace, l_c, &layer);
     int bad_attr = 0, n_layer = 0;
     double eps_min = mfem::infinity(), eps_max = -mfem::infinity(),
            muinv_min = mfem::infinity(), muinv_max = -mfem::infinity();
-    for (int e = 0; e < mesh.GetNE(); e++)
+    for (int e : layer)
     {
       const int attr = mesh.GetAttribute(e);
-      if (src.attr_marker[attr - 1])
-      {
-        continue;
-      }
-      fes.GetElementVDofs(e, vdofs);
-      bool touches = false;
-      for (int d : vdofs)
-      {
-        if (lmark[d >= 0 ? d : -1 - d])
-        {
-          touches = true;
-          break;
-        }
-      }
-      if (!touches)
-      {
-        continue;
-      }
       n_layer++;
       const double eps = mat_op.GetPermittivityReal(attr)(0, 0),
                    muinv = mat_op.GetInvPermeability(attr)(0, 0);
@@ -712,6 +889,39 @@ void PlaneWaveOperator::SetUpBackground(const MaterialOperator &mat_op,
                                  "surrounded by a single homogeneous material, but the "
                                  "elements outside of the region which touch it have "
                                  "different permittivities or permeabilities!");
+    // PML regions truncate the scattered field, as absorbing boundaries do, and their
+    // attributes have the material of the background, so they would pass the check above:
+    // they must not overlap the total-field region nor touch its closure, even at a vertex.
+    if (mat_op.HasPML())
+    {
+      const auto pml_attr = mat_op.GetPMLAttributes();
+      auto IsPML = [&pml_attr](int attr)
+      { return std::ranges::binary_search(pml_attr, attr); };
+      mfem::Array<int> neighbors, bdr_neighbors;
+      GetVertexNeighbors(idx, const_cast<mfem::ParMesh &>(mesh), neighbors, bdr_neighbors);
+      int touching = 0;
+      for (int e : neighbors)
+      {
+        touching =
+            std::max(touching, IsPML(mesh.GetAttribute(e)) ? mesh.GetAttribute(e) : 0);
+      }
+      for (int e = 0; e < mesh.GetNE(); e++)
+      {
+        const int attr = mesh.GetAttribute(e);
+        if (src.attr_marker[attr - 1] && IsPML(attr))
+        {
+          touching = std::max(touching, attr);
+        }
+      }
+      Mpi::GlobalMax(1, &touching, fes.GetComm());
+      MFEM_VERIFY(touching == 0,
+                  "Plane wave " << idx << ": the PML region with domain attribute "
+                                << touching
+                                << " touches the total-field region: it truncates the "
+                                   "scattered field, so the total-field region must be "
+                                   "separated from it by a layer of background elements!");
+    }
+
     src.c = std::sqrt(muinv_max / eps_max);
     if (mat_op.HasWaveVector())
     {
@@ -895,9 +1105,7 @@ bool PlaneWaveOperator::GetTotalAndScatteredField(int idx, double omega,
   }
   const Vector &tmark = GetTotalFieldMarker(idx, nd_fespace);
   const int n = nd_fespace.GetTrueVSize();
-  ComplexVector g(n);
-  g.UseDevice(true);
-  GetIncidentField(idx, omega, nd_fespace, g);
+  const ComplexVector &g = GetLastIncidentField(idx, omega, nd_fespace);
   E_t.SetSize(n);
   E_s.SetSize(n);
   const auto *m = tmark.HostRead();

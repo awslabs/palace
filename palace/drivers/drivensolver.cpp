@@ -83,49 +83,13 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 
 void DrivenSolver::AddMarkedElements(Mesh &mesh, mfem::Array<int> &marked_elements) const
 {
-  // A nonconforming refinement of part of the layer of elements around the total-field
-  // region of a plane wave leaves hanging entities inside the layer, where the source is
-  // then not consistent with the incident field, and the solution degrades. Refining the
-  // whole layer whenever part of it is marked avoids this, at the cost of its elements.
   if (iodata.domains.plane_wave.empty())
   {
     return;
   }
   PlaneWaveOperator plane_wave_op(iodata.domains.plane_wave, iodata.units, mesh.Get(),
                                   false);
-  mfem::ND_FECollection nd_fec(1, mesh.Get().Dimension());
-  FiniteElementSpace nd_fespace(mesh, &nd_fec);
-  mfem::Array<int> marked(mesh.Get().GetNE()), tdofs, elements, layer;
-  marked = 0;
-  for (int e : marked_elements)
-  {
-    marked[e] = 1;
-  }
-  for (const auto &[idx, src] : plane_wave_op)
-  {
-    plane_wave_op.GetLayer(idx, nd_fespace, tdofs, elements, &layer);
-    int counts[2] = {0, layer.Size()};  // Marked and all elements of the layer
-    for (int e : layer)
-    {
-      counts[0] += marked[e];
-    }
-    Mpi::GlobalSum(2, counts, mesh.Get().GetComm());
-    if (counts[0] == 0 || counts[0] == counts[1])
-    {
-      continue;
-    }
-    for (int e : layer)
-    {
-      if (!marked[e])
-      {
-        marked[e] = 1;
-        marked_elements.Append(e);
-      }
-    }
-    Mpi::Print(" Plane wave {:d}: marked the whole layer of {:d} elements around the "
-               "total-field region ({:d} of them were marked)\n",
-               idx, counts[1], counts[0]);
-  }
+  plane_wave_op.AddLayerToMarkedElements(mesh, marked_elements);
 }
 
 ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const

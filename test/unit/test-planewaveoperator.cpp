@@ -485,10 +485,11 @@ TEST_CASE("PlaneWaveOperator boundaries around the total field",
   // region or crosses its boundary is rejected, except a PEC or PMC symmetry plane along
   // the direction of propagation, with the polarization (PEC) or the magnetic field (PMC)
   // along its normal. A boundary inside the region which does not reach its boundary is
-  // part of the scatterer. The slab x < 1/3 (attribute 2) touches the face x = 0 (boundary
-  // attribute 5) from inside, and its boundary x = 1/3 crosses the face y = 0 (boundary
-  // attribute 2); the inner cube (attribute 1) of a 6 x 6 x 6 mesh is separated from the
-  // boundaries.
+  // part of the scatterer, except an absorbing boundary (or a Floquet port), which
+  // truncates the scattered field and must not touch the region at all. The slab x < 1/3
+  // (attribute 2) touches the face x = 0 (boundary attribute 5) from inside, and its
+  // boundary x = 1/3 crosses the face y = 0 (boundary attribute 2); the inner cube
+  // (attribute 1) of a 6 x 6 x 6 mesh is separated from the boundaries.
   Units units(1.0, 1.0);
   auto Check = [&units](int n, int tf_attr, const std::array<double, 3> &direction,
                         const std::array<double, 3> &polarization,
@@ -517,7 +518,10 @@ TEST_CASE("PlaneWaveOperator boundaries around the total field",
   CHECK_NOTHROW(Check(6, 1, z, x, all));
   CHECK_THROWS_WITH(Check(3, 1, z, x, all),
                     Catch::Matchers::ContainsSubstring("touch the layer"));
-  CHECK_NOTHROW(Check(3, 2, z, x, Bdr("Absorbing", 5)));
+  CHECK_THROWS_WITH(Check(3, 2, z, x, Bdr("Absorbing", 5)),
+                    Catch::Matchers::ContainsSubstring("touch the total-field region"));
+  CHECK_NOTHROW(Check(3, 2, z, x, Bdr("PEC", 5)));
+  CHECK_NOTHROW(Check(3, 2, z, y, Bdr("PMC", 5)));
   CHECK_THROWS_WITH(Check(3, 2, z, x, Bdr("Absorbing", 2)),
                     Catch::Matchers::ContainsSubstring("attributes 2"));
   CHECK_NOTHROW(Check(3, 2, z, y, Bdr("PEC", 2)));
@@ -525,6 +529,49 @@ TEST_CASE("PlaneWaveOperator boundaries around the total field",
   CHECK_THROWS(Check(3, 2, y, z, Bdr("PEC", 2)));
   CHECK_NOTHROW(Check(3, 2, z, x, Bdr("PMC", 2)));
   CHECK_THROWS(Check(3, 2, z, y, Bdr("PMC", 2)));
+}
+
+TEST_CASE("PlaneWaveOperator separated from PML regions",
+          "[planewaveoperator][Serial][Parallel]")
+{
+  // A PML region truncates the scattered field and has the material of the background, so
+  // it must not overlap the total-field region or touch its closure, even at a vertex. On
+  // a cube of 6 x 6 x 6 hexahedra, the PML region (attribute 3) is the top layer of
+  // elements, z > 5/6, and the total-field region (attribute 1) is a block of 2 x 2 x n_z
+  // elements from z = 1/3: with n_z = 2, the layer of elements above it separates it from
+  // the PML region, with n_z = 3 it touches it.
+  auto Check = [](int n_z)
+  {
+    auto smesh = mfem::Mesh::MakeCartesian3D(6, 6, 6, mfem::Element::HEXAHEDRON);
+    mfem::Vector c;
+    for (int e = 0; e < smesh.GetNE(); e++)
+    {
+      smesh.GetElementCenter(e, c);
+      const bool tf = std::abs(c(0) - 0.5) < 1.0 / 6.0 &&
+                      std::abs(c(1) - 0.5) < 1.0 / 6.0 && c(2) > 1.0 / 3.0 &&
+                      c(2) < (2.0 + n_z) / 6.0;
+      smesh.SetAttribute(e, tf ? 1 : (c(2) > 5.0 / 6.0 ? 3 : 2));
+    }
+    smesh.SetAttributes();
+    Mesh mesh(std::make_unique<mfem::ParMesh>(Mpi::World(), smesh));
+    mfem::ND_FECollection nd_fec(1, 3);
+    FiniteElementSpace nd_fespace(mesh, &nd_fec);
+    std::vector<config::MaterialData> materials(1);
+    materials[0].attributes = {1, 2, 3};
+    config::PMLData pml;
+    pml.attributes = {3};
+    pml.reference_frequency = 2.0;
+    config::PeriodicBoundaryData periodic;
+    MaterialOperator mat_op(materials, periodic, ProblemType::DRIVEN, mesh, {pml});
+    REQUIRE(mat_op.HasPML());
+    Units units(1.0, 1.0);
+    std::map<int, config::PlaneWaveData> plane_wave = {
+        {1, MakePlaneWave({1}, {0.0, 0.0, 1.0}, {1.0, 0.0, 0.0})}};
+    PlaneWaveOperator op(plane_wave, units, mesh.Get(), false);
+    op.SetUpBackground(mat_op, nd_fespace);
+  };
+  CHECK_NOTHROW(Check(2));
+  CHECK_THROWS_WITH(Check(3), Catch::Matchers::ContainsSubstring("PML region"));
 }
 
 }  // namespace palace

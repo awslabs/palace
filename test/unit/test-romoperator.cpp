@@ -26,7 +26,9 @@
 #include "fem/integrator.hpp"
 #include "fem/mesh.hpp"
 #include "fixtures.hpp"
+#include "linalg/ksp.hpp"
 #include "models/materialoperator.hpp"
+#include "models/planewaveoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/postoperatorcsv.hpp"
 #include "models/romoperator.hpp"
@@ -5562,4 +5564,140 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "RomOperator plane wave excitation
     CHECK((prom_op.GetAr() * prom_op.GetReducedSolution(1) - full).norm() <=
           1.0e-10 * full.norm());
   }
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Plane wave leakage under nonconforming refinement",
+                 "[planewaveoperator][Serial][Parallel]")
+{
+  // An empty total-field region in a vacuum box: the scattered field outside of the layer
+  // around S (the leakage) and the error of the total field inside T only come from the
+  // discretization of the source. After one nonconforming refinement of one element of the
+  // layer, completed by the marking of the adaptive refinement to the whole layer on both
+  // sides of S (PlaneWaveOperator::AddLayerToMarkedElements), both must be lower than on
+  // the initial mesh. The total-field region is the center block of 4 x 4 x 4 elements of a
+  // cube of 8 x 8 x 8 hexahedra, about a wavelength across.
+  const int n = 8;
+  json config;
+  config["Problem"] = {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir}};
+  config["Model"] = {{"Mesh", (temp_dir / "box.mesh").string()}, {"L0", 1.0}};
+  config["Domains"] = {{"Materials", {{{"Attributes", {1, 2}}}}},
+                       {"PlaneWave",
+                        {{{"Index", 1},
+                          {"Attributes", {1}},
+                          {"Direction", "+Z"},
+                          {"Polarization", "+X"},
+                          {"Amplitude", 1.0}}}}};
+  config["Boundaries"] = {
+      {"Absorbing", {{"Attributes", {1, 2, 3, 4, 5, 6}}, {"Order", 1}}}};
+  config["Solver"] = {{"Order", 2},
+                      {"Linear", {{"Tol", 1.0e-10}, {"MaxIts", 1000}}},
+                      {"Driven", {{"Samples", {{{"Type", "Point"}, {"Freq", {0.6}}}}}}}};
+  mfem::Mesh serial_mesh =
+      mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::HEXAHEDRON, 1.0, 1.0, 1.0, false);
+  mfem::Vector c;
+  for (int e = 0; e < serial_mesh.GetNE(); e++)
+  {
+    serial_mesh.GetElementCenter(e, c);
+    const bool tf = std::abs(c(0) - 0.5) < 0.25 && std::abs(c(1) - 0.5) < 0.25 &&
+                    std::abs(c(2) - 0.5) < 0.25;
+    serial_mesh.SetAttribute(e, tf ? 1 : 2);
+  }
+  serial_mesh.SetAttributes();
+  serial_mesh.EnsureNCMesh();
+  if (Mpi::Root(Mpi::World()))
+  {
+    std::ofstream fo(temp_dir / "box.mesh");
+    fo.precision(16);
+    serial_mesh.Print(fo);
+  }
+  Mpi::Barrier(Mpi::World());
+  CAPTURE(config.dump());
+  IoData iodata(config, false);
+  auto mesh = LoadScaleParMesh2(iodata, Mpi::World());
+  REQUIRE(mesh.back()->Get().Nonconforming());
+
+  // The leakage and the error of the total field in T, as norms of the true dofs relative
+  // to the incident field on the same dofs.
+  auto Measure = [&iodata](std::vector<std::unique_ptr<Mesh>> &mesh)
+  {
+    SpaceOperator space_op(iodata, mesh);
+    const auto comm = space_op.GetComm();
+    const auto &nd_fespace = space_op.GetNDSpace();
+    const auto &plane_wave_op = space_op.GetPlaneWaveOp();
+    const double omega = iodata.solver.driven.sample_f[0];
+    auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
+    auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto M = space_op.GetMassMatrix<ComplexOperator>(Operator::DIAG_ZERO);
+    auto A = space_op.GetSystemMatrix(1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i,
+                                      K.get(), C.get(), M.get());
+    auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(
+        1.0 + 0.0i, 1i * omega, -omega * omega + 0.0i, omega);
+    ComplexKspSolver ksp(iodata, space_op.GetNDSpaces(), &space_op.GetH1Spaces());
+    ksp.SetOperators(*A, *P);
+    const int size = nd_fespace.GetTrueVSize();
+    ComplexVector RHS(size), E(size), E_t, E_s, g(size);
+    RHS.UseDevice(true);
+    E.UseDevice(true);
+    g.UseDevice(true);
+    RHS = 0.0;
+    REQUIRE(space_op.AddPlaneWaveExcitationVector(1, omega, *A, RHS));
+    E = 0.0;
+    ksp.Mult(RHS, E);
+    REQUIRE(plane_wave_op.GetTotalAndScatteredField(1, omega, nd_fespace, E, E_t, E_s));
+    REQUIRE(plane_wave_op.GetIncidentField(1, omega, nd_fespace, g));
+    const auto *m = plane_wave_op.GetTotalFieldMarker(1, nd_fespace).HostRead();
+    mfem::Array<int> tdofs, elements;
+    plane_wave_op.GetLayer(1, nd_fespace, tdofs, elements);
+    std::vector<bool> layer(size, false);
+    for (int i : tdofs)
+    {
+      layer[i] = true;
+    }
+    double sums[4] = {0.0, 0.0, 0.0, 0.0};  // Leakage, incident outside, error, incident T
+    for (int i = 0; i < size; i++)
+    {
+      const double g2 = std::norm(std::complex<double>(g.Real()[i], g.Imag()[i]));
+      if (m[i] > 0.0)
+      {
+        sums[2] += std::norm(
+            std::complex<double>(E_t.Real()[i] - g.Real()[i], E_t.Imag()[i] - g.Imag()[i]));
+        sums[3] += g2;
+      }
+      else if (!layer[i])
+      {
+        sums[0] += std::norm(std::complex<double>(E_s.Real()[i], E_s.Imag()[i]));
+        sums[1] += g2;
+      }
+    }
+    Mpi::GlobalSum(4, sums, comm);
+    return std::make_pair(std::sqrt(sums[0] / sums[1]), std::sqrt(sums[2] / sums[3]));
+  };
+  const auto [leakage_0, error_0] = Measure(mesh);
+
+  // Mark one element of the layer, above the total-field region, and complete the marking.
+  mfem::ParMesh &pmesh = mesh.back()->Get();
+  mfem::Array<int> marked;
+  for (int e = 0; e < pmesh.GetNE(); e++)
+  {
+    pmesh.GetElementCenter(e, c);
+    if (std::abs(c(0) - 0.4375) < 1.0e-6 && std::abs(c(1) - 0.4375) < 1.0e-6 &&
+        std::abs(c(2) - 0.8125) < 1.0e-6)
+    {
+      marked.Append(e);
+    }
+  }
+  int counts[2] = {marked.Size(), 0};
+  PlaneWaveOperator(iodata.domains.plane_wave, iodata.units, pmesh, false)
+      .AddLayerToMarkedElements(*mesh.back(), marked);
+  counts[1] = marked.Size();
+  Mpi::GlobalSum(2, counts, pmesh.GetComm());
+  REQUIRE(counts[0] == 1);
+  CHECK(counts[1] > 1);
+  pmesh.GeneralRefinement(marked, 1, 0);
+  mesh.back()->Update();
+  const auto [leakage_1, error_1] = Measure(mesh);
+  CAPTURE(leakage_0, leakage_1, error_0, error_1);
+  CHECK(leakage_1 < leakage_0);
+  CHECK(error_1 < error_0);
 }

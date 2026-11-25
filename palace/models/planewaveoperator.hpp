@@ -15,6 +15,7 @@ namespace palace
 {
 
 class FiniteElementSpace;
+class Mesh;
 class MaterialOperator;
 class Units;
 
@@ -88,6 +89,17 @@ private:
   // elsewhere) for each source.
   mutable std::map<int, Vector> tf_markers;
 
+  // The incident field of the last plane wave and frequency, shared by the right-hand side
+  // and the reconstruction of the total and scattered fields of the same solve.
+  mutable struct
+  {
+    int idx = -1;
+    double omega = 0.0;
+    ComplexVector g;
+  } last_incident;
+  const ComplexVector &GetLastIncidentField(int idx, double omega,
+                                            const FiniteElementSpace &nd_fespace) const;
+
   // Marker of the local dofs of the elements which couple the closure of the total-field
   // region and the rest of the domain (see GetLayer), and optionally these elements outside
   // of the region.
@@ -124,6 +136,20 @@ public:
                 mfem::Array<int> &elements,
                 mfem::Array<int> *coupling_elements = nullptr) const;
 
+  // The local elements outside of the total-field region of the plane wave with the given
+  // index, and the local boundary elements, which have a vertex in the closure of the
+  // region (on a nonconforming mesh, also a hanging vertex constrained by it), across the
+  // processes. With inside = true, the local elements of the region which have a vertex in
+  // the closure of the rest of the domain instead (and the boundary elements likewise).
+  void GetVertexNeighbors(int idx, mfem::ParMesh &mesh, mfem::Array<int> &elements,
+                          mfem::Array<int> &bdr_elements, bool inside = false) const;
+
+  // For a nonconforming refinement of the given mesh, add to the marked local elements the
+  // whole layer of elements on both sides of the boundary of the total-field region of
+  // each plane wave (the elements with a vertex on it, and the coupling elements) when part
+  // of it is marked, so that the boundary stays conforming.
+  void AddLayerToMarkedElements(Mesh &mesh, mfem::Array<int> &marked_elements) const;
+
   PlaneWaveOperator(const std::map<int, config::PlaneWaveData> &plane_wave,
                     const Units &units, const mfem::ParMesh &mesh, bool print = true);
 
@@ -152,7 +178,8 @@ public:
   // Set the background material of each plane wave from the elements outside of its
   // total-field region which touch its boundary, where the incident field is evaluated,
   // and the Floquet wave vector of the solution, if any. Aborts if these elements are not
-  // one homogeneous, isotropic, lossless and non-dispersive material.
+  // one homogeneous, isotropic, lossless and non-dispersive material, or if a PML region
+  // overlaps the total-field region or touches its closure.
   void SetUpBackground(const MaterialOperator &mat_op,
                        const FiniteElementSpace &nd_fespace);
 
@@ -169,7 +196,8 @@ public:
   // Check that no boundary with a condition touches the layer of elements around the
   // total-field region of any plane wave, where the incident field does not satisfy it,
   // except PEC or PMC symmetry planes along the direction of propagation which it
-  // satisfies.
+  // satisfies, and that no absorbing boundary or Floquet port, which truncates the
+  // scattered field, touches the total-field region anywhere.
   void CheckBoundaries(const config::BoundaryData &boundaries,
                        const FiniteElementSpace &nd_fespace) const;
 

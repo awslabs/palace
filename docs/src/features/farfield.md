@@ -143,7 +143,7 @@ patterns.
 
 ## Radar cross section
 
-When every excitation of a driven simulation is an incident plane wave
+For the excitations of a driven simulation with an incident plane wave
 ([`config["Domains"]["PlaneWave"]`](../config/reference.md#config-domains)),
 the far field is the scattered field of the plane wave, and *Palace* also writes
 its radar cross section
@@ -156,10 +156,12 @@ where ``E_0`` is the amplitude of the incident electric field. The far field is
 computed from the scattered field, which *Palace* reconstructs everywhere, so the
 far-field surface may lie anywhere in the background material around the scatterer.
 See [Plane Wave Excitation and Radar Cross Section](planewave.md) for the setup and
-the [coated sphere example](../examples/rcs_coated_sphere.md).
+the [coated sphere example](../examples/rcs_coated_sphere.md). The radar cross section is
+not written on periodic cells, where the scattered field of the infinite structure is a
+set of Floquet orders.
 
-`farfield-rcs.csv` has the same rows as `farfield-rE.csv` (when
-`"ThetaPhis"` or `"NSample"` give any direction), with the columns:
+`farfield-rcs.csv` has the rows of `farfield-rE.csv` (when `"ThetaPhis"` or `"NSample"`
+give any direction) for the excitations with a plane wave, with the columns:
 
   - `f (GHz)`, `exc`, `theta (deg.)`, `phi (deg.)` : As in `farfield-rE.csv`
   - `sigma (m²)` : Bistatic radar cross section, ``\sigma = \sigma_\theta + \sigma_\phi``
@@ -167,7 +169,7 @@ the [coated sphere example](../examples/rcs_coated_sphere.md).
     ``\hat{\phi}`` components of the far field
 
 `rcs-monostatic.csv` has one row per frequency, with the radar cross section in
-the backscattering direction ``-\hat{\mathbf{k}}`` of each plane wave (added
+the backscattering direction ``-\hat{\mathbf{k}}`` of each excitation with a plane wave (added
 automatically to the far-field directions, also without `"ThetaPhis"`):
 
   - `sigma[i] (m²)` : Monostatic radar cross section of excitation `i`

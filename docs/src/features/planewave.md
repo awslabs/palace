@@ -13,8 +13,9 @@ bounded domain with the total-field/scattered-field (TF/SF) formulation
 [[1]](#References): a closed surface ``S`` encloses the scatterer, the unknown is the
 total field ``\mathbf{E}`` inside ``S`` and the scattered field
 ``\mathbf{E}_s = \mathbf{E} - \mathbf{E}_\text{inc}`` outside, and the incident field
-enters only on ``S``. The truncation of the domain (an absorbing boundary or a perfectly
-matched layer) therefore only sees the outgoing scattered field. From the solution,
+enters only on ``S``. The truncation of the domain (an absorbing boundary or a
+[perfectly matched layer](../guide/boundaries.md#Perfectly-matched-layer)) therefore only
+sees the outgoing scattered field. From the solution,
 *Palace* reconstructs the total and the scattered fields everywhere, for the outputs and
 the far field.
 
@@ -51,9 +52,13 @@ both the uniform and the adaptive frequency sweep. The exceptions are the symmet
 of the plane wave: a `"PEC"` boundary with ``\hat{\mathbf{p}}`` along its normal, or a
 `"PMC"` boundary with ``\hat{\mathbf{k}} \times \hat{\mathbf{p}}`` along its normal, both
 with ``\hat{\mathbf{k}}`` tangent to it. Boundaries inside ``T`` which do not reach ``S``
-are part of the scatterer and arbitrary. With nonconforming adaptive mesh refinement,
-*Palace* refines the whole layer of elements around ``S`` when any of its elements is
-marked, so that the layer, and the incident field which it radiates, stays uniform.
+are part of the scatterer and arbitrary, except absorbing boundaries, Floquet ports and
+PML regions: they truncate the scattered field, so they must not touch ``T`` at all, and
+*Palace* checks that ``T`` is separated from them by background elements. With
+nonconforming adaptive mesh refinement, *Palace* refines the whole layer of elements on
+both sides of ``S`` which touch it, also only at a vertex, when any of them is marked, so
+that ``S`` stays conforming and the incident field which the layer radiates stays
+consistent.
 
 The incident field is
 
@@ -91,7 +96,8 @@ several directions of incidence) are solved one after the other, as port excitat
 The mesh needs:
 
   - a total-field region ``T`` containing the scatterer, separated from the truncation of
-    the domain by at least one layer of elements of the background;
+    the domain (absorbing boundaries or PML regions) by at least one layer of elements of
+    the background;
   - for the far field and the radar cross section, a closed surface
     ([`config["Boundaries"]["Postprocessing"]["FarField"]`](../config/reference.md#config-boundaries))
     around the scatterer, in the background material. It is usually an interior surface

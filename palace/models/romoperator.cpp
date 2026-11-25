@@ -1547,12 +1547,11 @@ Eigen::VectorXcd RomOperator::UpdatePROM(const ComplexVector &u,
         }
         Mpi::GlobalSum(2, norm2, space_op.GetComm());
         MFEM_VERIFY(norm2[1] <= 1.0e-24 * norm2[0],
-                    "Plane wave "
-                        << pw.excitations[0]
-                        << ": the coupling of the total-field region and the "
-                           "rest of the domain has rows outside of the layer of "
-                           "dofs of its excitation (relative norm "
-                        << std::sqrt(norm2[1] / norm2[0]) << ")!");
+                    "Plane wave " << pw.excitations[0]
+                                  << ": the coupling of the total-field region and the "
+                                     "rest of the domain has rows outside of the layer of "
+                                     "dofs of its excitation (relative norm "
+                                  << std::sqrt(norm2[1] / norm2[0]) << ")!");
       }
     }
   }
