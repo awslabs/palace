@@ -62,6 +62,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Fixed the domain energies of boundary mode simulations, which omitted the out-of-plane
     electric field and the in-plane magnetic flux density, so that the magnetic energy of
     a quasi-TEM mode was nearly zero.
+    [PR 1308](https://github.com/awslabs/palace/pull/1308).
 
 #### Documentation
 
