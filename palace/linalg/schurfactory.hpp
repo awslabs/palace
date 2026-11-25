@@ -20,10 +20,26 @@ class BlockCyclicGrid;
 // full rank at no loss of accuracy.
 inline constexpr double kBlrTol = 1.0e-14;
 
+// The factorizations for a Schur complement: the condensation of an environment onto its
+// interface, and the Schur complement of a region, which RegionSolver adds S_E to.
+enum class SchurKind
+{
+  ENVIRONMENT,
+  REGION
+};
+
+// The largest Schur complement of a region that STRUMPACK gives by default (see
+// SchurSolverFor).
+inline constexpr HYPRE_BigInt kRegionStrumpackSchur = 10000;
+
 // The sparse direct solver of a factorization for a Schur complement: the one requested if
 // Palace is built with it (STRUMPACK, MUMPS or SuperLU_DIST), else the first it is built
-// with of MUMPS, STRUMPACK and SuperLU_DIST.
-LinearSolver SchurSolverFor(LinearSolver requested);
+// with of MUMPS, STRUMPACK and SuperLU_DIST. The Schur complement of a region of at most
+// kRegionStrumpackSchur variables takes STRUMPACK first, with its Schur complement
+// interface: STRUMPACK gathers it on one process, and MUMPS distributes it but with a
+// workspace of about 0.4 GB on each process, which on many processes outweighs it.
+LinearSolver SchurSolverFor(LinearSolver requested, SchurKind kind,
+                            HYPRE_BigInt n_schur = 0);
 
 // The name of a sparse direct solver, and of its factorization for a Schur complement:
 // partial (MUMPS's, or STRUMPACK's with its Schur complement interface), or with one solve

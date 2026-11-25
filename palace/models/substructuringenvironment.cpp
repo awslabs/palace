@@ -252,7 +252,8 @@ void SubstructuringSolver::Impl::EnsureEnv(bool condense)
     keep[i] = iface.env_int[i] || (condense && iface.gamma[i]);
   }
   SideSystem side({&Aenv()}, keep);
-  const LinearSolver type = SchurSolverFor(iodata.solver.substructuring->direct_solver);
+  const LinearSolver type =
+      SchurSolverFor(iodata.solver.substructuring->direct_solver, SchurKind::ENVIRONMENT);
   env_factorization = SchurFactorizationName(type);
   const auto gamma = condense ? side.Indices(iface.tdofs) : std::vector<HYPRE_BigInt>{};
   MFEM_VERIFY(gamma_grid, "The environment is factored before the interface is numbered!");
