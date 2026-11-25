@@ -79,10 +79,11 @@ internal::DrivenSystemOperator internal::BuildDrivenSystemOperator(
 }
 
 PreflightCensusOutcome
-DrivenSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const
+DrivenSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh,
+                                        bool fail_closed) const
 {
   PrepareFirstLevelMesh(mesh);
-  return PreflightMaxwellResolutionCensus(mesh, &response_geometry);
+  return PreflightMaxwellResolutionCensus(mesh, &response_geometry, fail_closed);
 }
 
 std::pair<ErrorIndicator, long long int>

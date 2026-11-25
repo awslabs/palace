@@ -4,13 +4,18 @@
 #ifndef PALACE_DRIVER_HPP
 #define PALACE_DRIVER_HPP
 
+#include <memory>
 #include <string>
+#include <vector>
 #include <mpi.h>
 
 namespace palace
 {
 
+class BaseSolver;
 class IoData;
+class Mesh;
+struct SurfaceResponsePreflightOutcome;
 
 // Run a Palace solve end-to-end on an already-parsed `iodata`.
 //
@@ -42,6 +47,14 @@ constexpr int kSurfaceResponsePreflightFailClosedExitStatus = 3;
 // (then the timing and memory metadata are not written, as before this status existed).
 int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
                                 const char *git_tag = nullptr);
+
+// The end of a surface-response preflight after its manifest (`outcome`, written on
+// `mesh`): the resolution census of the first mesh where a solve-form run reaches it
+// (CUT-PLAN step 4b), one line where that run stops before it, and the exit status of
+// RunSurfaceResponsePreflight. Collective.
+int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
+                                   std::vector<std::unique_ptr<Mesh>> &mesh,
+                                   const SurfaceResponsePreflightOutcome &outcome);
 
 // Load through the normal preprocessing path (including internal-boundary cracking)
 // and report the resulting global H1 size without constructing a PDE operator.

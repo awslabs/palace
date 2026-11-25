@@ -172,19 +172,29 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
   const auto outcome = WriteSurfaceResponseRequirements(
       iodata, *mesh.back(),
       (fs::path(iodata.problem.output) / "surface-response-requirements.json").string());
+  return FinishSurfaceResponsePreflight(iodata, *solver, mesh, outcome);
+}
+
+int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
+                                   std::vector<std::unique_ptr<Mesh>> &mesh,
+                                   const SurfaceResponsePreflightOutcome &outcome)
+{
+  MPI_Comm comm = mesh.back()->GetComm();
+  auto &request = iodata.problem.type == ProblemType::ELECTROSTATIC
+                      ? iodata.solver.electrostatic.response_correction
+                      : iodata.solver.surface_response_correction;
+  MFEM_VERIFY(request, "Surface-response preflight requires a response correction!");
+  // CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling R1): a solve-form run stops
+  // before its census here; the census is not built and the exit status is the manifest's.
+  const std::string refusal = SurfaceResponsePreflightCensusRefusal(outcome, *request);
+  const auto policy = request->geometry_failure_policy;
   if (!outcome.fail_closed_summary.empty())
   {
-    // CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling (b) of 2026-11-25): with
-    // GeometryFailurePolicy absent, the preflight fails closed by default while a
-    // solve-form run records raw (its own default) and reaches its census: the census is
-    // built as that run builds it before the preflight ends. An explicit FailClosed (a
-    // solve form aborts too) builds none.
-    const auto &request = iodata.problem.type == ProblemType::ELECTROSTATIC
-                              ? iodata.solver.electrostatic.response_correction
-                              : iodata.solver.surface_response_correction;
-    const bool explicit_policy = request && request->geometry_failure_policy.has_value();
-    const auto census = explicit_policy ? PreflightCensusOutcome{}
-                                        : solver->PreflightResolutionCensus(mesh);
+    // The supervisor's rulings (b) and R2 (2026-11-25): today's FailClosed line first;
+    // with GeometryFailurePolicy absent (the preflight fails closed by default while a
+    // solve-form run records raw, its own default, and reaches its census) the census is
+    // then built as that run builds it; an explicit FailClosed (a solve form aborts too)
+    // builds none.
     std::string written;
     for (const auto &file : outcome.written)
     {
@@ -196,26 +206,53 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
         "written: {} (written in full); exit status {:d}\n",
         outcome.fail_closed_summary, written,
         kSurfaceResponsePreflightFailClosedExitStatus);
-    if (census.evaluated)
+    if (policy)
     {
-      Mpi::Print(
-          comm,
-          "The resolution census above was built as a solve-form run builds it "
-          "(GeometryFailurePolicy RecordRaw, the default of a solve: raw recorded for "
-          "the failed geometry, {:d} feature(s))\n",
-          census.fallback_features);
-    }
-    else if (explicit_policy)
-    {
-      Mpi::Print(comm, "Resolution census: not evaluated (GeometryFailurePolicy "
+      Mpi::Print(comm, "\nResolution census: not evaluated (GeometryFailurePolicy "
                        "\"FailClosed\" is set); \"GeometryFailurePolicy\": \"RecordRaw\" "
                        "gives it\n");
     }
+    else if (!refusal.empty())
+    {
+      Mpi::Print(comm, "\n{}\n", refusal);
+    }
+    else
+    {
+      const auto census = solver.PreflightResolutionCensus(mesh, false);
+      if (census.evaluated)
+      {
+        Mpi::Print(
+            comm,
+            "The resolution census above was built as a solve-form run builds it "
+            "(GeometryFailurePolicy RecordRaw, the default of a solve: raw recorded for "
+            "the failed geometry, {:d} feature(s))\n",
+            census.fallback_features);
+      }
+    }
     return kSurfaceResponsePreflightFailClosedExitStatus;
   }
-  // CUT-PLAN step 4b (lane v1step4b): the resolution census of the first mesh, as a
-  // corrected run computes it before its first solve (no matrix assembly, no solve).
-  solver->PreflightResolutionCensus(mesh);
+  if (!refusal.empty())
+  {
+    Mpi::Print(comm, "\n{}\n", refusal);
+  }
+  else
+  {
+    // CUT-PLAN step 4b (lane v1step4b): the resolution census of the first mesh, as a
+    // corrected run computes it before its first solve (no system matrix is assembled and
+    // nothing is solved; a wave port's boundary-mode matrices are built with the space
+    // operator). An explicit FailClosed (ruling R1, G3): the census operator is built under
+    // RecordRaw, which takes the same branches, and a fallback it records ends the census.
+    const bool fail_closed =
+        policy && *policy == config::ElectrostaticSolverData::ResponseCorrectionData::
+                                 GeometryFailurePolicy::FAIL_CLOSED;
+    if (fail_closed)
+    {
+      request->geometry_failure_policy = config::ElectrostaticSolverData::
+          ResponseCorrectionData::GeometryFailurePolicy::RECORD_RAW;
+    }
+    solver.PreflightResolutionCensus(mesh, fail_closed);
+    request->geometry_failure_policy = policy;
+  }
 
   // Preserve the same structured timing and memory metadata as an ordinary solve so
   // geometry-only preflight benchmarks do not need to scrape formatted terminal output.
@@ -226,9 +263,9 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
   memory_reporting::PrintMemoryUsage(comm, peak_node_mem);
   BlockTimer::Finalize(comm);
   BlockTimer::Print(comm);
-  solver->SaveMetadata(BlockTimer::GlobalTimer());
-  solver->SaveMetadata(peak_mem);
-  solver->SaveMetadata(peak_node_mem);
+  solver.SaveMetadata(BlockTimer::GlobalTimer());
+  solver.SaveMetadata(peak_mem);
+  solver.SaveMetadata(peak_node_mem);
   Mpi::Print(comm, "\n");
   return 0;
 }

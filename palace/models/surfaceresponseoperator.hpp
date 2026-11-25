@@ -2493,7 +2493,22 @@ struct SurfaceResponsePreflightOutcome
   std::string fail_closed_summary;
   // The files written (the manifest, then the patch dry run in 3D).
   std::vector<std::string> written;
+  // CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling R1): the sites of this pass
+  // where a solve-form run stops, for the census PreflightOnly builds after it. Whatever
+  // its UnmatchedPolicy (each a reason, in the order of the sites):
+  std::vector<std::string> census_refusals;
+  // Under "UnmatchedPolicy": "Error" (the preflight treats Error as Warn and went on; on
+  // the default PatchConstruction Features this is an incomplete manifest).
+  bool unmatched_policy_refusal = false;
 };
+
+// CUT-PLAN step 4b (lane v1step4b; ruling R1): the line of a PreflightOnly run that builds
+// no resolution census because a solve-form run stops before it (outcome.census_refusals
+// first, then UnmatchedPolicy "Error" with outcome.unmatched_policy_refusal); empty when
+// the census is built.
+std::string SurfaceResponsePreflightCensusRefusal(
+    const SurfaceResponsePreflightOutcome &outcome,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request);
 
 // Classify the configured automatic surface-response neighborhoods without assembling a
 // finite-element operator or solving a field problem. The deterministic JSON manifest

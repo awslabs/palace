@@ -306,10 +306,11 @@ void EigenSolver::UpdateAfterMeshChange(Mesh &mesh) const
 }
 
 PreflightCensusOutcome
-EigenSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const
+EigenSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh,
+                                       bool fail_closed) const
 {
   PrepareFirstLevelMesh(mesh);
-  return PreflightMaxwellResolutionCensus(mesh, &response_geometry);
+  return PreflightMaxwellResolutionCensus(mesh, &response_geometry, fail_closed);
 }
 
 std::pair<ErrorIndicator, long long int>

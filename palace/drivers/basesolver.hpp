@@ -106,11 +106,20 @@ protected:
                                                         long long int unknowns,
                                                         MPI_Comm comm) const;
 
+  // CUT-PLAN step 4b (ruling R1, G3): `fail_closed` = the configuration sets
+  // GeometryFailurePolicy FailClosed and the caller built the census operator under
+  // RecordRaw (the same branches; only the deferred abort differs). True, with one line,
+  // when that operator recorded a geometry fallback: a solve-form run stops at its deferred
+  // FailClosed abort there, so no census is written. Collective.
+  bool PreflightCensusStopsFailClosed(const SurfaceResponseOperator &response,
+                                      bool fail_closed, MPI_Comm comm) const;
+
   // PreflightResolutionCensus of the eigenmode and driven solvers: the space operator (no
-  // matrix) and the Maxwell response operator as their PostOperator builds it.
+  // system matrix) and the Maxwell response operator as their PostOperator builds it.
   PreflightCensusOutcome PreflightMaxwellResolutionCensus(
       const std::vector<std::unique_ptr<Mesh>> &mesh,
-      std::shared_ptr<const SurfaceResponseGeometry> *response_geometry) const;
+      std::shared_ptr<const SurfaceResponseGeometry> *response_geometry,
+      bool fail_closed) const;
 
   // Previous adaptation iteration's total London kinetic energy S(A_t − a_h), for detecting
   // an anomalous spike; negative until the first London solve sets it.
@@ -136,11 +145,15 @@ public:
 
   // CUT-PLAN step 4b (lane v1step4b): PreflightOnly's resolution census. On the mesh the
   // first solve would read, builds the FE space and the response operator as the solve form
-  // does before its first solve (no matrix assembly, no solve) and writes what that solve
-  // form computes there (WritePreflightResolutionCensus). Electrostatic, eigenmode and
-  // driven; any other problem type prints one line. Collective.
+  // does before its first solve (no system matrix is assembled and nothing is solved; a
+  // wave port's boundary-mode matrices are built with the space operator) and writes what
+  // that solve form computes there (WritePreflightResolutionCensus; `fail_closed` as in
+  // PreflightCensusStopsFailClosed).
+  // Electrostatic, eigenmode and driven; any other problem type prints one line.
+  // Collective.
   virtual PreflightCensusOutcome
-  PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const;
+  PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh,
+                            bool fail_closed) const;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.

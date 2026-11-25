@@ -2714,7 +2714,9 @@ aggregates equivalent neighborhoods and reports their topology, interface slots,
 boundary law, count, total edge length, geometric signature, and exact, interpolated, or
 missing library selection. Its `Complete` field is true only when no requirement is
 missing. During preflight only, `UnmatchedPolicy: "Error"` is treated as `"Warn"` so all
-missing requirements can be reported in one pass.
+missing requirements can be reported in one pass; a `PreflightOnly` run with
+`"UnmatchedPolicy": "Error"` and missing requirements then builds no resolution census (a
+solve-form run stops there) and says so in one line: `"Warn"` gives it.
 
 The same preflight can be requested from the configuration, for front ends that start
 Palace without command-line options (a cluster run service runs `palace config.json`):
@@ -3771,18 +3773,25 @@ level's mesh. Because a knot on a face shared by several elements takes the LARG
 refinement on one side of a face only does not lower that knot's size: the census can read
 coarser than the finer side, never finer (the conservative side). `PreflightOnly` evaluates
 the census of the first mesh without a solve: it builds the FE space and the response
-operator as a corrected run does before its first solve (no matrix assembly, no solve) and
-prints the same knots and PREFLIGHT lines, writes the same
+operator as a corrected run does before its first solve (no system matrix is assembled and
+nothing is solved; a wave port's boundary-mode matrices are built with the space operator)
+and prints the same knots and PREFLIGHT lines, writes the same
 `surface-response-resolution-patches.csv` (with `"PatchEnergy": true`) and the same
 `SurfaceResponse.Resolution` block of `palace.json` (`Knots`, `Preflight` and the bars;
 `"Cells": 0`, `"NoCellsReason": "PreflightOnly: no solve"`). The energy-weighted census
 (`surface-response-resolution.csv`, the banner) needs the solved field and is not written.
 A preflight that ends by its default `GeometryFailurePolicy` (`FailClosed` with the key
-absent; exit status 3) still builds this census first, as a solve-form run builds it under
-its own default `RecordRaw` (raw recorded for the failed geometry; the log names how many
-features), and then ends as before; with `"GeometryFailurePolicy": "FailClosed"` set (a
-solve-form run aborts too) no census is built and the log names `"RecordRaw"` as the value
-that gives it.
+absent; exit status 3) prints its summary line as before, then builds this census as a
+solve-form run builds it under its own default `RecordRaw` (raw recorded for the failed
+geometry; a line after the census names how many features), and then ends with exit status
+3; with `"GeometryFailurePolicy": "FailClosed"` set (a solve-form run aborts too) no census
+is built and the log names `"RecordRaw"` as the value that gives it, also when only the
+response operator's construction records a fallback. Wherever a solve-form run stops before
+its census (`"UnmatchedPolicy": "Error"` with missing requirements, a library it refuses, a
+placed discovery placeholder, coupon models without surface response matrices on a Maxwell
+run), `PreflightOnly` builds no census, prints one line `Resolution census: not evaluated:
+<why> (a solve-form run stops there)` and ends with the exit status it had before the census
+existed (0, or 3 after a `FailClosed` summary).
 
 ### The per-iteration table of the response correction
 
@@ -3910,7 +3919,8 @@ word of the census PREFLIGHT line, by cell length against the census bars; a `re
 (`PREFLIGHT-ONLY: geometric census by cell length against the census bars; no solve; values not computed; the table's resolution verdict (energy-weighted; bars of the rule) needs a solve`);
 `SurfaceResponse.ParticipationTable` records `"PreflightOnly": true`. The PREFLIGHT word
 and the table's resolution word are different readings (length against energy weights,
-the census bars against the rule's bars) and may differ on the same mesh.
+the census bars against the rule's bars) and may differ on the same mesh. A run whose
+targets are all Regions has no word in the table: read the PREFLIGHT line.
 
 ## Electrostatic Simulations
 

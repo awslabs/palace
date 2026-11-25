@@ -181,8 +181,8 @@ public:
 
   // CUT-PLAN step 4b (lane v1step4b): the Laplace operator's FE spaces (no stiffness
   // matrix) and the response operator as Solve constructs them, then the census.
-  PreflightCensusOutcome
-  PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const override;
+  PreflightCensusOutcome PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh,
+                                                   bool fail_closed) const override;
 };
 
 }  // namespace palace
