@@ -100,6 +100,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     {
       config["Boundaries"]["Ground"]["Attributes"] = {1, 2, 3, 4, 5, 6};
       config["Boundaries"]["Impedance"] = {{{"Attributes", {9}}, {"Ls", 4.5e-14}}};
+      // The rule "Off": since CUT-PLAN step 3 the Maxwell default "Apply" serves this sheet
+      // by the perfect-conductor models (a sheet the rule does not serve is named the same
+      // way: test-surfaceresponsefilmrule.cpp, the default above the bound).
+      correction["ImpedanceMetalRule"] = "Off";
     }
     IoData iodata(config, false);
     iodata.boundaries.cracked_attributes.insert(9);
