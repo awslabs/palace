@@ -172,11 +172,6 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
   const auto outcome = WriteSurfaceResponseRequirements(
       iodata, *mesh.back(),
       (fs::path(iodata.problem.output) / "surface-response-requirements.json").string());
-  // CUT-PLAN step 4 (supervisor's ruling (B), 2026-11-24): the census needs the response
-  // operator's placed knots, which the preflight does not build (step 4b); say so.
-  Mpi::Print(comm,
-             "\nResolution census: not evaluated in PreflightOnly; every corrected run "
-             "prints it before its first solve\n");
   if (!outcome.fail_closed_summary.empty())
   {
     std::string written;
@@ -192,6 +187,9 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
         kSurfaceResponsePreflightFailClosedExitStatus);
     return kSurfaceResponsePreflightFailClosedExitStatus;
   }
+  // CUT-PLAN step 4b (lane v1step4b): the resolution census of the first mesh, as a
+  // corrected run computes it before its first solve (no matrix assembly, no solve).
+  solver->PreflightResolutionCensus(mesh);
 
   // Preserve the same structured timing and memory metadata as an ordinary solve so
   // geometry-only preflight benchmarks do not need to scrape formatted terminal output.

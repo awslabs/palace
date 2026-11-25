@@ -1138,6 +1138,78 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK_FALSE(fs::exists(path));
 }
 
+// CUT-PLAN step 4b (lane v1step4b): a PreflightOnly run's rows carry the census PREFLIGHT
+// word of their Type's all-planes row (a region row and a Type without a census row:
+// NOT-EVALUATED), compute no value, and are written with their Type totals without a join.
+TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOnly rows",
+                 "[surfaceparticipation][preflightonly][Serial]")
+{
+  MPI_Comm comm = MPI_COMM_WORLD;
+  std::vector<ResolutionPreflightRow> preflight(3);
+  preflight[0].type = "SA";
+  preflight[0].status = ResolutionStatus::UNDER_RESOLVED;
+  preflight[1].type = "SA";
+  preflight[1].all_planes = false;  // a plane's word is not the Type's
+  preflight[1].status = ResolutionStatus::RESOLVED;
+  preflight[2].type = "MS";
+  preflight[2].status = ResolutionStatus::NO_BARS;
+  const std::map<int, std::string> targets = {{4, "SA"}, {5, "MS"}, {7, "SA"}, {8, "MA"}};
+  const auto rows = PreflightParticipationRows(targets, {7}, preflight);
+  REQUIRE(rows.size() == 4);
+  CHECK(rows[0].resolution == "PREFLIGHT UNDER-RESOLVED");
+  CHECK(rows[1].resolution == "PREFLIGHT NO-BARS");
+  CHECK(rows[2].region);
+  CHECK(rows[2].resolution == "PREFLIGHT NOT-EVALUATED");
+  CHECK(rows[3].resolution == "PREFLIGHT NOT-EVALUATED");
+  for (const auto &row : rows)
+  {
+    INFO("interface " << row.interface);
+    CHECK(row.point == 0);
+    CHECK(row.excitation == 0);
+    CHECK(std::isnan(row.frequency));
+    for (const double value :
+         {row.p_raw, row.p_corrected, row.q_raw, row.q_corrected, row.m90, row.m50,
+          row.uncovered_share, row.change_corrected, row.change_raw, row.per_doubling})
+    {
+      CHECK(std::isnan(value));
+    }
+    for (const auto *word : {&row.coverage, &row.regime, &row.confidence, &row.convergence})
+    {
+      CHECK(*word == kParticipationNotComputed);
+    }
+    CHECK(row.flags == kParticipationPreflightFlags);
+    CHECK(row.reason == kParticipationPreflightReason);
+    CHECK(row.reason.find(',') == std::string::npos);  // a text cell holds no comma
+  }
+  const auto path = temp_dir / (std::string("preflight-") + kSurfaceParticipationFile);
+  SurfaceParticipationTable table(path.string(), "Eigenmode", 2, InterimBars());
+  table.WritePreflightLevel(rows, 12345, comm);
+  CHECK(table.Started());
+  const std::string text = ReadText(path);
+  CHECK(CountLines(text) == 1 + 3 + 4);  // the SA, MS, MA totals (not the box), the rows
+  CHECK(text.find("PREFLIGHT UNDER-RESOLVED") != std::string::npos);
+  CHECK(text.find("12345") != std::string::npos);
+  CHECK(text.find("MOVING") == std::string::npos);
+  CHECK(text.find("FIRST-ITERATION") == std::string::npos);
+  std::size_t not_computed = 0;
+  for (auto at = text.find(kParticipationNotComputed); at != std::string::npos;
+       at = text.find(kParticipationNotComputed, at + 1))
+  {
+    not_computed++;
+  }
+  CHECK(not_computed == 4 * 7);  // coverage, regime, confidence, convergence of each row
+  const auto meta = table.Metadata();
+  CHECK(meta["PreflightOnly"] == true);
+  CHECK(meta["Iterations"] == 1);
+  CHECK(meta["Rows"] == 7);
+  // A solve-form table records no PreflightOnly member.
+  SurfaceParticipationTable solved((temp_dir / kSurfaceParticipationFile).string(),
+                                   "Eigenmode", 2, InterimBars());
+  solved.AddRow(Row(1, 4, "SA", 1.0e-4, 1.2e-4));
+  solved.FinishLevel(1, 1000, true, comm);
+  CHECK_FALSE(solved.Metadata().contains("PreflightOnly"));
+}
+
 TEST_CASE("Surface participation log block", "[surfaceparticipation][Serial]")
 {
   const auto bars = InterimBars();

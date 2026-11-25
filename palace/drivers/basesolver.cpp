@@ -5,6 +5,8 @@
 
 #include <array>
 #include <cmath>
+#include <map>
+#include <set>
 #include <utility>
 #include <fmt/ranges.h>
 #include <mfem.hpp>
@@ -17,12 +19,15 @@
 #include "models/domainpostoperator.hpp"
 #include "models/portexcitations.hpp"
 #include "models/postoperator.hpp"
+#include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseoperator.hpp"
+#include "models/surfaceresponseresolution.hpp"
 #include "utils/communication.hpp"
 #include "utils/dorfler.hpp"
 #include "utils/edgedistance.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/filesystem.hpp"
 #include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
@@ -443,7 +448,7 @@ bool BaseSolver::ContinueAdaptation(int it, long long int ntdof, double err) con
          !(refinement.max_size > 0 && ntdof > refinement.max_size) && err >= refinement.tol;
 }
 
-void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
+bool BaseSolver::PrepareFirstLevelMesh(std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   const auto &refinement = iodata.model.refinement;
   const bool use_amr = [&]()
@@ -467,11 +472,18 @@ void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mes
                "final mesh in the sequence of a priori refinements\n");
     mesh.erase(mesh.begin(), mesh.end() - 1);
   }
-  MPI_Comm comm = mesh.back()->GetComm();
 
   // Resolve every configured correction tube before the first field solve, independent of
   // the relative field energy around each edge.
   RefineEdgeTubes(iodata, *mesh.back());
+  return use_amr;
+}
+
+void BaseSolver::SolveEstimateMarkRefine(std::vector<std::unique_ptr<Mesh>> &mesh) const
+{
+  const auto &refinement = iodata.model.refinement;
+  const bool use_amr = PrepareFirstLevelMesh(mesh);
+  MPI_Comm comm = mesh.back()->GetComm();
 
   // CUT-PLAN step 4 (lane v1table): the per-iteration table of a corrected run.
   surface_participation = NewSurfaceParticipationTable(iodata, post_dir);
@@ -1184,6 +1196,82 @@ void BaseSolver::SaveSurfaceResponseMetadata(const std::string &key,
     nlohmann::json meta = LoadMetadata(post_dir);
     meta["SurfaceResponse"][key] = value;
     WriteMetadata(post_dir, meta);
+  }
+}
+
+void BaseSolver::PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const
+{
+  Mpi::Print(mesh.back()->GetComm(),
+             "\nResolution census: not evaluated in PreflightOnly for this problem type "
+             "(PreflightOnly evaluates it for Electrostatic, Eigenmode and Driven)\n");
+}
+
+void BaseSolver::PreflightMaxwellResolutionCensus(
+    const std::vector<std::unique_ptr<Mesh>> &mesh,
+    std::shared_ptr<const SurfaceResponseGeometry> *response_geometry) const
+{
+  BlockTimer bt(Timer::CONSTRUCT);
+  SpaceOperator space_op(iodata, mesh);
+  auto response =
+      std::make_unique<SurfaceResponseOperator>(iodata, space_op, response_geometry);
+  response->SetPatchRecordResidency(
+      SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
+  // The PostOperator's check of a corrected Maxwell run (before its first solve).
+  MFEM_VERIFY(response->IsRawFallback() || response->HasSurfaceResponse(),
+              "Maxwell surface response correction requires fabricated and thin "
+              "surface response matrices in the selected coupon models!");
+  WritePreflightResolutionCensus(*response, space_op.GlobalTrueVSize(), space_op.GetComm());
+}
+
+void BaseSolver::WritePreflightResolutionCensus(SurfaceResponseOperator &response,
+                                                long long int unknowns, MPI_Comm comm) const
+{
+  if (response.IsRawFallback())
+  {
+    // The solve form makes no census on a whole-run raw fallback either.
+    Mpi::Print(comm, "\nResolution census: not evaluated: the correction falls back to "
+                     "the raw run (RawFallback: no patch applied)\n");
+    return;
+  }
+  // The census Types of the solve form (PostOperator::GetInterfaceTypes over the coverage
+  // interfaces: each entry's Type, read here from the configuration it copies).
+  const auto &dielectric = iodata.boundaries.postpro.dielectric;
+  std::map<int, std::string> types;
+  std::set<int> regions;
+  for (const int interface : response.GetCoverageInterfaces())
+  {
+    const auto entry = dielectric.find(interface);
+    if (entry != dielectric.end())
+    {
+      types[interface] = ToString(entry->second.type);
+      if (entry->second.region)
+      {
+        regions.insert(interface);
+      }
+    }
+  }
+  response.ConfigureResolutionTypes(types);
+  const auto &request = iodata.problem.type == ProblemType::ELECTROSTATIC
+                            ? iodata.solver.electrostatic.response_correction
+                            : iodata.solver.surface_response_correction;
+  if (request && request->patch_energy)
+  {
+    // The solve form's per-patch census table (PatchEnergy only; collective).
+    const auto path = response.CollectiveDiagnosticsPath(
+        post_dir, "surface-response-resolution-patches.csv");
+    response.WriteResolutionPatchTable(path.string());
+  }
+  auto &record = response.GetResolutionRunRecord();
+  record.no_cells_reason = "PreflightOnly: no solve";
+  auto block = ResolutionRunMetadata(record, 1, 1);
+  block["Final"] = true;
+  SaveSurfaceResponseMetadata("Resolution", block);
+  surface_participation = NewSurfaceParticipationTable(iodata, post_dir);
+  if (surface_participation)
+  {
+    surface_participation->WritePreflightLevel(
+        PreflightParticipationRows(types, regions, record.preflight), unknowns, comm);
+    SaveSurfaceResponseMetadata("ParticipationTable", surface_participation->Metadata());
   }
 }
 

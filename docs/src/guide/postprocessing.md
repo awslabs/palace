@@ -466,8 +466,11 @@ the solved window (for example a mode below it moving out of the `Target` range)
 its neighbours for one level. The log lists every join and every `UNMATCHED` mode with both
 frequencies. Data marked interim make the words read `-INTERIM`. The thresholds are data
 (see [the reference](../reference.md#The-per-iteration-table-of-the-response-correction)).
-The log prints the values in short form after each level. `PreflightOnly` does not evaluate
-the resolution census; every corrected run prints it before its first solve and in the first
-rows of this table. A run restarted from a saved adapted mesh starts a new history (its
-first level reads `MOVING: FIRST-ITERATION`) and replaces the table in its output directory:
-give it another `Output` directory to keep the earlier table.
+The log prints the values in short form after each level. `PreflightOnly` evaluates the
+geometric census of the first mesh without a solve (the PREFLIGHT line, the census's
+`palace.json` block and, with `PatchEnergy`, its per-patch table, as a corrected run writes
+them before its first solve) and writes one row set of this table whose `resolution` reads
+`PREFLIGHT <word>` and whose values are `nan` (not computed): the table's own resolution
+verdict is energy-weighted and needs a solve. A run restarted from a saved adapted mesh
+starts a new history (its first level reads `MOVING: FIRST-ITERATION`) and replaces the
+table in its output directory: give it another `Output` directory to keep the earlier table.

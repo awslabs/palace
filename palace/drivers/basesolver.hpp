@@ -31,6 +31,7 @@ class Mesh;
 class Timer;
 class PortExcitations;
 class SurfacePostOperator;
+class SurfaceResponseGeometry;
 class SurfaceResponseOperator;
 
 namespace config
@@ -80,6 +81,26 @@ protected:
   mutable std::unique_ptr<SurfaceParticipationTable> surface_participation;
   void FinishSurfaceParticipationLevel(long long int ntdof, MPI_Comm comm) const;
 
+  // The first-level mesh of SolveEstimateMarkRefine (the a priori sequence flattened under
+  // AMR or edge-tube refinement, then the configured correction tubes refined); returns
+  // whether the run is adaptive. CUT-PLAN step 4b (lane v1step4b): PreflightOnly's census
+  // reads the same mesh.
+  bool PrepareFirstLevelMesh(std::vector<std::unique_ptr<Mesh>> &mesh) const;
+
+  // CUT-PLAN step 4b (lane v1step4b): the tail of PreflightResolutionCensus after the
+  // response operator's construction on the first mesh (`unknowns` the first solve's true
+  // dofs): the census Types and the PREFLIGHT line, surface-response-resolution-patches.csv
+  // (PatchEnergy), the Resolution block of palace.json and the level-1 PREFLIGHT rows of
+  // surface-participation.csv. Collective.
+  void WritePreflightResolutionCensus(SurfaceResponseOperator &response,
+                                      long long int unknowns, MPI_Comm comm) const;
+
+  // PreflightResolutionCensus of the eigenmode and driven solvers: the space operator (no
+  // matrix) and the Maxwell response operator as their PostOperator builds it.
+  void PreflightMaxwellResolutionCensus(
+      const std::vector<std::unique_ptr<Mesh>> &mesh,
+      std::shared_ptr<const SurfaceResponseGeometry> *response_geometry) const;
+
   // Previous adaptation iteration's total London kinetic energy S(A_t − a_h), for detecting
   // an anomalous spike; negative until the first London solve sets it.
   mutable double prev_london_kinetic_ = -1.0;
@@ -101,6 +122,13 @@ public:
   // nondimensionalization.
   virtual void Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
                           MPI_Comm comm) const;
+
+  // CUT-PLAN step 4b (lane v1step4b): PreflightOnly's resolution census. On the mesh the
+  // first solve would read, builds the FE space and the response operator as the solve form
+  // does before its first solve (no matrix assembly, no solve) and writes what that solve
+  // form computes there (WritePreflightResolutionCensus). Electrostatic, eigenmode and
+  // driven; any other problem type prints one line. Collective.
+  virtual void PreflightResolutionCensus(std::vector<std::unique_ptr<Mesh>> &mesh) const;
 
   // Performs adaptive mesh refinement using the solve-estimate-mark-refine paradigm.
   // Dispatches to the Solve method for the driver specific calculations.

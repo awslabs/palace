@@ -63,6 +63,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the raw and corrected participations with their verdicts and a convergence indicator.
     The optional `"Verdict"` member of the `Resolution.BarsFile` file replaces the built-in
     verdict data. SchemaVer 6-1-1
+  - A `"PreflightOnly"` run of a surface-response-corrected electrostatic, eigenmode or
+    driven configuration evaluates the resolution census of the first mesh without a solve
+    (no matrix is assembled): the knots and PREFLIGHT lines, `SurfaceResponse.Resolution`
+    of `palace.json` and, with `"PatchEnergy"`, `surface-response-resolution-patches.csv`,
+    as a corrected run writes them before its first solve, and one row set of
+    `surface-participation.csv` whose resolution reads `PREFLIGHT <word>` and whose values
+    are `nan` (not computed). Corrected solve runs are unchanged.
   - Added the configuration keys of the surface-response correction and of the features
     below to the schema, all optional (a configuration accepted before is accepted with the
     same meaning): `Solver.SurfaceResponseCorrection`; `Solver.Electrostatic`

@@ -318,6 +318,41 @@ void SetParticipationNotTarget(SurfaceParticipationRow &row)
   row.reason = not_target + ": raw only";
 }
 
+std::vector<SurfaceParticipationRow>
+PreflightParticipationRows(const std::map<int, std::string> &targets,
+                           const std::set<int> &regions,
+                           const std::vector<ResolutionPreflightRow> &preflight)
+{
+  std::vector<SurfaceParticipationRow> rows;
+  for (const auto &[interface, type] : targets)
+  {
+    SurfaceParticipationRow row;
+    row.point = 0;
+    row.excitation = 0;
+    row.interface = interface;
+    row.type = type;
+    row.region = regions.count(interface) > 0;
+    auto status = ResolutionStatus::NOT_EVALUATED;
+    if (!row.region)
+    {
+      const auto census = std::find_if(preflight.begin(), preflight.end(),
+                                       [&](const ResolutionPreflightRow &r)
+                                       { return r.all_planes && r.type == type; });
+      if (census != preflight.end())
+      {
+        status = census->status;
+      }
+    }
+    row.resolution = "PREFLIGHT " + std::string(ResolutionStatusName(status));
+    row.coverage = row.regime = row.confidence = row.convergence =
+        kParticipationNotComputed;
+    row.flags = kParticipationPreflightFlags;
+    row.reason = kParticipationPreflightReason;
+    rows.push_back(std::move(row));
+  }
+  return rows;
+}
+
 std::map<int, ParticipationModeJoin>
 MatchParticipationModes(const std::vector<ParticipationModeSignature> &previous,
                         const std::vector<ParticipationModeSignature> &current)
@@ -865,8 +900,49 @@ void SurfaceParticipationTable::FinishLevel(int iteration, long long int unknown
   current = AddParticipationTypeTotals(current);
   const auto joins =
       JoinParticipationLevel(current, iterations > 0 ? &previous : nullptr, bars, order);
+  AppendRows(current);
+  started = true;
+  Mpi::Print(comm, "{}",
+             ParticipationLogBlock(current, iteration, unknowns,
+                                   iterations > 0 ? previous_unknowns : 0, bars, order,
+                                   joins));
+  rows_written += current.size();
+  iterations++;
+  previous = std::move(current);
+  current.clear();
+  previous_unknowns = unknowns;
+}
+
+void SurfaceParticipationTable::WritePreflightLevel(
+    std::vector<SurfaceParticipationRow> rows, long long int unknowns, MPI_Comm comm)
+{
+  if (!Mpi::Root(comm))
+  {
+    return;
+  }
+  for (auto &row : rows)
+  {
+    row.iteration = 1;
+    row.unknowns = unknowns;
+    row.problem = problem;
+  }
+  rows = AddParticipationTypeTotals(rows);
+  AppendRows(rows);
+  started = true;
+  preflight_only = true;
+  rows_written += rows.size();
+  iterations = 1;
+  Mpi::Print(comm,
+             "\nSurface participation (surface-participation.csv), PreflightOnly: {:d} "
+             "row(s) of iteration 1 ({:d} unknowns), the resolution cells \"PREFLIGHT "
+             "<word>\" of the census PREFLIGHT; no solve, no value computed (NaN)\n",
+             rows.size(), unknowns);
+}
+
+void SurfaceParticipationTable::AppendRows(const std::vector<SurfaceParticipationRow> &rows)
+{
   auto &table = file.table;
-  for (const auto &row : current)
+  for (const auto &row : rows)
   {
     table["iteration"] << static_cast<double>(row.iteration);
     table["unknowns"] << static_cast<double>(row.unknowns);
@@ -899,16 +975,6 @@ void SurfaceParticipationTable::FinishLevel(int iteration, long long int unknown
     table["reason"] << row.reason;
   }
   file.AppendRowsAndClear();
-  started = true;
-  Mpi::Print(comm, "{}",
-             ParticipationLogBlock(current, iteration, unknowns,
-                                   iterations > 0 ? previous_unknowns : 0, bars, order,
-                                   joins));
-  rows_written += current.size();
-  iterations++;
-  previous = std::move(current);
-  current.clear();
-  previous_unknowns = unknowns;
 }
 
 nlohmann::json SurfaceParticipationTable::Metadata() const
@@ -917,6 +983,10 @@ nlohmann::json SurfaceParticipationTable::Metadata() const
   block["File"] = kSurfaceParticipationFile;
   block["Iterations"] = iterations;
   block["Rows"] = rows_written;
+  if (preflight_only)
+  {
+    block["PreflightOnly"] = true;
+  }
   auto &verdict = block["Verdict"];
   verdict["MinUnknownsRatio"] = bars.min_unknowns_ratio;
   verdict["MaxCensusRatio"] = bars.max_census_ratio;

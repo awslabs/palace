@@ -7,6 +7,7 @@
 #include <array>
 #include <limits>
 #include <map>
+#include <set>
 #include <string>
 #include <utility>
 #include <vector>
@@ -19,6 +20,7 @@ namespace palace
 
 struct CoverageCell;
 struct ResolutionCell;
+struct ResolutionPreflightRow;
 
 // CUT-PLAN step 4 (decisions 2378 / 2379; lane v1table DESIGN-NOTE): the designer's table
 // surface-participation.csv. One row per (adaptive iteration, point, excitation, interface)
@@ -167,6 +169,26 @@ struct SurfaceParticipationRow
   std::map<int, double> mode_ports;
 };
 
+// CUT-PLAN step 4b (lane v1step4b; the supervisor's ruling of 2026-11-25): the level-1 rows
+// of a PreflightOnly run, which solves nothing. Per target interface (`targets`: interface
+// -> Type; `regions`: the targets with a Region) one row of point 0 and excitation 0 whose
+// values (p, Q, h/R m90 and m50, the share, the changes) are NaN, whose resolution reads
+// "PREFLIGHT <the Type's all-planes PREFLIGHT status>" (a region row "PREFLIGHT
+// NOT-EVALUATED": a box has no geometric census of its own), whose coverage, regime,
+// confidence and convergence read kParticipationNotComputed, whose flags read
+// kParticipationPreflightFlags and whose reason is kParticipationPreflightReason. Never a
+// verdict of the table's rule (energy-weighted, the rule's bars): that needs a solve.
+inline constexpr const char *kParticipationNotComputed = "NOT-COMPUTED";
+inline constexpr const char *kParticipationPreflightFlags = "PREFLIGHT-ONLY";
+inline constexpr const char *kParticipationPreflightReason =
+    "PREFLIGHT-ONLY: geometric census by cell length against the census bars; no solve; "
+    "values not computed; the table's resolution verdict (energy-weighted; bars of the "
+    "rule) needs a solve";
+std::vector<SurfaceParticipationRow>
+PreflightParticipationRows(const std::map<int, std::string> &targets,
+                           const std::set<int> &regions,
+                           const std::vector<ResolutionPreflightRow> &preflight);
+
 // The verdict inputs of a target row from its cells (nullptr = no cell: no census reading /
 // NOT-MEASURED): m90 and m50 of the census cell (the resolution word is set by the join,
 // which knows the convergence), coverage and regime of the coverage cell.
@@ -257,6 +279,10 @@ class SurfaceParticipationTable
   int iterations = 0;
   std::size_t rows_written = 0;
   bool started = false;
+  // CUT-PLAN step 4b (lane v1step4b): the file holds a PreflightOnly run's rows.
+  bool preflight_only = false;
+  // The rows into the file (root): the 27 columns, one line per row.
+  void AppendRows(const std::vector<SurfaceParticipationRow> &rows);
 
 public:
   // `path` the table file; `problem` Electrostatic / Eigenmode / Driven; `order` the FE
@@ -272,6 +298,12 @@ public:
   // rows to the previous level's, appends them to the file and prints the log block;
   // otherwise drops them and prints one line.
   void FinishLevel(int iteration, long long int unknowns, bool converged, MPI_Comm comm);
+  // CUT-PLAN step 4b (lane v1step4b): a PreflightOnly run's only level (collective call;
+  // root work): the PreflightParticipationRows of iteration 1 with their Type totals
+  // (AddParticipationTypeTotals), written without a join, an indicator or a log block of
+  // values (one log line).
+  void WritePreflightLevel(std::vector<SurfaceParticipationRow> rows,
+                           long long int unknowns, MPI_Comm comm);
   // The rows of the last finished level (root).
   const std::vector<SurfaceParticipationRow> &LastLevel() const { return previous; }
   // Whether the file exists: a run that never has a row writes no file (root).
