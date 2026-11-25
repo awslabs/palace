@@ -17,6 +17,7 @@
 #include <nlohmann/json.hpp>
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
+#include "fem/interpolator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
 #include "utils/geodata.hpp"
@@ -546,21 +547,6 @@ std::vector<char> BoundaryTrueDofs(mfem::ParFiniteElementSpace &fespace,
   return mark;
 }
 
-std::unique_ptr<mfem::HypreParMatrix> EliminateToIdentity(const mfem::HypreParMatrix &A,
-                                                          const mfem::Array<int> &dofs)
-{
-  mfem::HypreParMatrix B(A);
-  B.EliminateBC(dofs, mfem::Operator::DiagonalPolicy::DIAG_ZERO);
-  mfem::SparseMatrix diag(A.Height());
-  for (int d : dofs)
-  {
-    diag.Set(d, d, 1.0);
-  }
-  diag.Finalize();
-  mfem::HypreParMatrix I(A.GetComm(), A.GetGlobalNumRows(), A.GetRowStarts(), &diag);
-  return std::unique_ptr<mfem::HypreParMatrix>(mfem::ParAdd(&B, &I));
-}
-
 std::vector<int> BoundaryAttributesInRegion(const mfem::ParMesh &mesh,
                                             const std::vector<int> &region_attributes)
 {
@@ -594,6 +580,68 @@ std::vector<int> BoundaryAttributesInRegion(const mfem::ParMesh &mesh,
     }
   }
   return attrs;
+}
+
+std::vector<std::pair<std::string, std::vector<int>>>
+RegionPostprocessing(const mfem::ParMesh &mesh, const std::vector<int> &region_attributes,
+                     const std::vector<int> &env_bdr_attributes,
+                     config::DomainData &domains, config::BoundaryData &boundaries)
+{
+  auto contains = [](const std::vector<int> &v, int a)
+  { return std::ranges::find(v, a) != v.end(); };
+  // Erase the entries that the field of the region does not give, returning their indices.
+  auto keep = [](auto &entries, auto &&in_region)
+  {
+    std::vector<int> left_out;
+    for (auto it = entries.begin(); it != entries.end();)
+    {
+      if (in_region(it->first, it->second))
+      {
+        ++it;
+      }
+      else
+      {
+        left_out.push_back(it->first);
+        it = entries.erase(it);
+      }
+    }
+    return left_out;
+  };
+  const auto energy =
+      keep(domains.postpro.energy,
+           [&](int, const auto &data)
+           {
+             return std::ranges::all_of(data.attributes, [&](int a)
+                                        { return contains(region_attributes, a); });
+           });
+  // A probe is interpolated in the element it is found in, which for a probe on Γ can be
+  // one of the environment.
+  const auto probes_in_region =
+      fem::ProbesInDomains(domains.postpro.probe, mesh, region_attributes);
+  const auto probe = keep(domains.postpro.probe, [&](int idx, const auto &)
+                          { return contains(probes_in_region, idx); });
+  auto surfaces = BoundaryAttributesInRegion(mesh, region_attributes);
+  std::erase_if(surfaces, [&](int a) { return contains(env_bdr_attributes, a); });
+  auto on_surfaces = [&](int, const auto &data)
+  {
+    return !data.attributes.empty() &&
+           std::ranges::all_of(data.attributes,
+                               [&](int a) { return contains(surfaces, a); });
+  };
+  const auto flux = keep(boundaries.postpro.flux, on_surfaces);
+  const auto dielectric = keep(boundaries.postpro.dielectric, on_surfaces);
+  std::vector<std::pair<std::string, std::vector<int>>> left_out;
+  for (const auto &[idx, key] : {std::pair{&energy, "Energy"},
+                                 {&probe, "Probe"},
+                                 {&flux, "SurfaceFlux"},
+                                 {&dielectric, "Dielectric"}})
+  {
+    if (!idx->empty())
+    {
+      left_out.emplace_back(key, *idx);
+    }
+  }
+  return left_out;
 }
 
 std::string RegionMeshPath(const std::string &model_path)
@@ -1402,6 +1450,37 @@ InterfaceClasses ClassifyInterfaceTrueDofs(const mfem::Array<int> &region_marker
     c.region_int[i] = r && !g;
   }
   return c;
+}
+
+SubstructureInterface::SubstructureInterface(InterfaceClasses &&classes,
+                                             HYPRE_BigInt tstart, MPI_Comm comm)
+  : InterfaceClasses(std::move(classes))
+{
+  const int nt = static_cast<int>(gamma.size()), nranks = Mpi::Size(comm);
+  count = static_cast<int>(std::ranges::count_if(gamma, [](char g) { return g != 0; }));
+  counts.assign(nranks, 0);
+  MPI_Allgather(&count, 1, MPI_INT, counts.data(), 1, MPI_INT, comm);
+  offsets.assign(nranks, 0);
+  for (int r = 1; r < nranks; r++)
+  {
+    offsets[r] = offsets[r - 1] + counts[r - 1];
+  }
+  offset = offsets[Mpi::Rank(comm)];
+  size = offsets.back() + counts.back();
+  index.assign(nt, -1);
+  std::vector<HYPRE_BigInt> mine;
+  mine.reserve(count);
+  for (int i = 0, k = offset; i < nt; i++)
+  {
+    if (gamma[i])
+    {
+      index[i] = k++;
+      mine.push_back(tstart + i);
+    }
+  }
+  tdofs.resize(size);
+  MPI_Allgatherv(mine.data(), count, HYPRE_MPI_BIG_INT, tdofs.data(), counts.data(),
+                 offsets.data(), HYPRE_MPI_BIG_INT, comm);
 }
 
 bool FingerprintsMatch(std::span<const double> a, std::span<const double> b,

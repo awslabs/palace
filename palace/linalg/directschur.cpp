@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <limits>
 #include <numeric>
+#include <type_traits>
 #include <utility>
 #include "linalg/superlu.hpp"
 #include "utils/communication.hpp"
@@ -21,9 +22,9 @@ namespace palace
 // numbered by rank): A_II (CSR with global columns), A_IS (CSR, by the positions of the
 // Schur variables) and, on rank 0, A_SS (dense, column-major, with ss_slots its structural
 // entries).
+template <typename T>
 struct DirectSchurBlocks
 {
-  using T = std::complex<double>;
   int n, n_schur;
   HYPRE_BigInt off, n_glob;
   const std::vector<int> &ii_ptr;
@@ -37,12 +38,12 @@ struct DirectSchurBlocks
 
 // The factorization of A_II or, partially, of the whole matrix, which then also gives S on
 // rank 0 (Factor returns true).
+template <typename T>
 class DirectSchurFactorization
 {
 public:
-  using T = std::complex<double>;
   virtual ~DirectSchurFactorization() = default;
-  virtual bool Factor(const DirectSchurBlocks &A, std::vector<T> &schur) = 0;
+  virtual bool Factor(const DirectSchurBlocks<T> &A, std::vector<T> &schur) = 0;
   // x = A_II^-1 b for nb local column-major blocks (collective).
   virtual void Solve(const std::vector<T> &b, std::vector<T> &x, int nb) const = 0;
 };
@@ -56,6 +57,34 @@ constexpr int kII = 0, kIS = 1, kSS = 2;
 // Right-hand sides per solve with A_II (a fixed number: MFEM's SuperLU_DIST wrapper keeps
 // that of its first solve).
 constexpr int kBatch = 32;
+
+// The entries of a vector of the solves, to read, and to write after zeroing it.
+inline auto Entries(const Vector &x)
+{
+  const double *p = x.HostRead();
+  return [p](int i) { return p[i]; };
+}
+inline auto Entries(const ComplexVector &x)
+{
+  const double *pr = x.Real().HostRead(), *pi = x.Imag().HostRead();
+  return [pr, pi](int i) { return std::complex<double>(pr[i], pi[i]); };
+}
+inline auto ZeroedEntries(Vector &x)
+{
+  x = 0.0;
+  double *p = x.HostReadWrite();
+  return [p](int i, double v) { p[i] = v; };
+}
+inline auto ZeroedEntries(ComplexVector &x)
+{
+  x = 0.0;
+  double *pr = x.Real().HostReadWrite(), *pi = x.Imag().HostReadWrite();
+  return [pr, pi](int i, std::complex<double> v)
+  {
+    pr[i] = v.real();
+    pi[i] = v.imag();
+  };
+}
 
 #if defined(MFEM_USE_STRUMPACK)
 // STRUMPACK's fill-reducing ordering for config["Solver"]["Linear"]["ColumnOrdering"], as
@@ -79,9 +108,10 @@ strumpack::ReorderingStrategy Reordering(SymbolicFactorization ordering)
   }
 }
 
-// STRUMPACK, in complex arithmetic, with the options of Palace's STRUMPACK solver and its
-// ordering reused when refactored.
-class StrumpackFactorization : public DirectSchurFactorization
+// STRUMPACK, with the options of Palace's STRUMPACK solver and its ordering reused when
+// refactored.
+template <typename T>
+class StrumpackFactorization : public DirectSchurFactorization<T>
 {
 public:
   StrumpackFactorization(MPI_Comm comm, SymbolicFactorization ordering)
@@ -96,7 +126,7 @@ public:
     opt.disable_gpu();  // as StrumpackSolverBase
   }
 
-  bool Factor(const DirectSchurBlocks &A, std::vector<T> &) override
+  bool Factor(const DirectSchurBlocks<T> &A, std::vector<T> &) override
   {
     n_loc = A.n;
     cols.assign(A.ii_col.begin(), A.ii_col.end());
@@ -142,29 +172,46 @@ private:
 #endif
 
 #if defined(PALACE_WITH_STRUMPACK_SCHUR)
+// The sequential counterpart of an ordering, which STRUMPACK's Schur complement needs.
+strumpack::ReorderingStrategy SequentialReordering(SymbolicFactorization ordering)
+{
+  switch (ordering)
+  {
+    case SymbolicFactorization::PARMETIS:
+      return strumpack::ReorderingStrategy::METIS;
+    case SymbolicFactorization::PTSCOTCH:
+      return strumpack::ReorderingStrategy::SCOTCH;
+    default:
+      return Reordering(ordering);
+  }
+}
+
 // STRUMPACK's partial factorization of the whole matrix, with its Schur complement
 // interface: numbered with the Schur variables first (rows of rank 0), then A_II, it gives
 // S, and the expansions of zero values of the Schur variables are the solves with A_II.
-class StrumpackSchurFactorization : public DirectSchurFactorization
+template <typename T>
+class StrumpackSchurFactorization : public DirectSchurFactorization<T>
 {
 public:
-  explicit StrumpackSchurFactorization(MPI_Comm comm) : comm(comm), sp(comm, false)
+  StrumpackSchurFactorization(MPI_Comm comm, SymbolicFactorization ordering)
+    : comm(comm), sp(comm, false)
   {
-    // The Schur complement needs neither matching nor the GPU (and a sequential graph
-    // reordering without compression, STRUMPACK's defaults).
+    // The Schur complement needs neither matching nor the GPU, and a sequential graph
+    // reordering without compression.
     sp.options().set_matching(strumpack::MatchingJob::NONE);
     sp.options().disable_gpu();
+    sp.options().set_reordering_method(SequentialReordering(ordering));
   }
 
-  bool Factor(const DirectSchurBlocks &A, std::vector<T> &schur) override
+  bool Factor(const DirectSchurBlocks<T> &A, std::vector<T> &schur) override
   {
     if (dist.empty())
     {
       Pattern(A);
     }
     std::vector<T> si(si_pos.size());
-    MPI_Gatherv(A.is_val.data(), static_cast<int>(A.is_val.size()), MPI_C_DOUBLE_COMPLEX,
-                si.data(), si_cnt.data(), si_dsp.data(), MPI_C_DOUBLE_COMPLEX, 0, comm);
+    MPI_Gatherv(A.is_val.data(), static_cast<int>(A.is_val.size()), mpi::DataType<T>(),
+                si.data(), si_cnt.data(), si_dsp.data(), mpi::DataType<T>(), 0, comm);
     val.assign(col.size(), 0.0);
     for (std::size_t e = 0; e < si.size(); e++)
     {
@@ -238,7 +285,7 @@ private:
   // The rows of the Schur variables on rank 0 (the structural entries of A_SS, and those of
   // A_SI, the transposes of the A_IS entries of every rank), and those of A_II (A_IS, then
   // A_II), with the slots of the values.
-  void Pattern(const DirectSchurBlocks &A)
+  void Pattern(const DirectSchurBlocks<T> &A)
   {
     const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm);
     n = A.n;
@@ -326,38 +373,55 @@ private:
 #endif
 
 #if defined(MFEM_USE_SUPERLU)
-// SuperLU_DIST, in the real equivalent form [Ar, Ai; Ai, -Ar] of A_II (local rows: those of
-// Ar, then of Ai, so that a local vector is [Re x; -Im x] for the solution x).
-class RealFormFactorization : public DirectSchurFactorization
+// SuperLU_DIST: of A_II, or for a complex A_II of its real equivalent form [Ar, Ai; Ai,
+// -Ar] (local rows: those of Ar, then of Ai, so that a local vector is [Re x; -Im x] for
+// the solution x).
+template <typename T>
+class SuperLUFactorization : public DirectSchurFactorization<T>
 {
+  static constexpr bool kComplex = !std::is_same_v<T, double>;
+  static constexpr int kForm = kComplex ? 2 : 1;
+
 public:
-  RealFormFactorization(MPI_Comm comm, SymbolicFactorization ordering)
-    : comm(comm), solver(std::make_unique<SuperLUSolver>(comm, ordering, false, true, 0))
+  SuperLUFactorization(MPI_Comm comm, SymbolicFactorization ordering)
+    : comm(comm),
+      solver(std::make_unique<SuperLUSolver>(comm, ordering, false, kComplex, 0))
   {
   }
 
-  bool Factor(const DirectSchurBlocks &A, std::vector<T> &) override
+  bool Factor(const DirectSchurBlocks<T> &A, std::vector<T> &) override
   {
     n_loc = A.n;
-    std::vector<double> re(A.ii_val.size()), im(A.ii_val.size());
-    for (std::size_t q = 0; q < A.ii_val.size(); q++)
-    {
-      re[q] = A.ii_val[q].real();
-      im[q] = A.ii_val[q].imag();
-    }
     HYPRE_BigInt part[2] = {A.off, A.off + A.n};
-    mfem::HypreParMatrix Ar(comm, A.n, A.n_glob, A.n_glob, A.ii_ptr.data(), A.ii_col.data(),
-                            re.data(), part, part);
-    mfem::HypreParMatrix Ai(comm, A.n, A.n_glob, A.n_glob, A.ii_ptr.data(), A.ii_col.data(),
-                            im.data(), part, part);
-    mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
-    mfem::Array2D<double> coef(2, 2);
-    blocks(0, 0) = blocks(1, 1) = &Ar;
-    blocks(0, 1) = blocks(1, 0) = &Ai;
-    coef(0, 0) = coef(0, 1) = coef(1, 0) = 1.0;
-    coef(1, 1) = -1.0;
-    std::unique_ptr<mfem::HypreParMatrix> A2(mfem::HypreParMatrixFromBlocks(blocks, &coef));
-    solver->SetOperator(*A2);
+    if constexpr (kComplex)
+    {
+      std::vector<double> re(A.ii_val.size()), im(A.ii_val.size());
+      for (std::size_t q = 0; q < A.ii_val.size(); q++)
+      {
+        re[q] = A.ii_val[q].real();
+        im[q] = A.ii_val[q].imag();
+      }
+      mfem::HypreParMatrix Ar(comm, A.n, A.n_glob, A.n_glob, A.ii_ptr.data(),
+                              A.ii_col.data(), re.data(), part, part);
+      mfem::HypreParMatrix Ai(comm, A.n, A.n_glob, A.n_glob, A.ii_ptr.data(),
+                              A.ii_col.data(), im.data(), part, part);
+      mfem::Array2D<const mfem::HypreParMatrix *> blocks(2, 2);
+      mfem::Array2D<double> coef(2, 2);
+      blocks(0, 0) = blocks(1, 1) = &Ar;
+      blocks(0, 1) = blocks(1, 0) = &Ai;
+      coef(0, 0) = coef(0, 1) = coef(1, 0) = 1.0;
+      coef(1, 1) = -1.0;
+      std::unique_ptr<mfem::HypreParMatrix> A2(
+          mfem::HypreParMatrixFromBlocks(blocks, &coef));
+      solver->SetOperator(*A2);
+    }
+    else
+    {
+      std::vector<double> v(A.ii_val.begin(), A.ii_val.end());
+      mfem::HypreParMatrix Ar(comm, A.n, A.n_glob, A.n_glob, A.ii_ptr.data(),
+                              A.ii_col.data(), v.data(), part, part);
+      solver->SetOperator(Ar);
+    }
     return false;
   }
 
@@ -369,8 +433,8 @@ public:
     mfem::Array<Vector *> Y(kBatch);
     for (int k = 0; k < kBatch; k++)
     {
-      xv[k].SetSize(2 * n_loc);
-      yv[k].SetSize(2 * n_loc);
+      xv[k].SetSize(kForm * n_loc);
+      yv[k].SetSize(kForm * n_loc);
       X[k] = &xv[k];
       Y[k] = &yv[k];
     }
@@ -383,8 +447,15 @@ public:
         for (int i = 0; i < n_loc; i++)
         {
           const T v = (k < m) ? b[i + static_cast<std::size_t>(n_loc) * (c0 + k)] : T(0.0);
-          p[i] = v.real();
-          p[n_loc + i] = v.imag();
+          if constexpr (kComplex)
+          {
+            p[i] = v.real();
+            p[n_loc + i] = v.imag();
+          }
+          else
+          {
+            p[i] = v;
+          }
         }
       }
       solver->ArrayMult(X, Y);
@@ -393,7 +464,14 @@ public:
         const double *p = yv[k].HostRead();
         for (int i = 0; i < n_loc; i++)
         {
-          x[i + static_cast<std::size_t>(n_loc) * (c0 + k)] = T(p[i], -p[n_loc + i]);
+          if constexpr (kComplex)
+          {
+            x[i + static_cast<std::size_t>(n_loc) * (c0 + k)] = T(p[i], -p[n_loc + i]);
+          }
+          else
+          {
+            x[i + static_cast<std::size_t>(n_loc) * (c0 + k)] = p[i];
+          }
         }
       }
     }
@@ -408,13 +486,15 @@ private:
 
 }  // namespace
 
-DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
-                                     const std::vector<HYPRE_BigInt> &schur_vars,
-                                     std::vector<int> local_rows, LinearSolver type,
-                                     SymbolicFactorization ordering)
+template <typename T>
+DirectSchurSolverT<T>::DirectSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc,
+                                          Coo &&A,
+                                          const std::vector<HYPRE_BigInt> &schur_vars,
+                                          std::vector<int> local_rows, LinearSolver type,
+                                          SymbolicFactorization ordering)
   : comm(comm), rank(Mpi::Rank(comm)), n_loc(n_loc),
-    n_schur(static_cast<int>(schur_vars.size())), gather(comm, n_loc, schur_vars),
-    rows(std::move(local_rows)), val(std::move(A.val))
+    n_schur(static_cast<int>(schur_vars.size())), rows(std::move(local_rows)),
+    val(std::move(A.val))
 {
   switch (type)
   {
@@ -423,22 +503,24 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
 #if defined(PALACE_WITH_STRUMPACK_SCHUR)
       if (n_schur > 0)
       {
-        fact = std::make_unique<StrumpackSchurFactorization>(comm);
+        fact = std::make_unique<StrumpackSchurFactorization<T>>(comm, ordering);
         break;
       }
 #endif
-      fact = std::make_unique<StrumpackFactorization>(comm, ordering);
+      fact = std::make_unique<StrumpackFactorization<T>>(comm, ordering);
       break;
 #endif
 #if defined(MFEM_USE_SUPERLU)
     case LinearSolver::SUPERLU:
-      fact = std::make_unique<RealFormFactorization>(comm, ordering);
+      fact = std::make_unique<SuperLUFactorization<T>>(comm, ordering);
       break;
 #endif
     default:
       MFEM_ABORT("DirectSchurSolver factors with STRUMPACK or SuperLU_DIST, and Palace is "
                  "not built with the one requested!");
   }
+  MFEM_VERIFY(n_glob <= std::numeric_limits<int>::max(),
+              "DirectSchurSolver needs fewer than 2^31 unknowns!");
   MFEM_VERIFY(rows.size() == static_cast<std::size_t>(n_loc),
               "DirectSchurSolver needs the vector index of each local row!");
   const int nranks = Mpi::Size(comm);
@@ -615,17 +697,19 @@ DirectSchurSolver::DirectSchurSolver(MPI_Comm comm, HYPRE_BigInt n_glob, int n_l
   Factor();
 }
 
-DirectSchurSolver::~DirectSchurSolver() = default;
+template <typename T>
+DirectSchurSolverT<T>::~DirectSchurSolverT() = default;
 
-void DirectSchurSolver::Distribute()
+template <typename T>
+void DirectSchurSolverT<T>::Distribute()
 {
   std::vector<T> sv(send_src.size()), rv(recv_kind.size());
   for (std::size_t q = 0; q < send_src.size(); q++)
   {
     sv[q] = val[send_src[q]];
   }
-  MPI_Alltoallv(sv.data(), send_cnt.data(), send_dsp.data(), MPI_C_DOUBLE_COMPLEX,
-                rv.data(), recv_cnt.data(), recv_dsp.data(), MPI_C_DOUBLE_COMPLEX, comm);
+  MPI_Alltoallv(sv.data(), send_cnt.data(), send_dsp.data(), mpi::DataType<T>(), rv.data(),
+                recv_cnt.data(), recv_dsp.data(), mpi::DataType<T>(), comm);
   ii_val.assign(ii_col.size(), 0.0);
   is_val.assign(is_col.size(), 0.0);
   ss_val.assign((rank == 0) ? static_cast<std::size_t>(n_schur) * n_schur : 0, 0.0);
@@ -636,7 +720,8 @@ void DirectSchurSolver::Distribute()
   }
 }
 
-void DirectSchurSolver::Factor()
+template <typename T>
+void DirectSchurSolverT<T>::Factor()
 {
   Distribute();
   if (fact->Factor({n_int, n_schur, int_off, n_int_glob, ii_ptr, ii_col, ii_val, is_ptr,
@@ -669,61 +754,62 @@ void DirectSchurSolver::Factor()
   }
 }
 
-void DirectSchurSolver::Refactor()
+template <typename T>
+void DirectSchurSolverT<T>::Refactor()
 {
   MFEM_VERIFY(!reduced, "DirectSchurSolver: Refactor between Reduce and Expand!");
   Factor();
 }
 
-std::vector<DirectSchurSolver::T> DirectSchurSolver::ReleaseSchur()
+template <typename T>
+std::vector<T> DirectSchurSolverT<T>::ReleaseSchur()
 {
   std::vector<T> s;
   s.swap(schur);
   return s;
 }
 
-void DirectSchurSolver::SolveInterior(const std::vector<T> &b, std::vector<T> &x,
-                                      int nb) const
+template <typename T>
+void DirectSchurSolverT<T>::SolveInterior(const std::vector<T> &b, std::vector<T> &x,
+                                          int nb) const
 {
   fact->Solve(b, x, nb);
 }
 
-void DirectSchurSolver::SolveInternal(const std::vector<const ComplexVector *> &X,
-                                      const std::vector<ComplexVector *> &Y)
+template <typename T>
+void DirectSchurSolverT<T>::SolveInternal(const std::vector<const VecType *> &X,
+                                          const std::vector<VecType *> &Y)
 {
   const int nb = static_cast<int>(X.size());
   std::vector<T> b(static_cast<std::size_t>(n_int) * nb, 0.0), x;
   for (int k = 0; k < nb; k++)
   {
-    const double *br = X[k]->Real().HostRead(), *bi = X[k]->Imag().HostRead();
+    const auto x_k = Entries(*X[k]);
     for (int q = 0; q < n_loc; q++)
     {
       if (rows[q] >= 0 && int_row[q] >= 0)
       {
-        b[int_row[q] + static_cast<std::size_t>(n_int) * k] = T(br[rows[q]], bi[rows[q]]);
+        b[int_row[q] + static_cast<std::size_t>(n_int) * k] = x_k(rows[q]);
       }
     }
   }
   SolveInterior(b, x, nb);
   for (int k = 0; k < nb; k++)
   {
-    ComplexVector &y = *Y[k];
-    y = 0.0;
-    double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
+    const auto y_k = ZeroedEntries(*Y[k]);
     for (int q = 0; q < n_loc; q++)
     {
       if (rows[q] >= 0 && int_row[q] >= 0)
       {
-        const T v = x[int_row[q] + static_cast<std::size_t>(n_int) * k];
-        yr[rows[q]] = v.real();
-        yi[rows[q]] = v.imag();
+        y_k(rows[q], x[int_row[q] + static_cast<std::size_t>(n_int) * k]);
       }
     }
   }
 }
 
-void DirectSchurSolver::AddSchurProduct(const std::vector<T> &x, int nb, double sign,
-                                        T *y) const
+template <typename T>
+void DirectSchurSolverT<T>::AddSchurProduct(const std::vector<T> &x, int nb, double sign,
+                                            T *y) const
 {
   // A_SI x = A_IS^T x (A is symmetric), summed over the ranks onto rank 0.
   std::vector<T> loc(static_cast<std::size_t>(n_schur) * nb, 0.0), sum;
@@ -742,7 +828,7 @@ void DirectSchurSolver::AddSchurProduct(const std::vector<T> &x, int nb, double 
   {
     sum.resize(loc.size());
   }
-  MPI_Reduce(loc.data(), sum.data(), static_cast<int>(loc.size()), MPI_C_DOUBLE_COMPLEX,
+  MPI_Reduce(loc.data(), sum.data(), static_cast<int>(loc.size()), mpi::DataType<T>(),
              MPI_SUM, 0, comm);
   if (rank == 0)
   {
@@ -753,8 +839,9 @@ void DirectSchurSolver::AddSchurProduct(const std::vector<T> &x, int nb, double 
   }
 }
 
-void DirectSchurSolver::Reduce(const std::vector<const ComplexVector *> &B,
-                               std::vector<T> &red)
+template <typename T>
+void DirectSchurSolverT<T>::Reduce(const std::vector<const VecType *> &B,
+                                   std::vector<T> &red)
 {
   MFEM_VERIFY(n_schur > 0 && !reduced, "DirectSchurSolver: invalid Reduce!");
   const int nb = static_cast<int>(B.size());
@@ -762,7 +849,7 @@ void DirectSchurSolver::Reduce(const std::vector<const ComplexVector *> &B,
       bs(static_cast<std::size_t>(n_schur) * nb, 0.0);
   for (int k = 0; k < nb; k++)
   {
-    const double *br = B[k]->Real().HostRead(), *bi = B[k]->Imag().HostRead();
+    const auto b_k = Entries(*B[k]);
     for (int q = 0; q < n_loc; q++)
     {
       const int r = rows[q];
@@ -770,7 +857,7 @@ void DirectSchurSolver::Reduce(const std::vector<const ComplexVector *> &B,
       {
         continue;
       }
-      const T v(br[r], bi[r]);
+      const T v = b_k(r);
       if (int_row[q] >= 0)
       {
         b[int_row[q] + static_cast<std::size_t>(n_int) * k] = v;
@@ -784,22 +871,23 @@ void DirectSchurSolver::Reduce(const std::vector<const ComplexVector *> &B,
   SolveInterior(b, y_last, nb);
   // red = b_S - A_SI A_II^-1 b_I, with each b_S from the rank of its row.
   red.assign((rank == 0) ? bs.size() : 0, 0.0);
-  MPI_Reduce(bs.data(), red.data(), static_cast<int>(bs.size()), MPI_C_DOUBLE_COMPLEX,
+  MPI_Reduce(bs.data(), red.data(), static_cast<int>(bs.size()), mpi::DataType<T>(),
              MPI_SUM, 0, comm);
   AddSchurProduct(y_last, nb, -1.0, red.data());
   reduced = nb;
 }
 
-void DirectSchurSolver::Condense(const std::vector<const ComplexVector *> &X,
-                                 std::vector<T> &g)
+template <typename T>
+void DirectSchurSolverT<T>::Condense(const std::vector<const VecType *> &X,
+                                     std::vector<T> &g)
 {
   // A Reduce that no Expand follows.
   Reduce(X, g);
   reduced = 0;
 }
 
-void DirectSchurSolver::Expand(const std::vector<T> &u,
-                               const std::vector<ComplexVector *> &X)
+template <typename T>
+void DirectSchurSolverT<T>::Expand(const std::vector<T> &u, const std::vector<VecType *> &X)
 {
   MFEM_VERIFY(reduced && static_cast<int>(X.size()) == reduced,
               "DirectSchurSolver: Expand must follow Reduce of the same batch!");
@@ -810,7 +898,7 @@ void DirectSchurSolver::Expand(const std::vector<T> &u,
     MFEM_VERIFY(u.size() == us.size(), "DirectSchurSolver: wrong size of u_S!");
     us = u;
   }
-  MPI_Bcast(us.data(), static_cast<int>(us.size()), MPI_C_DOUBLE_COMPLEX, 0, comm);
+  MPI_Bcast(us.data(), static_cast<int>(us.size()), mpi::DataType<T>(), 0, comm);
   // x_I = A_II^-1 b_I - A_II^-1 A_IS u_S.
   std::vector<T> r(static_cast<std::size_t>(n_int) * nb, 0.0), z;
   for (int i = 0; i < n_int; i++)
@@ -827,9 +915,7 @@ void DirectSchurSolver::Expand(const std::vector<T> &u,
   SolveInterior(r, z, nb);
   for (int k = 0; k < nb; k++)
   {
-    ComplexVector &x = *X[k];
-    x = 0.0;
-    double *xr = x.Real().HostReadWrite(), *xi = x.Imag().HostReadWrite();
+    const auto x_k = ZeroedEntries(*X[k]);
     for (int q = 0; q < n_loc; q++)
     {
       const int row = rows[q];
@@ -837,16 +923,17 @@ void DirectSchurSolver::Expand(const std::vector<T> &u,
       {
         continue;
       }
-      const T v = (int_row[q] >= 0)
-                      ? y_last[int_row[q] + static_cast<std::size_t>(n_int) * k] -
-                            z[int_row[q] + static_cast<std::size_t>(n_int) * k]
-                      : us[schur_pos[q] + static_cast<std::size_t>(n_schur) * k];
-      xr[row] = v.real();
-      xi[row] = v.imag();
+      x_k(row, (int_row[q] >= 0)
+                   ? y_last[int_row[q] + static_cast<std::size_t>(n_int) * k] -
+                         z[int_row[q] + static_cast<std::size_t>(n_int) * k]
+                   : us[schur_pos[q] + static_cast<std::size_t>(n_schur) * k]);
     }
   }
   std::vector<T>().swap(y_last);
   reduced = 0;
 }
+
+template class DirectSchurSolverT<double>;
+template class DirectSchurSolverT<std::complex<double>>;
 
 }  // namespace palace

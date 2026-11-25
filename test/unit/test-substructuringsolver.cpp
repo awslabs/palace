@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <complex>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -45,6 +46,8 @@
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/schurfactory.hpp"
+#include "linalg/vector.hpp"
 #include "models/curlcurloperator.hpp"
 #include "models/drivensubstructure.hpp"
 #include "models/environmentoperator.hpp"
@@ -2431,11 +2434,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 TEST_CASE("SubstructuringSolver region factored with the environment operator",
           "[substructure][Serial][Parallel][Long]")
 {
-  // The region is factored with S_E as one sparse system, here with one excitation and an
-  // interface of over 1000 DOFs, the dense block of the factorization. Without a Dirichlet
-  // boundary, the region operator alone is singular, but not with S_E. The capacitance is
-  // that of a monolith, of the terminal at x = 1 against the grounded sides of the
-  // environment, with the region grounded at x = 0 or not.
+  // The region is solved by its Schur complement onto the interface with S_E, here with one
+  // excitation and an interface of over 1000 DOFs. Without a Dirichlet boundary, the
+  // region's Schur complement alone is singular, but not with S_E. The capacitance is that
+  // of a monolith, of the terminal at x = 1 against the grounded sides of the environment,
+  // with the region grounded at x = 0 or not.
   const bool grounded = GENERATE(true, false);
   CAPTURE(grounded);
   const std::vector<int> ground = grounded ? std::vector<int>{2, 4} : std::vector<int>{4};
@@ -2538,10 +2541,11 @@ TEST_CASE("SubstructuringSolver grounded PEC boundaries",
 TEST_CASE("SubstructuringSolver sparse direct solver choice",
           "[substructure][Serial][Parallel]")
 {
-  // Solver.Linear.Type names the sparse direct solver of the factorizations, else Palace
-  // prefers STRUMPACK, MUMPS, then SuperLU_DIST. The environment is condensed by the
-  // partial factorization of MUMPS, or else of STRUMPACK with its Schur complement
-  // interface, and otherwise by solves. The capacitance matrix does not depend on it.
+  // Solver.Linear.Type names the sparse direct solver of the factorizations for the Schur
+  // complements of the environment and of the region, else Palace prefers MUMPS,
+  // STRUMPACK, then SuperLU_DIST (the partial factorization of MUMPS, or of STRUMPACK with
+  // its Schur complement interface, and otherwise one solve per interface DOF). The
+  // capacitance matrix does not depend on it.
   auto config = [](const std::string &type)
   {
     return json{{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -2573,7 +2577,8 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   types.push_back("SuperLU");
 #endif
 
-  // The solver of each choice, and its partial factorization of a small SPD matrix.
+  // The solver of each choice, and its factorization of a small SPD matrix for a Schur
+  // complement.
   mfem::Mesh serial = mfem::Mesh::MakeCartesian2D(4, 4, mfem::Element::QUADRILATERAL);
   mfem::ParMesh pmesh(Mpi::World(), serial);
   mfem::H1_FECollection fec(1, 2);
@@ -2592,36 +2597,30 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   {
     CAPTURE(type);
     IoData iodata(config(type), false);
-    const std::string direct = substructuring::DirectSolverName(iodata);
-    std::string partial;
-    const bool built = (substructuring::MakePartialFactorization(iodata, *A, schur_vars,
-                                                                 partial) != nullptr);
-    std::string direct_ref = (type == "SuperLU") ? "SuperLU_DIST" : type, partial_ref;
-#if defined(PALACE_WITH_STRUMPACK_SCHUR)
-    partial_ref = (type == "Default" || type == "STRUMPACK") ? "STRUMPACK" : "";
-#endif
-#if defined(MFEM_USE_MUMPS)
-    partial_ref = (type == "Default" || type == "MUMPS") ? "MUMPS" : partial_ref;
-#endif
+    const LinearSolver schur_type =
+        SchurSolverFor(iodata.solver.substructuring->direct_solver);
+    std::string schur_ref = (type == "SuperLU") ? "SuperLU_DIST" : type;
     if (type == "Default")
     {
-      direct_ref = (types[0] == "SuperLU") ? "SuperLU_DIST" : types[0];
-    }
-    CHECK(direct == direct_ref);
-    const auto solver = substructuring::MakeDirectSolver(iodata, Mpi::World());
-    std::string made;
-#if defined(MFEM_USE_STRUMPACK)
-    made = dynamic_cast<StrumpackSolver *>(solver.get()) ? "STRUMPACK" : made;
-#endif
 #if defined(MFEM_USE_MUMPS)
-    made = dynamic_cast<substructuring::MumpsDirectSolver *>(solver.get()) ? "MUMPS" : made;
+      schur_ref = "MUMPS";
+#elif defined(MFEM_USE_STRUMPACK)
+      schur_ref = "STRUMPACK";
+#else
+      schur_ref = "SuperLU_DIST";
 #endif
-#if defined(MFEM_USE_SUPERLU)
-    made = dynamic_cast<SuperLUSolver *>(solver.get()) ? "SuperLU_DIST" : made;
-#endif
-    CHECK(made == direct_ref);
-    CHECK(built == !partial_ref.empty());
-    CHECK(partial == partial_ref);
+    }
+    CHECK(std::string(DirectSolverName(schur_type)) == schur_ref);
+    {
+      SideSystem side({A.get()}, std::vector<char>(A->Height(), 1));
+      const auto schur = MakeSchurFactorization<double>(
+          schur_type, SymbolicFactorization::DEFAULT, Mpi::World(), side.n_glob,
+          static_cast<int>(side.rows.size()),
+          {std::move(side.irn), std::move(side.jcn), std::move(side.parts[0])},
+          side.Indices(schur_vars), side.rows, true, false);
+      CHECK(schur->ReleaseSchur().size() ==
+            (Mpi::Root(Mpi::World()) ? schur_vars.size() * schur_vars.size() : 0));
+    }
   }
 
   // The capacitance of each choice, against a monolith: the grounded boundaries of the
@@ -4382,7 +4381,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   auto A2 = space_op.GetExtraSystemOperator(omega, Operator::DIAG_ZERO);
   auto A = space_op.GetSystemMatrix(a0, a1, a2, K.get(), C.get(), M.get(), A2.get());
   auto P = space_op.GetPreconditionerMatrix<ComplexOperator>(a0, a1, a2, omega);
-  RegionSolver solver(iodata, space_op, env);
+  DrivenRegionSolver solver(iodata, space_op, env);
   const int n = A->Height();
   ComplexVector x(n), y(n), r(n);
   x.UseDevice(true);
@@ -7136,95 +7135,169 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   CHECK(d.Norml2() <= 1.0e-9 * u_ref.Norml2());
 }
 
-TEST_CASE("Rows of an interface operator pass through rank 0 in chunks",
-          "[substructure][Serial][Parallel]")
+#if defined(MFEM_USE_MUMPS)
+
+TEST_CASE("MumpsSchurSolver refactors with new values", "[substructure][Serial][Parallel]")
 {
-  // Rank q holds q + 2 rows of width 3; a chunk of 1 or 6 doubles holds 1 or 2 rows, the
-  // largest one all of them.
-  MPI_Comm comm = Mpi::World();
-  const int rank = Mpi::Rank(comm), nranks = Mpi::Size(comm), w = 3;
-  const std::size_t chunk = GENERATE(1, 6, 1000);
-  auto value = [](int q, int r, int c) { return 100.0 * q + 10.0 * r + c; };
-  std::vector<int> cnt(nranks);
-  for (int q = 0; q < nranks; q++)
+  // A complex symmetric shifted Laplacian with Schur variables on a face of the cube,
+  // refactored with its values doubled: the Schur complement doubles, and the internal
+  // solves halve.
+  auto pmesh = MakeSplitCube(4);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
+  mfem::ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+  a.AddDomainIntegrator(new mfem::MassIntegrator);
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
+  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
+  bdr = 0;
+  bdr[0] = 1;
+  fes.GetEssentialTrueDofs(bdr, face);
+  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
+  for (int i = 0; i < face.Size(); i++)
   {
-    cnt[q] = q + 2;
+    mine[i] = fes.GetMyTDofOffset() + face[i];
   }
-  std::vector<double> rows(static_cast<std::size_t>(cnt[rank]) * w), expected;
-  for (int r = 0; r < cnt[rank]; r++)
   {
-    for (int c = 0; c < w; c++)
+    int n = face.Size();
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
     {
-      rows[r * w + c] = value(rank, r, c);
+      disp[r] = disp[r - 1] + cnt[r - 1];
     }
+    schur_vars.resize(disp.back() + cnt.back());
+    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
   }
+  REQUIRE(!schur_vars.empty());
+  ComplexVector x(nt);
+  x.Real().Randomize(1 + Mpi::Rank(comm));
+  x.Imag().Randomize(2 + Mpi::Rank(comm));
 
-  // To rank 0: every row once, in rank order, in chunks of at most the chunk.
-  std::vector<double> got;
-  int most = 0;
-  substructuring::RowsToRoot(comm, rows, w, cnt, chunk,
-                             [&](const double *x, int n)
-                             {
-                               got.insert(got.end(), x, x + n * w);
-                               most = std::max(most, n);
-                             });
-  for (int q = 0; Mpi::Root(comm) && q < nranks; q++)
+  ComplexMumpsSchurSolver::Coo coo;
+  std::vector<std::vector<double>> vals;
+  std::vector<int> row_ptr;
+  LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
+  for (double v : vals[0])
   {
-    for (int r = 0; r < cnt[q]; r++)
+    coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
+  }
+  ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
+                                 schur_vars, 0.0, true, false);
+  std::vector<std::complex<double>> S[2];
+  ComplexVector y[2];
+  for (int k = 0; k < 2; k++)
+  {
+    if (k == 1)
     {
-      for (int c = 0; c < w; c++)
+      for (auto &v : solver.Values())
       {
-        expected.push_back(value(q, r, c));
+        v *= 2.0;
       }
+      solver.Refactor();
     }
+    S[k] = solver.ReleaseSchur();
+    solver.SolveInternal({&x}, {&y[k]});
   }
-  CHECK(got == expected);
-  CHECK(most <= std::max<int>(1, static_cast<int>(chunk) / w));
-
-  // From rank 0: rank q takes the rows 3 i + q (i < 2 q + 3) of a source, in that order.
-  auto need = [](int q)
-  {
-    std::vector<int> a;
-    for (int i = 0; i < 2 * q + 3; i++)
-    {
-      a.push_back(3 * i + q);
-    }
-    return a;
-  };
-  auto read = [](int a, double *x)
-  {
-    for (int c = 0; c < 3; c++)
-    {
-      x[c] = a + 0.25 * c;
-    }
-  };
-  substructuring::RowsFromRoot from(comm, w, chunk);
   if (Mpi::Root(comm))
   {
-    from.Serve(need, read);
-  }
-  else
-  {
-    // Each chunk holds the next rows of the chunk, or the rest (probed before Next takes
-    // it).
-    const std::vector<int> a = need(rank);
-    const std::size_t per = std::max<std::size_t>(1, chunk / w);
-    for (std::size_t k = 0; k < a.size(); k++)
+    double d = 0.0, m = 0.0;
+    for (std::size_t q = 0; q < S[0].size(); q++)
     {
-      if (k % per == 0)
+      d = std::max(d, std::abs(S[1][q] - 2.0 * S[0][q]));
+      m = std::max(m, std::abs(2.0 * S[0][q]));
+    }
+    CHECK(d <= 1.0e-12 * m);
+  }
+  ComplexVector d(y[1]);
+  d *= 2.0;
+  d -= y[0];
+  CHECK(linalg::Norml2(comm, d) <= 1.0e-12 * linalg::Norml2(comm, y[0]));
+}
+
+TEST_CASE("MumpsSchurSolver keeps its tolerance relative when refactored",
+          "[substructure][Serial][Parallel]")
+{
+  // The block low-rank (BLR) tolerance is relative to the largest diagonal entry of the
+  // values factored: refactored with values 1e6 times smaller, the Schur complement keeps
+  // the accuracy of the first factorization (with the scale of the first values, it loses
+  // three digits here).
+  auto pmesh = MakeSplitCube(12);
+  mfem::H1_FECollection fec(2, 3);
+  mfem::ParFiniteElementSpace fes(pmesh.get(), &fec);
+  mfem::ParBilinearForm a(&fes);
+  a.AddDomainIntegrator(new mfem::DiffusionIntegrator);
+  a.AddDomainIntegrator(new mfem::MassIntegrator);
+  a.Assemble();
+  a.Finalize();
+  std::unique_ptr<mfem::HypreParMatrix> A(a.ParallelAssemble());
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize(), nranks = Mpi::Size(comm);
+  mfem::Array<int> bdr(pmesh->bdr_attributes.Max()), face;
+  bdr = 0;
+  bdr[0] = 1;
+  fes.GetEssentialTrueDofs(bdr, face);
+  std::vector<HYPRE_BigInt> mine(face.Size()), schur_vars;
+  for (int i = 0; i < face.Size(); i++)
+  {
+    mine[i] = fes.GetMyTDofOffset() + face[i];
+  }
+  {
+    int n = face.Size();
+    std::vector<int> cnt(nranks), disp(nranks, 0);
+    MPI_Allgather(&n, 1, MPI_INT, cnt.data(), 1, MPI_INT, comm);
+    for (int r = 1; r < nranks; r++)
+    {
+      disp[r] = disp[r - 1] + cnt[r - 1];
+    }
+    schur_vars.resize(disp.back() + cnt.back());
+    MPI_Allgatherv(mine.data(), n, HYPRE_MPI_BIG_INT, schur_vars.data(), cnt.data(),
+                   disp.data(), HYPRE_MPI_BIG_INT, comm);
+  }
+  auto schur = [&](double blr_tol)
+  {
+    ComplexMumpsSchurSolver::Coo coo;
+    std::vector<std::vector<double>> vals;
+    std::vector<int> row_ptr;
+    LowerTrianglePattern({A.get()}, coo.irn, coo.jcn, vals, row_ptr);
+    for (double v : vals[0])
+    {
+      coo.val.push_back(std::complex<double>(1.0, 0.1) * v);
+    }
+    const auto values = coo.val;
+    ComplexMumpsSchurSolver solver(comm, A->GetGlobalNumRows(), nt, std::move(coo),
+                                   schur_vars, blr_tol, true, false);
+    std::array<std::vector<std::complex<double>>, 2> S;
+    S[0] = solver.ReleaseSchur();
+    for (std::size_t q = 0; q < values.size(); q++)
+    {
+      solver.Values()[q] = 1.0e-6 * values[q];
+    }
+    solver.Refactor();
+    S[1] = solver.ReleaseSchur();
+    return S;
+  };
+  const auto exact = schur(0.0), blr = schur(1.0e-8);
+  if (Mpi::Root(comm))
+  {
+    for (int k = 0; k < 2; k++)
+    {
+      double d = 0.0, m = 0.0;
+      for (std::size_t q = 0; q < exact[k].size(); q++)
       {
-        MPI_Status status;
-        int n = 0;
-        MPI_Probe(0, 0, comm, &status);
-        MPI_Get_count(&status, MPI_DOUBLE, &n);
-        CHECK(n == static_cast<int>(std::min(per, a.size() - k)) * w);
+        d = std::max(d, std::abs(blr[k][q] - exact[k][q]));
+        m = std::max(m, std::abs(exact[k][q]));
       }
-      std::vector<double> x(w), ref(w);
-      from.Next(x.data());
-      read(a[k], ref.data());
-      CHECK(x == ref);
+      CAPTURE(k, d, m);
+      CHECK(d <= 1.0e-8 * m);
     }
   }
 }
+#endif
 
 }  // namespace palace

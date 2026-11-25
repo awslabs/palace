@@ -3,14 +3,19 @@
 
 # Runs long, expensive tests on self-hosted large runners.
 #
-# The `long-tests` job succeeds either when testing is deferred (there is no
-# `trigger-long-tests` label), or after the tests pass. New commits are tested
-# automatically while the label remains present.
+# On a pull request, the `long-tests` job succeeds either when testing is
+# deferred (there is no `trigger-long-tests` label), or after the tests pass.
+# New commits are tested automatically while the label remains present.
+#
+# Every merge to main runs the tests too, so that the logs record the wall time
+# of the long cases after each merge.
 name: Long Tests
 
 on:
   pull_request:
     types: [labeled, opened, synchronize]
+  push:
+    branches: [main]
 
 permissions:
   packages: read
@@ -18,11 +23,14 @@ permissions:
 
 # Pull request workflows cannot filter label events by name. Unrelated label
 # events therefore use a unique concurrency group and a differently named
-# reporting job, so they cannot cancel a test or replace its result.
+# reporting job, so they cannot cancel a test or replace its result. Each push
+# to main also has a group of its own: a later merge must not cancel it, or that
+# merge has no timings.
 concurrency:
   group: >-
-    long-tests-${{ (github.event.action == 'labeled' &&
-    github.event.label.name != 'trigger-long-tests') &&
+    long-tests-${{ (github.event_name == 'push' ||
+    (github.event.action == 'labeled' &&
+    github.event.label.name != 'trigger-long-tests')) &&
     github.run_id || github.event.pull_request.number }}
   cancel-in-progress: true
 
@@ -35,19 +43,25 @@ jobs:
     name: run-long-tests
     if: |
       github.repository == 'awslabs/palace' &&
-      contains(github.event.pull_request.labels.*.name, 'trigger-long-tests') &&
       (
-        github.event.action != 'labeled' ||
-        github.event.label.name == 'trigger-long-tests'
+        github.event_name == 'push' ||
+        (
+          contains(github.event.pull_request.labels.*.name, 'trigger-long-tests') &&
+          (
+            github.event.action != 'labeled' ||
+            github.event.label.name == 'trigger-long-tests'
+          )
+        )
       )
     runs-on: [self-hosted, x64]
     timeout-minutes: 180
     steps:
+      # On a push, the merge commit on main; on a pull request, its head.
       - name: Check out authorized revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
-          ref: ${{ github.event.pull_request.head.sha }}
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - uses: ./.github/actions/palace-ci
@@ -68,9 +82,10 @@ jobs:
         env:
           REQUESTED: >-
             ${{ github.repository == 'awslabs/palace' &&
-            contains(github.event.pull_request.labels.*.name, 'trigger-long-tests') &&
+            (github.event_name == 'push' ||
+            (contains(github.event.pull_request.labels.*.name, 'trigger-long-tests') &&
             (github.event.action != 'labeled' ||
-            github.event.label.name == 'trigger-long-tests') }}
+            github.event.label.name == 'trigger-long-tests'))) }}
           TEST_RESULT: ${{ needs.test.result }}
         shell: bash
         run: |

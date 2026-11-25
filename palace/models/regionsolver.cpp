@@ -3,9 +3,13 @@
 
 #include "regionsolver.hpp"
 
+#include <complex>
+#include <type_traits>
+#include <utility>
 #include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/rap.hpp"
+#include "linalg/schurfactory.hpp"
 #include "models/drivensubstructure.hpp"
 #include "models/environmentoperator.hpp"
 #include "models/spaceoperator.hpp"
@@ -15,6 +19,62 @@
 
 namespace palace
 {
+
+template <typename T>
+RegionSolver<T>::RegionSolver(const BlockCyclicGrid &grid, LinearSolver type,
+                              SymbolicFactorization ordering, HYPRE_BigInt n_glob,
+                              int n_loc, typename SchurFactorization<T>::Coo &&A,
+                              const std::vector<HYPRE_BigInt> &gamma, std::vector<int> rows,
+                              const std::function<void(std::vector<T> &)> &add_interface)
+  : grid(grid)
+{
+  MFEM_VERIFY(static_cast<int>(gamma.size()) == grid.Size(),
+              "The interface of a region solver is not that of its grid!");
+  const bool has_gamma = (grid.Size() > 0);
+  factorization = MakeSchurFactorization<T>(
+      type, ordering, grid.GetComm(), n_glob, n_loc, std::move(A), gamma, std::move(rows),
+      std::is_same_v<T, double>, false, has_gamma ? &grid : nullptr);
+  if (!has_gamma)
+  {
+    return;
+  }
+  std::vector<T> *C = &dense;
+#if defined(MFEM_USE_MUMPS)
+  if (auto *mumps = dynamic_cast<MumpsSchurSolverT<T> *>(factorization.get()))
+  {
+    C = &mumps->SchurBlocks();
+  }
+  else
+#endif
+  {
+    dense = factorization->ReleaseSchurBlocks(grid);
+  }
+  add_interface(*C);
+  factors = std::make_unique<BlockCyclicFactorization<T>>(grid);
+  factors->Factor(*C);
+}
+
+template <typename T>
+void RegionSolver<T>::Mult(const std::vector<const VecType *> &X,
+                           const std::vector<VecType *> &Y) const
+{
+  if (X.empty())
+  {
+    return;
+  }
+  if (!factors)
+  {
+    factorization->SolveInternal(X, Y);
+    return;
+  }
+  std::vector<T> u;
+  factorization->Reduce(X, u);
+  factors->Solve(u, static_cast<int>(X.size()));
+  factorization->Expand(u, Y);
+}
+
+template class RegionSolver<double>;
+template class RegionSolver<std::complex<double>>;
 
 namespace
 {
@@ -42,8 +102,8 @@ LinearSolver RegionSchurSolverType(LinearSolver type, int n_schur)
 
 }  // namespace
 
-RegionSolver::RegionSolver(const IoData &iodata, SpaceOperator &space_op,
-                           EnvironmentOperator &env)
+DrivenRegionSolver::DrivenRegionSolver(const IoData &iodata, SpaceOperator &space_op,
+                                       EnvironmentOperator &env)
   : space_op(space_op), env(env),
     type(RegionSchurSolverType(iodata.solver.substructuring->direct_solver,
                                env.Grid().Size())),
@@ -51,9 +111,10 @@ RegionSolver::RegionSolver(const IoData &iodata, SpaceOperator &space_op,
 {
 }
 
-RegionSolver::~RegionSolver() = default;
+DrivenRegionSolver::~DrivenRegionSolver() = default;
 
-void RegionSolver::Setup(const mfem::HypreParMatrix *Ar, const mfem::HypreParMatrix *Ai)
+void DrivenRegionSolver::Setup(const mfem::HypreParMatrix *Ar,
+                               const mfem::HypreParMatrix *Ai)
 {
   // The system: the true DOFs which are not eliminated (Dirichlet or pinned), numbered by
   // rank.
@@ -127,7 +188,7 @@ void RegionSolver::Setup(const mfem::HypreParMatrix *Ar, const mfem::HypreParMat
              env.Grid().NumProcessRows(), env.Grid().NumProcessCols());
 }
 
-void RegionSolver::SetOperator(const ComplexOperator &op)
+void DrivenRegionSolver::SetOperator(const ComplexOperator &op)
 {
   height = op.Height();
   width = op.Width();
@@ -175,7 +236,7 @@ void RegionSolver::SetOperator(const ComplexOperator &op)
   lu->Factor(*C);
 }
 
-void RegionSolver::Mult(const ComplexVector &x, ComplexVector &y) const
+void DrivenRegionSolver::Mult(const ComplexVector &x, ComplexVector &y) const
 {
   std::vector<std::complex<double>> u;
   factorization->Reduce({&x}, u);
@@ -204,7 +265,7 @@ std::unique_ptr<ComplexKspSolver> MakeDrivenKspSolver(const IoData &iodata,
     linear.pc_side = PreconditionerSide::DEFAULT;
     return std::make_unique<ComplexKspSolver>(
         linear, iodata.problem.verbose, space_op.GetComm(),
-        std::make_unique<RegionSolver>(iodata, space_op, *env));
+        std::make_unique<DrivenRegionSolver>(iodata, space_op, *env));
   }
   return std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
                                             &space_op.GetH1Spaces());

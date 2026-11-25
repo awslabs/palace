@@ -115,12 +115,12 @@ attributes works: the interface follows the element faces between them and need 
 cost of the condensation grows with the number of interface degrees of freedom, so a region boundary
 in a coarsely meshed part of the domain (substrate or vacuum away from the metal) is cheaper than
 one that cuts through a finely meshed area. Its memory does too: ``\bm{S}_E`` is dense
-(``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``), and each process holds its rows, except
-with the STRUMPACK partial factorization, which gives it whole to one process (two copies while the
-environment is condensed). A driven model holds one per frequency or sample, complex, by its lower
-triangle (see [Driven problems](#Driven-problems)). One process holds the whole mesh to write the
-mesh of the region. The [transmon example](@ref substructuring-transmon-example) retags the elements
-of an existing mesh by the position of their centroids.
+(``|\Gamma|^2`` values, 7 GB at ``|\Gamma| = 30{,}000``), distributed over a grid of processes
+(STRUMPACK and SuperLU_DIST form it whole on one process first), and the region solve holds as many
+values again. A saved model holds its lower triangle, and a driven model one per frequency or
+sample, complex (see [Driven problems](#Driven-problems)). One process holds the whole mesh to write
+the mesh of the region. The [transmon example](@ref substructuring-transmon-example) retags the
+elements of an existing mesh by the position of their centroids.
 
 ### Adaptive mesh refinement
 
@@ -153,27 +153,28 @@ of the field in the volume (without the kinetic energy of the London sheets and 
 
 Substructuring also runs with a GPU device (`config["Solver"]["Device"]` `"GPU"`), with the dense
 interface operator and the sparse direct factorizations on the CPU. In electrostatics and
-magnetostatics, the environment and the region are factored with a sparse direct solver (the one
+magnetostatics, the environment and the region are each factored for their Schur complement onto the
+interface by a sparse direct solver (the one
 [`config["Solver"]["Linear"]["Type"]`](../config/reference.md#config-solver-linear-type) names, or
-else STRUMPACK, MUMPS or SuperLU_DIST, preferred in this order among those Palace is built with), so
-*Palace* must be built with one of them. The region operator is factored together with the dense
-``\bm{S}_E``, as one sparse system whose dense block on the interface is a front of the
-factorization: its cost grows as the cube of the number of interface unknowns. The Schur complement
-of the environment comes instead from a single partial factorization, by MUMPS or, without it, by
-STRUMPACK (with the Schur complement interface that the superbuild and the Spack package patch in),
-unless `"Type"` names another solver; MUMPS compresses its fronts at round-off (block low-rank),
-which is faster than full rank at no loss of accuracy. A saved magnetostatic model also holds the
+else MUMPS, STRUMPACK or SuperLU_DIST, preferred in this order among those Palace is built with), so
+*Palace* must be built with one of them. MUMPS and STRUMPACK (with the Schur complement interface
+that the superbuild and the Spack package patch in) give it by a partial factorization, the others
+by one solve per interface unknown; MUMPS compresses its fronts at round-off (block low-rank), which
+is faster than full rank at no loss of accuracy. The region solve adds ``\bm{S}_E`` to the Schur
+complement of the region and factors this dense interface system by Cholesky, on a grid of processes
+(by ScaLAPACK): its cost grows as the cube of the number of interface unknowns, and each solve
+condenses onto the interface, solves there and expands. A saved magnetostatic model also holds the
 energy operator of the environment, which takes an environment solve and a condensation (the forward
 elimination of the partial factorization, half a solve) per interface unknown, and with London
 sheets in the environment their kinetic energy operator, for another condensation per interface
 unknown and as many values again in the model. The factorizations follow the
 [`"ColumnOrdering"`](../config/reference.md#config-solver-linear-columnordering) of
-`config["Solver"]["Linear"]` (with `"ParMETIS"` or `"PTScotch"`, those without a Schur complement
-are analyzed in parallel, the others with the sequential counterpart), and take no other option of
-it: they are exact, so the compression of STRUMPACK and the 3D algorithm of SuperLU_DIST are not
-used (*Palace* warns). When running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the
-equivalent for the BLAS in use) avoids oversubscribing cores. Driven runs follow the same
-`"ColumnOrdering"`, with the sparse direct solvers of [Driven problems](#Driven-problems).
+`config["Solver"]["Linear"]` (the partial factorizations are analyzed with the sequential
+counterpart of `"ParMETIS"` or `"PTScotch"`), and take no other option of it: they are exact, so the
+compression of STRUMPACK and the 3D algorithm of SuperLU_DIST are not used (*Palace* warns). When
+running MUMPS with MPI, setting `OPENBLAS_NUM_THREADS=1` (or the equivalent for the BLAS in use)
+avoids oversubscribing cores. Driven runs follow the same `"ColumnOrdering"`, with the sparse direct
+solvers of [Driven problems](#Driven-problems).
 
 ## Magnetostatics
 

@@ -6,7 +6,6 @@
 
 #include <algorithm>
 #include <array>
-#include <complex>
 #include <cstddef>
 #include <vector>
 #include <mpi.h>
@@ -65,11 +64,30 @@ public:
   // The rank of the process at (pr, pc).
   int Rank(int pr, int pc) const { return pr * npcol + pc; }
 
+  // The rank of the process holding entry (g, h), and the index of the entry in its local
+  // part (on that process).
+  int Owner(int g, int h) const { return Rank((g / mb) % nprow, (h / mb) % npcol); }
+  std::size_t LocalIndex(int g, int h) const
+  {
+    return static_cast<std::size_t>((g / (mb * nprow)) * mb + g % mb) +
+           static_cast<std::size_t>(LeadingDim()) * ((h / (mb * npcol)) * mb + h % mb);
+  }
+
   // The local parts of an n x n matrix on rank 0 (column-major, or row-major), which it
   // sends to each process of the grid in turn. Collective.
-  std::vector<std::complex<double>>
-  ScatterFromRoot(const std::vector<std::complex<double>> &full,
-                  bool row_major = false) const;
+  template <typename T>
+  std::vector<T> ScatterFromRoot(const std::vector<T> &full, bool row_major = false) const;
+
+  // The n x n matrix on rank 0 (column-major; empty on the other processes) from the local
+  // parts of the processes of the grid, which it receives in turn. Collective.
+  template <typename T>
+  std::vector<T> GatherToRoot(const std::vector<T> &local) const;
+
+  // Adds the columns [col0, col0 + ncols) of an n x n matrix, given by rows, each process's
+  // nrows of them from row row0 (nrows x ncols, row-major), to the local part of this
+  // process (local), exchanging at most chunk entries per process at a time. Collective.
+  void AddFromRows(const std::vector<double> &rows, int row0, int nrows, int col0,
+                   int ncols, std::vector<double> &local, int chunk = 1 << 24) const;
 
 private:
   MPI_Comm comm;
@@ -77,31 +95,34 @@ private:
 };
 
 //
-// The LU factorization with partial pivoting of a dense complex matrix distributed on a
-// BlockCyclicGrid, in place, and solves with it: ScaLAPACK's, or LAPACK's on a grid of one
-// process. Collective on the communicator of the grid.
+// The factorization of a dense matrix distributed on a BlockCyclicGrid, in place, and
+// solves with it: Cholesky's for a real matrix, which must be symmetric positive definite
+// (its lower triangle is referenced), and LU with partial pivoting for a complex one;
+// ScaLAPACK's, or LAPACK's on a grid of one process. Collective on the communicator of the
+// grid.
 //
-class BlockCyclicLU
+template <typename T>
+class BlockCyclicFactorization
 {
 public:
-  explicit BlockCyclicLU(const BlockCyclicGrid &grid);
-  ~BlockCyclicLU();
-  BlockCyclicLU(const BlockCyclicLU &) = delete;
-  BlockCyclicLU &operator=(const BlockCyclicLU &) = delete;
+  explicit BlockCyclicFactorization(const BlockCyclicGrid &grid);
+  ~BlockCyclicFactorization();
+  BlockCyclicFactorization(const BlockCyclicFactorization &) = delete;
+  BlockCyclicFactorization &operator=(const BlockCyclicFactorization &) = delete;
 
   // Factor A (the local part of this process), which then holds the factors: it must
   // outlive the solves.
-  void Factor(std::vector<std::complex<double>> &A);
+  void Factor(std::vector<T> &A);
 
   // Solve for nb right-hand sides on rank 0 (n x nb, column-major), in place.
-  void Solve(std::vector<std::complex<double>> &b, int nb) const;
+  void Solve(std::vector<T> &b, int nb) const;
 
 private:
   const BlockCyclicGrid &grid;
   int system = -1, ctxt = -1;  // BLACS system handle and grid context
   std::array<int, 9> desc{};   // ScaLAPACK descriptor of the factors
-  std::vector<int> ipiv;
-  const std::vector<std::complex<double>> *factors = nullptr;
+  std::vector<int> ipiv;       // the pivots of an LU factorization
+  const std::vector<T> *factors = nullptr;
 };
 
 }  // namespace palace

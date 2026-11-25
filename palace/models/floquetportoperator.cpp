@@ -825,23 +825,20 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
 
   // Power-normalized S-parameter extraction.
   //
-  // Step 1: Field amplitude c_mn = v_mn^T E / |Γ| (Fourier coefficient of total field).
-  // Step 2: Power normalization: S_mn = √(γ_mn / γ_inc) × c_mn.
+  // The field amplitude of mode (m, n, p) at the port is its Fourier coefficient
+  // c = vᴴE / |Γ|, and the mode carries the time-averaged power |c|² Re{λ} |Γ| / (2ωμ),
+  // with λ its DtN eigenvalue (TE: γ, TM: ω²με/γ): Re{λ} is the real power per unit
+  // amplitude, also in a lossy port medium. Relative to the unit-power incident wave of the
+  // excitation, the S-parameter is the amplitude of the outgoing wave in units of √W,
   //
-  // This ensures Σ |S_mn|² = 1 for energy conservation (lossless). In a lossy port medium
-  // the power factor uses the real power per amplitude, Re{λ}, at the port plane. The
-  // factor √(γ_mn/γ_inc)
-  // accounts for different power-per-amplitude for different diffraction orders
-  // (higher-angle orders carry less power per unit amplitude due to oblique propagation).
+  //   S = √(Re{λ} |Γ| / (2ωμ)) c,
   //
-  // For the incident (0,0) mode: γ_inc = γ_00 = ω √(μ_r ε_r), so √(γ/γ_inc) = 1.
-  // For the driving port: S = √(γ/γ_inc) × c - δ_{incident mode} (subtract 1).
-
-  auto norm = ComputeIncidentNormalization(omega0);
-  const double lambda_te_00 = norm.lambda_te_00.real();
-  const double lambda_tm_00 = norm.lambda_tm_00.real();
-  const double lambda_eff = norm.lambda_eff;
-  double c_inc = norm.c_inc;
+  // so that Σ |S|² = 1 for a lossless structure. Higher-angle orders carry less power per
+  // unit amplitude due to oblique propagation. S depends on the excitation only through
+  // the field: a port which only terminates the model needs no incident wave, and its
+  // specular order may be below cutoff. At the driving port, the incident wave is
+  // subtracted from the (0,0) modes (total → scattered field).
+  const double power_scale = port_area / (2.0 * omega0 * mu_r_port);
 
   // Extract E in the true DOF space. Use GetTrueDofs (extracts owned DOF values)
   // instead of P^T × E_local (which sums shared DOF copies and over-counts in parallel).
@@ -880,29 +877,25 @@ FloquetPortData::GetAllSParameters(const GridFunction &E, bool subtract_incident
       double si =
           linalg::Dot(comm, v.Real(), E_i_tdof) - linalg::Dot(comm, v.Imag(), E_r_tdof);
 
-      // Field amplitude: c = v^T E / (c_inc × |Γ|), where c_inc accounts for the
-      // unit-power normalization applied to the excitation.
-      // Power normalization: S = √(λ_mn / λ_eff) × c, where λ is the DtN eigenvalue.
-      // TE: λ = γ. TM: λ = ω²με/γ. λ_eff is the weighted incident eigenvalue. Both are
-      // real powers per amplitude, Re{λ}.
-      const double power_factor = std::sqrt(lambda_mn / lambda_eff);
-
       auto key = std::make_tuple(order.m, order.n, is_te);
-      result[key] = power_factor * std::complex<double>(sr, si) / (c_inc * port_area);
+      result[key] =
+          std::sqrt(lambda_mn * power_scale) * std::complex<double>(sr, si) / port_area;
     }
   }
 
-  // Subtract incident field contribution for the driving port.
-  // S_{0,0,p} -= √(λ_p / λ_eff) × α_p for each incident polarization component.
+  // Subtract the incident field contribution at the driving port, whose incident (0,0)
+  // mode must carry power. The unit-power incident wave has the amplitude c_inc α_p in
+  // polarization p, so S_{0,0,p} -= √(Re{λ_p} / λ_eff) α_p.
   if (subtract_incident)
   {
+    const auto norm = ComputeIncidentNormalization(omega0);
     for (auto &[key, S] : result)
     {
       auto [m, n, is_te] = key;
       if (IsIncidentMode(m, n, is_te))
       {
-        double lambda_p = is_te ? lambda_te_00 : lambda_tm_00;
-        S -= std::sqrt(lambda_p / lambda_eff) * GetIncidentAlpha(is_te);
+        const double lambda_p = (is_te ? norm.lambda_te_00 : norm.lambda_tm_00).real();
+        S -= std::sqrt(lambda_p / norm.lambda_eff) * GetIncidentAlpha(is_te);
       }
     }
   }

@@ -10,9 +10,10 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
 #include <catch2/generators/catch_generators_range.hpp>
+#include "linalg/directschur.hpp"
+#include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
 #include "linalg/schursolver.hpp"
-#include "linalg/strumpackschur.hpp"
 #include "utils/communication.hpp"
 
 namespace palace
@@ -81,7 +82,7 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   const HYPRE_BigInt row0 = A->GetRowStarts()[0];
 
   // Scattered Schur variables, in an order other than that of their rows, and rows of
-  // neither kind (as Dirichlet rows), eliminated for the partial factorizations.
+  // neither kind (as Dirichlet rows), outside the system.
   std::vector<HYPRE_BigInt> schur_vars;
   std::vector<int> internal;
   std::vector<int> pos(n, -1);
@@ -104,17 +105,6 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   }
   const int ns = static_cast<int>(schur_vars.size()),
             ni = static_cast<int>(internal.size());
-  mfem::Array<int> other_rows;
-  for (int i = 0; i < n_loc; i++)
-  {
-    if (other[row0 + i])
-    {
-      other_rows.Append(i);
-    }
-  }
-  mfem::HypreParMatrix A_elim(*A);
-  A_elim.EliminateBC(other_rows, mfem::Operator::DiagonalPolicy::DIAG_ONE);
-
   // The dense references: A_II^-1 and S = A_SS - A_SI A_II^-1 A_IS.
   const mfem::DenseMatrix D = Dense(*A);
   mfem::DenseMatrix A_II(ni), A_IS(ni, ns), S_ref(ns);
@@ -142,92 +132,64 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   mfem::MultAtB(A_IS, Y, AtY);
   S_ref.Add(-1.0, AtY);
 
-  // An exact internal solver for the back-solves.
-  auto internal_solve =
-      [&](const std::vector<const mfem::Vector *> &X, const std::vector<mfem::Vector *> &Yv)
-  {
-    for (std::size_t k = 0; k < X.size(); k++)
-    {
-      const mfem::Vector x = Gather(*X[k], n, row0, comm);
-      mfem::Vector b(ni), y(ni);
-      for (int i = 0; i < ni; i++)
-      {
-        b(i) = x(internal[i]);
-      }
-      A_II_inv.Mult(b, y);
-      mfem::Vector full(n);
-      full = 0.0;
-      for (int i = 0; i < ni; i++)
-      {
-        full(internal[i]) = y(i);
-      }
-      Yv[k]->SetSize(n_loc);
-      for (int i = 0; i < n_loc; i++)
-      {
-        (*Yv[k])(i) = full(static_cast<int>(row0) + i);
-      }
-    }
-  };
-
-  std::vector<std::string> backends = {"back-solves"};
+  // The system of A without the other rows, factored by MUMPS, by STRUMPACK's partial
+  // factorization (or with one solve per Schur variable without its Schur complement
+  // interface), and with the solves of SuperLU_DIST.
+  std::vector<std::string> backends;
 #if defined(MFEM_USE_MUMPS)
   backends.push_back("MUMPS");
   backends.push_back("MUMPS, blocks of 4");
 #endif
-#if defined(PALACE_WITH_STRUMPACK_SCHUR)
+#if defined(MFEM_USE_STRUMPACK)
   backends.push_back("STRUMPACK");
 #endif
+#if defined(MFEM_USE_SUPERLU)
+  backends.push_back("SuperLU_DIST");
+#endif
+  if (backends.empty())
+  {
+    return;
+  }
   const std::string backend = GENERATE_COPY(from_range(backends));
   CAPTURE(backend, ns);
-  auto make = [&]() -> std::unique_ptr<SchurSolver<double>>
+  auto make = [&]() -> std::unique_ptr<SchurFactorization<double>>
   {
-    if (backend == "back-solves")
+    std::vector<char> keep(n_loc);
+    for (int i = 0; i < n_loc; i++)
     {
-      // Batches of 4: the last one is partial.
-      REQUIRE(ns % 4 != 0);
-      return std::make_unique<BackSolveSchurSolver>(*A, schur_vars, internal_solve, 4);
+      keep[i] = !other[row0 + i];
     }
+    SideSystem side({A.get()}, keep);
+    const int n_sys = static_cast<int>(side.rows.size());
+    SchurFactorization<double>::Coo coo{std::move(side.irn), std::move(side.jcn),
+                                        std::move(side.parts[0])};
+    const auto vars = side.Indices(schur_vars);
 #if defined(MFEM_USE_MUMPS)
-    if (backend == "MUMPS")
+    if (backend == "MUMPS" || backend == "MUMPS, blocks of 4")
     {
-      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars);
-    }
-    if (backend == "MUMPS, blocks of 4")
-    {
-      // Several blocks of S on each process of the grid.
-      return std::make_unique<MumpsSchurSolver>(A_elim, schur_vars, 0.0, false, true,
-                                                SymbolicFactorization::DEFAULT, 4);
+      // In blocks of 4, several blocks of S on each process of the grid.
+      return std::make_unique<MumpsSchurSolver>(
+          comm, side.n_glob, n_sys, std::move(coo), vars, 0.0, false, true, side.rows,
+          SymbolicFactorization::DEFAULT, (backend == "MUMPS") ? 64 : 4);
     }
 #endif
-#if defined(PALACE_WITH_STRUMPACK_SCHUR)
-    if (backend == "STRUMPACK")
-    {
-      return std::make_unique<StrumpackSchurSolver>(A_elim, schur_vars);
-    }
-#endif
-    return nullptr;
+    return std::make_unique<DirectSchurSolver>(
+        comm, side.n_glob, n_sys, std::move(coo), vars, side.rows,
+        (backend == "STRUMPACK") ? LinearSolver::STRUMPACK : LinearSolver::SUPERLU);
   };
 
-  // The rows of the Schur complement of the Schur variables of each rank, in the order of
-  // their positions.
-  const std::unique_ptr<SchurSolver<double>> solver = make();
+  // The Schur complement on rank 0.
+  const std::unique_ptr<SchurFactorization<double>> solver = make();
   {
-    std::vector<int> mine;
-    for (int p = 0; p < ns; p++)
-    {
-      if (schur_vars[p] >= row0 && schur_vars[p] < row0 + n_loc)
-      {
-        mine.push_back(p);
-      }
-    }
-    const std::vector<double> R = solver->ReleaseSchurRows();
-    CHECK(R.size() == mine.size() * ns);
+    const std::vector<double> S = solver->ReleaseSchur();
+    CHECK(S.size() == (Mpi::Root(comm) ? static_cast<std::size_t>(ns) * ns : 0));
     double err = 0.0;
-    for (std::size_t r = 0; r < mine.size() && R.size() == mine.size() * ns; r++)
+    for (int j = 0; j < ns && S.size() == static_cast<std::size_t>(ns) * ns; j++)
     {
-      for (int j = 0; j < ns; j++)
+      for (int i = 0; i < ns; i++)
       {
-        err = std::max(err, std::abs(R[r * ns + j] - S_ref(mine[r], j)));
+        err =
+            std::max(err, std::abs(S[i + static_cast<std::size_t>(ns) * j] - S_ref(i, j)));
       }
     }
     MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, comm);
@@ -235,7 +197,7 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
   }
 
   // Two internal solves in place: A_II^-1 b on the internal variables, 0 on the Schur ones
-  // (on the other rows, 0 for the back-solves and b for the partial factorizations).
+  // and on the other rows.
   std::vector<mfem::Vector> x(2, mfem::Vector(n_loc));
   for (int i = 0; i < n_loc; i++)
   {
@@ -265,10 +227,7 @@ TEST_CASE("Schur solvers give the Schur complement and the internal solves",
     double err = 0.0;
     for (int i = 0; i < n_loc; i++)
     {
-      if (!other[row0 + i])
-      {
-        err = std::max(err, std::abs(x[k](i) - ref[k](static_cast<int>(row0) + i)));
-      }
+      err = std::max(err, std::abs(x[k](i) - ref[k](static_cast<int>(row0) + i)));
     }
     MPI_Allreduce(MPI_IN_PLACE, &err, 1, MPI_DOUBLE, MPI_MAX, comm);
     CHECK(err <= 1.0e-12 * ref[k].Normlinf());

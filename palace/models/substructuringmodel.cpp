@@ -8,6 +8,7 @@
 #include <cstring>
 #include <fstream>
 #include <utility>
+#include "linalg/lowertriangle.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
 
@@ -46,148 +47,60 @@ void SubstructuringSolver::Impl::AppendRecord(
   ModelFile::Append(path, parent_fes.GetComm(), tag, size, write);
 }
 
-namespace substructuring
-{
-
-void RowsToRoot(MPI_Comm comm, const std::vector<double> &rows, int w,
-                const std::vector<int> &cnt, std::size_t chunk,
-                const std::function<void(const double *, int)> &write)
-{
-  const int per = static_cast<int>(std::max<std::size_t>(1, chunk / w));
-  const RowType row(w);
-  if (!Mpi::Root(comm))
-  {
-    const int m = static_cast<int>(rows.size() / w);
-    for (int r0 = 0; r0 < m; r0 += per)
-    {
-      MPI_Send(rows.data() + static_cast<std::size_t>(r0) * w, std::min(per, m - r0),
-               row.type, 0, 0, comm);
-    }
-    return;
-  }
-  // The chunks of another rank as it sends them, until it has sent its rows.
-  std::vector<double> buf;
-  for (std::size_t q = 0; q < cnt.size(); q++)
-  {
-    for (int r0 = 0; r0 < cnt[q];)
-    {
-      int n = std::min(per, cnt[q] - r0);
-      const double *x = rows.data() + static_cast<std::size_t>(r0) * w;
-      if (q > 0)
-      {
-        MPI_Status status;
-        MPI_Probe(static_cast<int>(q), 0, comm, &status);
-        MPI_Get_count(&status, row.type, &n);
-        buf.resize(static_cast<std::size_t>(n) * w);
-        MPI_Recv(buf.data(), n, row.type, static_cast<int>(q), 0, comm, MPI_STATUS_IGNORE);
-        x = buf.data();
-      }
-      write(x, n);
-      r0 += n;
-    }
-  }
-}
-
-RowsFromRoot::RowsFromRoot(MPI_Comm comm, int w, std::size_t chunk)
-  : comm(comm), w(w), per(static_cast<int>(std::max<std::size_t>(1, chunk / w))), row(w)
-{
-}
-
-void RowsFromRoot::Serve(const std::function<std::vector<int>(int)> &need,
-                         const std::function<void(int, double *)> &read)
-{
-  for (int q = 1; q < Mpi::Size(comm); q++)
-  {
-    const std::vector<int> a = need(q);
-    for (std::size_t i0 = 0; i0 < a.size(); i0 += per)
-    {
-      const int m = static_cast<int>(std::min<std::size_t>(per, a.size() - i0));
-      buf.resize(static_cast<std::size_t>(m) * w);
-      for (int k = 0; k < m; k++)
-      {
-        read(a[i0 + k], buf.data() + static_cast<std::size_t>(k) * w);
-      }
-      MPI_Send(buf.data(), m, row.type, q, 0, comm);
-    }
-  }
-}
-
-void RowsFromRoot::Next(double *x)
-{
-  if (i == n)
-  {
-    MPI_Status status;
-    MPI_Probe(0, 0, comm, &status);
-    MPI_Get_count(&status, row.type, &n);
-    buf.resize(static_cast<std::size_t>(n) * w);
-    MPI_Recv(buf.data(), n, row.type, 0, 0, comm, MPI_STATUS_IGNORE);
-    i = 0;
-  }
-  std::copy_n(buf.data() + static_cast<std::size_t>(i++) * w, w, x);
-}
-
-}  // namespace substructuring
-
-void SubstructuringSolver::Impl::AppendRows(const std::string &path, std::uint32_t tag,
-                                            const std::vector<double> &rows) const
+void SubstructuringSolver::Impl::AppendTriangle(const std::string &path, std::uint32_t tag,
+                                                const std::vector<double> &local) const
 {
   MPI_Comm comm = parent_fes.GetComm();
-  const int nG = nG_global;
-  const long long size = static_cast<long long>(sizeof(double)) * nG * nG;
-  if (nG == 0)
-  {
-    ModelFile::Append(path, comm, tag, size, [](std::ostream &) {});
-    return;
-  }
-  std::vector<int> cnt, disp;
-  RowLayout(cnt, disp);
+  const int nG = iface.size;
+  const std::vector<double> share = ShareFromGrid(*gamma_grid, local);
+  const std::vector<long long> size = TriangleShareSizes(nG, comm);
   ModelFile::Append(
-      path, comm, tag, size,
+      path, comm, tag, static_cast<long long>(sizeof(double)) * TriangleSize(nG),
       [&](std::ostream &f)
       {
-        substructuring::RowsToRoot(
-            comm, rows, nG, cnt, kIoChunk, [&](const double *x, int n)
-            { f.write(reinterpret_cast<const char *>(x), sizeof(double) * n * nG); });
+        ToRoot<double>(comm, share, size, kIoChunk,
+                       [&](const double *x, std::size_t n)
+                       {
+                         f.write(reinterpret_cast<const char *>(x),
+                                 static_cast<std::streamsize>(sizeof(double) * n));
+                       });
       },
-      [&]() { substructuring::RowsToRoot(comm, rows, nG, cnt, kIoChunk, {}); });
+      [&]() { ToRoot<double>(comm, share, size, kIoChunk, {}); });
 }
 
-std::vector<double> SubstructuringSolver::Impl::ReadRows(const std::string &path,
-                                                         std::streamoff pos,
-                                                         const SignatureMap &map) const
+std::vector<double> SubstructuringSolver::Impl::ReadTriangle(const std::string &path,
+                                                             std::streamoff pos,
+                                                             const SignatureMap &map) const
 {
-  // Rank 0 sends every row even if the file fails, then tells whether it did.
   MPI_Comm comm = parent_fes.GetComm();
-  const int nG = nG_global;
-  std::vector<double> rows;
-  if (nG == 0)
+  const int nG = iface.size;
+  std::vector<std::vector<std::pair<int, double>>> to(nG);
+  for (int g = 0; g < nG; g++)
   {
-    return rows;
-  }
-  std::vector<int> cnt, disp;
-  RowLayout(cnt, disp);
-  substructuring::RowsFromRoot from(comm, nG, kIoChunk);
-  int ok = 1;
-  if (Mpi::Root(comm))
-  {
-    std::ifstream f(path, std::ios::binary);
-    auto read = [&](int a, double *x)
+    for (const auto &[a, c] : map.rows[g])
     {
-      f.seekg(pos + static_cast<std::streamoff>(sizeof(double)) * a * nG);
-      f.read(reinterpret_cast<char *>(x), sizeof(double) * nG);
-    };
-    from.Serve([&](int q) { return map.SavedRows(disp[q], cnt[q]); }, read);
-    rows = map.DualMatrix<double>(gamma_off, gamma_nloc, read);
-    ok = static_cast<bool>(f);
+      to[a].emplace_back(g, c);
+    }
   }
-  else
-  {
-    rows = map.DualMatrix<double>(gamma_off, gamma_nloc,
-                                  [&](int, double *x) { from.Next(x); });
-  }
-  Mpi::Broadcast(1, &ok, 0, comm);
-  MFEM_VERIFY(ok, "Reading the substructuring model \"" << path << "\" failed!");
-  return rows;
+  const BlockCyclicGrid &grid = *gamma_grid;
+  std::vector<double> local(grid.LocalSize(), 0.0);
+  std::ifstream f(path, std::ios::binary);
+  bool ok = f.good();
+  RedistributeTriangle<double>(
+      comm, nG,
+      [&](long long e, long long m, double *x)
+      {
+        f.seekg(pos + static_cast<std::streamoff>(sizeof(double)) * e);
+        f.read(reinterpret_cast<char *>(x),
+               static_cast<std::streamsize>(sizeof(double) * m));
+        ok = ok && f.good();
+      },
+      to, [&](int g, int h) { return grid.Owner(g, h); },
+      [&](int g, int h) { return grid.LocalIndex(g, h); }, local);
+  int all = ok;
+  Mpi::GlobalMin(1, &all, comm);
+  MFEM_VERIFY(all, "Reading the substructuring model \"" << path << "\" failed!");
+  return local;
 }
 
 void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
@@ -198,7 +111,7 @@ void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
   const std::vector<double> H_full = GatherRows(SH_rows, K);
   const std::vector<double> Hkin_full =
       have_skin ? GatherRows(SHkin_rows, K) : std::vector<double>();
-  const long long k = K, n = nG_global;
+  const long long k = K, n = iface.size;
   const long long size =
       static_cast<long long>(sizeof(int)) * (1 + k) +
       static_cast<long long>(sizeof(double)) *
@@ -285,15 +198,15 @@ SubstructuringSolver::Impl::ReadSavedHead(const std::string &path, MPI_Comm comm
   const auto environment =
       env ? EnvironmentRecord::Deserialize(ModelFile::ReadPayload(path, *env, comm))
           : std::nullopt;
-  substructuring::InterfaceRecords iface;
+  substructuring::InterfaceRecords records;
   if (h.file.incomplete || w == 0 || nG < 0 || !S ||
-      S->size != static_cast<long long>(sizeof(double)) * nG * nG || !fp ||
+      S->size != static_cast<long long>(sizeof(double)) * TriangleSize(nG) || !fp ||
       fp->size != static_cast<long long>(sizeof(double)) * kEnvFpSize || !environment ||
-      !iface.Read(path, h.file, comm) || iface.n != nG || iface.width != w)
+      !records.Read(path, h.file, comm) || records.n != nG || records.width != w)
   {
     return h;
   }
-  h.sig = std::move(iface.signatures);
+  h.sig = std::move(records.signatures);
   h.width = w;
   h.S_pos = S->pos;
   h.environment = *environment;
@@ -339,7 +252,7 @@ SubstructuringSolver::Impl::EnvironmentFingerprint() const
   double loc[2] = {0.0, 0.0};
   for (int i = 0; i < nt; i++)
   {
-    loc[0] += (is_env_int[i] || is_gamma[i]) ? 1.0 : 0.0;
+    loc[0] += (iface.env_int[i] || iface.gamma[i]) ? 1.0 : 0.0;
     loc[1] += env_dbc[i] ? 1.0 : 0.0;
   }
   const mfem::Vector r2 = FingerprintField(2);
@@ -487,7 +400,7 @@ SubstructuringSolver::Impl::RegionFilmClosure(std::vector<char> &keep,
   std::vector<char> split(nt0, 0), gamma(nt0, 0);
   for (int t = 0; t < nt; t++)
   {
-    gamma[ParentTrueDof(t)] = gamma[ParentTrueDof(t)] || is_gamma[t];
+    gamma[ParentTrueDof(t)] = gamma[ParentTrueDof(t)] || iface.gamma[t];
   }
   const double *r = tr.HostRead();
   for (int t0 = 0; t0 < nt0; t0++)
@@ -703,7 +616,7 @@ void SubstructuringSolver::Impl::AppendModes(const std::string &path)
   BlockTimer bt(Timer::IO);
   const int K = static_cast<int>(mode_ids.size());
   const std::vector<double> G_full = GatherRows(G_rows, K);
-  const long long k = K, n = nG_global;
+  const long long k = K, n = iface.size;
   AppendRecord(path, kModesTag,
                static_cast<long long>(sizeof(int)) * (1 + k) +
                    static_cast<long long>(sizeof(double)) * (2 * k + n * k + k * k),
@@ -725,7 +638,7 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
 {
   MPI_Comm comm = parent_fes.GetComm();
   const bool root = Mpi::Root(comm);
-  const long long nG = nG_global;
+  const long long nG = iface.size;
   const auto &file = saved.file;
   auto complete = [&](bool ok)
   {
@@ -743,8 +656,8 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
   {
     if (const auto *r = file.Find(tag))
     {
-      complete(r->size == static_cast<long long>(sizeof(double)) * nG * nG);
-      (tag == kSKenTag ? SK_rows : SKin_rows) = ReadRows(path, r->pos, map);
+      complete(r->size == static_cast<long long>(sizeof(double)) * TriangleSize(nG));
+      (tag == kSKenTag ? SK_grid : SKin_grid) = ReadTriangle(path, r->pos, map);
       (tag == kSKenTag ? have_sk : have_skin) = true;
     }
   }
@@ -801,7 +714,7 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
 
 void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int sig_w)
 {
-  const int nG = nG_global;
+  const int nG = iface.size;
   MFEM_VERIFY(saved.nG == nG,
               "Saved substructuring model interface size ("
                   << saved.nG << ") does not match this run (" << nG
@@ -821,7 +734,7 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
       MatchSignatureBasis(InterfaceSignatures(sig_w), saved.sig, saved.width);
   {
     BlockTimer bt_io(Timer::IO);
-    S_rows = ReadRows(model_path, saved.S_pos, map);
+    S_grid = ReadTriangle(model_path, saved.S_pos, map);
   }
   {
     // The records after S_E (fingerprint, S^K, modes).
@@ -840,7 +753,7 @@ void SubstructuringSolver::Impl::LoadModel(const std::string &model_path, int si
 
 void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int sig_w)
 {
-  const int nG = nG_global;
+  const int nG = iface.size;
   const int sig_type = magnetostatic ? ((sig_w == 13) ? 3 : 2) : 1;
   const std::vector<double> sig =
       InterfaceSignatures(sig_w);  // collective: all ranks participate
@@ -852,7 +765,7 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
                  { f.write(reinterpret_cast<const char *>(head), sizeof(head)); });
     substructuring::InterfaceRecords{nG, sig_w, sig, iodata.model.Lc}.Append(
         model_path, parent_fes.GetComm());
-    AppendRows(model_path, kSETag, S_rows);  // collective
+    AppendTriangle(model_path, kSETag, S_grid);  // collective
   }
   AppendEnvFingerprint(model_path);  // collective
   AppendEnvRecord(model_path, WriteRegionMesh(RegionMeshPath(model_path)));
@@ -866,10 +779,10 @@ void SubstructuringSolver::Impl::SaveModel(const std::string &model_path, int si
   if (have_sk)
   {
     BlockTimer bt_io(Timer::IO);
-    AppendRows(model_path, kSKenTag, SK_rows);  // collective
+    AppendTriangle(model_path, kSKenTag, SK_grid);  // collective
     if (have_skin)
     {
-      AppendRows(model_path, kSKinTag, SKin_rows);
+      AppendTriangle(model_path, kSKinTag, SKin_grid);
     }
   }
   if (modes_ready)

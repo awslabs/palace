@@ -692,6 +692,7 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   // for the online output sweep; failed residual checks transparently fall back to the
   // exact port eigensolver and enrich the basis.
   space_op.GetWavePortOp().EnableReducedModel(iodata.solver.driven.adaptive_tol);
+  prom_op.PrepareOnlinePhase();
   // For a substructured region, the reduced postprocessing takes the environment's port
   // values from the values on Γ of the reduced solution, those of the basis vectors
   // combined.

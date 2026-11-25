@@ -55,6 +55,20 @@ private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
   const bool pc_coarse_real;  // Coarse-level solver is applied to the real-valued Br + Bi
+  const bool pml_subdomain;   // Provide the PML true DOFs for the PML subdomain correction
+
+  // Threshold of the PML stretch magnitude for the multigrid smoother masks (see
+  // GetPreconditionerMatrix).
+  const double pml_smoother_threshold;
+
+  // PML subdomain true DOFs and smoother masks (true DOFs of the primary and auxiliary
+  // spaces at each multigrid level), selected at the first construction of the
+  // preconditioner: a frequency-dependent stretch is evaluated at the first frequency, so
+  // that the sizes of the factored PML subdomain matrices do not change.
+  bool pml_dofs_selected = false;
+  std::vector<int> pml_subdomain_tdofs;
+  std::vector<std::vector<int>> pml_smoother_masks, pml_aux_smoother_masks;
+  void SelectPMLTrueDofs(std::complex<double> omega);
 
   // Helper variables for log file printing.
   bool print_hdr, print_prec_hdr;
@@ -152,7 +166,7 @@ private:
   BuildExtraSystemMatrix(std::complex<double> omega,
                          const std::vector<std::pair<int, std::complex<double>>> &port_kn,
                          Operator::DiagonalPolicy diag_policy,
-                         bool include_permittivity_poles = true);
+                         bool include_permittivity_poles = true, bool include_pml = true);
   std::unique_ptr<ComplexOperator>
   BuildExtraSystemOperator(std::complex<double> omega,
                            WavePortOperator::ComplexPortContribution &&ports,
@@ -215,18 +229,27 @@ private:
                                     bool time_harmonic);
   bool AddExcitationVector2Internal(int excitation_idx, double omega, ComplexVector &RHS);
 
+  // Print a summary of the PML regions.
+  void PrintPML(const Units &units) const;
+
   // Helper functions to build the preconditioner matrix. The type of a3 selects the
   // frequency-dependent (A2) stamping path: double dispatches to the real-ω overload of
   // AddExtraSystemBdrCoefficients (driven/boundary-mode: Floquet term included, cached
   // wave-port Initialize), while std::complex dispatches to the complex-ω overload
   // (eigenmode nonlinear solve: exact analytic continuation, uncached wave-port EVP).
+  // Frequency-dependent PML terms are analytic in ω and evaluated at a3 in both cases.
+  // For the complex-valued preconditioner, pml_block optionally returns the operator of the
+  // PML subdomain correction at the finest level: the PML and boundary terms only, which
+  // are the terms of the rows and columns of the PML true DOFs not shared with elements
+  // outside of the PML regions (see GetPMLTrueDofs).
   template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,
                               std::vector<std::unique_ptr<Operator>> &br_vec,
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_vec,
-                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec);
+                              std::vector<std::unique_ptr<Operator>> &bi_aux_vec,
+                              std::unique_ptr<ComplexOperator> *pml_block = nullptr);
   template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,
@@ -369,28 +392,49 @@ public:
   std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
                                                  Operator::DiagonalPolicy diag_policy);
 
-  // As GetExtraSystemMatrix, but optionally excluding the wave-port contribution. Used by
-  // the reduced-order model to apply the wave-port term separately via per-port factored
-  // operators while keeping the slow path for any remaining ω-dependent BCs (e.g.
-  // second-order farfield, surface conductivity).
+  // As GetExtraSystemMatrix, but optionally excluding the wave-port or frequency-dependent
+  // PML contributions. Used by the reduced-order model to apply the wave-port term
+  // separately via per-port factored operators while keeping the slow path for any
+  // remaining ω-dependent BCs (e.g. second-order farfield, surface conductivity), and to
+  // project the PML terms separately (see GetExtraSystemPMLMatrix).
   template <OperatorType OperType>
-  std::unique_ptr<OperType> GetExtraSystemMatrix(double omega,
-                                                 Operator::DiagonalPolicy diag_policy,
-                                                 bool include_wave_ports);
+  std::unique_ptr<OperType>
+  GetExtraSystemMatrix(double omega, Operator::DiagonalPolicy diag_policy,
+                       bool include_wave_ports, bool include_pml = true);
 
   // Complex-ω overload for the eigenmode nonlinear solve: assembles A2(λ) with all
   // frequency-dependent domain and boundary terms (including material permittivity models,
-  // 2nd-order ABC, surface conductivity, rational impedance, and numeric wave ports)
-  // evaluated at the genuinely complex frequency
+  // frequency-dependent PML regions, 2nd-order ABC, surface conductivity, rational
+  // impedance, and numeric wave ports) evaluated at the genuinely complex frequency
   // (ω = -i·λ). Always a ComplexOperator (these terms acquire a real-slot contribution
   // at complex ω). For real ω this matches GetExtraSystemMatrix<ComplexOperator>(double)
   // up to the Floquet port term. Without the permittivity poles, the pole terms of the
   // materials (MaterialOperator::GetPermittivityPoleTerms, which the linearized
   // eigensolvers take exactly, EigenvalueSolver::AddPoleTerms) are left out; the
-  // Djordjevic-Sarkar and boundary terms are kept.
+  // Djordjevic-Sarkar and boundary terms are kept. Without the PML, the
+  // frequency-dependent PML terms are left out (see GetExtraSystemPMLMatrix and
+  // GetFrozenPMLMatrices).
   std::unique_ptr<ComplexOperator>
   GetExtraSystemMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy,
-                       bool include_permittivity_poles = true);
+                       bool include_permittivity_poles = true, bool include_pml = true);
+
+  // Construct the matrices {K_pml, C_pml, M_pml} of the frequency-dependent PML terms of
+  // A2(λ) ≈ K_pml + λ C_pml + λ² M_pml with the PML stretch frozen at the real frequency
+  // omega: the corresponding terms of the system matrix for a static PML with reference
+  // frequency omega, exact at λ = iω. This is the approximation of the PML terms used for
+  // the polynomial seed eigenvalue problem of the hybrid nonlinear eigensolver. Absent
+  // terms are returned as null.
+  std::array<std::unique_ptr<ComplexOperator>, 3>
+  GetFrozenPMLMatrices(double omega, Operator::DiagonalPolicy diag_policy);
+
+  // Construct the frequency-dependent PML terms of A2(ω) only, at the (possibly complex)
+  // frequency ω. Returns null if there are no frequency-dependent PML regions.
+  std::unique_ptr<ComplexOperator>
+  GetExtraSystemPMLMatrix(std::complex<double> omega, Operator::DiagonalPolicy diag_policy);
+
+  // Whether the complex-ω A2(ω) has frequency-dependent boundary terms, without assembling
+  // them.
+  bool HasExtraSystemBdrTerms() const;
 
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
@@ -521,10 +565,13 @@ public:
   // It is assumed that the inputs have been constructed using previous calls to
   // GetSystemMatrix() and the returned operator does not inherit ownership of any of them.
   // If K or M have eliminated boundary conditions, they are not eliminated from the
-  // returned operator.
+  // returned operator. With PML regions, the matrix is instead assembled using the PML
+  // material tensors of the magnitudes of the stretch factors (with a frequency-dependent
+  // stretch evaluated at omega, if positive).
   std::unique_ptr<Operator> GetInnerProductMatrix(double a0, double a2,
                                                   const ComplexOperator *K,
-                                                  const ComplexOperator *M);
+                                                  const ComplexOperator *M,
+                                                  double omega = 0.0);
 
   // Construct the matrix for frequency or time domain linear system preconditioning. If it
   // is real-valued (Mr > 0, Mi < 0, |Mr + Mi| is done on the material property coefficient,
