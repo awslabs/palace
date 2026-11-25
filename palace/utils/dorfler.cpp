@@ -60,8 +60,9 @@ std::array<double, 2> ComputeDorflerThreshold(MPI_Comm comm, const Vector &e,
   // value will be higher. Thus using the value from the low error processor will give too
   // many elements, and using the value from the high error processor will give too few. The
   // correct threshold value will be an intermediate between the min and max over
-  // processors.
-  double min_threshold = error_threshold;
+  // processors. A processor without estimates takes no part in the min.
+  double min_threshold =
+      !estimates.empty() ? error_threshold : std::numeric_limits<double>::infinity();
   double max_threshold = error_threshold;
   Mpi::GlobalMin(1, &min_threshold, comm);
   Mpi::GlobalMax(1, &max_threshold, comm);

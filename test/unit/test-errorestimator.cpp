@@ -18,6 +18,7 @@
 #include "models/materialoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/dorfler.hpp"
 
 namespace palace
 {
@@ -504,6 +505,24 @@ TEST_CASE("Flux recovery minimizes the energy-norm error across material interfa
     CHECK(weighted < 1.0e-10);
     CHECK(unweighted > 1.0e-3);
   }
+}
+
+TEST_CASE("Dorfler marking with processes without estimates",
+          "[errorestimator][Serial][Parallel]")
+{
+  // All the estimates are on the first process. The others have none, and must not lower
+  // the threshold: the marking is that of a single process, the largest estimate alone.
+  MPI_Comm comm = Mpi::World();
+  Vector e(Mpi::Root(comm) ? 3 : 0);
+  if (Mpi::Root(comm))
+  {
+    e(0) = 1.0;
+    e(1) = 3.0;
+    e(2) = 2.0;
+  }
+  const auto [threshold, marked_fraction] = utils::ComputeDorflerThreshold(comm, e, 0.5);
+  CHECK(threshold == 3.0);
+  CHECK_THAT(marked_fraction, WithinRel(9.0 / 14.0, 1.0e-14));
 }
 
 }  // namespace palace
