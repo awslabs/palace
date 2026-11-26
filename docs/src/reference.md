@@ -3751,11 +3751,24 @@ directory) and may leave a truncated top-level `palace.json`; the top-level
 `surface-response-resolution.csv` has no level column and may already hold rows of the
 level that did not finish.
 
-Before the first solve of each level, the log prints a PREFLIGHT line per `Type` and plane
-(geometry only, an indicator): edge patches weighted by their longitudinal cell length,
-spatial patches (no cell) by count, and the WORSE of the two groups' statuses by the same
-share rule. It is not the offline length-weighted form of record and its share rule is not
-validated in this weight; the energy-weighted census after the solve is the reading.
+Before the first solve of each level, the log prints a PREFLIGHT line per `Type` and plane,
+and `SurfaceResponse.Resolution.Preflight` records each row: ONE resolution verdict, the
+per-iteration table's word (its rule and its verdict data, below) of the census weighted by
+length, since no field exists before a solve, with no convergence evaluated: `MARGINAL`
+(``m_{90} \le 2 B``), `UNDER-RESOLVED` (``m_{90} > 2 B``), `NO-BARS` (orders 1 and 5 and
+above) or `NOT-EVALUATED` (no reading); never `RESOLVED`. It is the word the table prints
+at a first iteration, there from the energy-weighted census. The weights: an edge patch its
+longitudinal cell length; a spatial patch (corner and cluster models; no cell) as much as
+edge patches with as many knots (its knot count times the edge patches' cell length per
+knot of the same `Type` and plane; by its knots alone where there is no edge patch).
+`LengthM90` is that census's 90 % quantile of ``h/R`` (the bin-centre rule of the energy
+census); `Status` its word; `EdgePatches`, `EdgeLength`, `SpatialPatches` and the shares
+`EdgeShares` / `SpatialShares` by the census bars below stay as numbers (no word is made of
+them). On measured meshes this word agreed with the table's first-iteration word on 225 of
+225 first levels of three designs' ladders and on 21 of 21 rows of the merge tier, with no
+reading better than the table's; on refined levels the energy concentrates where the
+length weight does not follow, and the pre-solve word can read `UNDER-RESOLVED` where the
+table reads `MARGINAL` (101 of 678 ladder rows), never the reverse there.
 
 RESOLVED IS NECESSARY, NOT SUFFICIENT: it says that the mesh at the trace contour is as fine
 as the interim bars ask, never that a corrected value is accurate (the exact-trace floor,
@@ -3931,19 +3944,21 @@ and scope with the ranges of the raw and the corrected values), and `palace.json
 `SurfaceResponse.ParticipationTable` (the file, the levels, the rows and the verdict data
 with their source).
 
-A `PreflightOnly` run solves nothing, so it computes no value and no verdict of this rule:
+A `PreflightOnly` run solves nothing, so it computes no value and no convergence:
 its `surface-participation.csv` holds one row set of iteration 1 (the first solve's
 unknowns), `point` and `exc` 0, one row per target interface and its `Type` totals, in
-which every number is `nan`, `resolution` reads `PREFLIGHT <word>` (the `Type`'s all-planes
-word of the census PREFLIGHT line, by cell length against the census bars; a `region` row
-`PREFLIGHT NOT-EVALUATED`), `coverage`, `regime`, `confidence` and `convergence` read
+which every number is `nan` (also `h/R m90` and `h/R m50`, the energy-weighted census
+of a solve), `resolution` reads the table's own word before a solve (the `Type`'s
+all-planes word of the PREFLIGHT line above: `MARGINAL`, `UNDER-RESOLVED`, `NO-BARS` or
+`NOT-EVALUATED`, never `RESOLVED`; a `region` row `NOT-EVALUATED`: a box has no census of
+its own before a solve), `coverage`, `regime`, `confidence` and `convergence` read
 `NOT-COMPUTED`, `flags` reads `PREFLIGHT-ONLY` (no `Ls` sheet word: those words qualify a
 value) and `reason` says why
-(`PREFLIGHT-ONLY: geometric census by cell length against the census bars; no solve; values not computed; the table's resolution verdict (energy-weighted; bars of the rule) needs a solve`);
-`SurfaceResponse.ParticipationTable` records `"PreflightOnly": true`. The PREFLIGHT word
-and the table's resolution word are different readings (length against energy weights,
-the census bars against the rule's bars) and may differ on the same mesh. A run whose
-targets are all Regions has no word in the table: read the PREFLIGHT line.
+(`PREFLIGHT-ONLY: no solve; values not computed; resolution = the table's rule on the census weighted by length (no field before a solve); no convergence evaluated: never RESOLVED`);
+`SurfaceResponse.ParticipationTable` records `"PreflightOnly": true`. The pre-solve word
+and the word of the first solve are the same rule on two weights (length, energy) and may
+differ on the same mesh. A run whose targets are all Regions has no word in the table:
+read the PREFLIGHT line.
 
 ## Electrostatic Simulations
 

@@ -32,35 +32,6 @@ nlohmann::json JsonNumber(double value)
   return std::isfinite(value) ? nlohmann::json(value) : nlohmann::json(nullptr);
 }
 
-// The status of a group's four shares, or "EMPTY" when the group carries no weight.
-std::string GroupStatusName(const double *bins, double total)
-{
-  if (!(total > 0.0))
-  {
-    return "EMPTY";
-  }
-  std::array<double, 4> shares;
-  for (int k = 0; k < 4; k++)
-  {
-    shares[k] = bins[k] / total;
-  }
-  return std::string(ResolutionStatusName(ResolutionShareStatus(shares)));
-}
-
-ResolutionStatus StatusOfName(const std::string &name)
-{
-  for (const auto status : {ResolutionStatus::RESOLVED, ResolutionStatus::MARGINAL,
-                            ResolutionStatus::UNDER_RESOLVED, ResolutionStatus::NO_BARS,
-                            ResolutionStatus::NOT_EVALUATED})
-  {
-    if (ResolutionStatusName(status) == name)
-    {
-      return status;
-    }
-  }
-  return ResolutionStatus::NOT_EVALUATED;
-}
-
 }  // namespace
 
 std::string_view ResolutionStatusName(ResolutionStatus status)
@@ -269,6 +240,38 @@ double ResolutionHistogramCentre(int bin)
                                 kResolutionHistogramBins);
 }
 
+std::array<double, 3> ResolutionHistogramQuantiles(const double *histogram)
+{
+  std::array<double, 3> quantiles;
+  quantiles.fill(kNaN);
+  double histogram_total = 0.0;
+  for (int k = 0; k < kResolutionHistogramBins; k++)
+  {
+    histogram_total += histogram[k];
+  }
+  if (!(histogram_total > 0.0))
+  {
+    return quantiles;
+  }
+  const std::array<double, 3> levels = {0.1 * histogram_total, 0.5 * histogram_total,
+                                        0.9 * histogram_total};
+  double cumulative = 0.0;
+  std::size_t next = 0;
+  for (int k = 0; k < kResolutionHistogramBins && next < levels.size(); k++)
+  {
+    cumulative += histogram[k];
+    while (next < levels.size() && cumulative >= levels[next])
+    {
+      quantiles[next++] = ResolutionHistogramCentre(k);
+    }
+  }
+  for (; next < levels.size(); next++)
+  {
+    quantiles[next] = std::pow(10.0, kResolutionHistogramMax);
+  }
+  return quantiles;
+}
+
 void ResolutionAccumulator::Reset(int types_, int slots_)
 {
   types = types_;
@@ -389,31 +392,7 @@ ResolutionCell ComputeResolutionCell(const double *slot, const std::string &type
     cell.shares[2] = slot[2] / total;
   }
   // The energy quantiles of m (the offline census's bin-centre rule).
-  const double *histogram = slot + bins;
-  double histogram_total = 0.0;
-  for (int k = 0; k < kResolutionHistogramBins; k++)
-  {
-    histogram_total += histogram[k];
-  }
-  if (histogram_total > 0.0)
-  {
-    const std::array<double, 3> levels = {0.1 * histogram_total, 0.5 * histogram_total,
-                                          0.9 * histogram_total};
-    double cumulative = 0.0;
-    std::size_t next = 0;
-    for (int k = 0; k < kResolutionHistogramBins && next < levels.size(); k++)
-    {
-      cumulative += histogram[k];
-      while (next < levels.size() && cumulative >= levels[next])
-      {
-        cell.quantiles[next++] = ResolutionHistogramCentre(k);
-      }
-    }
-    for (; next < levels.size(); next++)
-    {
-      cell.quantiles[next] = std::pow(10.0, kResolutionHistogramMax);
-    }
-  }
+  cell.quantiles = ResolutionHistogramQuantiles(slot + bins);
   if (cell.shares[3] > kResolutionShareNotEvaluated)
   {
     cell.status = ResolutionStatus::NOT_EVALUATED;
@@ -472,57 +451,40 @@ ResolutionPreflightRow ComputeResolutionPreflightRow(const double *slot,
   row.edge_patches = std::llround(slot[10]);
   row.spatial_patches = std::llround(slot[11]);
   // The group bins in the order R, M, U, NO-BARS, NE; the shares of R, M, U, NE (NO-BARS in
-  // the total), the status by the share rule or NO-BARS.
-  auto Group = [&](const double *bins, std::array<double, 4> &shares, std::string &status)
+  // the total; R, M, U only where the census bars hold).
+  auto Group = [&](const double *bins, std::array<double, 4> &shares)
   {
     const double total = bins[0] + bins[1] + bins[2] + bins[4] + bins[3];
     shares.fill(kNaN);
-    if (!(total > 0.0))
+    if (total > 0.0)
     {
-      status = "EMPTY";
-      return total;
-    }
-    const std::array<double, 4> four = {bins[0], bins[1], bins[2], bins[4]};
-    shares[3] = bins[4] / total;
-    if (bars_hold)
-    {
-      for (int k = 0; k < 3; k++)
+      shares[3] = bins[4] / total;
+      for (int k = 0; k < 3 && bars_hold; k++)
       {
-        shares[k] = four[k] / total;
+        shares[k] = bins[k] / total;
       }
-      status = GroupStatusName(four.data(), total);
-    }
-    else
-    {
-      status = shares[3] > kResolutionShareNotEvaluated
-                   ? std::string(ResolutionStatusName(ResolutionStatus::NOT_EVALUATED))
-                   : std::string(ResolutionStatusName(ResolutionStatus::NO_BARS));
     }
     return total;
   };
-  row.edge_length = Group(slot, row.edge_shares, row.edge_status) * length_scale;
-  Group(slot + 5, row.spatial_shares, row.spatial_status);
-  if (row.edge_status == "EMPTY" && row.spatial_status == "EMPTY")
+  const double edge_length = Group(slot, row.edge_shares);
+  row.edge_length = edge_length * length_scale;
+  Group(slot + 5, row.spatial_shares);
+  // A spatial patch weighs as much as edge patches with as many knots (by its knots alone
+  // in a slot without edge knots: any common scale gives the same quantiles).
+  const double length_per_knot = slot[12] > 0.0 ? edge_length / slot[12] : 1.0;
+  std::vector<double> histogram(kResolutionHistogramBins);
+  for (int k = 0; k < kResolutionHistogramBins; k++)
   {
-    row.status = ResolutionStatus::NOT_EVALUATED;
+    histogram[k] = slot[kResolutionPreflightEdgeHistogram + k] +
+                   length_per_knot * slot[kResolutionPreflightSpatialHistogram + k];
   }
-  else if (row.edge_status == "EMPTY" || row.spatial_status == "EMPTY")
-  {
-    row.status =
-        StatusOfName(row.edge_status == "EMPTY" ? row.spatial_status : row.edge_status);
-  }
-  else
-  {
-    const auto edge = StatusOfName(row.edge_status),
-               spatial = StatusOfName(row.spatial_status);
-    row.status =
-        ResolutionStatusRank(edge) >= ResolutionStatusRank(spatial) ? edge : spatial;
-  }
+  row.length_quantiles = ResolutionHistogramQuantiles(histogram.data());
   return row;
 }
 
 std::string ResolutionPreflightLine(const std::vector<ResolutionPreflightRow> &rows,
-                                    bool enabled)
+                                    bool enabled, int order, double bar,
+                                    double under_resolved_bar)
 {
   if (!enabled)
   {
@@ -530,25 +492,28 @@ std::string ResolutionPreflightLine(const std::vector<ResolutionPreflightRow> &r
            "(SurfaceResponseCorrection.Resolution.Enabled false): no knot located, every "
            "cell NOT-EVALUATED\n";
   }
-  std::string line = "Resolution census PREFLIGHT (geometry only, an indicator; edge "
-                     "patches by cell length, spatial patches by count; the worse of the "
-                     "two; NOT the offline length-weighted form of record; the energy "
-                     "census follows the solve):";
+  std::string line = fmt::format(
+      "Resolution census PREFLIGHT (before the solve: the table's resolution rule on the "
+      "census weighted by length, edge patches by cell length and spatial patches as edge "
+      "patches with as many knots; no convergence is evaluated, so never RESOLVED; Order "
+      "{:d}: {}):",
+      order,
+      std::isfinite(bar)
+          ? fmt::format("B = {:g} R, UNDER-RESOLVED above {:g} R", bar, under_resolved_bar)
+          : std::string("no bar at this order (NO-BARS)"));
   for (const auto &row : rows)
   {
     line += fmt::format(
-        " {} {}: {} (edge {:d} patches, {:.3e} m, beyond b10 {}; spatial {:d} patches, "
-        "beyond b10 {});",
+        " {} {}: {} (length m90 {}; edge {:d} patches, {:.3e} m; spatial {:d} patches);",
         row.type,
         row.all_planes ? std::string("all planes") : fmt::format("z {:.1f} um", row.plane),
-        ResolutionStatusName(row.status), row.edge_patches, row.edge_length,
-        std::isnan(row.edge_shares[2]) ? std::string("n/a")
-                                       : fmt::format("{:.3f}", row.edge_shares[2]),
-        row.spatial_patches,
-        std::isnan(row.spatial_shares[2]) ? std::string("n/a")
-                                          : fmt::format("{:.3f}", row.spatial_shares[2]));
+        row.resolution,
+        std::isnan(row.length_quantiles[2])
+            ? std::string("n/a")
+            : fmt::format("{:.3g} R", row.length_quantiles[2]),
+        row.edge_patches, row.edge_length, row.spatial_patches);
   }
-  return line + " RESOLVED is necessary, not sufficient.\n";
+  return line + "\n";
 }
 
 std::vector<bool>
@@ -655,11 +620,10 @@ nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int leve
          {"EdgePatches", row.edge_patches},
          {"EdgeLength", row.edge_length},
          {"EdgeShares", shares(row.edge_shares)},
-         {"EdgeStatus", row.edge_status},
          {"SpatialPatches", row.spatial_patches},
          {"SpatialShares", shares(row.spatial_shares)},
-         {"SpatialStatus", row.spatial_status},
-         {"Status", std::string(ResolutionStatusName(row.status))}});
+         {"LengthM90", JsonNumber(row.length_quantiles[2])},
+         {"Status", row.resolution}});
   }
   metadata["Preflight"] = std::move(preflight);
   // The summary over EVERY cell (each plane and the all-planes cell; review r1817 MJ-2): a

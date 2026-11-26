@@ -11,6 +11,7 @@
 #include <fstream>
 #include <iomanip>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -308,12 +309,23 @@ TEST_CASE_METHOD(
     return std::size_t(0);
   };
   REQUIRE(solved_rows[0] == rows[0]);  // the same 27 columns
+  // ONE verdict (lane v1verdict1): the Type's pre-solve word is bare, the table's word of
+  // the census weighted by length (LengthM90, h / R) with no convergence: never RESOLVED;
+  // the retired share-rule words are gone.
   std::string word;
   for (const auto &row : census.at("Preflight"))
   {
+    CHECK_FALSE(row.contains("EdgeStatus"));
+    CHECK_FALSE(row.contains("SpatialStatus"));
+    const auto &m90 = row.at("LengthM90");
+    CHECK(row.at("Status") ==
+          ParticipationPreflightWord(
+              m90.is_null() ? std::numeric_limits<double>::quiet_NaN() : m90.get<double>(),
+              census.at("Order").get<int>(), BuiltInParticipationVerdictBars(), problem));
+    CHECK(row.at("Status") != "RESOLVED");
     if (row.at("Type") == "SA" && row.at("Plane").is_null())
     {
-      word = "PREFLIGHT " + row.at("Status").get<std::string>();
+      word = row.at("Status").get<std::string>();
     }
   }
   REQUIRE(!word.empty());

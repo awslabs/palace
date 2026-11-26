@@ -18,9 +18,9 @@
 #include "utils/communication.hpp"
 
 // Lane rescensus-product (decision 1817; ruling 1819): the edge-resolution census. The
-// definitions (bars, patch and cell statuses, the quantile histogram, the PREFLIGHT's worse
-// of two groups) on hand-made sums, and the knot location on meshes whose element sizes are
-// known by construction.
+// definitions (bars, patch and cell statuses, the quantile histogram, the PREFLIGHT's
+// census weighted by length and its word) on hand-made sums, and the knot location on
+// meshes whose element sizes are known by construction.
 
 using namespace palace;
 
@@ -198,45 +198,89 @@ TEST_CASE("Resolution census cells from known patch energies",
   CHECK(text.find(",MARGINAL,\n") != std::string::npos);
 }
 
-TEST_CASE("Resolution census PREFLIGHT reads the worse of the edge and spatial groups",
+// ONE verdict (decision 2403 (3), lane v1verdict1, DESIGN-NOTE 1.5): the PREFLIGHT census
+// weighted by length (a spatial patch as edge patches with as many knots) and its word, the
+// table's word at a first iteration: known answers.
+TEST_CASE("Resolution census PREFLIGHT weighs patches by length and reads the table's word",
           "[SurfaceResponseResolution][Serial]")
 {
-  using S = ResolutionStatus;
-  auto Row = [](std::array<double, 5> edge, std::array<double, 5> spatial, double edges,
-                double spatials)
+  const auto bars = BuiltInParticipationVerdictBars();  // B = 2.0 R at Order 3
+  const int fine = ResolutionHistogramBin(0.5), coarse = ResolutionHistogramBin(10.0);
+  // Edge patches: total length and knots, and the length at m = 0.5; spatial: knots at m.
+  auto Row = [&](double edge_length, double edge_knots, double spatial_knots, int bin)
   {
-    std::array<double, kResolutionPreflightStride> slot{};
-    std::copy(edge.begin(), edge.end(), slot.begin());
-    std::copy(spatial.begin(), spatial.end(), slot.begin() + 5);
-    slot[10] = edges;
-    slot[11] = spatials;
+    std::vector<double> slot(kResolutionPreflightStride, 0.0);
+    slot[0] = edge_length;
+    slot[10] = edge_length > 0.0 ? 9.0 : 0.0;
+    slot[12] = edge_knots;
+    slot[kResolutionPreflightEdgeHistogram + fine] = edge_length;
+    slot[11] = spatial_knots > 0.0 ? 1.0 : 0.0;
+    slot[7] = slot[11];
+    slot[kResolutionPreflightSpatialHistogram + bin] = spatial_knots;
     return ComputeResolutionPreflightRow(slot.data(), "SA", true, 0.0, true, 1.0e-6);
   };
-  // Bins R, M, U, NO-BARS, NE (edge: lengths; spatial: counts).
-  const auto under = Row({9.0, 1.0, 0.0, 0.0, 0.0}, {0.0, 0.0, 1.0, 0.0, 0.0}, 2.0, 1.0);
-  CHECK(under.edge_status == "RESOLVED");
-  CHECK(under.spatial_status == "UNDER-RESOLVED");
-  CHECK(under.status == S::UNDER_RESOLVED);
-  CHECK(under.edge_length == Catch::Approx(10.0e-6).epsilon(1e-14));
-  CHECK(under.edge_shares[0] == 0.9);
-  const auto spatial_ne =
-      Row({9.5, 0.5, 0.0, 0.0, 0.0}, {0.0, 0.0, 0.0, 0.0, 2.0}, 2.0, 2.0);
-  CHECK(spatial_ne.edge_status == "RESOLVED");
-  CHECK(spatial_ne.spatial_status == "NOT-EVALUATED");
-  CHECK(spatial_ne.status ==
-        S::NOT_EVALUATED);  // never RESOLVED with spatial patches unread
-  const auto edges_only = Row({9.5, 0.5, 0.0, 0.0, 0.0}, {}, 2.0, 0.0);
-  CHECK(edges_only.spatial_status == "EMPTY");
-  CHECK(edges_only.status == S::RESOLVED);
-  const auto spatial_only = Row({}, {3.0, 1.0, 0.0, 0.0, 0.0}, 0.0, 4.0);
-  CHECK(spatial_only.edge_status == "EMPTY");
-  CHECK(spatial_only.status == S::MARGINAL);
-  CHECK(Row({}, {}, 0.0, 0.0).status == S::NOT_EVALUATED);
-  const std::string line = ResolutionPreflightLine({under, spatial_ne}, true);
-  CHECK(line.find("PREFLIGHT") != std::string::npos);
-  CHECK(line.find("SA all planes: UNDER-RESOLVED") != std::string::npos);
-  CHECK(line.find("RESOLVED is necessary, not sufficient.") != std::string::npos);
-  CHECK(ResolutionPreflightLine({under}, false).find("DISABLED") != std::string::npos);
+  auto Word = [&](const ResolutionPreflightRow &row, int order)
+  {
+    return ParticipationPreflightWord(row.length_quantiles[2], order, bars,
+                                      "Electrostatic");
+  };
+  // Fine edges (9 of length 1, 10 knots each: 0.1 per knot) and ONE coarse spatial patch of
+  // 20 knots (2.0 of 11.0, above 10 %): the m90 is the coarse patch's; UNDER-RESOLVED.
+  const auto above = Row(9.0, 90.0, 20.0, coarse);
+  CHECK(above.length_quantiles[2] == ResolutionHistogramCentre(coarse));
+  CHECK(above.length_quantiles[1] == ResolutionHistogramCentre(fine));
+  CHECK(Word(above, 3) == "UNDER-RESOLVED");
+  CHECK(above.edge_length == Catch::Approx(9.0e-6).epsilon(1e-14));
+  CHECK(above.edge_shares[0] == 1.0);  // the census bars' shares stay numbers
+  CHECK(above.spatial_shares[2] == 1.0);
+  // The same spatial patch at 5 knots (0.5 of 9.5, below 10 %): the edges' m90; MARGINAL,
+  // never RESOLVED before a solve although m90 <= B.
+  const auto below = Row(9.0, 90.0, 5.0, coarse);
+  CHECK(below.length_quantiles[2] == ResolutionHistogramCentre(fine));
+  CHECK(Word(below, 3) == "MARGINAL");
+  CHECK(Word(below, 3) == ParticipationResolutionWord(below.length_quantiles[2], 3, false,
+                                                      false, bars, "Electrostatic"));
+  // A spatial-only census by its knots; no reading; the orders without a bar.
+  const auto spatial_only = Row(0.0, 0.0, 20.0, ResolutionHistogramBin(3.8));
+  CHECK(spatial_only.length_quantiles[2] ==
+        ResolutionHistogramCentre(ResolutionHistogramBin(3.8)));
+  CHECK(Word(spatial_only, 3) == "MARGINAL");
+  CHECK(Word(spatial_only, 2) == "UNDER-RESOLVED");  // 3.76 > 2 x 1.7
+  CHECK(Word(Row(0.0, 0.0, 0.0, 0), 3) == "NOT-EVALUATED");
+  CHECK(Word(above, 1) == "NO-BARS");
+  CHECK(Word(above, 5) == "NO-BARS");
+  for (const int order : {1, 2, 3, 4, 5})
+  {
+    for (const auto &row : {above, below, spatial_only})
+    {
+      CHECK(Word(row, order).find("RESOLVED") != 0);  // never RESOLVED
+    }
+  }
+  auto worded = above;
+  worded.resolution = Word(above, 3);
+  const std::string line = ResolutionPreflightLine({worded, below}, true, 3, 2.0, 4.0);
+  CHECK(line.find("B = 2 R, UNDER-RESOLVED above 4 R") != std::string::npos);
+  CHECK(line.find("SA all planes: UNDER-RESOLVED (length m90 ") != std::string::npos);
+  CHECK(line.find("never RESOLVED") != std::string::npos);
+  CHECK(ResolutionPreflightLine({above}, true, 1, kNaN, kNaN).find("NO-BARS") !=
+        std::string::npos);
+  CHECK(ResolutionPreflightLine({above}, false, 3, 2.0, 4.0).find("DISABLED") !=
+        std::string::npos);
+}
+
+// The PREFLIGHT's quantile is the energy cell's (one function).
+TEST_CASE("Resolution census quantiles are one function",
+          "[SurfaceResponseResolution][Serial]")
+{
+  ResolutionAccumulator accumulator;
+  accumulator.Reset(1, 1);
+  accumulator.Add(0, 0, ResolutionStatus::MARGINAL, 0.7, 2.0);
+  accumulator.Add(0, 0, ResolutionStatus::UNDER_RESOLVED, 9.0, 1.0);
+  const double *slot = accumulator.Slot(0, 0);
+  const auto cell = ComputeResolutionCell(slot, "SA", true, 0.0, true, 1.0, "");
+  CHECK(cell.quantiles ==
+        ResolutionHistogramQuantiles(slot + ResolutionAccumulator::kStatusBins));
+  CHECK(cell.quantiles[2] == ResolutionHistogramCentre(ResolutionHistogramBin(9.0)));
 }
 
 TEST_CASE("Resolution bars file: read and checked against the run radius",

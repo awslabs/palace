@@ -1165,26 +1165,27 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 // CUT-PLAN step 4b (lane v1step4b): a PreflightOnly run's rows carry the census PREFLIGHT
 // word of their Type's all-planes row (a region row and a Type without a census row:
 // NOT-EVALUATED), compute no value, and are written with their Type totals without a join.
+// ONE verdict (lane v1verdict1): the word is bare, the table's own (no 'PREFLIGHT ' label).
 TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOnly rows",
                  "[surfaceparticipation][preflightonly][Serial]")
 {
   MPI_Comm comm = MPI_COMM_WORLD;
   std::vector<ResolutionPreflightRow> preflight(3);
   preflight[0].type = "SA";
-  preflight[0].status = ResolutionStatus::UNDER_RESOLVED;
+  preflight[0].resolution = "UNDER-RESOLVED";
   preflight[1].type = "SA";
   preflight[1].all_planes = false;  // a plane's word is not the Type's
-  preflight[1].status = ResolutionStatus::RESOLVED;
+  preflight[1].resolution = "MARGINAL";
   preflight[2].type = "MS";
-  preflight[2].status = ResolutionStatus::NO_BARS;
+  preflight[2].resolution = "NO-BARS";
   const std::map<int, std::string> targets = {{4, "SA"}, {5, "MS"}, {7, "SA"}, {8, "MA"}};
   const auto rows = PreflightParticipationRows(targets, {7}, preflight);
   REQUIRE(rows.size() == 4);
-  CHECK(rows[0].resolution == "PREFLIGHT UNDER-RESOLVED");
-  CHECK(rows[1].resolution == "PREFLIGHT NO-BARS");
+  CHECK(rows[0].resolution == "UNDER-RESOLVED");
+  CHECK(rows[1].resolution == "NO-BARS");
   CHECK(rows[2].region);
-  CHECK(rows[2].resolution == "PREFLIGHT NOT-EVALUATED");
-  CHECK(rows[3].resolution == "PREFLIGHT NOT-EVALUATED");
+  CHECK(rows[2].resolution == "NOT-EVALUATED");
+  CHECK(rows[3].resolution == "NOT-EVALUATED");
   for (const auto &row : rows)
   {
     INFO("interface " << row.interface);
@@ -1211,7 +1212,8 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOn
   CHECK(table.Started());
   const std::string text = ReadText(path);
   CHECK(CountLines(text) == 1 + 3 + 4);  // the SA, MS, MA totals (not the box), the rows
-  CHECK(text.find("PREFLIGHT UNDER-RESOLVED") != std::string::npos);
+  CHECK(text.find("UNDER-RESOLVED") != std::string::npos);
+  CHECK(text.find("PREFLIGHT ") == std::string::npos);
   CHECK(text.find("12345") != std::string::npos);
   CHECK(text.find("MOVING") == std::string::npos);
   CHECK(text.find("FIRST-ITERATION") == std::string::npos);

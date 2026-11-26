@@ -34629,6 +34629,9 @@ void SurfaceResponseOperator::ConfigureResolutionCensus(
   resolution_readings.clear();
   resolution_plane_slots.clear();
   resolution_planes.clear();
+  // ONE verdict (decision 2403 (3)): the PREFLIGHT word is the table's, by its own data.
+  resolution_verdict_bars = ParticipationVerdictBarsFor(request.resolution.bars_file);
+  resolution_problem = ParticipationProblemName(iodata.problem.type);
   resolution_run_record = ResolutionRunRecord{};
   resolution_run_record.enabled = resolution_enabled;
   resolution_run_record.order = resolution_order;
@@ -34741,6 +34744,12 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
         patches[i].mortar_longitudinal_strip[1] - patches[i].mortar_longitudinal_strip[0];
     const int plane_slot =
         i < resolution_plane_slots.size() ? resolution_plane_slots[i] : 0;
+    const double knots =
+        i < resolution_readings.size() ? resolution_readings[i].knots : 0.0;
+    // ONE verdict (decision 2403 (3)): the census weighted by length, patches with a
+    // reading (the energy census's condition) into the histograms.
+    const bool reading = status != ResolutionStatus::NOT_EVALUATED;
+    const int m_bin = reading ? ResolutionHistogramBin(m) : 0;
     for (int t = 0; t < type_count; t++)
     {
       for (const int slot : {0, plane_slot > 0 ? plane_slot : -1})
@@ -34754,11 +34763,14 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
         {
           values[bin] += length;
           values[10] += 1.0;
+          values[12] += knots;
+          values[kResolutionPreflightEdgeHistogram + m_bin] += reading ? length : 0.0;
         }
         else
         {
           values[5 + bin] += 1.0;
           values[11] += 1.0;
+          values[kResolutionPreflightSpatialHistogram + m_bin] += reading ? knots : 0.0;
         }
       }
     }
@@ -34773,10 +34785,19 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
           sums.data() + (t * slots + slot) * kResolutionPreflightStride,
           resolution_types[t], slot == 0, slot == 0 ? 0.0 : resolution_planes[slot - 1],
           resolution_bars_hold, resolution_length_scale));
+      // The table's word of this census at a first iteration (no convergence evaluated:
+      // never SETTLED, so never RESOLVED; a Type's census, not a box's).
+      auto &row = resolution_run_record.preflight.back();
+      row.resolution =
+          ParticipationPreflightWord(row.length_quantiles[2], resolution_order,
+                                     resolution_verdict_bars, resolution_problem);
     }
   }
+  const double bar = resolution_verdict_bars.CensusBar(resolution_order);
   Mpi::Print(fespace.GetComm(), "\n{}",
-             ResolutionPreflightLine(resolution_run_record.preflight, resolution_enabled));
+             ResolutionPreflightLine(resolution_run_record.preflight, resolution_enabled,
+                                     resolution_order, bar,
+                                     resolution_verdict_bars.under_resolved_factor * bar));
 }
 
 ResolutionAccumulator SurfaceResponseOperator::NewResolutionAccumulator() const

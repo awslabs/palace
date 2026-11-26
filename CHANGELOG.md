@@ -19,6 +19,17 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - ONE resolution verdict: the PREFLIGHT word (the log's PREFLIGHT line before each
+    level's solve, `Status` of `SurfaceResponse.Resolution.Preflight` in `palace.json`, the
+    `resolution` of a `"PreflightOnly"` run's `surface-participation.csv`) is the
+    per-iteration table's word, by its rule and its verdict data, on the census weighted
+    by length (edge patches by cell length, spatial patches as edge patches with as many
+    knots), with no convergence evaluated: `MARGINAL`, `UNDER-RESOLVED`, `NO-BARS` or
+    `NOT-EVALUATED`, never `RESOLVED`, as the table prints it at a first iteration. The
+    share-rule words of the census bars are retired from the PREFLIGHT (`EdgeStatus` and
+    `SpatialStatus` are removed; the shares stay as numbers); `LengthM90` (``h/R``) is
+    added; a `"PreflightOnly"` row reads the bare word (no `PREFLIGHT ` label). The words
+    of a solved level and the energy-weighted census are unchanged.
   - Purely inductive `Impedance` sheets are served by the perfect-conductor library models
     by default: `"ImpedanceMetalRule"` of `Solver.SurfaceResponseCorrection` defaults to
     `"Apply"` (was `"Off"`; the electrostatic block's default stays `"Off"`). A sheet with
@@ -92,10 +103,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `SurfaceResponse.Resolution` of `palace.json` and, with `"PatchEnergy"`,
     `surface-response-resolution-patches.csv`, as a corrected run writes them before its
     first solve, and one row set of `surface-participation.csv` whose resolution reads
-    `PREFLIGHT <word>` and whose values are `nan` (not computed); a preflight that fails
-    closed by its default `GeometryFailurePolicy` prints that summary and then builds the
-    census, as a solve-form run does, before its exit status 3. Where a solve-form run
-    stops before its census (`"UnmatchedPolicy": "Error"` with missing requirements, a
+    the table's word before a solve and whose values are `nan` (not computed); a
+    preflight that fails closed by its default `GeometryFailurePolicy` prints that
+    summary and then builds the census, as a solve-form run does, before its exit
+    status 3. Where a solve-form run stops before its census (`"UnmatchedPolicy": "Error"` with missing requirements, a
     library its reader refuses, a response model whose fabricated domain matrix its matrix
     step refuses, an explicit `"GeometryFailurePolicy": "FailClosed"` with a fallback) no
     census is built, one line says why (also kept as

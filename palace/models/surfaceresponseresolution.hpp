@@ -98,6 +98,11 @@ ResolutionStatus ResolutionPatchStatus(double m, int order, const ResolutionBars
                                        bool bars_hold);
 int ResolutionHistogramBin(double m);
 double ResolutionHistogramCentre(int bin);
+// The m10 / m50 / m90 of a histogram of kResolutionHistogramBins weights (the offline
+// census's bin-centre rule: the centre of the first bin where the cumulative weight reaches
+// 0.1 / 0.5 / 0.9 of the total; 10^kResolutionHistogramMax if rounding never reaches it;
+// NaN without weight). The energy cell's and the PREFLIGHT's one quantile.
+std::array<double, 3> ResolutionHistogramQuantiles(const double *histogram);
 
 // The per-cell sums of one measurement: per (Type, plane slot; slot 0 = every plane) the
 // energy of the patches of each status (R, M, U, NO-BARS, NE), the m histogram (patches
@@ -156,11 +161,16 @@ std::string ResolutionTableHeader(const std::string &key_header);
 void WriteResolutionRows(std::ostream &output, const std::string &keys,
                          const std::vector<ResolutionCell> &cells);
 
-// The PREFLIGHT (stage-0, geometry only; ruling 1819 F1): per Type and plane, the EDGE
-// patches (a longitudinal cell of positive length) by their cell length and the SPATIAL
-// patches (cell {0, 0}) by count; each group's shares and status by the same share rule;
-// the printed status = the WORSE of the two (an empty group does not enter; both empty =
-// NOT-EVALUATED). Not the offline length-weighted form of record; an indicator only.
+// The PREFLIGHT (stage-0, geometry only; ruling 1819 F1; ONE verdict, decision 2403 (3),
+// lane v1verdict1): per Type and plane the census WEIGHTED BY LENGTH, since no field exists
+// before a solve: an EDGE patch (a longitudinal cell of positive length) weighs its cell
+// length, a SPATIAL patch (cell {0, 0}: corner and cluster models) as much as edge patches
+// with as many knots (its knot count times the slot's edge length per edge knot; by its
+// knots alone in a slot without edge patches). length_quantiles = m10 / m50 / m90 of h / R
+// over the patches with a reading by that weight (ResolutionHistogramQuantiles; NaN without
+// a reading). The word (`resolution`) is the per-iteration table's word of that m90 with no
+// convergence evaluated (ParticipationResolutionWord, set by the census operator): never
+// RESOLVED. The edge and spatial shares by the census bars stay as numbers.
 struct ResolutionPreflightRow
 {
   std::string type;
@@ -169,17 +179,26 @@ struct ResolutionPreflightRow
   long long int edge_patches = 0, spatial_patches = 0;
   double edge_length = 0.0;  // m
   std::array<double, 4> edge_shares{}, spatial_shares{};
-  std::string edge_status, spatial_status;  // a status name, or "EMPTY"
-  ResolutionStatus status = ResolutionStatus::NOT_EVALUATED;
+  std::array<double, 3> length_quantiles{};
+  std::string resolution = "NOT-EVALUATED";
 };
-// Per (Type, slot): [5 edge-length bins][5 spatial-count bins][edge count][spatial count].
-inline constexpr int kResolutionPreflightStride = 12;
+// Per (Type, slot): [5 edge-length bins][5 spatial-count bins][edge count][spatial count]
+// [edge knots][the edge-length histogram][the spatial-knot histogram] (histograms of
+// kResolutionHistogramBins over ResolutionHistogramBin(m), patches with a reading).
+inline constexpr int kResolutionPreflightEdgeHistogram = 13;
+inline constexpr int kResolutionPreflightSpatialHistogram =
+    kResolutionPreflightEdgeHistogram + kResolutionHistogramBins;
+inline constexpr int kResolutionPreflightStride =
+    kResolutionPreflightSpatialHistogram + kResolutionHistogramBins;
 ResolutionPreflightRow ComputeResolutionPreflightRow(const double *slot,
                                                      const std::string &type,
                                                      bool all_planes, double plane,
                                                      bool bars_hold, double length_scale);
+// The PREFLIGHT line: per row its word and its length m90, with the rule's bar `bar` (NaN:
+// none at `order`) and its UNDER-RESOLVED limit `under_resolved_bar` in the header.
 std::string ResolutionPreflightLine(const std::vector<ResolutionPreflightRow> &rows,
-                                    bool enabled);
+                                    bool enabled, int order, double bar,
+                                    double under_resolved_bar);
 
 // The run's census record (root only): the measurement cells and the preflight of the
 // level, for palace.json SurfaceResponse.Resolution and the end-of-run banner.
