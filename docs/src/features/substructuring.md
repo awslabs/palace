@@ -195,8 +195,9 @@ the condensed excitations of the environment, so an online run needs no environm
 the excitations in the environment are unchanged; excitations inside the region, such as a port
 added or moved in a redesign, need none at all. A small mass regularization keeps the curl-curl
 operator definite. It is weighted by the inverse permeability and scaled with the extent of the
-mesh, so that it scales as the curl-curl operator and the results depend on neither the
-permeability nor [`config["Model"]["Lc"]`](../config/reference.md#config-model); the extracted
+mesh, so that it scales as the curl-curl operator and the results for the part of a current that
+closes depend on neither the permeability nor
+[`config["Model"]["Lc"]`](../config/reference.md#config-model); the extracted
 energies use the unregularized operator, in a form whose error is quadratic in the regularization.
 Each surface current must close: it has to start and end on `"PEC"`
 boundaries or superconducting films, as in a physical circuit, with no net current into any

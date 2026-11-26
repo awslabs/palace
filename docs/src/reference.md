@@ -1097,9 +1097,10 @@ null space holds the gradients of the functions constant on each connected condu
 ``\bm{A} = \bm{L} + \varepsilon\bm{D}``, with ``\bm{D}`` the mass matrix weighted by
 ``\mu_r^{-1}`` off the London domains and scaled by ``1/L'^2``, ``L'`` the extent of the mesh in
 units of [`config["Model"]["Lc"]`](config/reference.md#config-model), so that
-``\varepsilon\bm{D}`` scales as the curl-curl operator and the results depend on neither
-``\mu_r`` nor ``L_c``; the energies use ``\bm{L}``, with ``\bm{S}^K = \bm{Z}^T\bm{L}^E\bm{Z}``. A
-surface current ``\bm{J}_k``, with ``\bm{u}_k = \bm{A}^{-1}\bm{J}_k``, has the energies
+``\varepsilon\bm{D}`` scales as the curl-curl operator and the results for the part of a current
+that closes (see below) depend on neither ``\mu_r`` nor ``L_c``; the energies use ``\bm{L}``,
+with ``\bm{S}^K = \bm{Z}^T\bm{L}^E\bm{Z}``. A surface current ``\bm{J}_k``, with
+``\bm{u}_k = \bm{A}^{-1}\bm{J}_k``, has the energies
 
 ```math
 \mathcal{E}_{ij} = \bm{J}_i^T\bm{u}_j + \bm{J}_j^T\bm{u}_i - \bm{u}_i^T\bm{L}\bm{u}_j ,
@@ -1109,7 +1110,7 @@ stationary in ``\varepsilon``, so their error is ``O(\varepsilon^2)``, provided 
 closes: ``\bm{G}^T\bm{J}_k``, ``\bm{G}`` the discrete gradient, vanishes at the nodes off the
 conductors and sums to zero over each conductor. A current that does not close is rejected. The
 part that the quadrature of an excitation leaves incompatible is amplified by
-``1/\varepsilon``, and twice the regularization energy
+``\mu_r/\varepsilon``, and twice the regularization energy
 ``\bm{J}^T\bm{u} - \bm{u}^T\bm{L}\bm{u}`` bounds the error. A flux loop ``k`` with the fluxoid
 generator ``\bm{a}_k`` drives ``\bm{M}_{sheet}\bm{a}_k``, which is orthogonal to the null space,
 with the London energies
