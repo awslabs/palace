@@ -26,6 +26,7 @@
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseorientedbox.hpp"
 #include "models/surfaceresponseresolution.hpp"
+#include "models/surfaceresponsesegmentindex.hpp"
 #include "utils/configfile.hpp"
 #include "utils/metadatafile.hpp"
 
@@ -3593,6 +3594,37 @@ MirrorArmDirection(const IdentificationResult &identification,
 void ClipLongitudinalCell(
     config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch, double kept_lo,
     double kept_hi);
+
+// The own-edge cell ends of a translational patch, as the corner-arm trim and extension
+// compute them: origin + EdgeOffset AxisU + c AxisW at the two cell offsets.
+std::array<std::array<double, 3>, 2>
+OwnEdgeCellEnds(const config::ElectrostaticSolverData::ResponseCorrectionPatchData &patch);
+
+// The candidate patches of one corner arm for the corner-arm trim and extension (lane
+// v1prefast C1): a patch those passes change has both own-edge cell ends within `tolerance`
+// of the arm's line and plane and a cell meeting the arm's query segment, so its cell box
+// lies within 3 x tolerance of that segment's box. The candidates are the patches whose
+// cell box meets the query box widened by 4 x tolerance (an AABB tree over the cells at
+// construction), every patch changed since (Changed: its current cell), and every patch
+// with a non-finite cell end, in ascending patch order: the passes' loops over the
+// candidates are their loops over every patch. A degenerate tolerance or a non-finite
+// query reads every patch.
+class CornerArmPatchCandidates
+{
+public:
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  CornerArmPatchCandidates(const std::vector<Patch> &patches_, double tolerance);
+  std::vector<std::size_t> Near(const std::array<double, 3> &p0,
+                                const std::array<double, 3> &p1) const;
+  void Changed(std::size_t p) { changed.push_back(p); }
+
+private:
+  const std::vector<Patch> &patches;
+  bool every = false;
+  double widen = 0.0;
+  std::optional<SegmentBoxIndex> index;
+  std::vector<std::size_t> indexed, non_finite, changed;
+};
 
 // The own-edge point of a translational patch at the cell offset c: the recorded pre-image
 // on the own segment (Provenance::own_cell) mapped linearly from the cell, the frame

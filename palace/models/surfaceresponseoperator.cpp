@@ -12437,6 +12437,102 @@ MirrorArmDirection(const IdentificationResult &identification,
   return arm ? arm : chord;
 }
 
+std::array<Point3D, 2> OwnEdgeCellEnds(const ResponsePatchData &patch)
+{
+  std::array<Point3D, 2> ends;
+  for (int e = 0; e < 2; e++)
+  {
+    ends[e] = patch.origin;
+    for (int d = 0; d < 3; d++)
+    {
+      ends[e][d] += patch.provenance.edge_offset * patch.axis_u[d] +
+                    patch.longitudinal_cell[e] * patch.axis_w[d];
+    }
+  }
+  return ends;
+}
+
+CornerArmPatchCandidates::CornerArmPatchCandidates(
+    const std::vector<ResponsePatchData> &patches_, double tolerance)
+  : patches(patches_), every(!(std::isfinite(tolerance) && tolerance > 0.0))
+{
+  std::vector<std::pair<Point3D, Point3D>> cells;
+  double scale = 1.0;
+  for (std::size_t p = 0; p < patches.size() && !every; p++)
+  {
+    // The passes' first test (unchanged patches keep failing it; changed ones are read by
+    // Near from their current cell).
+    const auto &patch = patches[p];
+    if (patch.provenance.coupon_depth <= 0.0 || patch.weight <= 0.0 ||
+        patch.longitudinal_cell[1] <= patch.longitudinal_cell[0])
+    {
+      continue;
+    }
+    const auto ends = OwnEdgeCellEnds(patch);
+    bool finite = true;
+    for (const auto &end : ends)
+    {
+      for (const double x : end)
+      {
+        finite = finite && std::isfinite(x);
+        scale = std::isfinite(x) ? std::max(scale, std::abs(x)) : scale;
+      }
+    }
+    (finite ? indexed : non_finite).push_back(p);
+    if (finite)
+    {
+      cells.emplace_back(ends[0], ends[1]);
+    }
+  }
+  widen = 4.0 * tolerance + 1.0e-12 * scale;
+  if (!cells.empty())
+  {
+    index.emplace(cells);
+  }
+}
+
+std::vector<std::size_t> CornerArmPatchCandidates::Near(const Point3D &p0,
+                                                        const Point3D &p1) const
+{
+  std::vector<std::size_t> near;
+  const auto finite = [](const Point3D &x)
+  { return std::isfinite(x[0]) && std::isfinite(x[1]) && std::isfinite(x[2]); };
+  if (every || !finite(p0) || !finite(p1))
+  {
+    // A non-finite arm reads every patch as on it (the passes' comparisons all fail).
+    near.resize(patches.size());
+    std::iota(near.begin(), near.end(), std::size_t(0));
+    return near;
+  }
+  if (index)
+  {
+    for (const std::size_t i : index->Query(p0, p1, widen))
+    {
+      near.push_back(indexed[i]);
+    }
+  }
+  near.insert(near.end(), non_finite.begin(), non_finite.end());
+  for (const std::size_t p : changed)
+  {
+    const auto ends = OwnEdgeCellEnds(patches[p]);
+    bool meets = true;
+    for (int d = 0; d < 3; d++)
+    {
+      const double lo = std::min(ends[0][d], ends[1][d]);
+      const double hi = std::max(ends[0][d], ends[1][d]);
+      meets = meets && std::isfinite(ends[0][d]) && std::isfinite(ends[1][d]) &&
+              hi >= std::min(p0[d], p1[d]) - widen && lo <= std::max(p0[d], p1[d]) + widen;
+    }
+    if (meets || !std::all_of(ends.begin(), ends.end(), finite))
+    {
+      near.push_back(p);
+    }
+  }
+  std::sort(near.begin(), near.end());
+  near.erase(std::unique(near.begin(), near.end()), near.end());
+  return near;
+}
+
 namespace
 {
 
@@ -12552,6 +12648,7 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
   std::vector<ResponseCorrectionData::CornerArmTrimData> records;
   const double tolerance = kSignatureParameterToleranceOverRadius * R;
   constexpr double pi = 3.14159265358979323846;
+  CornerArmPatchCandidates candidates(patches, tolerance);
   std::set<int> patched_corners;
   for (const auto &patch : patches)
   {
@@ -12615,7 +12712,7 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
     // first-order split share one stretch, so the stretches are merged before they are
     // emitted (each counted once).
     std::vector<std::pair<double, double>> stretches;
-    for (std::size_t p = 0; p < patches.size(); p++)
+    for (const std::size_t p : candidates.Near(vertex, Add(vertex, Scale(exit, arm))))
     {
       auto &patch = patches[p];
       const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
@@ -12659,6 +12756,7 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
       const double kept_lo = slope > 0.0 ? std::max(c0, c_cut) : c0;
       const double kept_hi = slope > 0.0 ? c1 : std::min(c1, c_cut);
       ClipLongitudinalCell(patch, a_hi > exit ? kept_lo : 0.0, a_hi > exit ? kept_hi : 0.0);
+      candidates.Changed(p);
       // The geometric length removed: the co-located patches of a first-order split share
       // one cell (model weights summing to 1), so each counts its model weight of it; the
       // per-patch record keeps the full removed length (the A7 audit weights it itself).
@@ -12826,6 +12924,7 @@ std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtens
   std::vector<ResponseCorrectionData::CornerArmExtensionData> records;
   const double tolerance = kSignatureParameterToleranceOverRadius * R;
   constexpr double pi = 3.14159265358979323846;
+  CornerArmPatchCandidates candidates(patches, tolerance);
   std::set<int> patched_corners;
   for (const auto &patch : patches)
   {
@@ -12885,7 +12984,8 @@ std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtens
       extension.exit_over_radius = exit / R;
       extension.claim_end_over_radius = *claim_end / R;
       extension.stretch_length = *claim_end - exit;
-      for (std::size_t p = 0; p < patches.size(); p++)
+      const Point3D claim_end_point = Add(vertex, Scale(*claim_end, arm));
+      for (const std::size_t p : candidates.Near(claim_end_point, claim_end_point))
       {
         auto &patch = patches[p];
         const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
@@ -12922,6 +13022,7 @@ std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtens
         const double c_exit = c0 + (exit - a0) / slope;
         const double extended = a_lo - exit;
         ClipLongitudinalCell(patch, slope > 0.0 ? c_exit : c0, slope > 0.0 ? c1 : c_exit);
+        candidates.Changed(p);
         extension.extended_cell_length += extended * patch.provenance.model_weight;
         extension.hosted = true;
         record.cells.emplace_back(p, extended);
