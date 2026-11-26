@@ -57,6 +57,10 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                  "Reverting to uniform sweep!\n",
                  iodata.solver.driven.prom_indices.size());
     adaptive = false;
+    if (iodata.solver.driven.adaptive_save_basis)
+    {
+      Mpi::Warning("\"AdaptiveSaveBasis\" has no effect with the uniform sweep!\n");
+    }
   }
   SaveMetadata(space_op.GetNDSpaces());
   Mpi::Print("\nComputing {}frequency response for:\n{}", adaptive ? "adaptive fast " : "",
@@ -575,6 +579,15 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   prom_op.PrepareOnlinePhase();
   post_op.ConfigureReducedPostprocessing(prom_op, iodata.solver.driven.adaptive_tol);
 
+  // Optionally write the PROM basis and its curl; the online sweep below records the
+  // reduced solution coefficients, so the fields E(ω) = Σₖ yₖ(ω) Eₖ and
+  // B(ω) = (i / ω) Σₖ yₖ(ω) ∇×Eₖ can be rebuilt offline at every output frequency.
+  const bool save_basis = iodata.solver.driven.adaptive_save_basis;
+  if (save_basis)
+  {
+    post_op.WriteBasisGridFunctions(prom_op.GetBasis());
+  }
+
   // Main fast frequency sweep loop (online phase).
   Mpi::Print("\nBeginning fast frequency sweep online phase\n");
   space_op.GetWavePortOp().SetSuppressOutput(false);  // Disable output suppression
@@ -591,6 +604,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
     // Reduced postprocessing evaluates the outputs from the reduced solution, mostly
     // without expanding it.
     const Eigen::VectorXcd y = prom_op.GetReducedSolution(excitation_idx);
+    if (save_basis)
+    {
+      post_op.RecordBasisCoefficients(excitation_idx, omega_i, omega_sample.size(), y);
+    }
     const bool reduced = post_op.HasReducedPostprocessing() &&
                          !post_op.WillWriteFields(static_cast<int>(omega_i));
     const bool expand = !reduced || post_op.ReducedPostprocessingNeedsField(excitation_idx);
@@ -665,6 +682,10 @@ ErrorIndicator DrivenSolver::SweepAdaptive(SpaceOperator &space_op) const
   {
     BlockTimer bt0(Timer::POSTPRO);
     SaveMetadata(prom_op.GetLinearSolver());
+    if (save_basis)
+    {
+      post_op.WriteBasisCoefficients(omega_sample);
+    }
   }
   space_op.GetWavePortOp().PrintReducedModelStats();
   post_op.MeasureFinalize(indicator);

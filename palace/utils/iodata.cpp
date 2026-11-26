@@ -554,6 +554,15 @@ void IoData::CheckConfiguration()
                 "support a nonzero Floquet wave vector (FloquetWaveVector): its terms make "
                 "the system matrices Hermitian rather than complex symmetric, so the "
                 "synthesized circuit matrices would not be symmetric.\n");
+    // With a Floquet wave vector, B has a k × E term besides the curl of E, which the
+    // written curl of the basis does not contain.
+    MFEM_VERIFY(
+        !solver.driven.adaptive_save_basis ||
+            std::hypot(k[0], k[1], k[2]) <= std::numeric_limits<double>::epsilon(),
+        "Driven system with the basis output (AdaptiveSaveBasis) does not support a "
+        "nonzero Floquet wave vector (FloquetWaveVector): the magnetic flux density "
+        "then has a k × E term which the written curl of the basis does not "
+        "contain.\n");
     // Second-order absorbing (farfield), surface-conductivity, and rational surface
     // impedance boundaries are supported in circuit synthesis: their frequency-dependent
     // contributions are folded into the synthesised pencil via the same auxiliary-state

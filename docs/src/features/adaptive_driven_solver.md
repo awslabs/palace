@@ -105,6 +105,62 @@ not a strict relative-error bound on every derived output. For example, a scatte
 parameter that is nearly zero can have a large pointwise relative error even when the
 absolute error is small. Validate the derived quantities that matter for your analysis.
 
+## Fields at every output frequency
+
+Writing fields with `"Save"` costs one full field file per saved frequency. The reduced-order
+model already contains the field at every frequency of the sweep:
+``\bm{E}(\omega) = \sum_k y_k(\omega)\,\bm{E}_k``, with ``n`` real basis fields
+``\bm{E}_k`` and complex coefficients ``y_k(\omega)``. With
+[`config["Solver"]["Driven"]["AdaptiveSaveBasis"]`](../config/reference.md#config-solver-driven)
+set to `true`, *Palace* writes:
+
+  - the basis fields ``\bm{E}_k`` and their curls ``\nabla\times\bm{E}_k`` as MFEM grid
+    functions in `gridfunction/driven/basis/` (`E_<k>.gf.<rank>` and `curlE_<k>.gf.<rank>`,
+    in V/m and V/m², at full double precision), with the mesh files `mesh.<rank>` of the
+    same run, in the input length unit. The grid functions of each MPI rank go with the
+    `mesh.<rank>` of that rank in `basis/`;
+  - the coefficients at every output frequency in `rom-basis-coefficients.csv`, one row per
+    frequency, with columns `Re{y[k][e]}` and `Im{y[k][e]}` for basis vector `k` and
+    excitation `e`.
+
+The magnetic flux density follows from the same coefficients: with the ``e^{i\omega t}``
+time convention of *Palace*, ``\nabla\times\bm{E} = -i\omega\bm{B}``, so
+``\bm{B}(\omega) = \frac{i}{\omega}\sum_k y_k(\omega)\,\nabla\times\bm{E}_k``, in T for
+``\omega`` in rad/s. In 2D, the curl is the scalar ``z`` component. The option is not
+available with a Floquet wave vector, for which ``\bm{B}`` has an additional
+``\bm{k}\times\bm{E}`` term.
+
+The storage grows with ``n``, not with the number of output frequencies, and the online
+sweep is cheap, so a fine frequency grid costs little. The fields at one frequency are
+linear combinations of degrees of freedom, so they need only NumPy (the files of one MPI
+rank shown; repeat for each rank):
+
+```python
+import numpy as np
+
+def read_gf(path):  # MFEM grid function: header, blank line, degrees of freedom
+    header, values = open(path).read().split("\n\n", 1)
+    return header, np.array(values.split(), dtype=float)
+
+csv = "postpro/rom-basis-coefficients.csv"
+names = [s.strip() for s in open(csv).readline().split(",")]
+c = np.loadtxt(csv, delimiter=",", skiprows=1, ndmin=2)
+i = np.argmin(np.abs(c[:, 0] - 5.0))  # row at 5 GHz
+e = 1  # excitation
+n = sum(s.startswith("Re{y[") and s.endswith(f"][{e}]}}") for s in names)
+y = [c[i, names.index(f"Re{{y[{k}][{e}]}}")] + 1j * c[i, names.index(f"Im{{y[{k}][{e}]}}")]
+     for k in range(1, n + 1)]
+basis = "postpro/gridfunction/driven/basis/{}_{:06d}.gf.000000"
+E = sum(yk * read_gf(basis.format("E", k))[1] for k, yk in enumerate(y, start=1))
+omega = 2 * np.pi * 1e9 * c[i, 0]  # rad/s
+B = 1j / omega * sum(yk * read_gf(basis.format("curlE", k))[1]
+                     for k, yk in enumerate(y, start=1))
+```
+
+The real and imaginary parts can be written back with the same headers for visualization
+with `mesh.000000`, or evaluated at points with PyMFEM. The accuracy is that of the
+reduced-order model, set by `"AdaptiveTol"`.
+
 ## Coplanar waveguide example
 
 The files for the CPW part of this guide are in

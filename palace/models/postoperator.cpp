@@ -1649,6 +1649,134 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step,
 }
 
 template <ProblemType solver_t>
+void PostOperator<solver_t>::WriteBasisGridFunctions(const std::vector<Vector> &basis)
+  requires(solver_t == ProblemType::DRIVEN)
+{
+  BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);
+  const fs::path output_dir = fs::path(gridfunction_output_dir) / "basis";
+  EnsureDirectory(output_dir, fem_op->GetComm());
+
+  // Write in the units of the regular grid function output: the mesh in the input length
+  // unit and the fields in SI units, so the reduced coefficients are dimensionless. The
+  // curl is in V/m², the field E in V/m divided by the length in m.
+  GridFunction Ek(fem_op->GetNDSpace()), curl_Ek(fem_op->GetCurlSpace());
+  const auto &curl = fem_op->GetCurlMatrix();
+  Vector curl_k(curl.Height());
+  curl_k.UseDevice(true);
+  mfem::ParMesh &mesh = *Ek.ParFESpace()->GetParMesh();
+  const auto mesh_Lc0 = units.GetMeshLengthRelativeScale();
+  const int local_rank = mesh.GetMyRank();
+
+  std::string error;
+  auto write_grid_function =
+      [&](const mfem::ParGridFunction &gridfunc, const std::string &name, std::size_t k)
+  {
+    // Full precision: the fields are linear combinations of these vectors, in which terms
+    // can cancel (e.g. the small field at an undriven port, or the curls at low frequency).
+    WriteRankOutputFile(
+        output_dir / fmt::format("{}_{:0{}d}.gf.{:0{}d}", name, k + 1, pad_digits_default,
+                                 local_rank, pad_digits_default),
+        [&](std::ostream &os)
+        {
+          os.precision(std::numeric_limits<double>::max_digits10);
+          gridfunc.Save(os);
+        },
+        error);
+  };
+  for (std::size_t k = 0; k < basis.size(); k++)
+  {
+    Ek.Real().SetFromTrueDofs(basis[k]);
+    ScaleGridFunction(mesh_Lc0, Ek);
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(Ek);
+    write_grid_function(Ek.Real(), "E", k);
+
+    curl.Mult(basis[k], curl_k);
+    curl_Ek.Real().SetFromTrueDofs(curl_k);
+    ScaleGridFunction(mesh_Lc0, curl_Ek);
+    units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(curl_Ek);
+    curl_Ek.Real() *= 1.0 / units.Dimensionalize<Units::ValueType::LENGTH>(1.0);
+    write_grid_function(curl_Ek.Real(), "curlE", k);
+  }
+
+  // The mesh files of this run, which the grid functions of each process go with, written
+  // as for WriteMFEMGridFunctionsFinal.
+  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  WriteRankOutputFile(
+      output_dir / fmt::format("mesh.{:0{}d}", local_rank, pad_digits_default),
+      [&](std::ostream &os)
+      {
+        os.precision(16);
+        mesh.Print(os);
+      },
+      error);
+
+  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  AbortOnOutputFileErrors(fem_op->GetComm(), error);
+  Mpi::Print(" Wrote {:d} PROM basis vectors and their curls to {}\n", basis.size(),
+             output_dir.string());
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::RecordBasisCoefficients(int excitation_idx, std::size_t step,
+                                                     std::size_t num_steps,
+                                                     const Eigen::VectorXcd &y)
+  requires(solver_t == ProblemType::DRIVEN)
+{
+  if (Mpi::Root(fem_op->GetComm()))
+  {
+    auto &ys = basis_coefficients[excitation_idx];
+    ys.resize(num_steps);
+    ys.at(step) = y;
+  }
+}
+
+template <ProblemType solver_t>
+void PostOperator<solver_t>::WriteBasisCoefficients(const std::vector<double> &omega) const
+  requires(solver_t == ProblemType::DRIVEN)
+{
+  if (!Mpi::Root(fem_op->GetComm()))
+  {
+    return;
+  }
+  BlockTimer bt(Timer::POSTPRO);
+  TableWithCSVFile out(post_dir / "rom-basis-coefficients.csv");
+  // Full precision: the field is a linear combination of the basis vectors, in which terms
+  // can cancel.
+  out.table.col_options.float_precision = 16;
+  out.table.insert("f", "f (GHz)");
+  for (const auto &[excitation_idx, ys] : basis_coefficients)
+  {
+    MFEM_VERIFY(ys.size() == omega.size(),
+                "Missing reduced solution coefficients for excitation " << excitation_idx
+                                                                        << "!");
+    for (Eigen::Index k = 0; k < (ys.empty() ? 0 : ys.front().size()); k++)
+    {
+      const auto key = fmt::format("y[{:d}][{:d}]", k + 1, excitation_idx);
+      out.table.insert(fmt::format("re_{}", key), fmt::format("Re{{{}}}", key),
+                       excitation_idx);
+      out.table.insert(fmt::format("im_{}", key), fmt::format("Im{{{}}}", key),
+                       excitation_idx);
+    }
+  }
+  const double unit_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * std::numbers::pi);
+  for (std::size_t i = 0; i < omega.size(); i++)
+  {
+    out.table["f"] << omega[i] * unit_GHz;
+    for (const auto &[excitation_idx, ys] : basis_coefficients)
+    {
+      for (Eigen::Index k = 0; k < ys[i].size(); k++)
+      {
+        const auto key = fmt::format("y[{:d}][{:d}]", k + 1, excitation_idx);
+        out.table[fmt::format("re_{}", key)] << ys[i](k).real();
+        out.table[fmt::format("im_{}", key)] << ys[i](k).imag();
+      }
+    }
+  }
+  out.WriteFullTableTrunc();
+}
+
+template <ProblemType solver_t>
 void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *indicator)
 {
   BlockTimer bt(Timer::POSTPRO_GRIDFUNCTION);

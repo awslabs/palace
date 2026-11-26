@@ -32,6 +32,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     normalized like `rom-C-re.csv`, so that `yᴴ C_Γ y / yᴴ Re{C} y` is the surface
     participation ratio of a field with synthesized coordinates `y`.
     [PR 1156](https://github.com/awslabs/palace/pull/1156).
+  - Added `Solver.Driven.AdaptiveSaveBasis`: the adaptive frequency sweep writes its
+    reduced-order basis and the curl of the basis as grid functions, and the reduced
+    solution coefficients at every output frequency to `rom-basis-coefficients.csv`, so the
+    electric field and the magnetic flux density can be reconstructed at all output
+    frequencies from a few basis files. SchemaVer 6-2-0
+    [PR 1294](https://github.com/awslabs/palace/pull/1294).
 
 #### Interface Changes
 

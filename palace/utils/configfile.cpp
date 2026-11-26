@@ -1715,9 +1715,13 @@ DrivenSolverData::DrivenSolverData(const json &driven)
   adaptive_circuit_synthesis_domain_orthog =
       driven.value("AdaptiveCircuitSynthesisDomainOrthogonalization",
                    adaptive_circuit_synthesis_domain_orthog);
+  adaptive_save_basis = driven.value("AdaptiveSaveBasis", adaptive_save_basis);
 
   MFEM_VERIFY(!(restart != 1 && adaptive_tol > 0.0),
               "\"Restart\" is incompatible with adaptive frequency sweep!");
+  MFEM_VERIFY(!adaptive_save_basis || adaptive_tol > 0.0,
+              "\"AdaptiveSaveBasis\" requires an adaptive frequency sweep "
+              "(\"AdaptiveTol\" > 0)!");
 
   std::vector<double> save_f, prom_f;  // samples to be saved to paraview and added to prom
   // Backwards compatible top level interface.

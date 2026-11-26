@@ -1147,6 +1147,11 @@ public:
   DomainOrthogonalizationWeight adaptive_circuit_synthesis_domain_orthog =
       DomainOrthogonalizationWeight::ENERGY;
 
+  // Write the PROM basis Eₖ, its curl, and the reduced solution coefficients yₖ(ω) at every
+  // output frequency, so the fields can be reconstructed offline as E(ω) = Σₖ yₖ(ω) Eₖ and
+  // B(ω) = (i / ω) Σₖ yₖ(ω) ∇×Eₖ.
+  bool adaptive_save_basis = false;
+
   DrivenSolverData() = default;
   DrivenSolverData(const json &driven);
 };
