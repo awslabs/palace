@@ -74,6 +74,24 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [PR 1293](https://github.com/awslabs/palace/pull/1293).
   - `--dry-run` with more than one process no longer hangs when the configuration file
     fails the schema validation. [PR 1260](https://github.com/awslabs/palace/pull/1260).
+  - Fixed the marking of tetrahedra for conformal refinement, which could differ between the
+    processes from 3 processes on and leave a mesh that was not conforming across them. The
+    MFEM patch of [mfem/mfem#3847](https://github.com/mfem/mfem/pull/3847) is replaced by
+    [mfem/mfem#5761](https://github.com/mfem/mfem/pull/5761), its commits with their fixes:
+    in one build, refining the same elements gives the same mesh, curved or not, for any
+    partition (unless `"ReorientTetMesh"` is set). Refined meshes can differ from before:
+    conformal AMR in 2D and 3D, nonconformal AMR of tetrahedra (children follow the new
+    vertex orders), uniform refinement of tetrahedra with tied diagonals. At exact ties of
+    edge lengths, the marks, and so an adapted mesh, can differ between compilers.
+    [PR 1232](https://github.com/awslabs/palace/pull/1232).
+  - Writing ParaView or MFEM grid function output now restores the mesh coordinates exactly,
+    rather than scaling them back by the inverse of the length unit, which changed them by
+    round-off. With the exact marking above, that change could alter the next conformal
+    rebalance, and so the adapted mesh.
+    [PR 1232](https://github.com/awslabs/palace/pull/1232).
+  - Added an MFEM patch for [mfem/mfem#5754](https://github.com/mfem/mfem/pull/5754): a
+    prerequisite of the conformal rebalance of PR 1254; no other Palace path needs it.
+    [PR 1232](https://github.com/awslabs/palace/pull/1232).
 
 #### Documentation
 
@@ -524,24 +542,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     only, also in `BoundaryMode` simulations. The index of a mode above an exactly
     degenerate pair can still depend on roundoff.
     [PR 1208](https://github.com/awslabs/palace/pull/1208).
-  - Fixed the marking of tetrahedra for conformal refinement, which could differ between the
-    processes from 3 processes on and leave a mesh that was not conforming across them. The
-    MFEM patch of [mfem/mfem#3847](https://github.com/mfem/mfem/pull/3847) is replaced by
-    [mfem/mfem#5761](https://github.com/mfem/mfem/pull/5761), its commits with their fixes:
-    in one build, refining the same elements gives the same mesh, curved or not, for any
-    partition (unless `"ReorientTetMesh"` is set). Refined meshes can differ from before:
-    conformal AMR in 2D and 3D, nonconformal AMR of tetrahedra (children follow the new
-    vertex orders), uniform refinement of tetrahedra with tied diagonals. At exact ties of
-    edge lengths, the marks, and so an adapted mesh, can differ between compilers.
-    [PR 1232](https://github.com/awslabs/palace/pull/1232).
-  - Writing ParaView or MFEM grid function output now restores the mesh coordinates exactly,
-    rather than scaling them back by the inverse of the length unit, which changed them by
-    round-off. With the exact marking above, that change could alter the next conformal
-    rebalance, and so the adapted mesh.
-    [PR 1232](https://github.com/awslabs/palace/pull/1232).
-  - Added an MFEM patch for [mfem/mfem#5754](https://github.com/mfem/mfem/pull/5754): a
-    prerequisite of the conformal rebalance of PR 1254; no other Palace path needs it.
-    [PR 1232](https://github.com/awslabs/palace/pull/1232).
   - Fixed driven frequency sweeps aborting with "... not found in sample frequencies!" when
     overlapping `"Samples"` ranges compute the same frequency with different rounding.
     [PR 1192](https://github.com/awslabs/palace/pull/1192).
