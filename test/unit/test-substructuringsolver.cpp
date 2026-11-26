@@ -2528,7 +2528,8 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
   // STRUMPACK, then SuperLU_DIST (the partial factorization of MUMPS, or of STRUMPACK with
   // its Schur complement interface, and otherwise one solve per interface DOF), but
   // STRUMPACK with its Schur complement interface for the Schur complement of a region of
-  // at most kRegionStrumpackSchur variables. The capacitance matrix does not depend on it.
+  // at most kRegionStrumpackSchur variables on at least kRegionStrumpackProcs processes.
+  // The capacitance matrix does not depend on it.
   auto config = [](const std::string &type)
   {
     return json{{"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
@@ -2601,10 +2602,15 @@ TEST_CASE("SubstructuringSolver sparse direct solver choice",
       region_ref = "STRUMPACK";
     }
 #endif
-    CHECK(std::string(DirectSolverName(SchurSolverFor(
-              requested, SchurKind::REGION, kRegionStrumpackSchur))) == region_ref);
-    CHECK(std::string(DirectSolverName(SchurSolverFor(
-              requested, SchurKind::REGION, kRegionStrumpackSchur + 1))) == schur_ref);
+    CHECK(std::string(DirectSolverName(
+              SchurSolverFor(requested, SchurKind::REGION, kRegionStrumpackSchur,
+                             kRegionStrumpackProcs))) == region_ref);
+    CHECK(std::string(DirectSolverName(
+              SchurSolverFor(requested, SchurKind::REGION, kRegionStrumpackSchur,
+                             kRegionStrumpackProcs - 1))) == schur_ref);
+    CHECK(std::string(DirectSolverName(
+              SchurSolverFor(requested, SchurKind::REGION, kRegionStrumpackSchur + 1,
+                             kRegionStrumpackProcs))) == schur_ref);
     {
       SideSystem side({A.get()}, std::vector<char>(A->Height(), 1));
       const auto schur = MakeSchurFactorization<double>(

@@ -49,8 +49,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [pghysels/STRUMPACK#167](https://github.com/pghysels/STRUMPACK/pull/167), which adds a
     Schur complement interface to its sparse solvers. The partial factorization of
     STRUMPACK then gives the Schur complement of a substructuring region with up to 10,000
-    interface unknowns, and without MUMPS that of the environment too, instead of one solve
-    per interface unknown. [PR 995](https://github.com/awslabs/palace/pull/995).
+    interface unknowns on 32 processes or more, and without MUMPS that of the environment
+    too, instead of one solve per interface unknown.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Bug Fixes
 

@@ -154,10 +154,12 @@ else MUMPS, STRUMPACK or SuperLU_DIST, preferred in this order among those Palac
 *Palace* must be built with one of them. MUMPS and STRUMPACK (with the Schur complement interface
 that the superbuild and the Spack package patch in) give it by a partial factorization, the others
 by one solve per interface unknown; MUMPS compresses its fronts at round-off (block low-rank), which
-is faster than full rank at no loss of accuracy. By default, the Schur complement of a region with
-at most 10,000 interface unknowns comes from STRUMPACK first, with its Schur complement interface:
-STRUMPACK gathers it on one process, and MUMPS distributes it but with a workspace of about 0.4 GB
-per process, which outweighs it on many processes. The region solve adds ``\bm{S}_E`` to the Schur
+is faster than full rank at no loss of accuracy. By default, on 32 processes or more, the Schur
+complement of a region with at most 10,000 interface unknowns comes from STRUMPACK first, with its
+Schur complement interface: STRUMPACK gathers it on one process, and MUMPS distributes it but with
+a workspace of a few tenths of a GB per process, so that from about 30 processes MUMPS takes more
+memory (on 192 processes, twice as much), though it stays faster by up to a third. On fewer
+processes, MUMPS is both faster and smaller. The region solve adds ``\bm{S}_E`` to the Schur
 complement of the region and factors this dense interface system by Cholesky, on a grid of processes
 (by ScaLAPACK): its cost grows as the cube of the number of interface unknowns, and each solve
 condenses onto the interface, solves there and expands. A saved magnetostatic model also holds the
