@@ -11,6 +11,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iomanip>
 #include <map>
 #include <memory>
@@ -4776,6 +4777,78 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       SurfaceResponseOperator::ConstructElectrostatic(iodata, laplace_op, nullptr, 0),
       ContainsSubstring("allows 1 to 3 passes"));
 #endif
+}
+
+TEST_CASE(
+    "DomainBoundaryContainmentInputBytes reads every field the containment test reads",
+    "[surfaceresponseoperator][domainboundary][Serial]")
+{
+  // Lane v1prefast C5: the preflight's census operator takes the dry run's containment
+  // result only when its signature and these bytes are identical, so each field the test
+  // reads beyond the signature changes them, and a patch the test skips does not.
+  using Patch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+  using Data = config::ElectrostaticSolverData::ResponseCorrectionData;
+  Patch patch;
+  patch.model = 0;
+  patch.conductor_references = {{0.5, 0.0, 0.0}};
+  patch.provenance.segment = 3;
+  patch.provenance.feature = 7;
+  patch.provenance.coupon_depth = 1.0;
+  patch.provenance.edge_offset = 0.25;
+  patch.provenance.claims = {{3, {0.0, 0.0, 0.0}, {1.0, 0.0, 0.0}}};
+  patch.provenance.raw_claims = {{3, {1.0, 0.0, 0.0}, {2.0, 0.0, 0.0}}};
+  std::vector<std::array<double, 3>> basis = {{0.0, 0.0, 0.0}, {0.0, 1.0, 0.0}};
+  bool spatial = false;
+  std::string name = "model";
+  std::vector<Data::MirrorPlaneData> planes = {
+      {4, {1.0, 0.0, 0.0}, 2.0, "Natural", {}, {}}};
+  std::vector<Data::UnmergedPortionData> portions;
+  auto Bytes = [&](const std::vector<Patch> &patches, const std::set<std::size_t> &skipped)
+  {
+    return DomainBoundaryContainmentInputBytes(
+        patches, skipped, [&](int) { return &basis; }, [&](int) { return spatial; },
+        [&](int) { return name; }, planes, portions);
+  };
+  const std::vector<Patch> patches = {patch, patch};
+  const auto base = Bytes(patches, {});
+  CHECK(Bytes(patches, {}) == base);
+  std::vector<std::function<void(Patch &)>> changes = {
+      [](Patch &p) { p.conductor_references[0][1] = 1.0e-9; },
+      [](Patch &p) { p.provenance.segment = 4; },
+      [](Patch &p) { p.provenance.feature = 8; },
+      [](Patch &p) { p.provenance.coupon_depth = 2.0; },
+      [](Patch &p) { p.provenance.mirror_formed_topology = 0; },
+      [](Patch &p) { p.provenance.edge_offset = 0.5; },
+      [](Patch &p) { p.provenance.claims[0].p1[0] = 1.5; },
+      [](Patch &p) { p.provenance.raw_claims[0].segment = 5; }};
+  for (std::size_t k = 0; k < changes.size(); k++)
+  {
+    INFO("patch field change " << k);
+    auto changed = patches;
+    changes[k](changed[1]);
+    CHECK(Bytes(changed, {}) != base);
+    CHECK(Bytes(changed, {1}) == Bytes(patches, {1}));  // a skipped patch is not read
+    auto zero = patches;
+    zero[1].weight = 0.0;
+    changed[1].weight = 0.0;
+    CHECK(Bytes(changed, {}) == Bytes(zero, {}));  // nor a patch of weight 0
+  }
+  basis[1][2] = 1.0e-9;
+  CHECK(Bytes(patches, {}) != base);
+  basis[1][2] = 0.0;
+  spatial = true;
+  CHECK(Bytes(patches, {}) != base);
+  spatial = false;
+  name = "other";
+  CHECK(Bytes(patches, {}) != base);
+  name = "model";
+  planes[0].offset = 2.5;
+  CHECK(Bytes(patches, {}) != base);
+  planes[0].offset = 2.0;
+  portions.push_back({});
+  CHECK(Bytes(patches, {}) != base);
+  portions.clear();
+  CHECK(Bytes(patches, {}) == base);
 }
 
 }  // namespace palace
