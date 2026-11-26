@@ -38,8 +38,10 @@ class SpaceOperator;
 // Σ_k c_k(ω) of its records with the barycentric coefficients of a rational model, on the
 // current interface, each process holding its rows of Γ. They are formed when a frequency
 // is first asked for, and held until another one is: the calls are collective, for the
-// frequencies in turn. The records of a rational model are held whole, for the terms of a
-// reduced model of the region (see RomOperator).
+// frequencies in turn. The records of a rational model are held for the terms of a reduced
+// model of the region (see RomOperator), S_E by the shares of the processes of its lower
+// triangle as recorded, as in the model file: only S_E(ω) is formed on the grid, for the
+// factorization of the region.
 //
 class EnvironmentOperator
 {
@@ -158,9 +160,11 @@ private:
   SubstructureInterface iface;
   std::vector<int> gamma_local;
 
-  // A record on the current interface: the local part of S_E on the grid, the rows of Γ of
-  // this process of the condensed sources g (per model column) and of the port functionals
-  // h (per port), and c (ports x model columns, column-major) on every process.
+  // A record: S_E, the local part of S_E on the grid on the current interface or (for the
+  // records of a rational model) the share of this process of its lower triangle as
+  // recorded (see TriangleShare), and on the current interface, the rows of Γ of this
+  // process of the condensed sources g (per model column) and of the port functionals h
+  // (per port), and c (ports x model columns, column-major) on every process.
   struct Rows
   {
     std::vector<std::complex<double>> S;
@@ -180,16 +184,23 @@ private:
   std::vector<int> grid_rows, grid_cols;
 
   // A record from the shares of the processes (see RecordFunction), or record j of the
-  // model file, whose S_E each process reads a share of, and the record from the parts
-  // after S_E on root. Collective.
-  Rows Distribute(const std::vector<std::complex<double>> &x) const;
-  Rows ReadRecord(int j) const;
+  // model file, whose S_E each process reads a share of, with S_E on the grid (on_grid) or
+  // by the shares, and the record from the parts after S_E on root. Collective.
+  Rows Distribute(std::vector<std::complex<double>> &&x, bool on_grid) const;
+  Rows ReadRecord(int j, bool on_grid) const;
   Rows DistributeVectors(const std::complex<double> *tail) const;
 
-  // S_E of the record whose payload starts at byte pos of the model file, on the grid: each
-  // process reads an equal share of its lower triangle, and sends each entry, mapped onto
-  // the current interface, to the processes holding the entries it adds to. Collective.
+  // S_E on the grid on the current interface from the shares of its lower triangle as
+  // recorded: each entry, mapped onto the current interface, goes to the processes holding
+  // the entries it adds to. Collective.
+  std::vector<std::complex<double>>
+  ToGrid(const std::vector<std::complex<double>> &share) const;
+
+  // S_E of the record whose payload starts at byte pos of the model file, on the grid (each
+  // process reads an equal share of its lower triangle, as ToGrid maps), or the share of
+  // this process. Collective.
   std::vector<std::complex<double>> ReadSchur(long long pos) const;
+  std::vector<std::complex<double>> ReadShare(long long pos) const;
 
   // Form the terms of the operator (S_E and g) at ω, or the port functionals (c and h),
   // unless they are held (an exact model reads them whole).
@@ -203,15 +214,17 @@ private:
   std::vector<double> AllInterfaceValues(const Vector &x) const;
 
   // y = S x on all of Γ (on every process), for a matrix S on the grid (its local part), or
-  // its real or imaginary part (for a real x). Collective.
+  // for the S_E of a record from the share of this process of its lower triangle, with its
+  // entries as entry(S_ab) gives them (for a real x, a real or imaginary part). Collective.
   std::vector<std::complex<double>>
   Product(const std::vector<std::complex<double>> &S,
           const std::vector<std::complex<double>> &x) const;
-  std::vector<double> ProductPart(const std::vector<std::complex<double>> &S, bool imag,
-                                  const std::vector<double> &x) const;
-  // y += R_Γᵀ S R_Γ x for a matrix S on the grid (its local part).
-  void RecordProduct(const std::vector<std::complex<double>> &S, const ComplexVector &x,
-                     ComplexVector &y) const;
+  template <typename T, typename Entry>
+  std::vector<T> ShareProduct(const std::vector<std::complex<double>> &S,
+                              const std::vector<T> &x, Entry entry) const;
+  // y += R_Γᵀ y_Γ for the values y_Γ of all of Γ.
+  void AddInterfaceValues(const std::vector<std::complex<double>> &yG,
+                          ComplexVector &y) const;
 };
 
 }  // namespace palace

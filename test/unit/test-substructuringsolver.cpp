@@ -4555,6 +4555,113 @@ ComplexVector RandomField(SpaceOperator &space_op, int seed)
 }  // namespace
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring records of a rational model apply as their sum",
+                 "[substructure][Serial][Parallel]")
+{
+  // The records of a rational model, held by the shares of the processes of the lower
+  // triangles of their S_E as recorded, apply as S_E(ω) of their combination, which is
+  // formed on the grid on the current interface: Σ_k c_k(ω) S_k x = S_E(ω) x, also for the
+  // real and imaginary parts of the records with a real x. On the mesh of the region, and
+  // on the full mesh with its vertices and elements numbered in reverse, so that the
+  // interface DOFs are numbered and oriented unlike the model's.
+  auto edit = [](json &config) { EnvironmentPort(config); };
+  RunDrivenBox(temp_dir, "Offline", edit);
+  const bool region_mesh = GENERATE(false, true);
+  CAPTURE(region_mesh);
+  json config = DrivenBoxConfig(temp_dir, "Online", edit);
+  if (region_mesh)
+  {
+    config["Model"]["Mesh"] = RegionMeshPath(DrivenModel(temp_dir).string());
+  }
+  else
+  {
+    const auto reversed = temp_dir / "box_reversed.mesh";
+    if (Mpi::Root(Mpi::World()))
+    {
+      const mfem::Mesh box = MakeInteriorBoundaryBox();
+      const int nv = box.GetNV(), ne = box.GetNE(), nbe = box.GetNBE();
+      mfem::Mesh mesh(3, nv, ne, nbe, 3);
+      for (int v = nv - 1; v >= 0; v--)
+      {
+        mesh.AddVertex(box.GetVertex(v));
+      }
+      mfem::Array<int> vertices;
+      auto reverse = [nv, &vertices]()
+      {
+        for (int &v : vertices)
+        {
+          v = nv - 1 - v;
+        }
+        return vertices.GetData();
+      };
+      for (int e = ne - 1; e >= 0; e--)
+      {
+        box.GetElementVertices(e, vertices);
+        mesh.AddHex(reverse(), box.GetAttribute(e));
+      }
+      for (int b = nbe - 1; b >= 0; b--)
+      {
+        box.GetBdrElementVertices(b, vertices);
+        mesh.AddBdrQuad(reverse(), box.GetBdrAttribute(b));
+      }
+      mesh.FinalizeHexMesh(1, 0, true);
+      mesh.Save(reversed.string());
+    }
+    Mpi::Barrier(Mpi::World());
+    config["Model"]["Mesh"] = reversed.string();
+  }
+  OnlineRegion region(config);
+  auto &env = *region.env;
+  REQUIRE(env.NumRecords() > 2);
+  const double omega =
+      2.0 * std::numbers::pi *
+      region.iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(17.3);
+  const auto c = env.Coefficients(omega);
+  const ComplexVector x = RandomField(*region.space_op, 91);
+  const int n = x.Size();
+  auto distance = [&](const ComplexVector &a, const ComplexVector &b)
+  {
+    ComplexVector d(n);
+    d.UseDevice(true);
+    d = a;
+    d -= b;
+    return linalg::Norml2(env.GetComm(), d) / linalg::Norml2(env.GetComm(), b);
+  };
+  ComplexVector y(n), z(n), t(n);
+  for (auto *v : {&y, &z, &t})
+  {
+    v->UseDevice(true);
+    *v = 0.0;
+  }
+  env.AddMult(omega, x, y);
+  for (std::size_t k = 0; k < env.NumRecords(); k++)
+  {
+    t = 0.0;
+    env.RecordAddMult(k, x, t);
+    linalg::AXPY(c[k], t, z);
+  }
+  CHECK(linalg::Norml2(env.GetComm(), y) > 0.0);
+  CHECK(distance(z, y) <= 1.0e-12);
+
+  // A real x: the real and imaginary parts of the records.
+  ComplexVector xr(n);
+  xr.UseDevice(true);
+  xr.Real() = x.Real();
+  xr.Imag() = 0.0;
+  y = 0.0;
+  z = 0.0;
+  env.AddMult(omega, xr, y);
+  for (std::size_t k = 0; k < env.NumRecords(); k++)
+  {
+    t = 0.0;
+    env.RecordAddMultPart(k, false, xr.Real(), t.Real());
+    env.RecordAddMultPart(k, true, xr.Real(), t.Imag());
+    linalg::AXPY(c[k], t, z);
+  }
+  CHECK(distance(z, y) <= 1.0e-12);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring PROM truncation also truncates the environment's "
                  "sources",
                  "[substructure][Serial][Parallel]")
