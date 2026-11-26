@@ -1041,6 +1041,17 @@ void ModeEigenSolver::SetUpEigenSolver(MPI_Comm comm)
   constexpr int print = 0;
   EigenSolverBackend type = eigen_backend;
 
+  // A Krylov subspace holds at most the unknowns off the essential ones, in which the
+  // start vector lies. With a larger subspace (by default, for a port of a few elements),
+  // the eigensolver runs out of independent vectors among them, and can take a spurious
+  // mode, with no power on the port.
+  long long num_free = static_cast<long long>(nd_size) + h1_size - dbc_tdof_list.Size();
+  Mpi::GlobalSum(1, &num_free, comm);
+  MFEM_VERIFY(num_free > num_modes, "The boundary mode problem has "
+                                        << num_free << " unknowns, too few for "
+                                        << num_modes << " modes!");
+  num_subspace = static_cast<int>(std::min<long long>(num_vec, num_free));
+
   if (type == EigenSolverBackend::SLEPC)
   {
 #if !defined(PALACE_WITH_SLEPC)
@@ -1070,7 +1081,7 @@ void ModeEigenSolver::SetUpEigenSolver(MPI_Comm comm)
   {
 #if defined(PALACE_WITH_ARPACK)
     auto arpack = std::make_unique<arpack::ArpackEPSSolver>(comm, print);
-    arpack->SetNumModes(num_modes, num_vec);
+    arpack->SetNumModes(num_modes, num_subspace);
     arpack->SetTol(eig_tol);
     arpack->SetWhichEigenpairs(which_eig);
     arpack->SetLinearSolver(*ksp);
@@ -1083,7 +1094,7 @@ void ModeEigenSolver::SetUpEigenSolver(MPI_Comm comm)
     auto slepc = std::make_unique<slepc::SlepcEPSSolver>(comm, print);
     slepc->SetType(slepc::SlepcEigenvalueSolver::Type::KRYLOVSCHUR);
     slepc->SetProblemType(slepc::SlepcEigenvalueSolver::ProblemType::GEN_NON_HERMITIAN);
-    slepc->SetNumModes(num_modes, num_vec);
+    slepc->SetNumModes(num_modes, num_subspace);
     slepc->SetTol(eig_tol);
     slepc->SetWhichEigenpairs(which_eig);
     slepc->SetLinearSolver(*ksp);

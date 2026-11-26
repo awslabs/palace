@@ -60,6 +60,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the abort "Wave port mode with zero power cannot be normalized!" of a wave port
+    whose mode problem has fewer unknowns off the PEC ones than the subspace of its
+    eigenvalue solver (by default `max(2 Mode, Mode + 15)`), as on a port of a few elements:
+    the solver ran out of independent vectors and could take a spurious mode, depending on
+    rounding. The subspace is now at most these unknowns.
+    [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - Fixed the S-parameters of Floquet ports in `port-floquet-S.csv` for the excitation of a
     wave port with a nonzero `"Offset"`, which lacked the de-embedding factor
     exp(i kₙ d) of the excited wave port: their phase was off by kₙ d, and for a lossy wave

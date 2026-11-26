@@ -130,6 +130,10 @@ public:
   int GetNDTrueVSize() const { return nd_size; }
   int GetH1TrueVSize() const { return h1_size; }
 
+  // The dimension of the eigensolver's subspace: the requested one, or the number of
+  // unknowns off the essential ones if fewer (0 on a process without a solver).
+  int GetSubspaceSize() const { return num_subspace; }
+
   // Access the linear solver (for metadata reporting). Returns nullptr if this process
   // does not have a solver configured (non-port process in wave port mode).
   const ComplexKspSolver *GetLinearSolver() const { return ksp.get(); }
@@ -142,7 +146,7 @@ public:
 
 private:
   // Solver parameters.
-  int num_modes, num_vec;
+  int num_modes, num_vec, num_subspace = 0;
   double eig_tol;
   EigenvalueSolver::WhichType which_eig;
   const config::LinearSolverData &linear;
