@@ -17,10 +17,12 @@ From this directory, run:
 julia --project -e 'include("flux_lattice.jl"); generate_flux_lattice()'
 ```
 
-which writes mesh/flux_lattice.msh.
+which writes mesh/flux_lattice.msh, and the configuration of the online run, flux_lattice_online.json,
+from that of the offline run, flux_lattice_offline.json: it reuses the model of the offline run.
 =#
 
 using Gmsh: gmsh
+using JSON
 
 """
     generate_flux_lattice(;
@@ -141,5 +143,21 @@ function generate_flux_lattice(;
     mkpath(dirname(mesh_path))
     gmsh.write(mesh_path)
     println("Generated mesh: $(mesh_path)")
-    return gmsh.finalize()
+    gmsh.finalize()
+    return write_online_config("flux_lattice")
+end
+
+# The configuration of the online run from that of the offline run (<name>_offline.json):
+# the model of the offline run, and an output directory of its own.
+function write_online_config(name)
+    config = JSON.parsefile(joinpath(@__DIR__, "$(name)_offline.json"))
+    config["Problem"]["Output"] = "postpro/$(name)_online"
+    config["Solver"]["Substructuring"]["ModelFile"] = "postpro/$(name)_offline/environment.model"
+    path = joinpath(@__DIR__, "$(name)_online.json")
+    open(path, "w") do io
+        JSON.print(io, config, 2)
+        return println(io)
+    end
+    println("Wrote $(path)")
+    return nothing
 end

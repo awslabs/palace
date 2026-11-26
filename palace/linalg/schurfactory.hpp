@@ -28,18 +28,21 @@ enum class SchurKind
   REGION
 };
 
-// The largest Schur complement of a region that STRUMPACK gives by default (see
-// SchurSolverFor).
+// The largest Schur complement of a region, and the fewest processes, for which STRUMPACK
+// gives it by default (see SchurSolverFor).
 inline constexpr HYPRE_BigInt kRegionStrumpackSchur = 10000;
+inline constexpr int kRegionStrumpackProcs = 32;
 
 // The sparse direct solver of a factorization for a Schur complement: the one requested if
 // Palace is built with it (STRUMPACK, MUMPS or SuperLU_DIST), else the first it is built
 // with of MUMPS, STRUMPACK and SuperLU_DIST. The Schur complement of a region of at most
-// kRegionStrumpackSchur variables takes STRUMPACK first, with its Schur complement
-// interface: STRUMPACK gathers it on one process, and MUMPS distributes it but with a
-// workspace of about 0.4 GB on each process, which on many processes outweighs it.
+// kRegionStrumpackSchur variables on num_procs >= kRegionStrumpackProcs processes takes
+// STRUMPACK first, with its Schur complement interface: STRUMPACK gathers it on one
+// process, and MUMPS distributes it but with a workspace of a few tenths of a GB on each
+// process, which from about 30 processes outweighs it. On fewer, MUMPS is faster and
+// smaller.
 LinearSolver SchurSolverFor(LinearSolver requested, SchurKind kind,
-                            HYPRE_BigInt n_schur = 0);
+                            HYPRE_BigInt n_schur = 0, int num_procs = 0);
 
 // The name of a sparse direct solver, and of its factorization for a Schur complement:
 // partial (MUMPS's, or STRUMPACK's with its Schur complement interface), or with one solve

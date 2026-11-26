@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Prepare the transmon mesh for substructuring (see transmon_substructuring_*.json).
+Prepare the transmon mesh for substructuring, and write the configurations of the runs after
+the offline one from its configuration (transmon_substructuring_offline.json).
 
 Substructuring needs the mesh split into a region (solved every run) and an environment
 (condensed once), and a capacitance matrix needs one boundary attribute per conductor. The
@@ -21,12 +22,20 @@ Usage (from this directory):
 writes mesh/transmon_substructuring.msh2. Any conforming split works: the interface between
 the region and the environment follows the element faces. To redesign the region after the
 offline run, label the conductors of the new design's mesh with --input/--output and build the
-redesigned mesh with ../substructuring/remesh_region.py (see transmon_substructuring_redesign.json
-and the substructuring documentation).
+redesigned mesh with ../substructuring/remesh_region.py (see the substructuring
+documentation).
+
+The configurations (transmon_substructuring_<run>.json) differ from the offline one by the
+model they reuse, the output directory, and for the redesign its mesh:
+
+  online    the mesh of the offline run: only the region is solved
+  redesign  the re-meshed redesign, mesh/transmon_substructuring_redesign.msh2
 """
 
 import argparse
 import collections
+import copy
+import json
 import os
 import sys
 
@@ -117,6 +126,26 @@ def main():
             count[10] + count[11],
         )
     )
+    write_configs(here)
+
+
+def write_configs(here):
+    with open(os.path.join(here, "transmon_substructuring_offline.json")) as f:
+        offline = json.load(f)
+    runs = [("online", None), ("redesign", "mesh/transmon_substructuring_redesign.msh2")]
+    for run, mesh in runs:
+        config = copy.deepcopy(offline)
+        config["Problem"]["Output"] = "postpro/transmon_substructuring_" + run
+        if mesh:
+            config["Model"]["Mesh"] = mesh
+        config["Solver"]["Substructuring"]["ModelFile"] = (
+            "postpro/transmon_substructuring_offline/environment.model"
+        )
+        path = os.path.join(here, "transmon_substructuring_%s.json" % run)
+        with open(path, "w") as f:
+            json.dump(config, f, indent=2)
+            f.write("\n")
+        print("Wrote %s" % path)
 
 
 if __name__ == "__main__":

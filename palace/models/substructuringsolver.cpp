@@ -506,7 +506,7 @@ void SubstructuringSolver::Impl::EnsureRegionSolver()
   region_solver = std::make_unique<RegionSolver<double>>(
       *gamma_grid,
       SchurSolverFor(iodata.solver.substructuring->direct_solver, SchurKind::REGION,
-                     iface.size),
+                     iface.size, Mpi::Size(parent_fes.GetComm())),
       iodata.solver.linear.sym_factorization, side.n_glob, n_rf,
       SchurFactorization<double>::Coo{std::move(side.irn), std::move(side.jcn),
                                       std::move(side.parts[0])},
@@ -863,8 +863,9 @@ void SubstructuringSolver::CondenseEnvironment()
         grid, impl->SKin_grid, impl->iface.index);
   }
 
-  std::string region_solver = SchurFactorizationName(SchurSolverFor(
-      impl->iodata.solver.substructuring->direct_solver, SchurKind::REGION, nG));
+  std::string region_solver = SchurFactorizationName(
+      SchurSolverFor(impl->iodata.solver.substructuring->direct_solver, SchurKind::REGION,
+                     nG, Mpi::Size(impl->parent_fes.GetComm())));
   if (nG > 0)
   {
     region_solver +=
