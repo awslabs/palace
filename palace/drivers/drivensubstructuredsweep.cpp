@@ -539,15 +539,18 @@ std::unique_ptr<EnvironmentOperator> DrivenSubstructuredSweep::SampleModel()
 {
   SampleEnvironment();
   // The region is factored without the environment's factorization, against the samples
-  // as recorded, one at a time, each process with its part.
+  // as recorded, one at a time, each process with its part, which the model then holds:
+  // the fit is no longer needed.
   ds.reset();
-  return std::make_unique<EnvironmentOperator>(iodata, space_op, model,
-                                               [this](std::size_t j)
-                                               {
-                                                 auto x = fit.Sample(j);
-                                                 ScaleRecord(x, true);
-                                                 return x;
-                                               });
+  auto env = std::make_unique<EnvironmentOperator>(iodata, space_op, model,
+                                                   [this](std::size_t j)
+                                                   {
+                                                     auto x = fit.Sample(j);
+                                                     ScaleRecord(x, true);
+                                                     return x;
+                                                   });
+  fit = BarycentricInterpolant(comm);
+  return env;
 }
 
 std::unique_ptr<EnvironmentOperator>
@@ -564,6 +567,13 @@ DrivenSubstructuredSweep::ExactModel(const std::shared_ptr<DrivenSubstructuredSw
           self->model.AppendRecord(self->model_path, rec, self->comm);
         }
         return DrivenSubstructureModel::Flatten(std::move(rec));
+      },
+      [self](int excitation_idx, double omega, ComplexVector &E)
+      {
+        // The excitation of the full problem, with its sources in the environment.
+        ComplexVector b;
+        self->space_op.GetExcitationVector(excitation_idx, omega, b);
+        self->ds->ExpandEnvironment(b, E);
       });
 }
 

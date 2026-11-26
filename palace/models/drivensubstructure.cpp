@@ -29,18 +29,6 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
-extern "C"
-{
-  void zgetrf_(const int *, const int *, std::complex<double> *, const int *, int *, int *);
-  void zgetrs_(const char *, const int *, const int *, const std::complex<double> *,
-               const int *, const int *, std::complex<double> *, const int *, int *);
-  void dpotrf_(const char *, const int *, double *, const int *, int *);
-  void dsyevr_(const char *, const char *, const char *, const int *, double *, const int *,
-               const double *, const double *, const int *, const int *, const double *,
-               int *, double *, double *, const int *, int *, double *, const int *, int *,
-               const int *, int *);
-}
-
 namespace palace
 {
 
@@ -238,97 +226,45 @@ void DrivenSubstructure::Setup(Side &side, double omega)
 #if defined(MFEM_USE_MUMPS)
   static_assert(std::is_same_v<MUMPS_INT, int>, "MUMPS_INT must be a 32-bit int!");
 #endif
-  // The factored system is the side's interior and Γ, numbered by rank: the pinned DOFs
-  // would be identity rows, and MUMPS's per-rank workspace grows with the system size.
+  // The factored system is the side's interior and Γ, numbered by rank (see SideSystem):
+  // the pinned DOFs would be identity rows, and MUMPS's per-rank workspace grows with the
+  // system size.
   const auto &fes = space_op.GetNDSpace().Get();
   MPI_Comm comm = fes.GetComm();
   const int nt = fes.GetTrueVSize();
-  const HYPRE_BigInt tstart = fes.GetMyTDofOffset();
-  std::vector<HYPRE_BigInt> sys(nt, 0);
+  std::vector<char> keep(nt, 1);
   for (int i : side.pinned)
   {
-    sys[i] = -1;
+    keep[i] = 0;
   }
-  side.rows.clear();
-  for (int i = 0; i < nt; i++)
-  {
-    if (sys[i] == 0)
-    {
-      side.rows.push_back(i);
-    }
-  }
-  HYPRE_BigInt nloc = static_cast<HYPRE_BigInt>(side.rows.size()), off = 0;
-  MPI_Exscan(&nloc, &off, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
-  off = Mpi::Root(comm) ? 0 : off;
-  MPI_Allreduce(&nloc, &side.n_sys, 1, HYPRE_MPI_BIG_INT, MPI_SUM, comm);
-  for (std::size_t q = 0; q < side.rows.size(); q++)
-  {
-    sys[side.rows[q]] = off + static_cast<HYPRE_BigInt>(q);
-  }
-  std::vector<HYPRE_BigInt> mine;
-  for (int i = 0; i < nt; i++)
-  {
-    if (iface.gamma[i])
-    {
-      mine.push_back(sys[i]);
-    }
-  }
-  side.gamma_sys.resize(iface.tdofs.size());
-  MPI_Allgatherv(mine.data(), static_cast<int>(mine.size()), HYPRE_MPI_BIG_INT,
-                 side.gamma_sys.data(), iface.counts.data(), iface.offsets.data(),
-                 HYPRE_MPI_BIG_INT, comm);
 
   // The frequency-independent parts, assembled once and one at a time: the pattern of the
   // stiffness matrix on the system, which contains those of the other parts, coupling DOFs
   // of elements of the side.
-  side.parts.assign(6, {});
+  side.system.reset();
   for (int op = 0; op < 3; op++)
   {
     auto parts = SideParts(side, op);
     for (int p = 0; p < 2; p++)
     {
       const auto &X = parts[p];
-      if (!X)
-      {
-        MFEM_VERIFY(op > 0 || p > 0,
-                    "Missing stiffness matrix of a substructure operator!");
-        continue;
-      }
-      auto &part = side.parts[2 * op + p];
       if (op == 0 && p == 0)
       {
-        // The pattern without the (zero) entries of pinned rows and columns.
-        std::vector<int> irn, jcn, row_ptr;
-        std::vector<std::vector<double>> vals;
-        LowerTrianglePattern({X.get()}, irn, jcn, vals, row_ptr);
-        const auto col_sys = OwnerValues(comm, tstart, sys, jcn);
-        side.row_ptr.assign(nt + 1, 0);
-        side.jcn.clear();
-        side.irn_sys.clear();
-        side.jcn_sys.clear();
-        part.clear();
-        for (int i = 0; i < nt; i++)
-        {
-          for (int q = row_ptr[i]; sys[i] >= 0 && q < row_ptr[i + 1]; q++)
-          {
-            if (col_sys[q] >= 0)
-            {
-              side.jcn.push_back(jcn[q]);
-              side.irn_sys.push_back(static_cast<int>(sys[i] + 1));
-              side.jcn_sys.push_back(static_cast<int>(col_sys[q] + 1));
-              part.push_back(vals[0][q]);
-            }
-          }
-          side.row_ptr[i + 1] = static_cast<int>(side.jcn.size());
-        }
+        MFEM_VERIFY(X, "Missing stiffness matrix of a substructure operator!");
+        side.system = std::make_unique<SideSystem>(
+            std::vector<const mfem::HypreParMatrix *>{X.get()}, keep);
+        side.system->parts.resize(6);
       }
-      else
+      else if (X)
       {
-        part.assign(side.jcn.size(), 0.0);
-        AddToPattern(*X, 1.0, side.row_ptr, side.jcn, part);
+        auto &part = side.system->parts[2 * op + p];
+        part.assign(side.system->parts[0].size(), 0.0);
+        side.system->AddPart(*X, 1.0, part);
       }
     }
   }
+  auto &sys = *side.system;
+
   // The modal terms of the side's wave ports border the system, with an extra unknown per
   // term on the last rank, against the DOFs of the term's port. Its diagonal is -σ and its
   // entries √(gσ) s, with σ the largest diagonal entry of the side's operator at this
@@ -337,19 +273,16 @@ void DrivenSubstructure::Setup(Side &side, double omega)
   {
     const auto coef = Coefficients(omega);
     side.border = 0.0;
-    for (int i = 0; i < nt; i++)
+    for (std::size_t q = 0; q < sys.irn.size(); q++)
     {
-      for (int q = side.row_ptr[i]; q < side.row_ptr[i + 1]; q++)
+      if (sys.irn[q] == sys.jcn[q])
       {
-        if (side.jcn[q] == tstart + i + 1)
+        std::complex<double> d = 0.0;
+        for (int p = 0; p < 6; p++)
         {
-          std::complex<double> d = 0.0;
-          for (int p = 0; p < 6; p++)
-          {
-            d += side.parts[p].empty() ? 0.0 : coef[p] * side.parts[p][q];
-          }
-          side.border = std::max(side.border, std::abs(d));
+          d += sys.parts[p].empty() ? 0.0 : coef[p] * sys.parts[p][q];
         }
+        side.border = std::max(side.border, std::abs(d));
       }
     }
     Mpi::GlobalMax(1, &side.border, comm);
@@ -357,9 +290,7 @@ void DrivenSubstructure::Setup(Side &side, double omega)
   }
   const int nterm = static_cast<int>(terms.size());
   const bool last = (Mpi::Rank(comm) == Mpi::Size(comm) - 1);
-  side.n_dofs = side.n_sys;
-  side.n_sys += nterm;
-  MFEM_VERIFY(side.n_sys <= std::numeric_limits<int>::max(),
+  MFEM_VERIFY(sys.n_glob + nterm <= std::numeric_limits<int>::max(),
               "The system of the environment needs fewer than 2^31 unknowns (32-bit "
               "indices)!");
   side.term_ports.clear();
@@ -368,23 +299,24 @@ void DrivenSubstructure::Setup(Side &side, double omega)
   {
     side.term_ports.push_back(terms[t].first);
     const auto &mark = wave_port_dofs.at(terms[t].first);
+    const int row = static_cast<int>(sys.n_glob + t + 1);
     for (int i = 0; i < nt; i++)
     {
-      if (mark[i] && sys[i] >= 0)
+      if (mark[i] && sys.Index(i) >= 0)
       {
         side.term_dofs[t].push_back(i);
-        side.irn_sys.push_back(static_cast<int>(side.n_dofs + t + 1));
-        side.jcn_sys.push_back(static_cast<int>(sys[i] + 1));
+        sys.irn.push_back(row);
+        sys.jcn.push_back(static_cast<int>(sys.Index(i) + 1));
       }
     }
     if (last)
     {
-      side.irn_sys.push_back(static_cast<int>(side.n_dofs + t + 1));
-      side.jcn_sys.push_back(static_cast<int>(side.n_dofs + t + 1));
-      side.rows.push_back(-1);
+      sys.irn.push_back(row);
+      sys.jcn.push_back(row);
+      sys.rows.push_back(-1);
     }
   }
-  side.val.resize(side.irn_sys.size());
+  side.val.resize(sys.irn.size());
   auto extra = ExtraParts(side, omega);
   side.extra = extra[0] || extra[1];
   Fill(side, omega, extra, terms, side.val);
@@ -419,25 +351,26 @@ void DrivenSubstructure::Fill(
     std::vector<std::complex<double>> &val) const
 {
   const auto coef = Coefficients(omega);
+  const auto &parts = side.system->parts;
   std::fill(val.begin(), val.end(), 0.0);
   for (int p = 0; p < 6; p++)
   {
-    for (std::size_t q = 0; q < side.parts[p].size(); q++)
+    for (std::size_t q = 0; q < parts[p].size(); q++)
     {
-      val[q] += coef[p] * side.parts[p][q];
+      val[q] += coef[p] * parts[p][q];
     }
   }
   for (int p = 0; p < 2; p++)
   {
     if (extra[p])
     {
-      AddToPattern(*extra[p], coef[6 + p], side.row_ptr, side.jcn, val);
+      side.system->AddPart(*extra[p], coef[6 + p], val);
     }
   }
   MFEM_VERIFY(terms.size() == side.term_dofs.size(),
               "The modal terms of the wave ports changed between frequencies!");
   const bool last = (Mpi::Rank(space_op.GetComm()) == Mpi::Size(space_op.GetComm()) - 1);
-  std::size_t q = side.jcn.size();
+  std::size_t q = parts[0].size();
   for (std::size_t t = 0; t < terms.size(); t++)
   {
     MFEM_VERIFY(terms[t].first == side.term_ports[t],
@@ -462,11 +395,14 @@ void DrivenSubstructure::Factor(Side &side, double omega)
   {
     MPI_Comm comm = space_op.GetComm();
     gamma_grid = std::make_unique<BlockCyclicGrid>(comm, iface.size, Mpi::Size(comm));
-    const int n_loc = static_cast<int>(side.rows.size());
+    auto &sys = *side.system;
+    const HYPRE_BigInt n_sys =
+        sys.n_glob + static_cast<HYPRE_BigInt>(side.term_dofs.size());
+    const int n_loc = static_cast<int>(sys.rows.size());
     side.schur = MakeSchurFactorization<std::complex<double>>(
-        SchurSolverFor(solver, SchurKind::ENVIRONMENT), ordering, comm, side.n_sys, n_loc,
-        {std::move(side.irn_sys), std::move(side.jcn_sys), std::move(side.val)},
-        side.gamma_sys, side.rows, false, true, gamma_grid.get());
+        SchurSolverFor(solver, SchurKind::ENVIRONMENT), ordering, comm, n_sys, n_loc,
+        {std::move(sys.irn), std::move(sys.jcn), std::move(side.val)},
+        sys.Indices(iface.tdofs), sys.rows, false, true, gamma_grid.get());
     return;
   }
 
@@ -552,6 +488,38 @@ DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *>
     *xo = std::move(x);
   }
   return red;
+}
+
+void DrivenSubstructure::ExpandEnvironment(const ComplexVector &b, ComplexVector &E)
+{
+  MFEM_VERIFY(!online && env.schur, "ExpandEnvironment needs the environment factor!");
+  // The reduction of b paired with the expansion of the values of E on Γ, gathered on root
+  // in interface order.
+  ComplexVector x = Masked(b, iface.env_int, &iface.gamma);
+  std::vector<std::complex<double>> red;
+  env.schur->Reduce({&x}, red);
+  const int nt = static_cast<int>(iface.gamma.size());
+  const double *er = E.Real().HostRead(), *ei = E.Imag().HostRead();
+  std::vector<std::complex<double>> u_gamma;
+  u_gamma.reserve(iface.count);
+  for (int i = 0; i < nt; i++)
+  {
+    if (iface.gamma[i])
+    {
+      u_gamma.emplace_back(er[i], ei[i]);
+    }
+  }
+  env.schur->Expand(iface.GatherRows(space_op.GetComm(), u_gamma, 1), {&x});
+  const double *xr = x.Real().HostRead(), *xi = x.Imag().HostRead();
+  double *Er = E.Real().HostReadWrite(), *Ei = E.Imag().HostReadWrite();
+  for (int i = 0; i < nt; i++)
+  {
+    if (iface.env_int[i])
+    {
+      Er[i] = xr[i];
+      Ei[i] = xi[i];
+    }
+  }
 }
 
 std::vector<char>
@@ -663,11 +631,11 @@ std::vector<char> DrivenSubstructure::WriteRegionMesh(
 
 const Vector &DrivenSubstructure::FingerprintField(int k) const
 {
-  if (fp_fields[k].Size() == 0)
+  if (!fp_fields[k])
   {
     fp_fields[k] = palace::FingerprintField(space_op.GetNDSpace().Get(), k, fp_centers[k]);
   }
-  return fp_fields[k];
+  return *fp_fields[k];
 }
 
 std::vector<double> DrivenSubstructure::EnvironmentFingerprint(double omega) const
@@ -1227,21 +1195,6 @@ bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
     }
   }
   return true;
-}
-
-std::vector<std::complex<double>>
-DrivenSubstructureModel::ReadFlatRecord(const std::string &path, int j) const
-{
-  const auto records = FrequencyRecords(ModelFile::Read(path, MPI_COMM_SELF));
-  MFEM_VERIFY(static_cast<std::size_t>(j) < records.size() &&
-                  records[j].size == static_cast<long long>(RecordBytes()),
-              "Truncated substructuring model \"" << path << "\"!");
-  const std::vector<char> p = ModelFile::ReadPayload(path, records[j], MPI_COMM_SELF);
-  std::vector<std::complex<double>> x(RecordBytes() / sizeof(std::complex<double>));
-  MFEM_VERIFY(p.size() == RecordBytes(),
-              "Truncated substructuring model \"" << path << "\"!");
-  std::memcpy(x.data(), p.data(), p.size());
-  return x;
 }
 
 std::vector<long long> DrivenSubstructureModel::RecordPositions(const std::string &path,

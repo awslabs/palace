@@ -26,6 +26,7 @@
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/environmentoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -108,7 +109,9 @@ double ParticipationRatio(double energy, double total)
 
 // The domains in which the probes are found: those of the region where its field is known
 // there only (a substructured static solve, or a driven sweep against the environment of a
-// model), else all, as for a regular simulation (a driven sweep of the whole device).
+// model which does not expand the environment's field), else all, as for a regular
+// simulation (a driven sweep of the whole device, or one whose environment's field is
+// expanded).
 template <ProblemType solver_t>
 std::vector<int> ProbeDomains(const config::SolverData &solver,
                               const fem_op_t<solver_t> &fem_op)
@@ -119,7 +122,7 @@ std::vector<int> ProbeDomains(const config::SolverData &solver,
   }
   if constexpr (solver_t == ProblemType::DRIVEN)
   {
-    if (!fem_op.GetEnvironment())
+    if (const auto *env = fem_op.GetEnvironment(); !env || env->Expands())
     {
       return {};
     }

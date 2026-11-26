@@ -38,8 +38,10 @@ class SpaceOperator;
 // Σ_k c_k(ω) of its records with the barycentric coefficients of a rational model, on the
 // current interface, each process holding its rows of Γ. They are formed when a frequency
 // is first asked for, and held until another one is: the calls are collective, for the
-// frequencies in turn. The records of a rational model are held whole, for the terms of a
-// reduced model of the region (see RomOperator).
+// frequencies in turn. The records of a rational model are held for the terms of a reduced
+// model of the region (see RomOperator), S_E by the shares of the processes of its lower
+// triangle as recorded, as in the model file: only S_E(ω) is formed on the grid, for the
+// factorization of the region.
 //
 class EnvironmentOperator
 {
@@ -48,6 +50,11 @@ public:
   // of S_E (see TriangleShare), then root the parts after it (see
   // DrivenSubstructureModel::Flatten). Called on every process, in turn. Collective.
   using RecordFunction = std::function<std::vector<std::complex<double>>(std::size_t)>;
+
+  // The environment's part of the solution E of the region and Γ of an excitation at the
+  // frequency of the last record, set on the environment's interior (see
+  // DrivenSubstructure::ExpandEnvironment). Collective.
+  using ExpandFunction = std::function<void(int, double, ComplexVector &)>;
 
   // Read the model and check it against the run: the environment (its record and, on the
   // full mesh, the fingerprint of its operator), the interface, the environment's ports,
@@ -59,13 +66,24 @@ public:
 
   // A model of this run's environment, condensed offline on the full mesh: rational, with
   // its samples as records, taken here, or exact, at the frequencies of the sweep, whose
-  // records are taken when the sweep reaches them. Collective.
+  // records are taken when the sweep reaches them, and which can expand the environment's
+  // part of a solution there. Collective.
   EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
-                      const DrivenSubstructureModel &sampled, const RecordFunction &record);
+                      const DrivenSubstructureModel &sampled, const RecordFunction &record,
+                      const ExpandFunction &expand = {});
   ~EnvironmentOperator();
 
   // Whether the mesh is the mesh of the region written with the model.
   bool RegionMesh() const { return region_mesh; }
+
+  // Whether the environment's part of a solution is known (an offline exact sweep, at the
+  // frequency of its last record), and that part set in the solution E of the region and Γ
+  // of an excitation at ω (see ExpandFunction). Collective.
+  bool Expands() const { return static_cast<bool>(expand); }
+  void Expand(int excitation_idx, double omega, ComplexVector &E) const
+  {
+    expand(excitation_idx, omega, E);
+  }
 
   // The domain attributes of the region.
   const std::vector<int> &RegionAttributes() const { return region_attrs; }
@@ -140,8 +158,9 @@ private:
   const std::string model_path;
   std::vector<int> region_attrs;
   DrivenSubstructureModel model;
-  // The records of an exact model of this run (see the constructor).
+  // The records of an exact model of this run, and its expansion (see the constructor).
   RecordFunction exact_records;
+  ExpandFunction expand;
   bool region_mesh = false;
   int nG = 0, np = 0, ne = 0;
   std::vector<int> env_ports;
@@ -158,9 +177,11 @@ private:
   SubstructureInterface iface;
   std::vector<int> gamma_local;
 
-  // A record on the current interface: the local part of S_E on the grid, the rows of Γ of
-  // this process of the condensed sources g (per model column) and of the port functionals
-  // h (per port), and c (ports x model columns, column-major) on every process.
+  // A record: S_E, the local part of S_E on the grid on the current interface or (for the
+  // records of a rational model) the share of this process of its lower triangle as
+  // recorded (see TriangleShare), and on the current interface, the rows of Γ of this
+  // process of the condensed sources g (per model column) and of the port functionals h
+  // (per port), and c (ports x model columns, column-major) on every process.
   struct Rows
   {
     std::vector<std::complex<double>> S;
@@ -180,16 +201,23 @@ private:
   std::vector<int> grid_rows, grid_cols;
 
   // A record from the shares of the processes (see RecordFunction), or record j of the
-  // model file, whose S_E each process reads a share of, and the record from the parts
-  // after S_E on root. Collective.
-  Rows Distribute(const std::vector<std::complex<double>> &x) const;
-  Rows ReadRecord(int j) const;
+  // model file, whose S_E each process reads a share of, with S_E on the grid (on_grid) or
+  // by the shares, and the record from the parts after S_E on root. Collective.
+  Rows Distribute(std::vector<std::complex<double>> &&x, bool on_grid) const;
+  Rows ReadRecord(int j, bool on_grid) const;
   Rows DistributeVectors(const std::complex<double> *tail) const;
 
-  // S_E of the record whose payload starts at byte pos of the model file, on the grid: each
-  // process reads an equal share of its lower triangle, and sends each entry, mapped onto
-  // the current interface, to the processes holding the entries it adds to. Collective.
+  // S_E on the grid on the current interface from the shares of its lower triangle as
+  // recorded: each entry, mapped onto the current interface, goes to the processes holding
+  // the entries it adds to. Collective.
+  std::vector<std::complex<double>>
+  ToGrid(const std::vector<std::complex<double>> &share) const;
+
+  // S_E of the record whose payload starts at byte pos of the model file, on the grid (each
+  // process reads an equal share of its lower triangle, as ToGrid maps), or the share of
+  // this process. Collective.
   std::vector<std::complex<double>> ReadSchur(long long pos) const;
+  std::vector<std::complex<double>> ReadShare(long long pos) const;
 
   // Form the terms of the operator (S_E and g) at ω, or the port functionals (c and h),
   // unless they are held (an exact model reads them whole).
@@ -203,15 +231,17 @@ private:
   std::vector<double> AllInterfaceValues(const Vector &x) const;
 
   // y = S x on all of Γ (on every process), for a matrix S on the grid (its local part), or
-  // its real or imaginary part (for a real x). Collective.
+  // for the S_E of a record from the share of this process of its lower triangle, with its
+  // entries as entry(S_ab) gives them (for a real x, a real or imaginary part). Collective.
   std::vector<std::complex<double>>
   Product(const std::vector<std::complex<double>> &S,
           const std::vector<std::complex<double>> &x) const;
-  std::vector<double> ProductPart(const std::vector<std::complex<double>> &S, bool imag,
-                                  const std::vector<double> &x) const;
-  // y += R_Γᵀ S R_Γ x for a matrix S on the grid (its local part).
-  void RecordProduct(const std::vector<std::complex<double>> &S, const ComplexVector &x,
-                     ComplexVector &y) const;
+  template <typename T, typename Entry>
+  std::vector<T> ShareProduct(const std::vector<std::complex<double>> &S,
+                              const std::vector<T> &x, Entry entry) const;
+  // y += R_Γᵀ y_Γ for the values y_Γ of all of Γ.
+  void AddInterfaceValues(const std::vector<std::complex<double>> &yG,
+                          ComplexVector &y) const;
 };
 
 }  // namespace palace

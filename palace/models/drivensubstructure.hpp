@@ -8,6 +8,7 @@
 #include <complex>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
@@ -33,6 +34,7 @@ struct DomainData;
 
 class BlockCyclicGrid;
 class PortExcitations;
+class SideSystem;
 class SpaceOperator;
 
 //
@@ -144,7 +146,6 @@ struct DrivenSubstructureModel
   void WriteHeader(const std::string &path, bool create = true) const;
   void AppendRecord(const std::string &path, const Record &r, MPI_Comm comm) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);
-  std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
   // Number of complete records of frequencies in the file.
   int NumRecords(const std::string &path) const;
 
@@ -229,6 +230,11 @@ public:
   CondenseEnvironment(const std::vector<const ComplexVector *> &b,
                       std::vector<ComplexVector> *x = nullptr);
 
+  // The environment's part u_E = A_EE^-1 (b_E - A_EΓ u_Γ) of the solution E of the region
+  // and Γ (zero on the environment's interior, where it is set) of the right-hand side b,
+  // with the environment factorization of the last condensation. Offline only. Collective.
+  void ExpandEnvironment(const ComplexVector &b, ComplexVector &E);
+
   // S_E(ω) of the last condensation (complex symmetric, in interface order), by the share
   // of this process of its lower triangle (see TriangleShare), handed over.
   std::vector<std::complex<double>> TakeSchur() { return std::move(S); }
@@ -303,29 +309,22 @@ private:
     std::vector<int> attrs;
     // Local true DOFs pinned in the side's operator: outside its interior and Γ.
     mfem::Array<int> pinned;
-    // The factored system, on the side's interior and Γ: its local true DOFs (the local
-    // rows), global size, and its indices of the interface DOFs.
-    std::vector<int> rows;
-    HYPRE_BigInt n_sys = 0;
-    std::vector<HYPRE_BigInt> gamma_sys;
-    // Lower-triangle pattern of the local rows (row_ptr over the local true DOFs, global
-    // columns jcn, 1-based), with the entries of the parts on it.
-    std::vector<int> row_ptr, jcn;
-    std::vector<std::vector<double>> parts;  // Kr, Ki, Cr, Ci, Mr, Mi (empty if absent)
-    bool extra = false;                      // A2(ω) is present
-    // The local entries (1-based COO in the system's indices) at the first frequency,
-    // until factored.
-    std::vector<int> irn_sys, jcn_sys;
+    // The factored system, on the side's interior and Γ (see SideSystem), with the entries
+    // of the parts Kr, Ki, Cr, Ci, Mr, Mi on its pattern (empty if absent), and its rows
+    // and entries extended by the bordering below until factored, when they are handed
+    // over.
+    std::unique_ptr<SideSystem> system;
+    bool extra = false;  // A2(ω) is present
+    // The local entries at the first frequency, until factored.
     std::vector<std::complex<double>> val;
     std::unique_ptr<SchurFactorization<std::complex<double>>> schur;
     // The rank-one modal terms g s sᵀ of the side's wave ports, bordering the system: an
-    // extra unknown y per term after its n_dofs DOFs, on the last rank, with the entries
-    // √(gσ) s against the term's DOFs (local true DOFs, in the system) and -σ on its
-    // diagonal (eliminating y adds g s sᵀ), σ = border. The entries follow those of the
+    // extra unknown y per term after those of the system, on the last rank, with the
+    // entries √(gσ) s against the term's DOFs (local true DOFs, in the system) and -σ on
+    // its diagonal (eliminating y adds g s sᵀ), σ = border. The entries follow those of the
     // pattern.
     std::vector<int> wave_ports, term_ports;
     std::vector<std::vector<int>> term_dofs;
-    HYPRE_BigInt n_dofs = 0;
     double border = 1.0;
   };
   Side env;
@@ -338,9 +337,10 @@ private:
   // The local true DOFs of the wave ports (each in the wave_ports of its side).
   std::map<int, std::vector<char>> wave_port_dofs;
 
-  // The fixed fields r_k of the fingerprints (true DOFs), projected on first use.
+  // The fixed fields r_k of the fingerprints (true DOFs), projected on first use, on every
+  // process alike (also one without true DOFs, whose fields are empty).
   std::array<std::array<double, 3>, 3> fp_centers;
-  mutable std::array<Vector, 3> fp_fields;
+  mutable std::array<std::optional<Vector>, 3> fp_fields;
   const Vector &FingerprintField(int k) const;
 
   // The real and imaginary parts of the stiffness (op = 0), damping (1) or mass (2) matrix

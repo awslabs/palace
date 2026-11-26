@@ -46,15 +46,16 @@ using namespace std::complex_literals;
 namespace
 {
 
-// The postprocessing of a sweep: that of the configuration or, for a substructured region,
-// whose field is known in the region and on Γ only, that of the region (see
-// RegionPostprocessing), without total energies or participation ratios.
+// The postprocessing of a sweep: that of the configuration or, for a substructured region
+// whose field is known in the region and on Γ only (online, or from a rational model), that
+// of the region (see RegionPostprocessing), without total energies or participation ratios.
+// An offline exact sweep expands the environment's field (see EnvironmentOperator::Expand).
 std::pair<config::DomainData, config::BoundaryData>
 SweepPostprocessing(const IoData &iodata, const SpaceOperator &space_op)
 {
   config::DomainData domains = iodata.domains;
   config::BoundaryData boundaries = iodata.boundaries;
-  if (const auto *env = space_op.GetEnvironment())
+  if (const auto *env = space_op.GetEnvironment(); env && !env->Expands())
   {
     domains.postpro.partial = true;
     const auto left_out = RegionPostprocessing(
@@ -77,15 +78,15 @@ SweepPostprocessing(const IoData &iodata, const SpaceOperator &space_op)
   return {domains, boundaries};
 }
 
-// For a substructured region, the values of the environment's ports from the model at a
-// solution E of an excitation, or its values on Γ on this process, for the next
-// measurements.
+// For a substructured region whose environment's field is not known, the values of the
+// environment's ports from the model at a solution E of an excitation, or its values on Γ
+// on this process, for the next measurements.
 template <typename T>
 void SetEnvironmentPorts(SpaceOperator &space_op,
                          PostOperator<ProblemType::DRIVEN> &post_op, int excitation_idx,
                          double omega, const T &E)
 {
-  if (auto *env = space_op.GetEnvironment())
+  if (auto *env = space_op.GetEnvironment(); env && !env->Expands())
   {
     std::map<int, std::complex<double>> V, S;
     env->PortValues(excitation_idx, omega, E, V, S);
@@ -97,7 +98,8 @@ void SetEnvironmentPorts(SpaceOperator &space_op,
 void WarnRegionFields(const SpaceOperator &space_op,
                       const PostOperator<ProblemType::DRIVEN> &post_op)
 {
-  if (space_op.GetEnvironment() && post_op.WillWriteFields())
+  if (const auto *env = space_op.GetEnvironment();
+      env && !env->Expands() && post_op.WillWriteFields())
   {
     Mpi::Warning("Driven substructuring writes the fields in the region and on the "
                  "interface only (zero in the environment)!\n");
@@ -213,9 +215,9 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
   B = 0.0;
 
   // Initialize structures for storing and reducing the results of error estimation (none
-  // for a substructured region, whose environment field is not known).
+  // for a substructured region whose environment field is not known).
   std::unique_ptr<FluxErrorEstimator<ComplexVector>> estimator;
-  if (!env)
+  if (!env || env->Expands())
   {
     estimator = std::make_unique<FluxErrorEstimator<ComplexVector>>(space_op, iodata);
   }
@@ -328,6 +330,10 @@ ErrorIndicator DrivenSolver::SweepUniform(SpaceOperator &space_op) const
 
     Mpi::Print("\n");
     ksp->Mult(RHS, E);
+    if (env && env->Expands())
+    {
+      env->Expand(excitation_idx, omega, E);
+    }
     E_prev.Push(E);
 
     if (s + 1 == n_solves)

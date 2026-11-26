@@ -38,20 +38,23 @@ bool Built(LinearSolver type)
 
 }  // namespace
 
-LinearSolver SchurSolverFor(LinearSolver requested, SchurKind kind, HYPRE_BigInt n_schur)
+LinearSolver SchurSolverFor(LinearSolver requested, SchurKind kind, HYPRE_BigInt n_schur,
+                            int num_procs)
 {
   if (Built(requested))
   {
     return requested;
   }
 #if defined(PALACE_WITH_STRUMPACK_SCHUR)
-  if (kind == SchurKind::REGION && n_schur <= kRegionStrumpackSchur)
+  if (kind == SchurKind::REGION && n_schur <= kRegionStrumpackSchur &&
+      num_procs >= kRegionStrumpackProcs)
   {
     return LinearSolver::STRUMPACK;
   }
 #else
   MFEM_CONTRACT_VAR(kind);
   MFEM_CONTRACT_VAR(n_schur);
+  MFEM_CONTRACT_VAR(num_procs);
 #endif
   for (const auto type :
        std::array{LinearSolver::MUMPS, LinearSolver::STRUMPACK, LinearSolver::SUPERLU})

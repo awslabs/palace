@@ -26,9 +26,13 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
 
 EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
                                          const DrivenSubstructureModel &sampled,
-                                         const RecordFunction &record)
+                                         const RecordFunction &record,
+                                         const ExpandFunction &expand)
   : EnvironmentOperator(iodata, space_op, &sampled, record, 0)
 {
+  MFEM_VERIFY(!expand || model.weights.empty(),
+              "A rational substructuring model does not expand its environment!");
+  this->expand = expand;
 }
 
 EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
@@ -186,7 +190,8 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
     }
     for (std::size_t j = 0; j < model.omega.size(); j++)
     {
-      records.push_back(sampled ? Distribute(record(j)) : ReadRecord(static_cast<int>(j)));
+      records.push_back(sampled ? Distribute(record(j), false)
+                                : ReadRecord(static_cast<int>(j), false));
     }
     Mpi::Print(" Rational substructuring model: {:d} samples from {:.3e} to {:.3e} GHz\n",
                model.omega.size(), lo * unit_GHz, hi * unit_GHz);
@@ -268,24 +273,33 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
 EnvironmentOperator::~EnvironmentOperator() = default;
 
 EnvironmentOperator::Rows
-EnvironmentOperator::Distribute(const std::vector<std::complex<double>> &x) const
+EnvironmentOperator::Distribute(std::vector<std::complex<double>> &&x, bool on_grid) const
 {
-  // S_E on the current interface (S_cur = M^-T S M^-1) on the grid, from the shares.
-  using T = std::complex<double>;
   const auto range = TriangleShare(nG, comm);
-  const long long e0 = range[0];
-  std::vector<T> S(grid->LocalSize(), 0.0);
-  RedistributeTriangle<T>(
-      comm, nG,
-      [&x, e0](long long e, long long m, T *y) { std::copy_n(x.data() + (e - e0), m, y); },
-      saved_to_current, [this](int g, int h) { return grid->Owner(g, h); },
-      [this](int g, int h) { return grid->LocalIndex(g, h); }, S);
-  Rows rows = DistributeVectors(root ? x.data() + (range[1] - e0) : nullptr);
-  rows.S = std::move(S);
+  const auto m = static_cast<std::size_t>(range[1] - range[0]);
+  Rows rows = DistributeVectors(root ? x.data() + m : nullptr);
+  x.resize(m);
+  x.shrink_to_fit();
+  rows.S = on_grid ? ToGrid(x) : std::move(x);
   return rows;
 }
 
-EnvironmentOperator::Rows EnvironmentOperator::ReadRecord(int j) const
+std::vector<std::complex<double>>
+EnvironmentOperator::ToGrid(const std::vector<std::complex<double>> &share) const
+{
+  // S_E on the current interface (S_cur = M^-T S M^-1) on the grid, from the shares.
+  using T = std::complex<double>;
+  const long long e0 = TriangleShare(nG, comm)[0];
+  std::vector<T> S(grid->LocalSize(), 0.0);
+  RedistributeTriangle<T>(
+      comm, nG, [&share, e0](long long e, long long m, T *y)
+      { std::copy_n(share.data() + (e - e0), m, y); }, saved_to_current,
+      [this](int g, int h) { return grid->Owner(g, h); },
+      [this](int g, int h) { return grid->LocalIndex(g, h); }, S);
+  return S;
+}
+
+EnvironmentOperator::Rows EnvironmentOperator::ReadRecord(int j, bool on_grid) const
 {
   // The parts after S_E, small, on root.
   const auto sz = model.PartSizes();
@@ -301,8 +315,23 @@ EnvironmentOperator::Rows EnvironmentOperator::ReadRecord(int j) const
     MFEM_VERIFY(f, "Truncated substructuring model \"" << model_path << "\"!");
   }
   Rows rows = DistributeVectors(root ? tail.data() : nullptr);
-  rows.S = ReadSchur(pos);
+  rows.S = on_grid ? ReadSchur(pos) : ReadShare(pos);
   return rows;
+}
+
+std::vector<std::complex<double>> EnvironmentOperator::ReadShare(long long pos) const
+{
+  using T = std::complex<double>;
+  const auto range = TriangleShare(nG, comm);
+  std::vector<T> S(static_cast<std::size_t>(range[1] - range[0]));
+  std::ifstream f(model_path, std::ios::binary);
+  f.seekg(pos + static_cast<std::streamoff>(sizeof(T)) * range[0]);
+  f.read(reinterpret_cast<char *>(S.data()),
+         static_cast<std::streamsize>(sizeof(T) * S.size()));
+  int ok = f.good();
+  Mpi::GlobalMin(1, &ok, comm);
+  MFEM_VERIFY(ok, "Truncated substructuring model \"" << model_path << "\"!");
+  return S;
 }
 
 std::vector<std::complex<double>> EnvironmentOperator::ReadSchur(long long pos) const
@@ -417,13 +446,13 @@ void EnvironmentOperator::Prepare(double omega)
   if (records.empty())
   {
     const int j = FindValue(model.omega, omega);
-    cur = exact_records ? Distribute(exact_records(j)) : ReadRecord(j);
+    cur = exact_records ? Distribute(exact_records(j), true) : ReadRecord(j, true);
     omega_fun = omega;
   }
   else
   {
     const auto a = Coefficients(omega);
-    cur.S = Combine(a, records, [](const Rows &r) -> const auto & { return r.S; });
+    cur.S = ToGrid(Combine(a, records, [](const Rows &r) -> const auto & { return r.S; }));
     cur.g.resize(ne);
     for (int e = 0; e < ne; e++)
     {
@@ -523,41 +552,65 @@ EnvironmentOperator::Product(const std::vector<std::complex<double>> &S,
   return y;
 }
 
-std::vector<double>
-EnvironmentOperator::ProductPart(const std::vector<std::complex<double>> &S, bool imag,
-                                 const std::vector<double> &x) const
+template <typename T, typename Entry>
+std::vector<T> EnvironmentOperator::ShareProduct(const std::vector<std::complex<double>> &S,
+                                                 const std::vector<T> &x, Entry entry) const
 {
-  std::vector<double> y(nG, 0.0);
-  const std::size_t lld = grid->LeadingDim();
-  for (std::size_t jl = 0; jl < grid_cols.size(); jl++)
+  // S_cur = C S C^T with C = M^-T (saved_to_current): x in the saved basis, its products
+  // with the entries of the share and their transposes, summed, and back on Γ.
+  std::vector<T> xs(nG, T(0.0)), ys(nG, T(0.0)), y(nG, T(0.0));
+  for (int a = 0; a < nG; a++)
   {
-    const double xj = x[grid_cols[jl]];
-    const auto *col = S.data() + lld * jl;
-    for (std::size_t il = 0; il < grid_rows.size(); il++)
+    for (const auto &[g, c] : saved_to_current[a])
     {
-      y[grid_rows[il]] += (imag ? col[il].imag() : col[il].real()) * xj;
+      xs[a] += c * x[g];
     }
   }
-  Mpi::GlobalSum(nG, y.data(), comm);
+  if (!S.empty())
+  {
+    auto [a, b] = TriangleEntry(nG, TriangleShare(nG, comm)[0]);
+    for (const auto &s : S)
+    {
+      const T v = entry(s);
+      ys[a] += v * xs[b];
+      if (a != b)
+      {
+        ys[b] += v * xs[a];
+      }
+      if (++a == nG)
+      {
+        a = ++b;
+      }
+    }
+  }
+  Mpi::GlobalSum(nG, ys.data(), comm);
+  for (int a = 0; a < nG; a++)
+  {
+    for (const auto &[g, c] : saved_to_current[a])
+    {
+      y[g] += c * ys[a];
+    }
+  }
   return y;
 }
 
 void EnvironmentOperator::AddMult(double omega, const ComplexVector &x, ComplexVector &y)
 {
   Prepare(omega);
-  RecordProduct(cur.S, x, y);
+  AddInterfaceValues(Product(cur.S, AllInterfaceValues(x)), y);
 }
 
 void EnvironmentOperator::RecordAddMult(std::size_t k, const ComplexVector &x,
                                         ComplexVector &y) const
 {
-  RecordProduct(records[k].S, x, y);
+  AddInterfaceValues(ShareProduct(records[k].S, AllInterfaceValues(x),
+                                  [](std::complex<double> s) { return s; }),
+                     y);
 }
 
-void EnvironmentOperator::RecordProduct(const std::vector<std::complex<double>> &S,
-                                        const ComplexVector &x, ComplexVector &y) const
+void EnvironmentOperator::AddInterfaceValues(const std::vector<std::complex<double>> &yG,
+                                             ComplexVector &y) const
 {
-  const auto yG = Product(S, AllInterfaceValues(x));
   const int off = iface.offset;
   double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
   for (std::size_t a = 0; a < gamma_local.size(); a++)
@@ -599,7 +652,9 @@ bool EnvironmentOperator::AddExcitation(int excitation_idx, double omega,
 void EnvironmentOperator::RecordAddMultPart(std::size_t k, bool imag, const Vector &x,
                                             Vector &y) const
 {
-  const auto yG = ProductPart(records[k].S, imag, AllInterfaceValues(x));
+  const auto yG =
+      ShareProduct(records[k].S, AllInterfaceValues(x),
+                   [imag](std::complex<double> s) { return imag ? s.imag() : s.real(); });
   const int off = iface.offset;
   double *py = y.HostReadWrite();
   for (std::size_t a = 0; a < gamma_local.size(); a++)

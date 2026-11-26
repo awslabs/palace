@@ -5,8 +5,14 @@ examples/transmon/mesh/transmon_substructuring.msh2
 examples/transmon/mesh/transmon_redesign*.msh2
 examples/transmon/mesh/transmon_substructuring_redesign.msh2
 examples/transmon/transmon_redesign.json
+examples/transmon/transmon_substructuring_online.json
+examples/transmon/transmon_substructuring_redesign.json
 examples/substructuring/mesh/
 examples/substructuring/cpw_resonator_grid_*.json
+examples/substructuring/qubit_lattice_online*.json
+examples/substructuring/qubit_lattice_redesign*.json
+examples/substructuring/flux_lattice_online.json
+examples/substructuring/flux_sheet_online.json
 examples/**/__pycache__/
 test/data/regression/input/**/postpro/
 test/data/regression/input/**/log/

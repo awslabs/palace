@@ -34,8 +34,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added substructuring for driven simulations: the environment is condensed onto the
     interface at each frequency, exactly or as a rational model sampled by an adaptive
     sweep, and saved, and later sweeps solve only the region, also after a redesign or
-    re-meshing of it. SchemaVer 6-2-1.
-    [PR 1044](https://github.com/awslabs/palace/pull/1044).
+    re-meshing of it. An exact offline sweep gives the outputs of the whole device.
+    SchemaVer 6-2-1. [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - Substructuring offline runs also write the interface as a Gmsh mesh of its faces
     (`environment_interface.msh`), for meshing a redesigned region against it, and online
     runs take a mesh of the region alone, adding the environment elements of the model's
@@ -59,11 +59,18 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     [pghysels/STRUMPACK#167](https://github.com/pghysels/STRUMPACK/pull/167), which adds a
     Schur complement interface to its sparse solvers. The partial factorization of
     STRUMPACK then gives the Schur complement of a substructuring region with up to 10,000
-    interface unknowns, and without MUMPS that of the environment too, instead of one solve
-    per interface unknown. [PR 995](https://github.com/awslabs/palace/pull/995).
+    interface unknowns on 32 processes or more, and without MUMPS that of the environment
+    too, instead of one solve per interface unknown.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Bug Fixes
 
+  - Fixed the abort "Wave port mode with zero power cannot be normalized!" of a wave port
+    whose mode problem has fewer unknowns off the PEC ones than the subspace of its
+    eigenvalue solver (by default `max(2 Mode, Mode + 15)`), as on a port of a few elements:
+    the solver ran out of independent vectors and could take a spurious mode, depending on
+    rounding. The subspace is now at most these unknowns.
+    [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - Fixed the S-parameters of Floquet ports in `port-floquet-S.csv` for the excitation of a
     wave port with a nonzero `"Offset"`, which lacked the de-embedding factor
     exp(i kₙ d) of the excited wave port: their phase was off by kₙ d, and for a lossy wave

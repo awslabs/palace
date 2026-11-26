@@ -99,7 +99,7 @@ DrivenRegionSolver::DrivenRegionSolver(const IoData &iodata, SpaceOperator &spac
                                        EnvironmentOperator &env)
   : space_op(space_op), env(env),
     type(SchurSolverFor(iodata.solver.substructuring->direct_solver, SchurKind::REGION,
-                        env.Grid().Size())),
+                        env.Grid().Size(), Mpi::Size(space_op.GetComm()))),
     ordering(iodata.solver.linear.sym_factorization)
 {
 }

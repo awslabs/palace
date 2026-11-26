@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Prepare the qubit lattice mesh (qubit_lattice.jl) for substructuring (see
-qubit_lattice_*.json).
+Prepare the qubit lattice mesh (qubit_lattice.jl) for substructuring, and write the
+configurations of the runs after the offline one from its configuration
+(qubit_lattice_offline.json).
 
 The DeviceLayout mesh has a single "metal" boundary and no region/environment split. This
 script
@@ -14,6 +15,14 @@ script
      region (substrate 1, vacuum 2) and the rest to the environment (substrate 10, vacuum
      11).
 
+The configurations (qubit_lattice_<run>.json) differ from the offline one by the model they
+reuse, the output directory, and for each run its mesh:
+
+  online           the mesh of the offline run: only the region is solved
+  online_region    the mesh of the region, which the offline run writes
+  redesign         the re-meshed redesign of the region (see remesh_region.py)
+  redesign_region  the redesign on its mesh of the region (remesh_region.py --region-mesh)
+
 Usage (from this directory):
 
     python3 qubit_lattice_substructuring.py [--input mesh/qubit_lattice.msh2]
@@ -23,6 +32,8 @@ Usage (from this directory):
 
 import argparse
 import collections
+import copy
+import json
 import os
 import sys
 
@@ -120,6 +131,31 @@ def main():
     inside = [k for k, p in enumerate(pads, 1)
               if all(lo <= c <= hi for c, (lo, hi) in zip(center(p), box))]
     print("  pads in the region: %s" % inside)
+    write_configs(here)
+
+
+def write_configs(here):
+    with open(os.path.join(here, "qubit_lattice_offline.json")) as f:
+        offline = json.load(f)
+    runs = [
+        ("online", None),
+        ("online_region", "postpro/qubit_lattice_offline/environment_region.mesh"),
+        ("redesign", "mesh/qubit_lattice_substructuring_redesign.msh2"),
+        ("redesign_region", "mesh/qubit_lattice_redesign_region.msh2"),
+    ]
+    for run, mesh in runs:
+        config = copy.deepcopy(offline)
+        config["Problem"]["Output"] = "postpro/qubit_lattice_" + run
+        if mesh:
+            config["Model"]["Mesh"] = mesh
+        config["Solver"]["Substructuring"]["ModelFile"] = (
+            "postpro/qubit_lattice_offline/environment.model"
+        )
+        path = os.path.join(here, "qubit_lattice_%s.json" % run)
+        with open(path, "w") as f:
+            json.dump(config, f, indent=2)
+            f.write("\n")
+        print("Wrote %s" % path)
 
 
 if __name__ == "__main__":
