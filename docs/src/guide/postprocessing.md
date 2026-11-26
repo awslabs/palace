@@ -476,9 +476,9 @@ word is the table's own rule on the census weighted by length (no field exists y
 no convergence: `MARGINAL`, `UNDER-RESOLVED`, `NO-BARS` or `NOT-EVALUATED`, never
 `RESOLVED` (the PREFLIGHT line before each level's solve). It can read better than the
 table's later word where a short coarse stretch carries the field; a row with a cell
-coarser than twice the bar is flagged (`cells beyond twice the bar: may read UNDER-RESOLVED
-after the solve`), and a row without the flag cannot read `UNDER-RESOLVED` after the solve
-on that mesh. `PreflightOnly` evaluates the
+coarser than twice the bar is flagged
+(`cells beyond twice the bar: may read UNDER-RESOLVED after the solve`), and a row without
+the flag cannot read `UNDER-RESOLVED` after the solve on that mesh. `PreflightOnly` evaluates the
 geometric census of the first mesh without a solve (the PREFLIGHT line, the census's
 `palace.json` block and, with `PatchEnergy`, its per-patch table, as a corrected run writes
 them before its first solve) and writes one row set of this table whose `resolution` reads

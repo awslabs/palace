@@ -3772,10 +3772,11 @@ order 4 reads `MARGINAL` before the solve and `UNDER-RESOLVED` in the table afte
 Hence THE FLAG OF CELLS BEYOND TWICE THE BAR: where at least one patch of a row's census is
 coarser than twice the bar (``h/R > 2 B``, ``2`` being the verdict's `UnderResolvedFactor`;
 ``h/R`` read by the census's bin centre, as the table's ``m_{90}``), the PREFLIGHT line
-adds `cells beyond twice the bar: <share> % of the length, largest h/R <m>: may read
-UNDER-RESOLVED after the solve`, and the rows of that `Type` in a PreflightOnly
-`surface-participation.csv` add the flags word `cells beyond twice the bar: may read
-UNDER-RESOLVED after the solve` (its region rows too). Every `Preflight` row records
+adds
+`cells beyond twice the bar: <share> % of the length, largest h/R <m>: may read UNDER-RESOLVED after the solve`,
+and the rows of that `Type` in a PreflightOnly `surface-participation.csv` add the flags
+word `cells beyond twice the bar: may read UNDER-RESOLVED after the solve` (its region
+rows too). Every `Preflight` row records
 `UnderResolvedLengthShare` (the share of the census weight with ``h/R > 2 B``; `0` when
 none, `null` at orders without a bar) and `LargestM` (the largest ``h/R``). THE
 GUARANTEE: WITHOUT THE FLAG NO CELL IS BEYOND TWICE THE BAR, so the table's energy-weighted
