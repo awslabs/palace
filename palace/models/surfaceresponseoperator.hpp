@@ -2514,6 +2514,10 @@ struct SurfaceResponsePreflightOutcome
   // three-dimensional Features path; the root's only), for
   // SurfaceResponsePreflightModelRefusal.
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionModelData> census_models;
+  // STEP 4c (lane v1verdict1): the census operator's target matching radius
+  // (nondimensional; TargetInterfaceMatchingRadius of the request's targets, the root's),
+  // at which it reads a spatial model's surface matrices.
+  double census_matching_radius = 0.0;
 };
 
 // CUT-PLAN step 4b (lane v1step4b; ruling R1): the line of a PreflightOnly run that builds
@@ -2525,10 +2529,11 @@ std::string SurfaceResponsePreflightCensusRefusal(
     const config::ElectrostaticSolverData::ResponseCorrectionData &request);
 
 // CUT-PLAN step 4b (the supervisor's ruling (B)): the line of a PreflightOnly run that
-// builds no resolution census because the operator's matrix step refuses one of
-// outcome.census_models (the first, as that step stops at it), predicted on the root by the
-// step's own test on the matrices it reads; empty when it accepts every model. Called where
-// the census would be built (a read it stops on stops the census operator too). Collective.
+// builds no resolution census because the operator's model loop refuses one or more of
+// outcome.census_models (STEP 4c, lane v1verdict1: every such model with its first refusal
+// in the loop's order, by the Try forms of its readers: basis points, domain matrices, the
+// matrix step's test, the interface mappings, surface matrices), predicted on the root;
+// empty when it accepts every model. Called where the census would be built. Collective.
 std::string
 SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outcome,
                                      const Units &units, MPI_Comm comm);

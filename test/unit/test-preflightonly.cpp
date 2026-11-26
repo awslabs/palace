@@ -509,10 +509,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 // key absent build the census); (b) a library with no model (the solve form's reader
 // refuses it); (c) an explicit "GeometryFailurePolicy": "FailClosed" on a library that
 // matches nothing (the solve form's NoMatchedFeature, recorded at the operator's
-// construction only, ends it there; RecordRaw gives the raw-fallback line). (f)-(h) pin
-// the class the supervisor ruled into the named exception (STEP 4c, a non-aborting reader
-// of the model files): a library file the operator's model loop refuses stops
-// PreflightOnly after the manifest is written, with the solve form's message.
+// construction only, ends it there; RecordRaw gives the raw-fallback line). (f)-(k): a
+// library file the operator's model loop refuses (STEP 4c, lane v1verdict1: the Try forms
+// of its readers) is predicted like (d) and (e), every refused model named.
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
                  "PreflightOnly builds no resolution census where a solve-form run stops "
                  "before it",
@@ -539,6 +538,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const fs::path points_absent = temp.temp_dir / (stem + "-points-absent.json");
   const fs::path absent_points = temp.temp_dir / (stem + "-absent-points.csv");
   const fs::path no_surface = temp.temp_dir / (stem + "-no-surface.json");
+  const fs::path short_matrix = temp.temp_dir / (stem + "-short-fabricated.csv");
+  const fs::path short_library = temp.temp_dir / (stem + "-short.json");
+  const fs::path no_column_matrix = temp.temp_dir / (stem + "-no-column-fabricated.csv");
+  const fs::path no_column_library = temp.temp_dir / (stem + "-no-column.json");
+  const fs::path no_entry_matrix = temp.temp_dir / (stem + "-no-entry-fabricated.csv");
+  const fs::path no_entry_library = temp.temp_dir / (stem + "-no-entry.json");
   if (Mpi::Root(comm))
   {
     mfem::Mesh serial = MakeSerialIslandMesh();
@@ -626,12 +631,41 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           output << i + 1 << "," << j + 1 << "," << matrix(i, j) << "\n";
         }
       }
+      // STEP 4c (lane v1verdict1): the edge model's fabricated domain matrix that does not
+      // fit its basis points (one basis function short), without its Q column, without
+      // one upper-triangular entry.
+      std::ofstream short_output(short_matrix), no_column_output(no_column_matrix),
+          no_entry_output(no_entry_matrix);
+      short_output << header << "\n" << std::setprecision(17);
+      no_column_output << "basis_i,basis_j,Q (J)\n" << std::setprecision(17);
+      no_entry_output << header << "\n" << std::setprecision(17);
+      for (const auto &[i, j, q] : entries)
+      {
+        const std::string row = std::to_string(i + 1) + "," + std::to_string(j + 1) + ",";
+        if (j + 1 < size)
+        {
+          short_output << row << q << "\n";
+        }
+        no_column_output << row << q << "\n";
+        if (!(i == 0 && j == 1))
+        {
+          no_entry_output << row << q << "\n";
+        }
+      }
     }
     json negative = sa, unreadable = sa;
     negative["Models"][0]["FabricatedMatrix"] = negative_matrix.string();
     unreadable["Models"][0]["FabricatedMatrix"] = absent_matrix.string();
     std::ofstream(negative_mode) << negative.dump(2) << "\n";
     std::ofstream(no_file) << unreadable.dump(2) << "\n";
+    for (const auto &[matrix, library] : {std::pair{short_matrix, short_library},
+                                          std::pair{no_column_matrix, no_column_library},
+                                          std::pair{no_entry_matrix, no_entry_library}})
+    {
+      json misfit = sa;
+      misfit["Models"][0]["FabricatedMatrix"] = matrix.string();
+      std::ofstream(library) << misfit.dump(2) << "\n";
+    }
     // (f) / (g) / (h): every model's fabricated surface matrix or basis-point file absent;
     // every model without surface matrices, its interface mappings kept.
     json surface = sa, points = sa, mappings = sa;
@@ -818,64 +852,68 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       "Unable to read response matrix file \"" + absent_matrix.string() + "\"!";
   NoCensus(Run(no_file, "", ""), unreadable_message + " (a solve-form run stops there)\n");
   SolveFormStops(no_file, unreadable_message);
-  // (f)-(h) The class ruled into the named exception (STEP 4c): PreflightOnly stops after
-  // the manifest is written, before any census, with the solve form's message (an abort
-  // with a non-zero exit status in a production run; a preflight without the census ended
-  // with 0). These rows pin that behaviour; (g) and (h) are the Maxwell configs of the
-  // second review (on Electrostatic a missing basis-point file stops main's preflight too).
-  auto PreflightStops = [&](const fs::path &library, const std::string &message)
+  // (f)-(k) STEP 4c (lane v1verdict1; formerly the named exception): a library file the
+  // operator's model loop refuses is predicted by the Try form of its reader: no census,
+  // the line naming every refused model with the solve form's message, exit status 0; the
+  // solve form stops with that message. (g) and (h) are the Maxwell configs of the second
+  // step-4b review (on Electrostatic a missing basis-point file stops main's preflight
+  // too).
+  auto LibraryFileRefused =
+      [&](const fs::path &library, const std::string &message, bool solve_form = true)
   {
-    json run = config;
-    const fs::path dir = temp.temp_dir / (stem + "-" + library.stem().string() + "-stop");
-    run["Problem"]["Output"] = dir.string();
-    run[correction_key]["Library"] = library.string();
-    run[correction_key].erase("UnmatchedPolicy");
-    IoData iodata(run, false);
-    MakeOutputFolder(iodata, comm);
-    BlockTimer::Reset();
-    bool thrown = false;
-    std::string what;
-    test::CaptureStdout(
-        [&]
-        {
-          try
-          {
-            RunSurfaceResponsePreflight(iodata, comm, utils::ConfigureOmp());
-          }
-          catch (const std::exception &e)
-          {
-            thrown = true;
-            what = e.what();
-          }
-        });
-    Mpi::Barrier(comm);
-    INFO("run " << dir.filename().string());
-    CHECK(thrown);
+    const auto refused = Run(library, "", "");
+    NoCensus(refused, message + " (a solve-form run stops there)\n");
     if (Mpi::Root(comm))
     {
-      CHECK_THAT(what, ContainsSubstring(message));
-      CHECK(fs::is_regular_file(dir / "surface-response-requirements.json"));
-      CHECK_FALSE(fs::exists(dir / patches));
-      CHECK_FALSE(fs::exists(dir / kSurfaceParticipationFile));
+      // Every model the line names carries the message of its first refused file.
+      const auto begin = refused.log.find("Resolution census: not evaluated: ");
+      REQUIRE(begin != std::string::npos);
+      const std::string line =
+          refused.log.substr(begin, refused.log.find('\n', begin) - begin);
+      auto Count = [&](const std::string &text)
+      {
+        int count = 0;
+        for (auto at = line.find(text); at != std::string::npos;
+             at = line.find(text, at + 1))
+        {
+          count++;
+        }
+        return count;
+      };
+      CHECK(Count("response model \"") >= 1);
+      CHECK(Count("response model \"") == Count(message));
     }
-    SolveFormStops(library, message);
+    if (solve_form)
+    {
+      SolveFormStops(library, message);
+    }
   };
   // (f) A surface-matrix file that cannot be read: ReadTable's message.
-  PreflightStops(surface_absent, "Unable to read response matrix file \"" +
-                                     absent_surface.string() + "\"!");
+  LibraryFileRefused(surface_absent, "Unable to read response matrix file \"" +
+                                         absent_surface.string() + "\"!");
+  // (i) / (j) / (k) A domain matrix that does not fit its basis points, without its Q
+  // column, without an upper-triangular entry (the 30 sweep rows of the named exception
+  // were (i)'s class).
+  LibraryFileRefused(short_library, "Response matrix \"" + short_matrix.string() +
+                                        "\" and basis point file have inconsistent sizes!");
+  LibraryFileRefused(no_column_library, "Response matrix file \"" +
+                                            no_column_matrix.string() +
+                                            "\" is missing column \"Q_ij (J)\"!");
+  LibraryFileRefused(no_entry_library, "Response matrix file \"" +
+                                           no_entry_matrix.string() +
+                                           "\" is missing an upper-triangular entry!");
   if (!electrostatic)
   {
-    // (g) A basis-point file that cannot be opened. Serial only: in parallel one rank's
-    // reader stops while the others wait in a collective (a production run ends there, the
-    // stopped rank's abort ending the job), which a test program cannot observe and go on.
-    if (Mpi::Size(comm) == 1)
-    {
-      PreflightStops(points_absent, "Unable to open response-correction basis point file");
-    }
+    // (g) A basis-point file that cannot be opened: the prediction on the root at any rank
+    // count; the solve form serially only (in parallel one rank's reader can stop while
+    // the others wait in a collective, which a test program cannot observe and go on).
+    LibraryFileRefused(points_absent,
+                       "Unable to open response-correction basis point file \"" +
+                           absent_points.string() + "\"!",
+                       Mpi::Size(comm) == 1);
     // (h) Interface mappings without surface matrices (ComputeSurfaceResponseMatrices).
-    PreflightStops(no_surface,
-                   "Response-correction interface mappings require surface response "
-                   "matrices!");
+    LibraryFileRefused(no_surface, "Response-correction interface mappings require surface "
+                                   "response matrices!");
   }
 #endif
 }
