@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -22,6 +23,7 @@
 #include <nlohmann/json.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/surfaceparticipationtable.hpp"
 #include "models/surfaceresponsecoverage.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseorientedbox.hpp"
@@ -44,6 +46,7 @@ struct FilmRuleResolution;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
+class Table;
 class Units;
 struct IdentifiedFeature;
 struct IdentificationResult;
@@ -1074,6 +1077,10 @@ private:
   double resolution_radius = 0.0;        // mesh units (the library matching radius)
   double resolution_length_scale = 1.0;  // m per mesh unit
   ResolutionBars resolution_bars;
+  // ONE verdict (decision 2403 (3), lane v1verdict1): the per-iteration table's verdict
+  // data (ParticipationVerdictBarsFor) and problem name, for the PREFLIGHT word.
+  ParticipationVerdictBars resolution_verdict_bars;
+  std::string resolution_problem;
   std::vector<ResolutionPatchReading> resolution_readings;
   std::vector<int> resolution_plane_slots;
   std::vector<double> resolution_planes;
@@ -2521,13 +2528,31 @@ std::string SurfaceResponsePreflightCensusRefusal(
     const config::ElectrostaticSolverData::ResponseCorrectionData &request);
 
 // CUT-PLAN step 4b (the supervisor's ruling (B)): the line of a PreflightOnly run that
-// builds no resolution census because the operator's matrix step refuses one of
-// outcome.census_models (the first, as that step stops at it), predicted on the root by the
-// step's own test on the matrices it reads; empty when it accepts every model. Called where
-// the census would be built (a read it stops on stops the census operator too). Collective.
+// builds no resolution census because the operator's model loop refuses one or more of
+// outcome.census_models (STEP 4c, lane v1verdict1: every such model once, with every
+// refusal of its files in the loop's order, by the Try forms of its readers and the
+// operator's own checks: basis points, domain matrices, the matrix step's test, the
+// interface mappings, surface matrices at the census operator's target matching radius
+// (read from `iodata` on every rank as that operator reads it), the blend's shared
+// interfaces, the coupon check), predicted on the root; empty when it accepts every model.
+// Called where the census would be built. Collective.
 std::string
 SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outcome,
-                                     const Units &units, MPI_Comm comm);
+                                     const IoData &iodata, MPI_Comm comm);
+
+// The knife-edge census of the preflight (lane v1prefast C2; its review MINOR-3): the
+// root's stop on a helper rank's failing silent identification carries the helper's own
+// error text verbatim, the text a one-rank run stops with, so that it does not depend on
+// the rank count.
+[[noreturn]] void RaiseKnifeEdgeCensusFailure(const std::string &text);
+
+// STEP 4c (lane v1verdict1 fix round, MAJOR-1): a library CSV file's contents read into
+// `table` by the rules of Table(table_str) (text_columns false), in one pass and without
+// stopping, since a build without MFEM exceptions (the containers) cannot catch that
+// parser's stop: empty, `table` equal to the parser's table; else the first refused cell's
+// message (a cell beyond the header's columns, or one that is not a double; shown
+// printable). The response-matrix readers parse through it.
+std::string TryParseTable(std::string_view table_str, Table &table);
 
 // Classify the configured automatic surface-response neighborhoods without assembling a
 // finite-element operator or solving a field problem. The deterministic JSON manifest

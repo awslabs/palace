@@ -380,24 +380,22 @@ std::string ConductorConsistencyBanner(const json &statistics)
 std::unique_ptr<SurfaceParticipationTable>
 NewSurfaceParticipationTable(const IoData &iodata, const fs::path &dir)
 {
-  auto Table = [&](const auto &request, const char *problem)
+  auto Table = [&](const auto &request)
   {
-    const auto &bars_file = request.resolution.bars_file;
     return std::make_unique<SurfaceParticipationTable>(
-        (dir / kSurfaceParticipationFile).string(), problem, iodata.solver.order,
-        bars_file.empty() ? BuiltInParticipationVerdictBars()
-                          : ReadParticipationVerdictBars(bars_file));
+        (dir / kSurfaceParticipationFile).string(),
+        ParticipationProblemName(iodata.problem.type), iodata.solver.order,
+        ParticipationVerdictBarsFor(request.resolution.bars_file));
   };
   const auto &electrostatic = iodata.solver.electrostatic.response_correction;
   const auto &maxwell = iodata.solver.surface_response_correction;
   switch (iodata.problem.type)
   {
     case ProblemType::ELECTROSTATIC:
-      return electrostatic ? Table(*electrostatic, "Electrostatic") : nullptr;
+      return electrostatic ? Table(*electrostatic) : nullptr;
     case ProblemType::EIGENMODE:
-      return maxwell ? Table(*maxwell, "Eigenmode") : nullptr;
     case ProblemType::DRIVEN:
-      return maxwell ? Table(*maxwell, "Driven") : nullptr;
+      return maxwell ? Table(*maxwell) : nullptr;
     default:
       return nullptr;
   }

@@ -171,6 +171,27 @@ ParticipationVerdictBars ReadParticipationVerdictBars(const std::string &path)
   return ParseParticipationVerdictBars(text, path, false);
 }
 
+ParticipationVerdictBars ParticipationVerdictBarsFor(const std::string &bars_file)
+{
+  return bars_file.empty() ? BuiltInParticipationVerdictBars()
+                           : ReadParticipationVerdictBars(bars_file);
+}
+
+std::string ParticipationProblemName(ProblemType type)
+{
+  switch (type)
+  {
+    case ProblemType::ELECTROSTATIC:
+      return "Electrostatic";
+    case ProblemType::EIGENMODE:
+      return "Eigenmode";
+    case ProblemType::DRIVEN:
+      return "Driven";
+    default:
+      return {};
+  }
+}
+
 ParticipationIndicator
 ComputeParticipationIndicator(double p, double m90, double unknowns,
                               const std::vector<ParticipationHistoryEntry> &history,
@@ -280,10 +301,19 @@ std::string ParticipationResolutionWord(double m90, int order, bool settled, boo
   return Scoped(std::string(ResolutionStatusName(ResolutionStatus::MARGINAL)));
 }
 
+std::string ParticipationPreflightWord(double length_m90, int order,
+                                       const ParticipationVerdictBars &bars,
+                                       const std::string &problem)
+{
+  return ParticipationResolutionWord(length_m90, order, false, false, bars, problem);
+}
+
 void SetParticipationResolution(SurfaceParticipationRow &row, const ResolutionCell *cell)
 {
   row.m90 = cell ? cell->quantiles[2] : kNaN;
   row.m50 = cell ? cell->quantiles[1] : kNaN;
+  row.spatial_share = cell ? cell->spatial_share : kNaN;
+  row.cluster_share = cell ? cell->cluster_share : kNaN;
 }
 
 void SetParticipationCoverage(SurfaceParticipationRow &row, const CoverageCell *cell)
@@ -313,7 +343,7 @@ void SetParticipationNotTarget(SurfaceParticipationRow &row)
   const std::string not_target(CoverageStatusName(CoverageStatus::NOT_TARGET));
   row.p_corrected = row.q_corrected = kNaN;
   row.resolution = row.coverage = not_target;
-  row.m90 = row.m50 = row.uncovered_share = kNaN;
+  row.m90 = row.m50 = row.uncovered_share = row.spatial_share = row.cluster_share = kNaN;
   row.regime = std::string(RegimeStatusName(RegimeStatus::NO_MODEL));
   row.reason = not_target + ": raw only";
 }
@@ -332,21 +362,22 @@ PreflightParticipationRows(const std::map<int, std::string> &targets,
     row.interface = interface;
     row.type = type;
     row.region = regions.count(interface) > 0;
-    auto status = ResolutionStatus::NOT_EVALUATED;
-    if (!row.region)
+    std::string word(ResolutionStatusName(ResolutionStatus::NOT_EVALUATED));
+    const auto census = std::find_if(preflight.begin(), preflight.end(),
+                                     [&](const ResolutionPreflightRow &r)
+                                     { return r.all_planes && r.type == type; });
+    if (!row.region && census != preflight.end())
     {
-      const auto census = std::find_if(preflight.begin(), preflight.end(),
-                                       [&](const ResolutionPreflightRow &r)
-                                       { return r.all_planes && r.type == type; });
-      if (census != preflight.end())
-      {
-        status = census->status;
-      }
+      word = census->resolution;
     }
-    row.resolution = "PREFLIGHT " + std::string(ResolutionStatusName(status));
+    row.resolution = word;
     row.coverage = row.regime = row.confidence = row.convergence =
         kParticipationNotComputed;
     row.flags = kParticipationPreflightFlags;
+    if (census != preflight.end() && census->UnderResolvedCells())
+    {
+      row.flags += std::string("; ") + kParticipationPreflightUnderResolvedCellsFlag;
+    }
     row.reason = kParticipationPreflightReason;
     rows.push_back(std::move(row));
   }
@@ -682,6 +713,14 @@ std::string ParticipationFlags(const SurfaceParticipationRow &row)
   {
     parts.push_back(kParticipationSheetNotServedFlag);
   }
+  if (row.spatial_share >= kParticipationSpatialShareFlagAt)
+  {
+    parts.push_back(kParticipationSpatialShareFlag);
+  }
+  if (row.cluster_share > kParticipationClusterShareFlagAbove)
+  {
+    parts.push_back(kParticipationClusterShareFlag);
+  }
   std::string flags;
   for (const auto &part : parts)
   {
@@ -874,6 +913,7 @@ SurfaceParticipationTable::SurfaceParticipationTable(std::string path, std::stri
       "convergence", label.empty()
                          ? "convergence"
                          : "convergence (" + label.substr(0, label.size() - 2) + ")"));
+  table.insert("spatial_share", "S corner+cluster share (fraction)");
   table.insert(Column::Text("flags", "flags"));
   table.insert(Column::Text("reason", "reason"));
 }
@@ -940,11 +980,12 @@ void SurfaceParticipationTable::WritePreflightLevel(
   preflight_only = true;
   rows_written += rows.size();
   iterations = 1;
-  Mpi::Print(comm,
-             "\nSurface participation (surface-participation.csv), PreflightOnly: {:d} "
-             "row(s) of iteration 1 ({:d} unknowns), the resolution cells \"PREFLIGHT "
-             "<word>\" of the census PREFLIGHT; no solve, no value computed (NaN)\n",
-             rows.size(), unknowns);
+  Mpi::Print(
+      comm,
+      "\nSurface participation (surface-participation.csv), PreflightOnly: {:d} "
+      "row(s) of iteration 1 ({:d} unknowns), the resolution cells the table's word "
+      "of the census PREFLIGHT (never RESOLVED); no solve, no value computed (NaN)\n",
+      rows.size(), unknowns);
 }
 
 void SurfaceParticipationTable::AppendRows(const std::vector<SurfaceParticipationRow> &rows)
@@ -979,6 +1020,7 @@ void SurfaceParticipationTable::AppendRows(const std::vector<SurfaceParticipatio
     table["change_raw"] << row.change_raw;
     table["per_doubling"] << row.per_doubling;
     table["convergence"] << row.convergence;
+    table["spatial_share"] << row.spatial_share;
     table["flags"] << row.flags;
     table["reason"] << row.reason;
   }

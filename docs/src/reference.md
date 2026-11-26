@@ -3751,11 +3751,41 @@ directory) and may leave a truncated top-level `palace.json`; the top-level
 `surface-response-resolution.csv` has no level column and may already hold rows of the
 level that did not finish.
 
-Before the first solve of each level, the log prints a PREFLIGHT line per `Type` and plane
-(geometry only, an indicator): edge patches weighted by their longitudinal cell length,
-spatial patches (no cell) by count, and the WORSE of the two groups' statuses by the same
-share rule. It is not the offline length-weighted form of record and its share rule is not
-validated in this weight; the energy-weighted census after the solve is the reading.
+Before the first solve of each level, the log prints a PREFLIGHT line per `Type` and plane,
+and `SurfaceResponse.Resolution.Preflight` records each row: ONE resolution verdict, the
+per-iteration table's word (its rule and its verdict data, below) of the census weighted by
+length, since no field exists before a solve, with no convergence evaluated: `MARGINAL`
+(``m_{90} \le 2 B``), `UNDER-RESOLVED` (``m_{90} > 2 B``), `NO-BARS` (orders 1 and 5 and
+above) or `NOT-EVALUATED` (no reading); never `RESOLVED`. It is the word the table prints
+at a first iteration, there from the energy-weighted census. The weights: an edge patch its
+longitudinal cell length; a spatial patch (corner and cluster models; no cell) as much as
+edge patches with as many knots (its knot count times the edge patches' cell length per
+knot of the same `Type` and plane; by its knots alone where there is no edge patch).
+`LengthM90` is that census's 90 % quantile of ``h/R`` (the bin-centre rule of the energy
+census); `Status` its word; `EdgePatches`, `EdgeLength`, `SpatialPatches` and the shares
+`EdgeShares` / `SpatialShares` by the census bars below stay as numbers (no word is made of
+them). On measured meshes this word agreed with the table's first-iteration word on 225 of
+225 first levels of three designs' ladders and on 21 of 21 rows of the merge tier. It can
+read better than the table's later word: a length-weighted ``m_{90}`` does not see a short,
+coarse stretch that carries the field (a junction lead: the v1 transmon mesh refined once at
+order 4 reads `MARGINAL` before the solve and `UNDER-RESOLVED` in the table after it).
+Hence THE FLAG OF CELLS BEYOND TWICE THE BAR: where at least one patch of a row's census is
+coarser than twice the bar (``h/R > 2 B``, ``2`` being the verdict's `UnderResolvedFactor`;
+``h/R`` read by the census's bin centre, as the table's ``m_{90}``), the PREFLIGHT line
+adds
+`cells beyond twice the bar: <share> % of the length, largest h/R <m>: may read UNDER-RESOLVED after the solve`,
+and the rows of that `Type` in a PreflightOnly `surface-participation.csv` add the flags
+word `cells beyond twice the bar: may read UNDER-RESOLVED after the solve` (its region
+rows too). Every `Preflight` row records
+`UnderResolvedLengthShare` (the share of the census weight with ``h/R > 2 B``; `0` when
+none, `null` at orders without a bar) and `LargestM` (the largest ``h/R``). THE
+GUARANTEE: WITHOUT THE FLAG NO CELL IS BEYOND TWICE THE BAR, so the table's energy-weighted
+``m_{90}`` cannot exceed ``2 B`` on that mesh whatever the field: a pre-solve `MARGINAL`
+without the flag cannot become `UNDER-RESOLVED` after the solve (a `Type`'s all-planes
+census reads every patch the table's census of that mesh can weigh, a box's included, with
+the same ``h/R``). At orders without a bar there is no flag. On refined levels the
+pre-solve word can also read `UNDER-RESOLVED` where the table reads `MARGINAL` (101 of 678
+ladder rows).
 
 RESOLVED IS NECESSARY, NOT SUFFICIENT: it says that the mesh at the trace contour is as fine
 as the interim bars ask, never that a corrected value is accurate (the exact-trace floor,
@@ -3797,29 +3827,38 @@ is built and the log names `"RecordRaw"` as the value that gives it, also when o
 response operator's construction records a fallback. Wherever a solve-form run stops before
 its census (`"UnmatchedPolicy": "Error"` with missing requirements, a library its reader
 refuses, a placed discovery placeholder, a response model whose fabricated domain matrix its
-matrix step refuses (a negative-energy mode beyond roundoff, by the operator's own test) or
-whose domain matrix file cannot be opened), `PreflightOnly` builds no census, prints one
-line
+matrix step refuses (a negative-energy mode beyond roundoff, by the operator's own test), or
+a library file the operator's model loop refuses: a basis-point, domain-matrix or
+surface-matrix file that cannot be read, holds a cell the table parser refuses (text, a
+binary file, a cell beyond the header's columns: read in one pass by the parser's own
+rules without stopping, since a build without MFEM exceptions cannot catch the parser's
+stop), or does not fit its basis points (a missing column or entry, a non-finite entry,
+another size), a
+surface-matrix file that reads but lacks a mapped coupon's response (a header-only file),
+blend sources without the same coupon interfaces, or interface mappings without surface
+matrices), `PreflightOnly` builds no census, prints one line
 `Resolution census: not evaluated: <why> (a solve-form run stops there)`
 and ends with the exit status it had before the census existed (0, or 3 after a
-`FailClosed` summary). Every census that is not evaluated (these reasons, an explicit
-`"GeometryFailurePolicy": "FailClosed"`, a whole-run raw fallback, a problem type without a
-census) is named by its one line, and the same line is
+`FailClosed` summary). For the library files the line names EVERY model the loop refuses,
+each once, with EVERY refused file's message in the loop's order (basis points, domain
+matrices, the matrix step, the interface mappings, surface matrices, the blend, the coupon
+check; the first is the one the solve form stops with; a model whose basis-point file is
+refused adds `(its matrices are not checked without its basis points)`):
+`response model "<name>": <message> <message>`, models separated by `; `. Every census
+that is not evaluated (these reasons, an explicit `"GeometryFailurePolicy": "FailClosed"`,
+a whole-run raw fallback, a problem type without a census) is named by its one line, and
+the same line is
 `SurfaceResponse.ResolutionCensusNotEvaluated` of `palace.json` (absent when the census is
 built). On `"PatchConstruction": "Legacy"` (a developer option) the requirements
 manifest's `Complete` is the features comparison's: the `"UnmatchedPolicy": "Error"` line
 can be printed where `Complete` is true (the legacy builder cannot serve a feature, and a
-solve-form run stops there). A library file the operator's model loop refuses (a
-surface-matrix or basis-point file that cannot be read, interface mappings without surface
-matrices, a domain matrix that does not fit its basis points) stops `PreflightOnly` after
-the manifest is written, with the solve form's message and a non-zero exit status, where a
-preflight without the census ended with 0; every solve-form run refuses such a library.
+solve-form run stops there).
 
 ### The per-iteration table of the response correction
 
 Every corrected electrostatic, eigenmode or driven run writes `surface-participation.csv` at
 the top level of its output directory: one row per (adaptive iteration, point, excitation,
-interface), the same 27 columns for the three problem types, appended at the end of every
+interface), the same 28 columns for the three problem types, appended at the end of every
 converged level (the file of a finished run holds every level; the iteration archive leaves
 it at the top level; a new run in the directory replaces it; a level whose solve did not
 converge adds nothing). It changes no other output. The columns: `iteration` (1 = the first
@@ -3836,7 +3875,8 @@ one: the same values; never another corrected column), `corrected / raw`, `Q raw
 against the joined row of the previous level, a fraction, information only; the log prints
 it in %), `change per doubling (%; an interface row: its Type's)` (the indicator below; an
 `interface` row prints its `Type`'s, the value its words are of, beside its own plain
-change), `convergence`, `flags` and `reason`. `scope` names THE VALUE a row's verdicts are
+change), `convergence`, `S corner+cluster share (fraction)` (below), `flags` and
+`reason`. `scope` names THE VALUE a row's verdicts are
 of: `Type` (interface 0: the sum over the `Type`'s whole target interfaces of the point,
 ``Q = 1 / \sum 1/Q_i``; the value the rule was measured on), `region` (an entry with a
 `Region`: its box value) or `interface` (one whole interface: its own p and change, and its
@@ -3848,7 +3888,16 @@ box on coarse elements reads UNDER-RESOLVED where its `Type` does not. No value 
 response target, reason `NOT-TARGET: raw only`, and on a raw fallback run, reason
 `RawFallback: <classes>`); `flags` lists the verdicts not met (resolution, coverage,
 `regime`, `confidence`, convergence, and `developer: MarkNotApplied` where that policy
-marked the cell). Rows join the previous level's row of the same point, excitation and
+marked the cell). `S corner+cluster share (fraction)` is the share of the row's
+within-R corrected energy (its census cell's fixed-trace fabricated energy: the `Type`'s, or
+the box's) served by spatial-basis models, corner and spatial-cluster models, whose map of
+the device trace onto their 16-knot rings is not within 1 % on the library's own corner
+test: at ``S \ge 5`` % a held-out reading found SA off by up to ``5 S`` points and MS by up
+to ``6 S`` (``S`` below 5 %: no effect seen), and `flags` adds
+`S >= 5% on corner and cluster models`; with more than 10 % of that energy on
+spatial-cluster models it adds `S over 10% on cluster models`. Information only: no value
+changes (`nan` without a census reading, on a `NOT-TARGET` row and on a `PreflightOnly`
+row). Rows join the previous level's row of the same point, excitation and
 interface; a driven row only at the same frequency (10⁻¹² relative). Each row keeps the
 history of its value through these joins.
 
@@ -3931,19 +3980,23 @@ and scope with the ranges of the raw and the corrected values), and `palace.json
 `SurfaceResponse.ParticipationTable` (the file, the levels, the rows and the verdict data
 with their source).
 
-A `PreflightOnly` run solves nothing, so it computes no value and no verdict of this rule:
+A `PreflightOnly` run solves nothing, so it computes no value and no convergence:
 its `surface-participation.csv` holds one row set of iteration 1 (the first solve's
 unknowns), `point` and `exc` 0, one row per target interface and its `Type` totals, in
-which every number is `nan`, `resolution` reads `PREFLIGHT <word>` (the `Type`'s all-planes
-word of the census PREFLIGHT line, by cell length against the census bars; a `region` row
-`PREFLIGHT NOT-EVALUATED`), `coverage`, `regime`, `confidence` and `convergence` read
+which every number is `nan` (also `h/R m90` and `h/R m50`, the energy-weighted census
+of a solve), `resolution` reads the table's own word before a solve (the `Type`'s
+all-planes word of the PREFLIGHT line above: `MARGINAL`, `UNDER-RESOLVED`, `NO-BARS` or
+`NOT-EVALUATED`, never `RESOLVED`; a `region` row `NOT-EVALUATED`: a box has no census of
+its own before a solve), `coverage`, `regime`, `confidence` and `convergence` read
 `NOT-COMPUTED`, `flags` reads `PREFLIGHT-ONLY` (no `Ls` sheet word: those words qualify a
-value) and `reason` says why
-(`PREFLIGHT-ONLY: geometric census by cell length against the census bars; no solve; values not computed; the table's resolution verdict (energy-weighted; bars of the rule) needs a solve`);
-`SurfaceResponse.ParticipationTable` records `"PreflightOnly": true`. The PREFLIGHT word
-and the table's resolution word are different readings (length against energy weights,
-the census bars against the rule's bars) and may differ on the same mesh. A run whose
-targets are all Regions has no word in the table: read the PREFLIGHT line.
+value), followed by `; cells beyond twice the bar: may read UNDER-RESOLVED after the solve`
+on every row of a `Type` whose census has a cell beyond twice the bar (the flag above; its
+region rows too), and `reason` says why
+(`PREFLIGHT-ONLY: no solve; values not computed; resolution = the table's rule on the census weighted by length (no field before a solve); no convergence evaluated: never RESOLVED`);
+`SurfaceResponse.ParticipationTable` records `"PreflightOnly": true`. The pre-solve word
+and the word of the first solve are the same rule on two weights (length, energy) and may
+differ on the same mesh. A run whose targets are all Regions has no word in the table:
+read the PREFLIGHT line.
 
 ## Electrostatic Simulations
 

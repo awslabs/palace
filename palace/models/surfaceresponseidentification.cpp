@@ -14680,7 +14680,8 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
 // (corner / endpoint / junction mesh vertices); otherwise the cluster's claimed length
 // counts on the Below (R (1 - band)) or Above (R (1 + band)) side, with the number of
 // clusters affected. Reported like the other bands (Below / Above / Total in length units)
-// and in the identification log; costs two more identifications on the root rank.
+// and in the identification log; costs two more identifications, on ranks 1 and 2 beside
+// the root's (on the root alone with one rank).
 // One SpatialEdgeCluster as the cluster-composition band reads it: EdgeCount, the sorted
 // member vertices, the claimed length and the claimed intervals per segment.
 struct ClusterRecord
