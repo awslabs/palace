@@ -7720,6 +7720,42 @@ TEST_CASE("SurfaceResponseIdentificationMirrorBandChains",
   }
 }
 
+TEST_CASE("SurfaceResponseIdentificationKnifeEdgeCensusRecordsOfAnotherRank",
+          "[surfaceresponseidentification][census][Serial]")
+{
+  // Lane v1prefast C2: the cluster-composition band read from records computed elsewhere
+  // (ClusterCompositionRecords on the same input, as the census's helper ranks compute
+  // them) is the band the census computes itself, read in its order (R (1 - band), then
+  // R (1 + band)). The pads of the knife-edge census case: C joins the cluster at R (1 + 1
+  // %).
+  const double R = 1.9;
+  const auto input = MakeInput({{Rectangle(0.0, 0.0, 8.0, 8.0), 0, 1.0},
+                                {Rectangle(11.0, 0.0, 14.0, 8.0), 1, 1.0},
+                                {Rectangle(17.82, 0.0, 25.82, 8.0), 2, 1.0}},
+                               R);
+  const auto own = IdentifyMetalPerimeter(input);
+  auto helped = input;
+  std::vector<int> order;
+  helped.composition_records = [&](int index)
+  {
+    order.push_back(index);
+    return ClusterCompositionRecords(input, index);
+  };
+  const auto result = IdentifyMetalPerimeter(helped);
+  CHECK(order == std::vector<int>{0, 1});
+  CHECK(result.knife_edge_census == own.knife_edge_census);
+  const auto band = nlohmann::json::parse(result.knife_edge_census)["ClusterComposition"];
+  INFO(band.dump());
+  CHECK(band["ClustersAbove"].get<int>() >= 1);
+  CHECK(band["ClustersBelow"].get<int>() == 0);
+  CHECK(ClusterCompositionRecords(input, 0) == ClusterCompositionRecords(input, 0));
+  CHECK(ClusterCompositionRecords(input, 0) != ClusterCompositionRecords(input, 1));
+  // A truncated record is refused, not read.
+  helped.composition_records = [&](int index)
+  { return ClusterCompositionRecords(input, index).substr(1); };
+  CHECK_THROWS(IdentifyMetalPerimeter(helped));
+}
+
 TEST_CASE("SurfaceResponseIdentificationSupportExcludedAndTruncationSegments",
           "[surfaceresponseidentification][cornercontainment][Serial]")
 {

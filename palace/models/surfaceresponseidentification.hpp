@@ -182,6 +182,11 @@ struct IdentificationInput
   // overridden by the config's ResponseCorrection.KnifeEdgeCensus. Diagnostic only: no
   // feature, key or patch depends on it.
   bool knife_edge_census = true;
+  // The knife-edge census's cluster-composition records at R (1 - band) (index 0) and
+  // R (1 + band) (index 1) when another rank computes them (ClusterCompositionRecords on
+  // this input; lane v1prefast C2): the census reads index 0, then index 1; unset = it
+  // identifies the perimeter at those radii itself.
+  std::function<std::string(int)> composition_records;
 };
 
 struct IdentifiedPortion
@@ -491,6 +496,12 @@ struct IdentificationResult
 };
 
 IdentificationResult IdentifyMetalPerimeter(const IdentificationInput &input);
+
+// The knife-edge census's cluster-composition records of `input`'s perimeter identified
+// silently at R (1 - band) (index 0) or R (1 + band) (index 1), as bytes: what the census
+// of IdentifyMetalPerimeter(input) reads at that radius (another rank's share of the
+// census, IdentificationInput::composition_records; lane v1prefast C2).
+std::string ClusterCompositionRecords(const IdentificationInput &input, int index);
 
 // Compact binary form of a result for the broadcast from the root (the identification runs
 // on the root only; every other rank receives the result it needs for the patches).

@@ -10623,6 +10623,97 @@ void ClassifyCandidateFeatureLaws(IdentificationResult &result,
   }
 }
 
+// Lane v1prefast C2, the knife-edge census's helper ranks: the identification input's metal
+// faces from the root to the other ranks of `comm` (vertex count, vertices, normal; as
+// doubles), unpacked on those ranks into `faces`.
+void BroadcastIdentificationFaces(std::vector<IdentificationFace> &faces, MPI_Comm comm)
+{
+  std::vector<double> values;
+  if (Mpi::Root(comm))
+  {
+    values.push_back(static_cast<double>(faces.size()));
+    for (const auto &face : faces)
+    {
+      values.push_back(static_cast<double>(face.vertices.size()));
+      for (const auto &vertex : face.vertices)
+      {
+        values.insert(values.end(), vertex.begin(), vertex.end());
+      }
+      values.insert(values.end(), face.normal.begin(), face.normal.end());
+    }
+  }
+  std::int64_t count = static_cast<std::int64_t>(values.size());
+  Mpi::Broadcast(1, &count, 0, comm);
+  values.resize(static_cast<std::size_t>(count));
+  Mpi::BroadcastLarge(count, values.data(), 0, comm);
+  if (Mpi::Root(comm))
+  {
+    return;
+  }
+  std::size_t at = 0;
+  faces.resize(static_cast<std::size_t>(values[at++]));
+  for (auto &face : faces)
+  {
+    face.vertices.resize(static_cast<std::size_t>(values[at++]));
+    for (auto &vertex : face.vertices)
+    {
+      for (auto &x : vertex)
+      {
+        x = values[at++];
+      }
+    }
+    for (auto &x : face.normal)
+    {
+      x = values[at++];
+    }
+  }
+}
+
+// One helper's share: the census records of pass `index` (ClusterCompositionRecords) to the
+// root of `comm` with tag `index`: a status (0, or 1 with the error text instead of the
+// records), the byte count, the bytes in chunks.
+void SendCensusRecords(const IdentificationInput &input, int index, MPI_Comm comm)
+{
+  std::int64_t status = 0;
+  std::string bytes;
+  try
+  {
+    bytes = ClusterCompositionRecords(input, index);
+  }
+  catch (const std::exception &error)
+  {
+    status = 1;
+    bytes = error.what();
+  }
+  std::int64_t header[2] = {status, static_cast<std::int64_t>(bytes.size())};
+  MPI_Send(header, 2, MPI_INT64_T, 0, index, comm);
+  const std::int64_t chunk = std::int64_t(1) << 28;
+  for (std::int64_t at = 0; at < header[1]; at += chunk)
+  {
+    MPI_Send(bytes.data() + at, static_cast<int>(std::min(chunk, header[1] - at)), MPI_CHAR,
+             0, index, comm);
+  }
+}
+
+// The root's read of pass `index` from rank `source` of `comm`; a helper's failure stops
+// the run with its text when `raise` (the census reads the pass), else is dropped (a
+// drain).
+std::string ReceiveCensusRecords(int source, int index, MPI_Comm comm, bool raise)
+{
+  std::int64_t header[2] = {0, 0};
+  MPI_Recv(header, 2, MPI_INT64_T, source, index, comm, MPI_STATUS_IGNORE);
+  std::string bytes(static_cast<std::size_t>(header[1]), '\0');
+  const std::int64_t chunk = std::int64_t(1) << 28;
+  for (std::int64_t at = 0; at < header[1]; at += chunk)
+  {
+    MPI_Recv(bytes.data() + at, static_cast<int>(std::min(chunk, header[1] - at)), MPI_CHAR,
+             source, index, comm, MPI_STATUS_IGNORE);
+  }
+  MFEM_VERIFY(header[0] == 0 || !raise,
+              "Knife-edge census pass " << index << " on rank " << source << ": " << bytes);
+  return bytes;
+}
+
 IdentificationResult RunGeometryIdentification(
     MPI_Comm comm, const MetalEdgeGeometry &geometry,
     const std::vector<EdgeSegment3D> &framed_segments, const ProcessLibrary &library,
@@ -10882,6 +10973,23 @@ IdentificationResult RunGeometryIdentification(
   // The identification runs on the root only (the global metal faces exist there alone;
   // decision 82 infrastructure) and the result is broadcast: every rank builds the same
   // patches from the same feature list, no rank replicates the identification state.
+  // DESIGN section 9 (i): the knife-edge census is a preflight diagnostic (on for the
+  // preflight, off for a solve run) unless the config says otherwise. Lane v1prefast C2:
+  // with more than one rank its two silent identifications (R (1 -/+ band)) run on ranks 1
+  // and 2 (rank 1 alone on two ranks) while the root runs the main one; the root sends them
+  // the input's metal faces (the rest of the input is replicated) and reads their records
+  // in the census's order, draining what its census does not read.
+  const bool knife_edge_census = request && request->knife_edge_census
+                                     ? *request->knife_edge_census
+                                     : requirements != nullptr;
+  const int census_helpers = knife_edge_census ? std::min(2, Mpi::Size(comm) - 1) : 0;
+  MPI_Comm census_comm = MPI_COMM_NULL;
+  if (census_helpers > 0)
+  {
+    const int rank = Mpi::Rank(comm);
+    MPI_Comm_split(comm, rank <= census_helpers ? 0 : MPI_UNDEFINED, rank, &census_comm);
+  }
+  auto CensusHelper = [&](int index) { return census_helpers == 1 ? 1 : 1 + index; };
   IdentificationResult result;
   MirrorMergeSummary mirror_summary;
   {
@@ -10898,12 +11006,26 @@ IdentificationResult RunGeometryIdentification(
       }
       // Stage counts, wall times and progress of the identification.
       input.log = [](const std::string &line) { Mpi::Print("{}", line); };
-      // DESIGN section 9 (i): the knife-edge census is a preflight diagnostic (on for the
-      // preflight, off for a solve run) unless the config says otherwise.
-      input.knife_edge_census = request && request->knife_edge_census
-                                    ? *request->knife_edge_census
-                                    : requirements != nullptr;
+      input.knife_edge_census = knife_edge_census;
+      std::array<bool, 2> census_read = {false, false};
+      if (census_comm != MPI_COMM_NULL)
+      {
+        BroadcastIdentificationFaces(input.faces, census_comm);
+        input.composition_records = [&](int index)
+        {
+          census_read[static_cast<std::size_t>(index)] = true;
+          return ReceiveCensusRecords(CensusHelper(index), index, census_comm, true);
+        };
+      }
       result = IdentifyMetalPerimeter(input);
+      input.composition_records = nullptr;
+      for (int index = 0; index < 2 && census_comm != MPI_COMM_NULL; index++)
+      {
+        if (!census_read[static_cast<std::size_t>(index)])
+        {
+          ReceiveCensusRecords(CensusHelper(index), index, census_comm, false);
+        }
+      }
       if (mirror_band.extended)
       {
         // The extended run (the real faces reflected into the band on the root) merged
@@ -10934,6 +11056,24 @@ IdentificationResult RunGeometryIdentification(
       input.faces.clear();
       input.faces.shrink_to_fit();
       buffer = SerializeIdentificationResult(result);
+    }
+    else if (census_comm != MPI_COMM_NULL)
+    {
+      // A helper of the knife-edge census: the root's faces, then its pass(es).
+      BroadcastIdentificationFaces(input.faces, census_comm);
+      for (int index = 0; index < 2; index++)
+      {
+        if (CensusHelper(index) == Mpi::Rank(comm))
+        {
+          SendCensusRecords(input, index, census_comm);
+        }
+      }
+      input.faces.clear();
+      input.faces.shrink_to_fit();
+    }
+    if (census_comm != MPI_COMM_NULL)
+    {
+      MPI_Comm_free(&census_comm);
     }
     std::int64_t size = static_cast<std::int64_t>(buffer.size());
     Mpi::Broadcast(1, &size, 0, comm);

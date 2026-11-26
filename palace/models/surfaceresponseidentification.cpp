@@ -14681,39 +14681,121 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
 // counts on the Below (R (1 - band)) or Above (R (1 + band)) side, with the number of
 // clusters affected. Reported like the other bands (Below / Above / Total in length units)
 // and in the identification log; costs two more identifications on the root rank.
+// One SpatialEdgeCluster as the cluster-composition band reads it: EdgeCount, the sorted
+// member vertices, the claimed length and the claimed intervals per segment.
+struct ClusterRecord
+{
+  int edge_count = 0;
+  std::vector<std::size_t> vertices;
+  double length = 0.0;
+  std::map<std::size_t, std::vector<Interval>> portions;  // per segment
+};
+
+std::vector<ClusterRecord> ClusterRecordsOf(const IdentificationResult &r)
+{
+  std::vector<ClusterRecord> records;
+  for (const auto &feature : r.features)
+  {
+    if (feature.type != "SpatialEdgeCluster")
+    {
+      continue;
+    }
+    ClusterRecord record;
+    record.edge_count = feature.signature.value("EdgeCount", 0);
+    record.vertices = feature.vertices;
+    std::sort(record.vertices.begin(), record.vertices.end());
+    record.length = feature.length;
+    for (const auto &portion : feature.portions)
+    {
+      record.portions[portion.segment].emplace_back(std::min(portion.s0, portion.s1),
+                                                    std::max(portion.s0, portion.s1));
+    }
+    records.push_back(std::move(record));
+  }
+  return records;
+}
+
+// The records as bytes for another rank (lane v1prefast C2): every integer as 8 bytes,
+// every double as its 8 bytes, the portions in the map's (segment) order.
+std::string SerializeClusterRecords(const std::vector<ClusterRecord> &records)
+{
+  std::string bytes;
+  auto Put = [&](auto value) { bytes.append(reinterpret_cast<const char *>(&value), 8); };
+  Put(static_cast<std::uint64_t>(records.size()));
+  for (const auto &record : records)
+  {
+    Put(static_cast<std::int64_t>(record.edge_count));
+    Put(static_cast<std::uint64_t>(record.vertices.size()));
+    for (const std::size_t v : record.vertices)
+    {
+      Put(static_cast<std::uint64_t>(v));
+    }
+    Put(record.length);
+    Put(static_cast<std::uint64_t>(record.portions.size()));
+    for (const auto &[segment, intervals] : record.portions)
+    {
+      Put(static_cast<std::uint64_t>(segment));
+      Put(static_cast<std::uint64_t>(intervals.size()));
+      for (const auto &[a, b] : intervals)
+      {
+        Put(a);
+        Put(b);
+      }
+    }
+  }
+  return bytes;
+}
+
+std::vector<ClusterRecord> DeserializeClusterRecords(const std::string &bytes)
+{
+  std::size_t at = 0;
+  auto Get = [&](auto &value)
+  {
+    static_assert(sizeof(value) == 8);
+    MFEM_VERIFY(at + 8 <= bytes.size(), "Truncated cluster-composition records!");
+    std::memcpy(&value, bytes.data() + at, 8);
+    at += 8;
+  };
+  std::uint64_t count = 0;
+  Get(count);
+  std::vector<ClusterRecord> records(count);
+  for (auto &record : records)
+  {
+    std::int64_t edge_count = 0;
+    std::uint64_t vertices = 0, segments = 0;
+    Get(edge_count);
+    record.edge_count = static_cast<int>(edge_count);
+    Get(vertices);
+    record.vertices.resize(vertices);
+    for (auto &v : record.vertices)
+    {
+      std::uint64_t vertex = 0;
+      Get(vertex);
+      v = static_cast<std::size_t>(vertex);
+    }
+    Get(record.length);
+    Get(segments);
+    for (std::uint64_t k = 0; k < segments; k++)
+    {
+      std::uint64_t segment = 0, intervals = 0;
+      Get(segment);
+      Get(intervals);
+      auto &portions = record.portions[static_cast<std::size_t>(segment)];
+      portions.resize(intervals);
+      for (auto &[a, b] : portions)
+      {
+        Get(a);
+        Get(b);
+      }
+    }
+  }
+  MFEM_VERIFY(at == bytes.size(), "Trailing bytes in cluster-composition records!");
+  return records;
+}
+
 nlohmann::json Identifier::ClusterCompositionBand(const IdentificationResult &result) const
 {
-  struct ClusterRecord
-  {
-    int edge_count = 0;
-    std::vector<std::size_t> vertices;
-    double length = 0.0;
-    std::map<std::size_t, std::vector<Interval>> portions;  // per segment
-  };
-  auto Clusters = [](const IdentificationResult &r)
-  {
-    std::vector<ClusterRecord> records;
-    for (const auto &feature : r.features)
-    {
-      if (feature.type != "SpatialEdgeCluster")
-      {
-        continue;
-      }
-      ClusterRecord record;
-      record.edge_count = feature.signature.value("EdgeCount", 0);
-      record.vertices = feature.vertices;
-      std::sort(record.vertices.begin(), record.vertices.end());
-      record.length = feature.length;
-      for (const auto &portion : feature.portions)
-      {
-        record.portions[portion.segment].emplace_back(std::min(portion.s0, portion.s1),
-                                                      std::max(portion.s0, portion.s1));
-      }
-      records.push_back(std::move(record));
-    }
-    return records;
-  };
-  const std::vector<ClusterRecord> at_R = Clusters(result);
+  const std::vector<ClusterRecord> at_R = ClusterRecordsOf(result);
   nlohmann::json band = {{"BandRelative", kKnifeEdgeBandRelative},
                          {"Clusters", at_R.size()},
                          {"Rule",
@@ -14726,11 +14808,16 @@ nlohmann::json Identifier::ClusterCompositionBand(const IdentificationResult &re
                           "counts (ClustersBelow / ClustersAbove of Clusters)"}};
   double below = 0.0, above = 0.0;
   std::size_t clusters_below = 0, clusters_above = 0;
+  int index = 0;
   for (const double factor : {1.0 - kKnifeEdgeBandRelative, 1.0 + kKnifeEdgeBandRelative})
   {
-    Identifier other(original_input, R * factor);
-    const IdentificationResult other_result = other.Identify();
-    const std::vector<ClusterRecord> at_other = Clusters(other_result);
+    // Another rank's records of the same silent identification when given (lane v1prefast
+    // C2), else this rank's own.
+    const std::vector<ClusterRecord> at_other =
+        original_input.composition_records
+            ? DeserializeClusterRecords(original_input.composition_records(index))
+            : ClusterRecordsOf(Identifier(original_input, R * factor).Identify());
+    index++;
     std::map<std::size_t, std::vector<std::size_t>> by_segment;  // segment -> clusters
     for (std::size_t c = 0; c < at_other.size(); c++)
     {
@@ -16368,6 +16455,15 @@ IdentificationResult Identifier::Identify()
 }
 
 }  // namespace
+
+std::string ClusterCompositionRecords(const IdentificationInput &input, int index)
+{
+  // The radius of the census's pass `index` (R x (1 -/+ band), R = the input's radius).
+  const double factor =
+      index == 0 ? 1.0 - kKnifeEdgeBandRelative : 1.0 + kKnifeEdgeBandRelative;
+  return SerializeClusterRecords(
+      ClusterRecordsOf(Identifier(input, input.radius * factor).Identify()));
+}
 
 IdentificationResult IdentifyMetalPerimeter(const IdentificationInput &input)
 {
