@@ -236,6 +236,9 @@ struct ElemPlan
   bool flip = false;  // Boundary element and face have the same orientation (o % 2 == 0),
                       // legacy coefficients invert the boundary element normal
   bool trace_b = false;  // Far field on a two-sided boundary: trace elem_b, not elem_a
+  // Interface dielectric energy: sum the energies of the two sides instead of evaluating
+  // that of their average field (see GetInterfaceDielectricSides).
+  bool sum_sides = false;
   // A side whose volume element is a face neighbor (ghost) on another process: its field
   // is not in the local vector, so it is pulled via FaceNbrFieldExchange and fed to the
   // operator at the mapped points (only Elem2 can be a ghost, so at most one side).
@@ -1256,9 +1259,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
                  false, mfem::Geometry::INVALID, {}, {}, side_scale, -1.0);
       }
     }
-    else if (kind == KernelKind::INTERFACE_EPR && two_sided &&
-             epr_type != InterfaceDielectric::SA && attr <= epr_sum_sides_marker.Size() &&
-             epr_sum_sides_marker[attr - 1])
+    else if (kind == KernelKind::INTERFACE_EPR && plan.sum_sides)
     {
       // An interior boundary separating the fields on its two sides (such as a thin metal
       // sheet): the energies of both sides add, as for a mesh cut along the boundary, which
@@ -1371,9 +1372,7 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           plan.trace_b = (n * dx > 0.0);
         }
       }
-      else if (kind == KernelKind::SURFACE_FLUX || IsBufferKind(kind) ||
-               (kind == KernelKind::INTERFACE_EPR &&
-                epr_type == InterfaceDielectric::DEFAULT))
+      else if (kind == KernelKind::SURFACE_FLUX || IsBufferKind(kind))
       {
         plan.elem_a = FET.Elem1No;
         if (has_elem2)
@@ -1381,35 +1380,25 @@ void SurfaceFunctional::AssembleLocal(const Mesh &mesh,
           plan.elem_b = FET.Elem2No;
         }
       }
-      else  // INTERFACE_EPR with MA, MS, or SA
+      else  // INTERFACE_EPR
       {
-        // Single-sided evaluation on the vacuum (MA, SA) or substrate (MS) side, with
-        // averaging if both sides qualify, skipping the element if neither does.
-        const bool vacuum_side = (epr_type != InterfaceDielectric::MS);
-        auto OnSide = [&](int elem_attr)
+        // The sides of the interface energy (GetInterfaceDielectricSides), skipping the
+        // element if neither side qualifies, as it contributes zero.
+        const bool sum_sides = has_elem2 && attr <= epr_sum_sides_marker.Size() &&
+                               epr_sum_sides_marker[attr - 1];
+        const auto sides =
+            GetInterfaceDielectricSides(epr_type, *mat_op, FET.Elem1->Attribute,
+                                        has_elem2 ? FET.Elem2->Attribute : 0, sum_sides);
+        if (!sides.first)
         {
-          const bool vacuum = mat_op->IsVacuum(elem_attr);
-          return vacuum_side ? vacuum : !vacuum;
-        };
-        const bool use_elem1 = OnSide(FET.Elem1->Attribute);
-        const bool use_elem2 = has_elem2 && OnSide(FET.Elem2->Attribute);
-        if (use_elem1)
-        {
-          plan.elem_a = FET.Elem1No;
-          if (use_elem2)
-          {
-            plan.elem_b = FET.Elem2No;
-          }
-        }
-        else if (use_elem2)
-        {
-          plan.elem_a = FET.Elem2No;
-        }
-        else
-        {
-          // Neither side qualifies: the element contributes zero, skip it.
           continue;
         }
+        plan.elem_a = (sides.first == 1) ? FET.Elem1No : FET.Elem2No;
+        if (sides.second)
+        {
+          plan.elem_b = FET.Elem2No;
+        }
+        plan.sum_sides = sides.sum;
       }
 
       // A two-sided interior boundary on a parallel interface: the Elem2 side is a face

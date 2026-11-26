@@ -72,6 +72,13 @@ public:
   // Parse configuration file, validate, and construct IoData.
   IoData(const char *filename, bool print);
 
+  // Parse a configuration file, returning the JSON object. Does not use MPI.
+  static nlohmann::json Parse(const char *filename);
+
+  // Validate a parsed configuration file against the JSON schema, aborting on errors.
+  // Collective on the world communicator.
+  static void Validate(const nlohmann::json &config);
+
   // Parse and validate a configuration file, returning the JSON object.
   static nlohmann::json ParseAndValidate(const char *filename);
 

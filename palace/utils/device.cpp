@@ -5,6 +5,9 @@
 #include "communication.hpp"
 #include "omp.hpp"
 
+#include <charconv>
+#include <cstdlib>
+#include <cstring>
 #include <mfem.hpp>
 #if defined(MFEM_USE_UMPIRE)
 #include <umpire/ResourceManager.hpp>
@@ -23,6 +26,53 @@ int GetDeviceCount()
   return mfem::Device::GetDeviceCount();
 #else
   return 0;
+#endif
+}
+
+int GetLauncherLocalRank()
+{
+  for (const char *name : LAUNCHER_LOCAL_RANK_VARIABLES)
+  {
+    if (const char *value = std::getenv(name))
+    {
+      const char *end = value + std::strlen(value);
+      int rank = -1;
+      const auto [ptr, ec] = std::from_chars(value, end, rank);
+      return (ec == std::errc() && ptr == end && rank >= 0) ? rank : -1;
+    }
+  }
+  return -1;
+}
+
+int InitDeviceBeforeMpi()
+{
+#if defined(MFEM_USE_CUDA) || defined(MFEM_USE_HIP)
+  const int local_rank = GetLauncherLocalRank();
+  if (local_rank < 0)
+  {
+    return -1;
+  }
+  // Like GetDeviceId, assign devices round-robin over the processes of a node. Errors, for
+  // example no visible device, only mean that the device is selected after MPI_Init.
+  int ngpu = 0;
+#if defined(MFEM_USE_CUDA)
+  if (cudaGetDeviceCount(&ngpu) != cudaSuccess || ngpu == 0 ||
+      cudaSetDevice(local_rank % ngpu) != cudaSuccess || cudaFree(nullptr) != cudaSuccess)
+  {
+    (void)cudaGetLastError();
+    return -1;
+  }
+#else
+  if (hipGetDeviceCount(&ngpu) != hipSuccess || ngpu == 0 ||
+      hipSetDevice(local_rank % ngpu) != hipSuccess || hipFree(nullptr) != hipSuccess)
+  {
+    (void)hipGetLastError();
+    return -1;
+  }
+#endif
+  return local_rank % ngpu;
+#else
+  return -1;
 #endif
 }
 

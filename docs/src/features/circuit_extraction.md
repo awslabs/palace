@@ -130,6 +130,36 @@ of the driven solver as well as the following additional files:
     constrained to the stable half-plane, so that the circuit can match the reduced-order model on
     the band and not be stable, for example in a transient circuit simulation. *Palace* warns how
     many estimates have ``\mathrm{Im}~f < 0``.
+  - (With interface dielectric postprocessing): `rom-interface-<idx>-C.csv`, one file per
+    [`config["Boundaries"]["Postprocessing"]["Dielectric"]`](../config/reference.md#config-boundaries-postprocessing-dielectric)
+    entry, where `<idx>` is its `"Index"`. It holds the interface capacitance matrix
+    ``\widehat{\bm{C}}_{\Gamma}``: the electric energy form of the interface (the numerator of
+    the participation ratio in `surface-Q.csv`) projected onto the reduced basis and normalized
+    like ``\widehat{\bm{C}}``, with the same node labels and order as `rom-C-re.csv` and zero
+    rows and columns for auxiliary states. It is real, symmetric, and positive semidefinite,
+    independent of frequency, free of port terminations (unlike ``\widehat{\bm{C}}``, which
+    includes the lumped port capacitances), linear in the interface `"Thickness"`, and
+    independent of the interface `"LossTan"`. For the synthesized node coordinates
+    ``\bm{y}`` of a field given by its peak phasor, such as a row of `rom-eigenvectors-*.csv`,
+    the time-averaged interface energy of the field is
+    ``U_{\Gamma} = \tfrac{1}{4}\bm{y}^{H}\widehat{\bm{C}}_{\Gamma}\bm{y}``, just as its
+    time-averaged electric energy is
+    ``U_{E} = \tfrac{1}{4}\bm{y}^{H}(\mathrm{Re}~\widehat{\bm{C}})\bm{y}``, so that its surface
+    participation ratio is ``p_{\Gamma} = U_{\Gamma}/U_{E}``. The loss of the interface enters
+    the circuit as ``\widehat{\bm{C}} - i\tan\delta_{\Gamma}\,\widehat{\bm{C}}_{\Gamma}``: as for
+    the loss tangent of a material, whose permittivity is ``\varepsilon(1 - i\tan\delta)``, it
+    is subtracted from ``\mathrm{Im}~\widehat{\bm{C}}``, which is negative semidefinite. The
+    denominator of `surface-Q.csv` includes the lumped port capacitances but not those of
+    `"Impedance"` boundaries, while ``U_{E}`` includes every capacitive boundary term. With a
+    frequency-dependent permittivity in the model, ``U_{E}`` is the energy of its
+    high-frequency permittivity ``\varepsilon_\infty``, without the polarization energy of the
+    material, which the auxiliary states carry, and with PML regions, ``U_{E}`` includes their
+    energy, which `surface-Q.csv` leaves out: in both cases, ``p_{\Gamma}`` differs from
+    `surface-Q.csv` for every interface (the loss of the circuit does not involve ``U_{E}``).
+    Like ``\widehat{\bm{C}}``, the matrix of an `"MS"` interface next to a frequency-dependent
+    substrate uses ``\varepsilon_\infty`` of the substrate, where `surface-Q.csv` uses
+    ``|\varepsilon(i\omega)|`` at the frequency of the field. *Palace* prints the
+    participations of each synthesized eigenvector with its eigenvalue estimate.
 
 There are several constraints and considerations for using this feature:
 

@@ -26,6 +26,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     preconditioner solves the PML regions with a sparse direct solver, and `eig.csv` reports
     the fraction of the energy of each mode in the PML regions. SchemaVer 6-1-0
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+  - Added interface capacitance matrices to adaptive driven circuit synthesis. For each
+    interface of `config["Boundaries"]["Postprocessing"]["Dielectric"]`,
+    `rom-interface-<index>-C.csv` holds its electric energy form in the reduced basis,
+    normalized like `rom-C-re.csv`, so that `yᴴ C_Γ y / yᴴ Re{C} y` is the surface
+    participation ratio of a field with synthesized coordinates `y`.
+    [PR 1156](https://github.com/awslabs/palace/pull/1156).
   - Added substructuring for electrostatic and magnetostatic simulations
     (`config["Solver"]["Substructuring"]`): the environment of a region is condensed onto
     their interface once and saved, and later runs solve only the region, also after a
@@ -50,6 +56,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     the cost of a triangular solve, instead of by the operations of the factorization. On a
     model with 115M unknowns on 3072 processes a coarse solve takes 43 ms instead of 72 ms.
     [PR 1306](https://github.com/awslabs/palace/pull/1306).
+  - In GPU runs, when the MPI launcher sets the node-local rank of each process, the GPU
+    of each process is selected, and its context created, before `MPI_Init`, so that MPI
+    libraries which set up the communication between the GPUs of a node in `MPI_Init`,
+    like Open MPI 5, can do so. [PR 1260](https://github.com/awslabs/palace/pull/1260).
   - Added a STRUMPACK patch for
     [pghysels/STRUMPACK#167](https://github.com/pghysels/STRUMPACK/pull/167), which adds a
     Schur complement interface to its sparse solvers. The partial factorization of
@@ -85,6 +95,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     their `PenetrationDepth`, `Thickness` and `KineticInductance` a default of 0.0, which
     only meant that the form is not used. SchemaVer 6-1-1
     [PR 1293](https://github.com/awslabs/palace/pull/1293).
+  - `--dry-run` with more than one process no longer hangs when the configuration file
+    fails the schema validation. [PR 1260](https://github.com/awslabs/palace/pull/1260).
 
 #### Documentation
 
