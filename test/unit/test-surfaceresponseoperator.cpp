@@ -4847,7 +4847,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     auto RingModelRefusal = [&]
     {
       const IoData iodata(ring_config, false);
-      return SurfaceResponsePreflightModelRefusal(ring_outcome, iodata.units, Mpi::World());
+      return SurfaceResponsePreflightModelRefusal(ring_outcome, iodata, Mpi::World());
     };
     auto RunRings = [&](const fs::path &library)
     {
