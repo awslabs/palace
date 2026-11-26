@@ -40,6 +40,7 @@
 #include "fem/substructuremodel.hpp"
 #include "models/drivensubstructure.hpp"
 #include "regression_helpers.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/iodata.hpp"
@@ -2973,8 +2974,8 @@ TEST_CASE("substructuring_driven_offline_restart", "[Serial][Parallel][GPU][Regr
     CHECK(fs::file_size(path) == fs::file_size(full));
     for (int j = 0; j < std::min(m.NumRecords(path), ref.NumRecords(full)); j++)
     {
-      auto x = m.ReadFlatRecord(path, j);
-      const auto y = ref.ReadFlatRecord(full, j);
+      auto x = palace::test::ReadDrivenRecord(m, path, j);
+      const auto y = palace::test::ReadDrivenRecord(ref, full, j);
       if (j == 0)
       {
         CHECK(x[0] == sentinel);

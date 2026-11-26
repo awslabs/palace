@@ -5,6 +5,7 @@
 #define PALACE_TEST_HELPERS_HPP
 
 #include <array>
+#include <complex>
 #include <cstdlib>
 #include <functional>
 #include <optional>
@@ -67,6 +68,11 @@ public:
   ~ScopedEnvironmentVariable() { Set(previous ? previous->c_str() : nullptr); }
 };
 
+namespace palace
+{
+class DrivenSubstructureModel;
+}  // namespace palace
+
 namespace palace::test
 {
 
@@ -79,6 +85,12 @@ std::string CaptureStdout(const std::function<void()> &f);
 // online run ("Online") which loads it.
 void SetModelRun(nlohmann::json &config, std::string_view mode,
                  const std::string &model_path);
+
+// The record j of the frequencies in the file of a driven substructuring model, as written:
+// the lower triangle of S by columns, then g, h and c (see
+// DrivenSubstructureModel::PartSizes), read by the calling process.
+std::vector<std::complex<double>> ReadDrivenRecord(const DrivenSubstructureModel &model,
+                                                   const std::string &path, int j);
 
 // Deterministic pseudo-random orthonormal frames (e1, e2, normal) of planes oblique to
 // every coordinate axis.

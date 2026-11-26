@@ -14,6 +14,7 @@
 #include <utility>
 #include <unistd.h>
 #include "fixtures.hpp"
+#include "models/drivensubstructure.hpp"
 
 mfem::Mesh SingleTetMesh()
 {
@@ -245,6 +246,22 @@ std::vector<std::array<mfem::Vector, 3>> ObliqueFrames(int num_frames)
     frames.push_back({e1, e2, n});
   }
   return frames;
+}
+
+std::vector<std::complex<double>> ReadDrivenRecord(const DrivenSubstructureModel &model,
+                                                   const std::string &path, int j)
+{
+  const auto pos = model.RecordPositions(path, MPI_COMM_SELF);
+  MFEM_VERIFY(j >= 0 && static_cast<std::size_t>(j) < pos.size(),
+              "No record " << j << " in the substructuring model \"" << path << "\"!");
+  const auto sz = model.PartSizes();
+  std::vector<std::complex<double>> x(sz[0] + sz[1] + sz[2] + sz[3]);
+  std::ifstream f(path, std::ios::binary);
+  f.seekg(pos[j]);
+  f.read(reinterpret_cast<char *>(x.data()),
+         static_cast<std::streamsize>(x.size() * sizeof(std::complex<double>)));
+  MFEM_VERIFY(f, "Truncated substructuring model \"" << path << "\"!");
+  return x;
 }
 
 }  // namespace palace::test

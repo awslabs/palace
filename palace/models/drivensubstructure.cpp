@@ -29,18 +29,6 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 
-extern "C"
-{
-  void zgetrf_(const int *, const int *, std::complex<double> *, const int *, int *, int *);
-  void zgetrs_(const char *, const int *, const int *, const std::complex<double> *,
-               const int *, const int *, std::complex<double> *, const int *, int *);
-  void dpotrf_(const char *, const int *, double *, const int *, int *);
-  void dsyevr_(const char *, const char *, const char *, const int *, double *, const int *,
-               const double *, const double *, const int *, const int *, const double *,
-               int *, double *, double *, const int *, int *, double *, const int *, int *,
-               const int *, int *);
-}
-
 namespace palace
 {
 
@@ -662,11 +650,11 @@ DrivenSubstructure::WriteRegionMesh(const std::string &path,
 
 const Vector &DrivenSubstructure::FingerprintField(int k) const
 {
-  if (fp_fields[k].Size() == 0)
+  if (!fp_fields[k])
   {
     fp_fields[k] = palace::FingerprintField(space_op.GetNDSpace().Get(), k, fp_centers[k]);
   }
-  return fp_fields[k];
+  return *fp_fields[k];
 }
 
 std::vector<double> DrivenSubstructure::EnvironmentFingerprint(double omega) const
@@ -1226,21 +1214,6 @@ bool DrivenSubstructureModel::SameHeader(const DrivenSubstructureModel &saved,
     }
   }
   return true;
-}
-
-std::vector<std::complex<double>>
-DrivenSubstructureModel::ReadFlatRecord(const std::string &path, int j) const
-{
-  const auto records = FrequencyRecords(ModelFile::Read(path, MPI_COMM_SELF));
-  MFEM_VERIFY(static_cast<std::size_t>(j) < records.size() &&
-                  records[j].size == static_cast<long long>(RecordBytes()),
-              "Truncated substructuring model \"" << path << "\"!");
-  const std::vector<char> p = ModelFile::ReadPayload(path, records[j], MPI_COMM_SELF);
-  std::vector<std::complex<double>> x(RecordBytes() / sizeof(std::complex<double>));
-  MFEM_VERIFY(p.size() == RecordBytes(),
-              "Truncated substructuring model \"" << path << "\"!");
-  std::memcpy(x.data(), p.data(), p.size());
-  return x;
 }
 
 std::vector<long long> DrivenSubstructureModel::RecordPositions(const std::string &path,

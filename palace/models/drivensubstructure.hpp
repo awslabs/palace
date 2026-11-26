@@ -8,6 +8,7 @@
 #include <complex>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 #include <mfem.hpp>
@@ -144,7 +145,6 @@ struct DrivenSubstructureModel
   void WriteHeader(const std::string &path, bool create = true) const;
   void AppendRecord(const std::string &path, const Record &r, MPI_Comm comm) const;
   void ReadHeader(const std::string &path, MPI_Comm comm);
-  std::vector<std::complex<double>> ReadFlatRecord(const std::string &path, int j) const;
   // Number of complete records of frequencies in the file.
   int NumRecords(const std::string &path) const;
 
@@ -336,9 +336,10 @@ private:
   // The local true DOFs of the wave ports (each in the wave_ports of its side).
   std::map<int, std::vector<char>> wave_port_dofs;
 
-  // The fixed fields r_k of the fingerprints (true DOFs), projected on first use.
+  // The fixed fields r_k of the fingerprints (true DOFs), projected on first use, on every
+  // process alike (also one without true DOFs, whose fields are empty).
   std::array<std::array<double, 3>, 3> fp_centers;
-  mutable std::array<Vector, 3> fp_fields;
+  mutable std::array<std::optional<Vector>, 3> fp_fields;
   const Vector &FingerprintField(int k) const;
 
   // The real and imaginary parts of the stiffness (op = 0), damping (1) or mass (2) matrix

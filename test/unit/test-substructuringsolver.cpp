@@ -3911,10 +3911,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
   m.TruncateRecords(path, 1);
   CHECK(m.NumRecords(path) == 1);
-  CHECK(m.ReadFlatRecord(path, 0) == flat(1.0));
+  CHECK(test::ReadDrivenRecord(m, path, 0) == flat(1.0));
   m.AppendRecord(path, record(4.0), MPI_COMM_SELF);
   CHECK(m.NumRecords(path) == 2);
-  CHECK(m.ReadFlatRecord(path, 1) == flat(4.0));
+  CHECK(test::ReadDrivenRecord(m, path, 1) == flat(4.0));
 
   // The model of another sweep does not continue: other frequencies, interface, boundaries,
   // ports, environment (beyond the rounding of its moments) or sources (beyond their
