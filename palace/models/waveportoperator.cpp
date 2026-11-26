@@ -3,6 +3,7 @@
 
 #include "waveportoperator.hpp"
 #include <algorithm>
+#include <cstdio>
 #include <limits>
 #include <numbers>
 #include <fmt/ranges.h>
@@ -160,6 +161,11 @@ std::complex<double> Normalize(const GridFunction &S0t, GridFunction &E0t,
       {-(sr * E0t.Real()) - (si * E0t.Imag()), -(sr * E0t.Imag()) + (si * E0t.Real())},
       {(sr * E0t.Real()) - (si * E0t.Imag()), (sr * E0t.Imag()) + (si * E0t.Real())}};
   Mpi::GlobalSum(3, dot, S0t.ParFESpace()->GetComm());
+  if (Mpi::Root(S0t.ParFESpace()->GetComm()))
+  {
+    fprintf(stderr, "WAVEDBG normalize dot0=(%.3e,%.3e) dot1=(%.3e,%.3e) dot2=(%.3e,%.3e)\n",
+            dot[0].real(), dot[0].imag(), dot[1].real(), dot[1].imag(), dot[2].real(), dot[2].imag());
+  }
   MFEM_VERIFY(std::abs(dot[1]) > 0.0,
               "Wave port mode with zero power cannot be normalized!");
   std::complex<double> scale = 1.0 / std::sqrt(std::abs(dot[1]));
@@ -986,7 +992,24 @@ void WavePortData::Initialize(double omega)
     if (port_comm != MPI_COMM_NULL)
     {
       mode_solver->GetEigenvector(mode_idx - 1, e0);
+      {
+        // DEBUG (throwaway branch): the selected mode before and after NormalizePhase.
+        const auto m = linalg::Mean(port_comm, e0);
+        const double n0 = linalg::Norml2(port_comm, e0);
+        if (Mpi::Root(port_comm))
+        {
+          fprintf(stderr, "WAVEDBG mode omega=%.9e lambda=(%.6e,%.6e) kn0=(%.6e,%.6e) |e0|=%.3e mean=(%.3e,%.3e)\n",
+                  omega, lambda.real(), lambda.imag(), kn0.real(), kn0.imag(), n0, m.real(), m.imag());
+        }
+      }
       linalg::NormalizePhase(port_comm, e0);
+      {
+        const double n1 = linalg::Norml2(port_comm, e0);
+        if (Mpi::Root(port_comm))
+        {
+          fprintf(stderr, "WAVEDBG phase |e0|=%.3e\n", n1);
+        }
+      }
       ComplexVector et_view, en_view;
       mode_assembly::ApplyVDBackTransform(e0, kn0, port_nd_fespace->GetTrueVSize(),
                                           port_h1_fespace->GetTrueVSize(), et_view,

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <initializer_list>
 #include <limits>
 #include <numeric>
@@ -353,6 +354,27 @@ ModeEigenSolver::SolveResult ModeEigenSolver::Solve(std::complex<double> omega,
   if (real_frequency)
   {
     reduced_model->RecordExactSolve();
+  }
+  {
+    // DEBUG (throwaway branch): the converged eigenpairs and the norms of their parts.
+    ComplexVector dx(nd_size + h1_size);
+    dx.UseDevice(true);
+    for (int i = 0; i < num_conv; i++)
+    {
+      eigen->GetEigenvector(i, dx);
+      Vector dr(dx.Real(), 0, nd_size), di(dx.Imag(), 0, nd_size);
+      Vector hr(dx.Real(), nd_size, h1_size), hi(dx.Imag(), nd_size, h1_size);
+      const double n_all = linalg::Norml2(solver_comm, dx);
+      const double n_nd = std::hypot(linalg::Norml2(solver_comm, dr), linalg::Norml2(solver_comm, di));
+      const double n_h1 = std::hypot(linalg::Norml2(solver_comm, hr), linalg::Norml2(solver_comm, hi));
+      const auto lam = eigen->GetEigenvalue(i);
+      const auto kn = mode_assembly::PropagationConstant(-sigma - 1.0 / lam, omega);
+      if (Mpi::Root(solver_comm))
+      {
+        fprintf(stderr, "WAVEDBG solve omega=%.9e sigma=%.6e nconv=%d i=%d lam=(%.6e,%.6e) kn=(%.6e,%.6e) |x|=%.3e |x_nd|=%.3e |x_h1|=%.3e subspace=%d\n",
+                omega.real(), sigma, num_conv, i, lam.real(), lam.imag(), kn.real(), kn.imag(), n_all, n_nd, n_h1, num_subspace);
+      }
+    }
   }
 
   // Build a permutation sorted by proximity to the shift target so that mode ordering is
