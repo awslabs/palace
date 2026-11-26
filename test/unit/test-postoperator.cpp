@@ -1127,17 +1127,15 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field output leaves the mesh coordinates 
   auto &pmesh = mesh.front()->Get();
   REQUIRE(dynamic_cast<const mfem::ParGridFunction *>(pmesh.GetNodes()));
 
-  // What the output scales: the vertices, the nodes, and their face-neighbor copies.
+  // What the output scales: the vertices, the nodes, and the face-neighbor nodes. With
+  // nodes, MFEM exchanges only the face-neighbor nodes: face_nbr_vertices is allocated but
+  // never set, so its values are uninitialized (NaN on some platforms) and are left out.
   auto Coordinates = [&pmesh]()
   {
     std::vector<double> x;
     for (int i = 0; i < pmesh.GetNV(); i++)
     {
       x.insert(x.end(), pmesh.GetVertex(i), pmesh.GetVertex(i) + 3);
-    }
-    for (int i = 0; i < pmesh.face_nbr_vertices.Size(); i++)
-    {
-      x.insert(x.end(), pmesh.face_nbr_vertices[i](), pmesh.face_nbr_vertices[i]() + 3);
     }
     const auto &nodes = static_cast<const mfem::ParGridFunction &>(*pmesh.GetNodes());
     x.insert(x.end(), nodes.HostRead(), nodes.HostRead() + nodes.Size());
