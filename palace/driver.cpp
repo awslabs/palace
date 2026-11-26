@@ -192,7 +192,7 @@ int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
   // matrix step refuses (predicted by that step's own test on the matrices it reads).
   if (refusal.empty() && (outcome.fail_closed_summary.empty() || !policy))
   {
-    refusal = SurfaceResponsePreflightModelRefusal(outcome, iodata.units, comm);
+    refusal = SurfaceResponsePreflightModelRefusal(outcome, iodata, comm);
   }
   if (!outcome.fail_closed_summary.empty())
   {

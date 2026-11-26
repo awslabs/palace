@@ -25570,8 +25570,6 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   {
     outcome.census_models =
         parallel_mesh.Dimension() == 2 ? identification_2d.models : patches.models;
-    outcome.census_matching_radius =
-        TargetInterfaceMatchingRadius(iodata, request.target_interfaces);
   }
   {
     // CUT-PLAN step 4b (lane v1step4b; ruling R1): the solve-form refusals this pass saw,
@@ -25706,18 +25704,23 @@ std::string ResponseModelRefusal(
 
 std::string
 SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outcome,
-                                     const Units &units, MPI_Comm comm)
+                                     const IoData &iodata, MPI_Comm comm)
 {
   // STEP 4c (lane v1verdict1): EVERY census model the loop refuses, each with its first
-  // refusal (one model: the line of step 4b).
+  // refusal (one model: the line of step 4b). The census operator's target matching radius
+  // on every rank, as that operator computes it (its check stops every rank alike).
+  const auto &request = iodata.problem.type == ProblemType::ELECTROSTATIC
+                            ? iodata.solver.electrostatic.response_correction
+                            : iodata.solver.surface_response_correction;
+  const double matching_radius =
+      request ? TargetInterfaceMatchingRadius(iodata, request->target_interfaces) : 0.0;
   std::string line;
   if (Mpi::Root(comm))
   {
     std::string refusals;
     for (const auto &model : outcome.census_models)
     {
-      const auto refusal =
-          ResponseModelRefusal(model, units, outcome.census_matching_radius);
+      const auto refusal = ResponseModelRefusal(model, iodata.units, matching_radius);
       if (!refusal.empty())
       {
         refusals += fmt::format(
