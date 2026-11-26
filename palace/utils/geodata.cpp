@@ -75,9 +75,11 @@ std::unordered_map<int, int> CheckMesh(const mfem::Mesh &, const config::Boundar
 int AddInterfaceBdrElements(IoData &, std::unique_ptr<mfem::Mesh> &,
                             std::unordered_map<int, int> &, MPI_Comm comm);
 
-// Generate element-based mesh partitioning, using either a provided file or METIS.
+// Generate element-based mesh partitioning, using either a provided file or METIS. An
+// invalid file sets the error, if given (and returns nullptr), and otherwise aborts.
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &, int,
-                                           const std::string & = "", bool = true);
+                                           const std::string & = "", bool = true,
+                                           std::string * = nullptr);
 
 // Given a serial mesh on the root processor and element partitioning, create a parallel
 // mesh over the given communicator. The serial mesh is destroyed when no longer needed.
@@ -500,11 +502,22 @@ std::unique_ptr<mfem::ParMesh> Partition(IoData &iodata, std::unique_ptr<mfem::M
     }
   }
 
-  // Generate partitioning from the serial mesh on loading ranks.
+  // Generate partitioning from the serial mesh on loading ranks. An invalid partitioning
+  // file fails on all processes, since the others wait for their part of the mesh.
   std::unique_ptr<int[]> partitioning;
+  std::string part_error;
   if (smesh)
   {
-    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning);
+    partitioning = GetMeshPartitioning(*smesh, Mpi::Size(comm), iodata.model.partitioning,
+                                       true, &part_error);
+  }
+  if (!iodata.model.partitioning.empty())
+  {
+    bool valid = part_error.empty();
+    Mpi::GlobalAnd(1, &valid, comm);
+    MFEM_VERIFY(valid, "Invalid mesh partitioning file \""
+                           << iodata.model.partitioning << "\""
+                           << (part_error.empty() ? "" : " (" + part_error + ")") << "!");
   }
 
   if (!pmesh && use_mesh_partitioner)
@@ -2948,6 +2961,15 @@ void CompleteMeshEntityCounts(mfem::ParMesh &mesh, MeshEntityCounts &counts)
   }
 }
 
+double GetImbalanceRatio(const mfem::ParMesh &mesh)
+{
+  int min_elem, max_elem;
+  min_elem = max_elem = mesh.GetNE();
+  Mpi::GlobalMin(1, &min_elem, mesh.GetComm());
+  Mpi::GlobalMax(1, &max_elem, mesh.GetComm());
+  return (max_elem > 1) ? double(max_elem) / min_elem : 1.0;
+}
+
 double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
                      MeshEntityCounts *out_counts)
 {
@@ -2957,22 +2979,8 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
   // If there is more than one processor, may perform rebalancing: a nonconforming mesh
   // before it is saved, with whole refinement-tree roots, so that the save need not move
   // them.
-  double ratio = 1.0;
+  const double ratio = GetImbalanceRatio(*mesh);
   const double tol = iodata.model.refinement.maximum_imbalance;
-  if (Mpi::Size(comm) > 1)
-  {
-    int min_elem, max_elem;
-    min_elem = max_elem = mesh->GetNE();
-    Mpi::GlobalMin(1, &min_elem, comm);
-    Mpi::GlobalMax(1, &max_elem, comm);
-    ratio = double(max_elem) / min_elem;
-    if constexpr (false)
-    {
-      Mpi::Print("Rebalancing: max/min elements per processor = {:d}/{:d} (ratio = {:.3e}, "
-                 "tol = {:.3e})\n",
-                 max_elem, min_elem, ratio, tol);
-    }
-  }
   if (ratio > tol && mesh->Nonconforming())
   {
     RebalanceRootAligned(*mesh, tol);
@@ -5918,10 +5926,9 @@ int AddInterfaceBdrElements(IoData &iodata, std::unique_ptr<mfem::Mesh> &orig_me
 }
 
 std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
-                                           const std::string &part_file, bool print)
+                                           const std::string &part_file, bool print,
+                                           std::string *error)
 {
-  MFEM_VERIFY(size <= mesh.GetNE(), "Mesh partitioning must have parts <= mesh elements ("
-                                        << size << " vs. " << mesh.GetNE() << ")!");
   if (part_file.length() == 0)
   {
     const int part_method = 1;
@@ -5943,25 +5950,38 @@ std::unique_ptr<int[]> GetMeshPartitioning(const mfem::Mesh &mesh, int size,
   //     ...
   //   <part[NE-1]>
   //
-  int ne, np;
+  auto Invalid = [&](const std::string &why)
+  {
+    MFEM_VERIFY(error,
+                "Invalid mesh partitioning file \"" << part_file << "\" (" << why << ")!");
+    *error = why;
+    return std::unique_ptr<int[]>();
+  };
   std::ifstream part_ifs(part_file);
+  if (!part_ifs.is_open())
+  {
+    return Invalid("cannot be opened");
+  }
+  int ne = -1, np = -1;
   part_ifs.ignore(std::numeric_limits<std::streamsize>::max(), ' ');
   part_ifs >> ne;
   if (ne != mesh.GetNE())
   {
-    MFEM_ABORT("Invalid partitioning file (number of elements)!");
+    return Invalid(fmt::format("{:d} elements, not {:d}", ne, mesh.GetNE()));
   }
   part_ifs.ignore(std::numeric_limits<std::streamsize>::max(), ' ');
   part_ifs >> np;
   if (np != size)
   {
-    MFEM_ABORT("Invalid partitioning file (number of processors)!");
+    return Invalid(fmt::format("{:d} processors, not {:d}", np, size));
   }
   auto partitioning = std::make_unique<int[]>(mesh.GetNE());
-  int i = 0;
-  while (i < mesh.GetNE())
+  for (int i = 0; i < mesh.GetNE(); i++)
   {
-    part_ifs >> partitioning[i++];
+    if (!(part_ifs >> partitioning[i]) || partitioning[i] < 0 || partitioning[i] >= size)
+    {
+      return Invalid(fmt::format("element {:d} has no part in [0, {:d})", i, size));
+    }
   }
   if (print)
   {

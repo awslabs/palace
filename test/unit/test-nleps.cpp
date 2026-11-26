@@ -14,6 +14,7 @@
 #include <mfem.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/generators/catch_generators.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
 #include "linalg/eps.hpp"
@@ -135,12 +136,11 @@ public:
 
 // Append decoupled dofs with the diagonal entry pad to the global vector v of a problem of
 // v.size() dofs, so that it has more dofs than processes: MFEM's partitioning then leaves
-// no process without a dof, which the eigenvalue solvers require on every process (an
-// empty process fails a verification, and the others wait in a collective). With
-// min_local > 1 it has twice min_local dofs per process, for a partitioning which is not
-// even: PARPACK requires its number of basis vectors ≤ the local size on every process.
-// The tests keep these dofs out of their solves: zero in a start vector, and far from the
-// target.
+// no process without a dof, which ARPACK requires (it raises an error on every process
+// otherwise). With min_local > 1 it has twice min_local dofs per process, for a
+// partitioning which is not even: PARPACK requires its number of basis vectors ≤ the local
+// size on every process. The tests keep these dofs out of their solves: zero in a start
+// vector, and far from the target.
 void AddDecoupledDofs(std::vector<double> &v, double pad, int min_local = 1)
 {
   const auto size = static_cast<std::size_t>(Mpi::Size(Mpi::World()));
@@ -157,12 +157,16 @@ struct DiagonalLorentzProblem
   std::vector<long long> gid;  // Global index of each local dof
   std::unique_ptr<ComplexParOperator> K, M;
 
-  explicit DiagonalLorentzProblem(std::vector<double> k_) : k(std::move(k_)), fec(0, 2)
+  // With on_root, all the elements are on the first process.
+  explicit DiagonalLorentzProblem(std::vector<double> k_, bool on_root = false)
+    : k(std::move(k_)), fec(0, 2)
   {
     auto smesh = mfem::Mesh::MakeCartesian2D(static_cast<int>(k.size()), 1,
                                              mfem::Element::QUADRILATERAL, false,
                                              static_cast<double>(k.size()), 1.0);
-    mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(Mpi::World(), smesh));
+    std::vector<int> partitioning(k.size(), 0);
+    mesh = std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(
+        Mpi::World(), smesh, on_root ? partitioning.data() : nullptr));
     fespace = std::make_unique<FiniteElementSpace>(*mesh, &fec);
     const int n = mesh->Get().GetNE();
     REQUIRE(fespace->GetVSize() == n);
@@ -661,4 +665,86 @@ TEST_CASE("Quasi-Newton updates a stale preconditioner below PreconditionerLagTo
     REQUIRE(m[2].matched);
     CHECK(std::stoi(m[2].str()) < 40);
   }
+}
+
+// A problem of a single dof: on more processes, the others have no unknowns, and take part
+// in the solve all the same.
+TEST_CASE("Quasi-Newton on processes without unknowns", "[nleps][Serial][Parallel]")
+{
+  constexpr double k0 = 4.0, tol = 1.0e-10;
+  const DiagonalLorentzProblem p(std::vector<double>{k0});
+  REQUIRE(p.LocalSize() == (Mpi::Root(Mpi::World()) ? 1 : 0));
+  const auto roots = p.Roots(k0);
+  const auto ls =
+      *std::ranges::max_element(roots, [](auto a, auto b) { return a.imag() < b.imag(); });
+  ComplexVector x0(p.LocalSize());
+  x0 = 1.0;
+  std::vector<std::complex<double>> theta = {1.01 * ls};
+  std::vector<ComplexVector> vecs = {x0};
+  QuasiNewtonSolver qn(Mpi::World(),
+                       std::make_unique<SeedEigenpairs>(std::move(theta), std::move(vecs)),
+                       1, 0, true);
+  qn.SetTol(tol);
+  qn.SetMaxIter(100);
+  qn.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
+  qn.SetExtraSystemMatrix([&p](std::complex<double> l) { return p.A2(l); });
+  qn.SetPreconditionerUpdate([&p](std::complex<double> a0, std::complex<double>,
+                                  std::complex<double> a2, std::complex<double> a3)
+                             { return p.Preconditioner(a0, a2, a3); });
+  qn.SetNumModes(1, 1);
+  qn.SetPreconditionerLag(1, 0.0);
+  qn.SetMaxRestart(0);
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-12);
+  gmres->SetMaxIter(100);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
+  qn.SetLinearSolver(ksp);
+  qn.SetShiftInvert(std::complex<double>(0.0, 1.5));
+  REQUIRE(qn.Solve() == 1);
+  CAPTURE(ls, qn.GetEigenvalue(0));
+  CHECK(std::abs(qn.GetEigenvalue(0) - ls) <= 1.0e-8 * std::abs(ls));
+  CHECK(qn.GetError(0, EigenvalueSolver::ErrorType::BACKWARD) <= tol);
+}
+
+// PARPACK requires unknowns on every process, and checks it on each process alone. With all
+// the dofs on the first process, the others have none: the solver raises the error on
+// every process.
+TEST_CASE("ARPACK requires unknowns on every process", "[nleps][Serial][Parallel]")
+{
+#if !defined(PALACE_WITH_ARPACK)
+  SKIP("Requires the ARPACK eigensolver");
+#else
+  const std::vector<double> k = {1.0, 2.0, 3.0, 4.0};
+  const DiagonalLorentzProblem p(k, true);
+  const double sigma = 2.2;
+  std::vector<std::complex<double>> d(p.LocalSize());
+  for (int i = 0; i < p.LocalSize(); i++)
+  {
+    d[i] = k[i] - sigma;
+  }
+  const DiagonalComplexOperator A(std::move(d));
+  auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
+  gmres->SetRelTol(1.0e-14);
+  gmres->SetMaxIter(100);
+  ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
+  ksp.SetOperators(A, A);
+  arpack::ArpackEPSSolver eigen(Mpi::World(), 0);
+  eigen.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
+  eigen.SetLinearSolver(ksp);
+  eigen.SetShiftInvert(sigma);
+  eigen.SetWhichEigenpairs(EigenvalueSolver::WhichType::LARGEST_MAGNITUDE);
+  eigen.SetNumModes(1, 3);
+  eigen.SetTol(1.0e-10);
+  eigen.SetMaxIter(100);
+  if (Mpi::Size(Mpi::World()) == 1)
+  {
+    REQUIRE(eigen.Solve() >= 1);
+    CHECK(std::abs(eigen.GetEigenvalue(0) - 2.0) <= 1.0e-8);
+  }
+  else
+  {
+    CHECK_THROWS_WITH(eigen.Solve(), Catch::Matchers::ContainsSubstring(
+                                         "with processes without unknowns"));
+  }
+#endif
 }

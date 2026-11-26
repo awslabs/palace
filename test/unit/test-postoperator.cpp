@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iterator>
 #include <numbers>
+#include <sstream>
 #include <string>
 #include <vector>
 #include <fmt/format.h>
@@ -1063,6 +1064,64 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
           fmt::format("E_real_{:0{}d}.gf.{:0{}d}", 2, pad_digits, rank, pad_digits);
       CHECK_FALSE(fs::exists(extra_field));
     }
+  }
+}
+
+TEST_CASE_METHOD(test::SharedTempDir, "Error indicator output without elements",
+                 "[postoperator][Serial][Parallel]")
+{
+  // A mesh of a single element, on the first process: the others have no elements and no
+  // local error indicators.
+  IoData iodata = IoData(Units(1.0, 1.0));
+  iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.boundaries.pec.attributes = {1};
+  iodata.problem.type = ProblemType::ELECTROSTATIC;
+  iodata.problem.output = temp_dir.string();
+  iodata.problem.output_formats.gridfunction = true;
+  iodata.solver.electrostatic.n_post = 1;
+  iodata.CheckConfiguration();
+
+  auto comm = Mpi::World();
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(1, 1, 1, mfem::Element::HEXAHEDRON));
+  iodata.model.Lc = mesh::ComputeReferenceLength(serial_mesh, comm);
+  iodata.NondimensionalizeInputs(serial_mesh);
+  int partitioning[] = {0};
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(std::make_unique<Mesh>(
+      std::make_unique<mfem::ParMesh>(comm, *serial_mesh, partitioning)));
+  REQUIRE(mesh.back()->GetNE() == (Mpi::Root(comm) ? 1 : 0));
+  LaplaceOperator laplace_op(iodata, mesh);
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+
+  Vector eta(mesh.back()->GetNE());
+  eta = 2.0;
+  post_op.MeasureFinalize(ErrorIndicator(std::move(eta)));
+  Mpi::Barrier(comm);
+
+  // The summary statistics of the indicator are those of its single element.
+  if (Mpi::Root(comm))
+  {
+    std::ifstream csv(fs::path(iodata.problem.output) / "error-indicators.csv");
+    std::string header, values;
+    REQUIRE(std::getline(csv, header));
+    REQUIRE(std::getline(csv, values));
+    std::istringstream row(values);
+    std::string value;
+    int num_values = 0;
+    while (std::getline(row, value, ','))
+    {
+      CHECK_THAT(std::stod(value), WithinRel(2.0, 1.0e-12));
+      num_values++;
+    }
+    CHECK(num_values == 4);
+  }
+  const auto pad_digits = post_op.GetPadDigitsDefault();
+  for (int i = 0; i < Mpi::Size(comm); i++)
+  {
+    CHECK(fs::is_regular_file(fs::path(iodata.problem.output) / "gridfunction" /
+                              "electrostatic" /
+                              fmt::format("indicator.gf.{:0{}d}", i, pad_digits)));
   }
 }
 

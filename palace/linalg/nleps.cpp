@@ -20,6 +20,8 @@ NonLinearEigenvalueSolver::NonLinearEigenvalueSolver(MPI_Comm comm, int print)
   : comm(comm), print(print)
 {
   // Initialization.
+  nev = n = 0;
+  rtol = 0.0;
   nleps_it = 0;
 
   gamma = delta = 1.0;
@@ -255,8 +257,8 @@ void QuasiNewtonSolver::SetOperators(const ComplexOperator &K, const ComplexOper
 void QuasiNewtonSolver::SetInitialGuess()
 {
 
-  MFEM_VERIFY(n > 0, "Must call SetOperators before using SetInitialguess for nonlinear "
-                     "eigenvalue solver!");
+  MFEM_VERIFY(opK, "Must call SetOperators before using SetInitialguess for nonlinear "
+                   "eigenvalue solver!");
   MFEM_VERIFY(nev > 0, "Must call SetNumModes before using SetInitialguess for nonlinear "
                        "eigenvalue solver!");
 

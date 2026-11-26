@@ -553,6 +553,22 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://raw.githubusercontent.com/awslabs/palace/48f86fa81ed110995e8bf6eda738650673077b2c/extern/patch/mfem/mfem_pr5780.diff"
   07c7214581cb5c11a4999e7bc473a67a16ae6a400c7220e1b2d743600fdee6f4
 )
+# https://github.com/mfem/mfem/pull/5436
+# A process without elements reads the nodes of its part of a mesh: Mesh::Loader takes
+# their vector dimension from their space, not from a typical element.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5436.diff
+  "https://raw.githubusercontent.com/awslabs/palace/1f3a11ea797c622e9a47f8b3aceaca94a5bf3a25/extern/patch/mfem/mfem_pr5436.diff"
+  5affda3dcb7f749ea6e3f19633f00ec65b469635dc1e421d2517ef0a7c05e081
+)
+# https://github.com/mfem/mfem/pull/5791
+# ParMesh::PrintInfo reduces defined element sizes and condition numbers from a process
+# without elements.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5791.diff
+  "https://github.com/mfem/mfem/pull/5791.diff?full_index=1"
+  16843fe49626ded2f85e4f883a65128c2ad218ce56e41c6974f6a9d5828e5850
+)
 
 # https://github.com/mfem/mfem/pull/5758
 # The parallel CuDSSSolver also sets the communicator for device buffers, which cuDSS 0.8
