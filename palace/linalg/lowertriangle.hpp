@@ -56,6 +56,9 @@ public:
   // one not kept), each rank mapping those it owns. Collective.
   std::vector<HYPRE_BigInt> Indices(const std::vector<HYPRE_BigInt> &tdofs) const;
 
+  // The system index (0-based) of a local true DOF (-1 if not kept).
+  HYPRE_BigInt Index(int i) const { return index[i]; }
+
   // Σ_p coef[p] parts[p] on the pattern (null parts skipped).
   template <typename T>
   std::vector<T> Values(const std::vector<T> &coef) const;

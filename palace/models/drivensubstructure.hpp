@@ -34,6 +34,7 @@ struct DomainData;
 
 class BlockCyclicGrid;
 class PortExcitations;
+class SideSystem;
 class SpaceOperator;
 
 //
@@ -301,29 +302,22 @@ private:
     std::vector<int> attrs;
     // Local true DOFs pinned in the side's operator: outside its interior and Γ.
     mfem::Array<int> pinned;
-    // The factored system, on the side's interior and Γ: its local true DOFs (the local
-    // rows), global size, and its indices of the interface DOFs.
-    std::vector<int> rows;
-    HYPRE_BigInt n_sys = 0;
-    std::vector<HYPRE_BigInt> gamma_sys;
-    // Lower-triangle pattern of the local rows (row_ptr over the local true DOFs, global
-    // columns jcn, 1-based), with the entries of the parts on it.
-    std::vector<int> row_ptr, jcn;
-    std::vector<std::vector<double>> parts;  // Kr, Ki, Cr, Ci, Mr, Mi (empty if absent)
-    bool extra = false;                      // A2(ω) is present
-    // The local entries (1-based COO in the system's indices) at the first frequency,
-    // until factored.
-    std::vector<int> irn_sys, jcn_sys;
+    // The factored system, on the side's interior and Γ (see SideSystem), with the entries
+    // of the parts Kr, Ki, Cr, Ci, Mr, Mi on its pattern (empty if absent), and its rows
+    // and entries extended by the bordering below until factored, when they are handed
+    // over.
+    std::unique_ptr<SideSystem> system;
+    bool extra = false;  // A2(ω) is present
+    // The local entries at the first frequency, until factored.
     std::vector<std::complex<double>> val;
     std::unique_ptr<SchurFactorization<std::complex<double>>> schur;
     // The rank-one modal terms g s sᵀ of the side's wave ports, bordering the system: an
-    // extra unknown y per term after its n_dofs DOFs, on the last rank, with the entries
-    // √(gσ) s against the term's DOFs (local true DOFs, in the system) and -σ on its
-    // diagonal (eliminating y adds g s sᵀ), σ = border. The entries follow those of the
+    // extra unknown y per term after those of the system, on the last rank, with the
+    // entries √(gσ) s against the term's DOFs (local true DOFs, in the system) and -σ on
+    // its diagonal (eliminating y adds g s sᵀ), σ = border. The entries follow those of the
     // pattern.
     std::vector<int> wave_ports, term_ports;
     std::vector<std::vector<int>> term_dofs;
-    HYPRE_BigInt n_dofs = 0;
     double border = 1.0;
   };
   Side env;
