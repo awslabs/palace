@@ -19,6 +19,7 @@
 #include "models/surfaceparticipationtable.hpp"
 #include "models/surfaceresponsecoverage.hpp"
 #include "models/surfaceresponseresolution.hpp"
+#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/filesystem.hpp"
 
@@ -1237,7 +1238,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOn
   }
   const auto path = temp_dir / (std::string("preflight-") + kSurfaceParticipationFile);
   SurfaceParticipationTable table(path.string(), "Eigenmode", 2, InterimBars());
-  table.WritePreflightLevel(rows, 12345, comm);
+  // MINOR-1 of the fix round: the line names the table's word of the census PREFLIGHT, not
+  // a 'PREFLIGHT <word>' label the cells no longer carry.
+  const std::string printed =
+      test::CaptureStdout([&] { table.WritePreflightLevel(rows, 12345, comm); });
+  CHECK(printed.find("the resolution cells the table's word of the census PREFLIGHT (never "
+                     "RESOLVED)") != std::string::npos);
+  CHECK(printed.find("PREFLIGHT <word>") == std::string::npos);
   CHECK(table.Started());
   const std::string text = ReadText(path);
   CHECK(CountLines(text) == 1 + 3 + 4);  // the SA, MS, MA totals (not the box), the rows
