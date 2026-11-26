@@ -149,10 +149,14 @@ TEST_CASE("Element moments tell sets of elements apart", "[substructure][Serial]
   CHECK(std::abs(r[1] - m[1]) <= 1.0e-12 * m[1]);
   CHECK(std::abs(r[2] - m[2]) <= 1.0e-12 * m[2]);
   CHECK_FALSE(MomentsMatch(m, r, 1.0e-9));
+  // Half of the elements by position (every other local element is all of them when each
+  // process holds one).
   std::vector<char> half(mesh.GetNE(), 0);
-  for (int e = 0; e < mesh.GetNE(); e += 2)
+  mfem::Vector c;
+  for (int e = 0; e < mesh.GetNE(); e++)
   {
-    half[e] = 1;
+    mesh.GetElementCenter(e, c);
+    half[e] = (c(0) < 1.0);
   }
   CHECK_FALSE(MomentsMatch(m, AttributeMoments(mesh, {1}, half)[0], 1.0e-9));
 }
