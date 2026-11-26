@@ -484,16 +484,18 @@ void CheckMagnetostatic(IoData &iodata, const std::vector<std::unique_ptr<Mesh>>
 }
 
 // With by_side, the processes own slabs of x (process floor(np x^2)), so that the last ones
-// own no element of x < 1/2, nor a neighbor of one.
-std::vector<std::unique_ptr<Mesh>> MakeMesh(mfem::Mesh &&serial, bool by_side = false)
+// own no element of x < 1/2, nor a neighbor of one. With first_only, the first process owns
+// every element, and the others none.
+std::vector<std::unique_ptr<Mesh>> MakeMesh(mfem::Mesh &&serial, bool by_side = false,
+                                            bool first_only = false)
 {
   const int np = Mpi::Size(Mpi::World());
   std::vector<int> part;
-  if (by_side && np > 1)
+  if ((by_side || first_only) && np > 1)
   {
-    part.resize(serial.GetNE());
+    part.assign(serial.GetNE(), 0);
     mfem::Vector c;
-    for (int e = 0; e < serial.GetNE(); e++)
+    for (int e = 0; by_side && e < serial.GetNE(); e++)
     {
       serial.GetElementCenter(e, c);
       part[e] = std::min(np - 1, static_cast<int>(np * c(0) * c(0)));
@@ -829,18 +831,21 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // environment, the environment with them numbered above. Either way, the inductance of a
   // surface current (on y = 0, from the PEC face x = 0 to x = 1, which the PEC face y = 1
   // connects) of the offline run must be that of an online run on the full mesh and of one
-  // on the mesh of the region, which keeps the environment neighbors of these faces.
+  // on the mesh of the region, which keeps the environment neighbors of these faces. Also
+  // partitioned by side, and with the first process owning every element: the processes
+  // without true DOFs take part in the collectives of the others.
   // Not structured bindings, which the lambdas below cannot capture with OpenMP (Clang 18).
-  bool region_below, by_side;
+  bool region_below, by_side, first_only;
   int order;
-  std::tie(region_below, order, by_side) =
-      GENERATE(table<bool, int, bool>({{true, 1, false},
-                                       {false, 1, false},
-                                       {true, 2, false},
-                                       {false, 2, false},
-                                       {true, 1, true},
-                                       {false, 1, true}}));
-  CAPTURE(region_below, order, by_side);
+  std::tie(region_below, order, by_side, first_only) =
+      GENERATE(table<bool, int, bool, bool>({{true, 1, false, false},
+                                             {false, 1, false, false},
+                                             {true, 2, false, false},
+                                             {false, 2, false, false},
+                                             {true, 1, true, false},
+                                             {false, 1, true, false},
+                                             {true, 1, false, true}}));
+  CAPTURE(region_below, order, by_side, first_only);
   const std::string model_path = (temp_dir / "sheet_side" / "environment.model").string();
   auto make_config = [&](const std::string &mode)
   {
@@ -857,7 +862,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   // The energy of the surface current, and whether the environment was solved.
   auto energy = [&](const IoData &iodata, mfem::Mesh &&serial)
   {
-    auto mesh = MakeMesh(std::move(serial), by_side);
+    auto mesh = MakeMesh(std::move(serial), by_side, first_only);
     Vector J;
     CurlCurlOperator(iodata, mesh).GetCurrentExcitationVector(1, J);
     SubstructuringSolver ss(iodata, mesh);

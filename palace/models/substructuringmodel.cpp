@@ -271,11 +271,11 @@ SubstructuringSolver::Impl::EnvironmentFingerprint() const
 
 const mfem::Vector &SubstructuringSolver::Impl::CachedFingerprintField(int k) const
 {
-  if (fp_fields[k].Size() != nt)
+  if (!fp_fields[k])
   {
     fp_fields[k] = FingerprintField(k);
   }
-  return fp_fields[k];
+  return *fp_fields[k];
 }
 
 void SubstructuringSolver::Impl::AppendEnvRecord(const std::string &path,

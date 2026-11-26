@@ -519,9 +519,10 @@ struct SubstructuringSolver::Impl
   std::array<double, kEnvFpSize> EnvironmentFingerprint() const;
   mutable std::optional<std::array<double, kEnvFpSize>> env_fp;
 
-  // The fixed fields 0 and 1 of the fingerprints, cached.
+  // The fixed fields 0 and 1 of the fingerprints, cached. Collective on first use, on every
+  // process alike (also one without true DOFs, whose fields are empty).
   const mfem::Vector &CachedFingerprintField(int k) const;
-  mutable std::array<mfem::Vector, 2> fp_fields;
+  mutable std::array<std::optional<mfem::Vector>, 2> fp_fields;
 
   // Environment fingerprint of a loaded model.
   std::array<double, kEnvFpSize> saved_env_fp = {};
