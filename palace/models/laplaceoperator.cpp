@@ -119,8 +119,6 @@ mfem::Array<int> LaplaceOperator::SetUpBoundaryProperties(
       dbc_bcs.Append(attr);
     }
   }
-  MFEM_VERIFY(dbc_bcs.Size() > 0,
-              "Electrostatic problem is ill-posed without any Dirichlet boundaries!");
   return dbc_bcs;
 }
 
@@ -180,17 +178,20 @@ void PrintHeader(const mfem::ParFiniteElementSpace &h1_fespace,
 
 std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 {
+  // The operator of the regular solve needs a Dirichlet boundary (the unconstrained
+  // stiffness matrix of substructuring, whose Dirichlet boundaries may all be in the
+  // environment, does not).
+  MFEM_VERIFY(dbc_attr.Size() > 0,
+              "Electrostatic problem is ill-posed without any Dirichlet boundaries!");
+
   // When partially assembled, the coarse operators can reuse the fine operator quadrature
   // data if the spaces correspond to the same mesh.
   PrintHeader(GetH1Space(), GetNDSpace(), GetRTSpace(), print_hdr);
 
   constexpr bool skip_zeros = false;
-  MaterialPropertyCoefficient epsilon_func(mat_op.GetAttributeToMaterial(),
-                                           mat_op.GetPermittivityReal());
-  BilinearForm k(GetH1Space());
-  k.AddDomainIntegrator<DiffusionIntegrator>(epsilon_func);
-  // k.AssembleQuadratureData();
-  auto k_vec = k.Assemble(GetH1Spaces(), skip_zeros);
+  const auto form = GetStiffnessForm();
+  // form->k.AssembleQuadratureData();
+  auto k_vec = form->k.Assemble(GetH1Spaces(), skip_zeros);
   auto K = std::make_unique<MultigridOperator>(GetH1Spaces().GetNumLevels());
   for (std::size_t l = 0; l < GetH1Spaces().GetNumLevels(); l++)
   {
@@ -217,6 +218,30 @@ std::unique_ptr<Operator> LaplaceOperator::GetStiffnessMatrix()
 
   print_hdr = false;
   return K;
+}
+
+std::unique_ptr<LaplaceOperator::StiffnessForm> LaplaceOperator::GetStiffnessForm() const
+{
+  // The integrator keeps a pointer to the coefficient, which the form owns.
+  std::unique_ptr<StiffnessForm> form(
+      new StiffnessForm{MaterialPropertyCoefficient(mat_op.GetAttributeToMaterial(),
+                                                    mat_op.GetPermittivityReal()),
+                        BilinearForm(GetH1Space())});
+  form->k.AddDomainIntegrator<DiffusionIntegrator>(form->epsilon);
+  assembly_domains.Restrict(form->k);
+  return form;
+}
+
+std::unique_ptr<ParOperator> LaplaceOperator::GetUnconstrainedStiffnessMatrix(bool assemble)
+{
+  // Restricted, only the elements of the assembly domains are assembled, and the zero
+  // entries are not stored.
+  const bool skip_zeros = (assembly_domains.Get() != nullptr);
+  const auto form = GetStiffnessForm();
+  return std::make_unique<ParOperator>(
+      assemble ? std::unique_ptr<Operator>(form->k.FullAssemble(skip_zeros))
+               : form->k.PartialAssemble(),
+      GetH1Space());
 }
 
 void LaplaceOperator::GetExcitationVector(int idx, const Operator &K, Vector &X,

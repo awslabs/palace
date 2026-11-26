@@ -211,7 +211,7 @@ auto GetElementAttributes(const std::vector<int> &indices,
 {
   // Gather each attribute once while recording active positions in the original
   // geometry-type element list.
-  Vector elem_attr(indices.size());
+  std::vector<int> elem_attr(indices.size());
   std::vector<int> active_indices;
   active_indices.reserve(indices.size());
   for (std::size_t i = 0; i < indices.size(); i++)
@@ -227,9 +227,8 @@ auto GetElementAttributes(const std::vector<int> &indices,
 }
 
 auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int> &indices,
-                          std::vector<int> &active_indices,
-                          const mfem::GridFunction &mesh_nodes, const Vector &elem_attr,
-                          bool coords)
+                          std::vector<int> &active_indices, std::vector<int> &elem_attr,
+                          const mfem::GridFunction &mesh_nodes, bool coords)
 {
   const mfem::FiniteElementSpace &mesh_fespace = *mesh_nodes.FESpace();
   const mfem::Mesh &mesh = *mesh_fespace.GetMesh();
@@ -239,6 +238,7 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   data.space_dim = mesh.SpaceDimension();
   data.indices = std::move(indices);
   data.active_indices = std::move(active_indices);
+  data.attributes = std::move(elem_attr);
   const std::size_t num_elem = data.indices.size();
   // Construct mesh node element restriction and basis.
   CeedElemRestriction mesh_restr =
@@ -255,8 +255,13 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
   PalaceCeedCall(ceed, CeedElemRestrictionCreateStrided(ceed, num_elem, 1, 1, num_elem,
                                                         CEED_STRIDES_BACKEND, &attr_restr));
   ceed::InitConstantLineBasis(ceed, 1, num_qpts, &attr_basis);
+  Vector attr_values(static_cast<int>(num_elem));
+  for (std::size_t i = 0; i < num_elem; i++)
+  {
+    attr_values[i] = data.attributes[i];
+  }
   CeedVector elem_attr_vec;
-  ceed::InitCeedVector(elem_attr, ceed, &elem_attr_vec);
+  ceed::InitCeedVector(attr_values, ceed, &elem_attr_vec);
 
   // Allocate storage for geometry factor data (attribute + quadrature weight + Jacobian at
   // each quadrature point, optionally followed by the quadrature point coordinates for 3D
@@ -276,26 +281,7 @@ auto AssembleGeometryData(Ceed ceed, mfem::Geometry::Type geom, std::vector<int>
                            CEED_STRIDES_BACKEND, &data.geom_data_restr));
   if (!data.active_indices.empty() && data.active_indices.size() < num_elem)
   {
-    // Reuse the full geometry vector without copying any factors. Each offset addresses the
-    // first component at one quadrature point of an active element in the full vector; the
-    // component stride then selects the remaining components at that point. The vector
-    // layout is the backend's, queried from the strided restriction (as [nodes, components,
-    // elements] strides) rather than assumed.
-    CeedInt layout[3];
-    PalaceCeedCall(ceed, CeedElemRestrictionGetLLayout(data.geom_data_restr, layout));
-    std::vector<CeedInt> active_offsets(data.active_indices.size() * num_qpts);
-    for (std::size_t k = 0; k < data.active_indices.size(); k++)
-    {
-      const CeedInt elem_offset = data.active_indices[k] * layout[2];
-      for (CeedInt q = 0; q < num_qpts; q++)
-      {
-        active_offsets[k * num_qpts + q] = elem_offset + q * layout[0];
-      }
-    }
-    PalaceCeedCall(ceed, CeedElemRestrictionCreate(
-                             ceed, data.active_indices.size(), num_qpts, geom_data_size,
-                             layout[1], geom_data_length, CEED_MEM_HOST, CEED_COPY_VALUES,
-                             active_offsets.data(), &data.active_geom_data_restr));
+    data.active_geom_data_restr = data.BuildGeomDataRestriction(ceed, data.active_indices);
   }
 
   // Compute the required geometry factors at quadrature points.
@@ -364,7 +350,7 @@ auto BuildCeedGeomFactorData(
           indices, GetCeedAttribute, attr_list ? no_active_attr : active_attr);
       geom_data_map.emplace(geom,
                             AssembleGeometryData(ceed, geom, indices, active_indices,
-                                                 *mesh.GetNodes(), elem_attr, coords));
+                                                 elem_attr, *mesh.GetNodes(), coords));
     }
   }
 
@@ -385,7 +371,7 @@ auto BuildCeedGeomFactorData(
       auto [active_indices, elem_attr] =
           GetElementAttributes(indices, GetCeedAttribute, active_bdr_attr);
       geom_data_map.emplace(geom, AssembleGeometryData(ceed, geom, indices, active_indices,
-                                                       *mesh.GetNodes(), elem_attr, false));
+                                                       elem_attr, *mesh.GetNodes(), false));
     }
   }
 
@@ -393,6 +379,38 @@ auto BuildCeedGeomFactorData(
 }
 
 }  // namespace
+
+CeedElemRestriction
+ceed::CeedGeomFactorData::BuildGeomDataRestriction(Ceed ceed,
+                                                   const std::vector<int> &positions) const
+{
+  // Reuse the full geometry vector without copying any factors. Each offset addresses the
+  // first component at one quadrature point of a selected element in the full vector; the
+  // component stride then selects the remaining components at that point. The vector
+  // layout is the backend's, queried from the strided restriction (as [nodes, components,
+  // elements] strides) rather than assumed.
+  CeedInt num_qpts, num_comp, layout[3];
+  CeedSize geom_data_length;
+  PalaceCeedCall(ceed, CeedElemRestrictionGetElementSize(geom_data_restr, &num_qpts));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetNumComponents(geom_data_restr, &num_comp));
+  PalaceCeedCall(ceed,
+                 CeedElemRestrictionGetLVectorSize(geom_data_restr, &geom_data_length));
+  PalaceCeedCall(ceed, CeedElemRestrictionGetLLayout(geom_data_restr, layout));
+  std::vector<CeedInt> offsets(positions.size() * num_qpts);
+  for (std::size_t k = 0; k < positions.size(); k++)
+  {
+    const CeedInt elem_offset = positions[k] * layout[2];
+    for (CeedInt q = 0; q < num_qpts; q++)
+    {
+      offsets[k * num_qpts + q] = elem_offset + q * layout[0];
+    }
+  }
+  CeedElemRestriction restr;
+  PalaceCeedCall(ceed, CeedElemRestrictionCreate(ceed, positions.size(), num_qpts, num_comp,
+                                                 layout[1], geom_data_length, CEED_MEM_HOST,
+                                                 CEED_COPY_VALUES, offsets.data(), &restr));
+  return restr;
+}
 
 const ceed::GeometryObjectMap<ceed::CeedGeomFactorData> &
 Mesh::GetCeedGeomFactorData(Ceed ceed) const

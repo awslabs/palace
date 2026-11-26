@@ -313,6 +313,7 @@ protected:
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   mutable Measurement measurement_cache;
+  std::optional<double> total_field_energy;  // see SetTotalFieldEnergy
 
   // Reduced-coordinate outputs for adaptive online postprocessing: the electric energy
   // form, the factor R of the curls of the basis vectors (the time-averaged magnetic energy
@@ -527,6 +528,16 @@ public:
 
   double MeasureAndPrintAll(int step, const Vector &a, const Vector &b, int idx)
     requires(solver_t == ProblemType::MAGNETOSTATIC);
+
+  // The total field energy of the next measurements, given instead of measured where the
+  // field is known on part of the domain only (substructuring, whose model holds the energy
+  // of the environment). It normalizes the participation ratios.
+  void SetTotalFieldEnergy(double energy)
+    requires(solver_t == ProblemType::ELECTROSTATIC ||
+             solver_t == ProblemType::MAGNETOSTATIC)
+  {
+    total_field_energy = energy;
+  }
 
   double MeasureAndPrintAll(int step, const Vector &e, const Vector &b, double time,
                             double J_coef)

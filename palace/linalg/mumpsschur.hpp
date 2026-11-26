@@ -1,0 +1,141 @@
+// Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+#ifndef PALACE_LINALG_MUMPS_SCHUR_HPP
+#define PALACE_LINALG_MUMPS_SCHUR_HPP
+
+#include <mfem.hpp>
+
+#if defined(MFEM_USE_MUMPS)
+
+#include <complex>
+#include <type_traits>
+#include <vector>
+#include <dmumps_c.h>
+#include <zmumps_c.h>
+#include "linalg/schursolver.hpp"
+#include "linalg/vector.hpp"
+#include "utils/labels.hpp"
+
+namespace palace
+{
+
+// MUMPS's partial factorization of a symmetric matrix A with a Schur complement: the given
+// Schur variables are left unfactored, which gives the dense Schur complement 2D block
+// cyclic on a grid of the first ranks (for the environment, S_E = A_GG - A_GE A_EE^-1
+// A_EG). The same factorization then solves the internal problem (A_EE, the Schur
+// variables fixed at 0). T = double (DMUMPS) for a real symmetric A, std::complex<double>
+// (ZMUMPS) for a complex symmetric A = Ar + i Ai. The right-hand sides and solutions of the
+// solves stay distributed by rows; only the condensed (Schur) parts are on rank 0.
+template <typename T>
+class MumpsSchurSolverT : public SchurFactorization<T>
+{
+  static constexpr bool kComplex = !std::is_same_v<T, double>;
+  using Struc = std::conditional_t<kComplex, ZMUMPS_STRUC_C, DMUMPS_STRUC_C>;
+
+public:
+  using typename SchurFactorization<T>::VecType;
+  using Coo = typename SchurFactorization<T>::Coo;
+
+  // From the local lower-triangle entries of A (n_loc local rows, in rank order), and
+  // schur_vars, the global (0-based) rows of the Schur variables, in the order of their
+  // rows and columns in S (replicated; empty for a plain factorization). blr_tol > 0
+  // enables a block low-rank (BLR) factorization with that relative accuracy (0: exact).
+  // With refactor, the entries are kept so that Refactor can factor new values with the
+  // same pattern, reusing the analysis. spd: A is positive definite, so it is factored
+  // without numerical pivoting. With rows, the vectors of the solves are of a larger
+  // (parent) space: rows[i] is the local index of local row i in them, or -1 for a row of
+  // none (the other entries of a solution are 0). ordering is the fill-reducing ordering
+  // ("Default": METIS); MUMPS computes a Schur complement only after a sequential analysis,
+  // so with Schur variables a parallel ordering is replaced by its sequential counterpart.
+  // block: the block size of the distribution of the Schur complement, on a grid of
+  // grid_rows x grid_cols processes (by default, as square as the number of ranks allows).
+  MumpsSchurSolverT(MPI_Comm comm, HYPRE_BigInt n_glob, int n_loc, Coo &&A,
+                    const std::vector<HYPRE_BigInt> &schur_vars, double blr_tol = 0.0,
+                    bool refactor = false, bool spd = true, std::vector<int> rows = {},
+                    SymbolicFactorization ordering = SymbolicFactorization::DEFAULT,
+                    int block = 64, int grid_rows = 0, int grid_cols = 0);
+
+  ~MumpsSchurSolverT() override;
+
+  // With refactor (the factorization releases the entries otherwise).
+  std::vector<T> &Values() override { return val; }
+
+  // With the sparsity pattern and the ordering of the analysis.
+  void Refactor() override;
+
+  std::vector<T> ReleaseSchur() override;
+
+  // Its distributed Schur complement, on a grid of the shape and block size it was made
+  // with.
+  std::vector<T> ReleaseSchurBlocks(const BlockCyclicGrid &grid) override;
+
+  // The local part of the Schur complement of the last factorization, 2D block cyclic as
+  // BlockCyclicGrid lays it out (of the given grid and block size), which the caller may
+  // overwrite: the next factorization writes the Schur complement in it again.
+  std::vector<T> &SchurBlocks() { return schur; }
+
+  void SolveInternal(const std::vector<const VecType *> &X,
+                     const std::vector<VecType *> &Y) override;
+
+  void Reduce(const std::vector<const VecType *> &B, std::vector<T> &red) override;
+
+  void Expand(const std::vector<T> &u, const std::vector<VecType *> &X) override;
+
+  void Condense(const std::vector<const VecType *> &X, std::vector<T> &g) override;
+
+private:
+  void Init(const std::vector<HYPRE_BigInt> &schur_vars);
+  void Factor();
+  // This rank holds a part of the Schur complement, whose grid is of the first ranks.
+  bool InGrid() const { return rank < nprow * npcol; }
+  void Check(const char *phase) const;
+  // The largest diagonal entry of the local values (diag_pos), over the ranks: the scale of
+  // the BLR tolerance.
+  double DiagonalScale() const;
+  void Call();
+  // The right-hand sides distributed by rows, room for the distributed solution, and the
+  // solution on the local rows.
+  void SetRhs(const std::vector<const VecType *> &X);
+  void SetSolution(int nb);
+  void ScatterSolution(const std::vector<VecType *> &Y);
+
+  // MUMPS's entry type (std::complex<double> has the layout of ZMUMPS_COMPLEX).
+  static auto *Entries(T *v)
+  {
+    if constexpr (kComplex)
+    {
+      return reinterpret_cast<ZMUMPS_COMPLEX *>(v);
+    }
+    else
+    {
+      return v;
+    }
+  }
+
+  MPI_Comm comm;
+  int rank = 0;
+  bool refactor = false, spd = true, factored = false;
+  SymbolicFactorization ordering = SymbolicFactorization::DEFAULT;
+  HYPRE_BigInt n_glob;
+  int n_loc, n_schur;
+  // The grid of the Schur complement (nprow x npcol, of the first ranks, in blocks of mb).
+  int nprow = 1, npcol = 1, mb;
+  std::vector<int> row_cnt, row_disp, rows;
+  int parent = 0;  // the vectors of the solves are of the parent space of rows
+  std::vector<MUMPS_INT> irn, jcn, listvar, irhs_loc, isol_loc;
+  std::vector<T> val, schur, redrhs, rhs_loc, sol_loc;
+  int reduced = 0;  // right-hand sides of the last Reduce, pending Expand
+  double blr_tol = 0.0, scale = 1.0;
+  std::vector<std::size_t> diag_pos;  // the diagonal entries of the local values (BLR)
+  Struc id{};
+};
+
+using MumpsSchurSolver = MumpsSchurSolverT<double>;
+using ComplexMumpsSchurSolver = MumpsSchurSolverT<std::complex<double>>;
+
+}  // namespace palace
+
+#endif
+
+#endif  // PALACE_LINALG_MUMPS_SCHUR_HPP

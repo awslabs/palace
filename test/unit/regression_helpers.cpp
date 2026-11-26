@@ -21,6 +21,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 
 #include "driver.hpp"
+#include "fem/substructuremodel.hpp"
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
@@ -150,12 +151,18 @@ std::set<std::string> ExpectedDirectories(int max_its, const RegressionOptions &
   return expected;
 }
 
-std::set<std::string> ExpectedMetadataFiles(int max_its)
+std::set<std::string> ExpectedMetadataFiles(int max_its, const IoData &iodata)
 {
   std::set<std::string> expected{"palace.json"};
   for (int i = 1; i <= max_its; ++i)
   {
     expected.insert("iteration" + std::to_string(i) + "/palace.json");
+  }
+  // The model of an offline substructuring run, and the mesh of the region next to it (of a
+  // conforming mesh, as every offline case has).
+  if (!substructuring::SaveModelPath(iodata).empty())
+  {
+    expected.insert({"environment.model", "environment_region.mesh"});
   }
   return expected;
 }
@@ -163,7 +170,18 @@ std::set<std::string> ExpectedMetadataFiles(int max_its)
 nlohmann::json LoadConfigJson(const std::filesystem::path &config_path)
 {
   std::stringstream buffer = PreprocessFile(config_path.string().c_str());
-  return nlohmann::json::parse(buffer);
+  auto config = nlohmann::json::parse(buffer);
+#if !defined(MFEM_USE_GSLIB)
+  // Without GSLIB, there are no probes: a case leaves them out, and their outputs.
+  if (auto domains = config.find("Domains"); domains != config.end())
+  {
+    if (auto postpro = domains->find("Postprocessing"); postpro != domains->end())
+    {
+      postpro->erase("Probe");
+    }
+  }
+#endif
+  return config;
 }
 
 int GetMaxRefinementIterations(const nlohmann::json &config)
@@ -473,20 +491,31 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   RequireArtifact(config_path, "config file");
   RequireArtifact(ref_postpro, "reference data directory");
   nlohmann::json config = LoadConfigJson(config_path);
-  if (auto model = config.find("Model"); model != config.end())
+  // The mesh of a config, relative to dir (after a setup run, the stage: the setup run may
+  // write it).
+  auto require_mesh = [](const nlohmann::json &cfg, const std::filesystem::path &dir)
   {
-    if (auto mesh = model->find("Mesh"); mesh != model->end() && mesh->is_string())
+    if (auto model = cfg.find("Model"); model != cfg.end())
     {
-      std::filesystem::path mesh_path = mesh->get<std::string>();
-      if (mesh_path.is_relative())
+      if (auto mesh = model->find("Mesh"); mesh != model->end() && mesh->is_string())
       {
-        mesh_path = input_path / mesh_path;
+        std::filesystem::path mesh_path = mesh->get<std::string>();
+        if (mesh_path.is_relative())
+        {
+          mesh_path = dir / mesh_path;
+        }
+        RequireArtifact(mesh_path, "mesh file");
       }
-      RequireArtifact(mesh_path, "mesh file");
     }
+  };
+  if (opts.setup_config.empty())
+  {
+    require_mesh(config, input_path);
   }
 
-  ScopedExampleStage stage(input_path, run_root, postpro_subdir, comm);
+  ScopedExampleStage stage(
+      input_path, run_root,
+      opts.stage.empty() ? postpro_subdir : std::string_view(opts.stage), comm);
   const std::filesystem::path postpro_path = stage.path() / "postpro" / postpro_subdir;
 
   const int max_refinement_iterations = GetMaxRefinementIterations(config);
@@ -496,9 +525,21 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     effective_opts.max_rows = GetRequestedEigenmodeRows(config);
   }
 
+  const int omp_threads = palace::utils::ConfigureOmp();
+  if (!effective_opts.setup_config.empty())
+  {
+    const std::filesystem::path setup_path = input_path / effective_opts.setup_config;
+    RequireArtifact(setup_path, "setup config file");
+    nlohmann::json setup_config = LoadConfigJson(setup_path);
+    require_mesh(setup_config, input_path);
+    IoData setup = LoadCaseIoData(std::move(setup_config), effective_opts);
+    MakeOutputFolder(setup, comm);
+    BlockTimer::Reset();
+    palace::Run(setup, comm, omp_threads, /*git_tag=*/nullptr);
+    require_mesh(config, stage.path());
+  }
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
   MakeOutputFolder(iodata, comm);
-  const int omp_threads = palace::utils::ConfigureOmp();
   // Wipe BlockTimer state so timings/peak-memory don't accumulate across cases.
   BlockTimer::Reset();
   palace::Run(iodata, comm, omp_threads, /*git_tag=*/nullptr);
@@ -510,7 +551,11 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
   {
     const std::set<std::string> skip_dirs{"paraview", "gridfunction"};
     FileListing got = ListRegressionFiles(postpro_path, skip_dirs);
-    const FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
+    FileListing want = ListRegressionFiles(ref_postpro, skip_dirs);
+#if !defined(MFEM_USE_GSLIB)
+    std::erase_if(want.csv_files, [](const std::string &rel)
+                  { return rel.find("probe-") != std::string::npos; });
+#endif
 
     // Drop intentionally-unstored outputs (large files no check consumes) from the live
     // listing so their absence in the reference tree is not flagged as a missing file,
@@ -532,7 +577,7 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
                   ExpectedDirectories(max_refinement_iterations, effective_opts));
     CheckSetEqual("regression CSV files", got.csv_files, want.csv_files);
     CheckSetEqual("regression metadata files", got.meta_files,
-                  ExpectedMetadataFiles(max_refinement_iterations));
+                  ExpectedMetadataFiles(max_refinement_iterations, iodata));
 
     for (const auto &rel : want.csv_files)
     {

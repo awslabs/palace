@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-1-1",
+  "$id": "urn:palace:schema:6-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -429,6 +429,11 @@
           "$ref": "#/$defs/Linear",
           "title": "Linear Solver",
           "description": "Configuration for the linear solver used by all simulation types."
+        },
+        "Substructuring": {
+          "$ref": "#/$defs/Substructuring",
+          "title": "Substructuring",
+          "description": "Configuration for domain-decomposition substructuring: condense the environment (rest of the domain) to a boundary operator on the interface and solve/redesign the region of interest against it."
         }
       }
     }
@@ -3426,6 +3431,52 @@
           "description": "Number of computed electric field solutions to save to disk for [visualization with ParaView](../guide/postprocessing.md#Visualization), ordered by the entries in the computed capacitance matrix. Files are saved in the `paraview/` (and/or `gridfunction/`) directory under [`/Problem/Output`](@ref config-problem-output).",
           "minimum": 0,
           "default": 0
+        }
+      }
+    },
+    "Substructuring": {
+      "type": "object",
+      "title": "Substructuring",
+      "description": "Substructuring for electrostatic and magnetostatic simulations: the environment (the rest of the domain) is condensed onto its interface with the region of interest, and the region is solved against the condensed environment. With a saved model, repeated region redesigns reuse it without solving the environment again. Magnetostatic substructuring supports \"FluxLoop\" and \"SurfaceCurrent\" excitations, alone or together.",
+      "additionalProperties": false,
+      "required": ["Region"],
+      "properties": {
+        "Region": {
+          "type": "object",
+          "description": "The region of interest: solved in every run and free to be redesigned or re-meshed.",
+          "additionalProperties": false,
+          "required": ["Attributes"],
+          "properties": {
+            "Attributes": {
+              "type": "array",
+              "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "minItems": 1,
+              "description": "Domain attributes defining the region of interest (redesigned/solved)."
+            }
+          }
+        },
+        "Environment": {
+          "type": "object",
+          "description": "The environment: condensed once onto its interface with the region. By default, the domain attributes of the mesh not in the region.",
+          "additionalProperties": false,
+          "required": ["Attributes"],
+          "properties": {
+            "Attributes": {
+              "type": "array",
+              "items": { "type": "integer", "exclusiveMinimum": 0 },
+              "minItems": 1,
+              "description": "Domain attributes defining the environment (condensed to the interface)."
+            }
+          }
+        },
+        "ModelFile": {
+          "type": "string",
+          "description": "A saved model of the environment: the run is online, and solves only the region against the model. The region may be re-meshed, provided the interface is unchanged, and on the mesh of the region, which an online run tells from the full mesh by the environment elements it holds, only the region is read. A run without a model condenses the environment (offline) and, with \"SaveModel\", saves its model as `environment.model` in [`/Problem/Output`](@ref config-problem-output), and on a conforming mesh the mesh of the region, `environment_region.mesh`, next to it."
+        },
+        "SaveModel": {
+          "type": "boolean",
+          "description": "Whether an offline run, without \"ModelFile\", saves its model of the environment for online runs.",
+          "default": true
         }
       }
     },

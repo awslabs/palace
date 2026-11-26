@@ -277,6 +277,10 @@ std::vector<std::size_t> table_expected_filling(std::size_t m_idx_row, std::size
 
 }  // namespace _impl
 
+// Write the summary statistics of the error indicators to post_dir/error-indicators.csv.
+void WriteErrorIndicatorCSV(const fs::path &post_dir,
+                            const ErrorIndicator::SummaryStatistics &indicator_stats);
+
 // Helper class to PostOperator to collect csv tables and printers for measurement that will
 // be saved to file. This class contains a pointer to the corresponding PostOperator class
 // and is a friend to a PostOperator class; this is equivalent to having these members

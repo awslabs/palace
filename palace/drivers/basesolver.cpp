@@ -4,6 +4,7 @@
 #include "basesolver.hpp"
 
 #include <array>
+#include <cmath>
 #include <utility>
 #include <mfem.hpp>
 #include <nlohmann/json.hpp>
@@ -11,6 +12,7 @@
 #include "fem/errorindicator.hpp"
 #include "fem/fespace.hpp"
 #include "fem/mesh.hpp"
+#include "fem/substructuremodel.hpp"
 #include "linalg/ksp.hpp"
 #include "models/domainpostoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -191,6 +193,11 @@ void KeepPMLElementSize(const IoData &iodata, Mesh &mesh)
 
 int MaskPMLRefinementIndicators(const IoData &iodata, const mfem::ParMesh &mesh, Vector &e)
 {
+  // A solve without error estimation (substructuring without adaptation) gives none.
+  if (e.Size() == 0)
+  {
+    return 0;
+  }
   MFEM_VERIFY(e.Size() == mesh.GetNE(),
               "Error indicator size does not match the number of local mesh elements!");
   const int attr_max = mesh.attributes.Size() ? mesh.attributes.Max() : 0;
@@ -259,6 +266,23 @@ BaseSolver::BaseSolver(const IoData &iodata, bool root, int size, int num_thread
 void BaseSolver::Preprocess(IoData &iodata, std::unique_ptr<mfem::Mesh> &smesh,
                             MPI_Comm comm) const
 {
+  // An online substructuring run takes the characteristic length of its saved model, that
+  // of the offline run, so that a mesh of the region alone is nondimensionalized as the
+  // model was (a configured one must equal it).
+  if (const auto &sub = iodata.solver.substructuring; sub && sub->Online())
+  {
+    const double L = substructuring::InterfaceRecords::ReadLength(sub->model_file, comm);
+    if (L > 0.0)
+    {
+      MFEM_VERIFY(!(iodata.model.Lc > 0.0) || std::abs(iodata.model.Lc - L) <= 1.0e-12 * L,
+                  "\"Model\": \"Lc\" ("
+                      << iodata.model.Lc
+                      << ") differs from that of the saved substructuring "
+                         "model ("
+                      << L << ")!");
+      iodata.model.Lc = L;
+    }
+  }
   if (!(iodata.model.Lc > 0.0))
   {
     iodata.model.Lc = mesh::ComputeReferenceLength(smesh, comm);

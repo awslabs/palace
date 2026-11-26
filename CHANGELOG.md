@@ -32,6 +32,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     normalized like `rom-C-re.csv`, so that `yᴴ C_Γ y / yᴴ Re{C} y` is the surface
     participation ratio of a field with synthesized coordinates `y`.
     [PR 1156](https://github.com/awslabs/palace/pull/1156).
+  - Added substructuring for electrostatic and magnetostatic simulations
+    (`config["Solver"]["Substructuring"]`): the environment of a region is condensed onto
+    their interface once and saved, and later runs solve only the region, also after a
+    redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
+    6-2-0. [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Interface Changes
 
@@ -50,6 +55,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     of each process is selected, and its context created, before `MPI_Init`, so that MPI
     libraries which set up the communication between the GPUs of a node in `MPI_Init`,
     like Open MPI 5, can do so. [PR 1260](https://github.com/awslabs/palace/pull/1260).
+  - Added a STRUMPACK patch for
+    [pghysels/STRUMPACK#167](https://github.com/pghysels/STRUMPACK/pull/167), which adds a
+    Schur complement interface to its sparse solvers. The partial factorization of
+    STRUMPACK then gives the Schur complement of a substructuring region with up to 10,000
+    interface unknowns on 32 processes or more, and without MUMPS that of the environment
+    too, instead of one solve per interface unknown.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
 
 #### Bug Fixes
 
@@ -80,6 +92,15 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added the microstrip patch antenna example and a PML section to the dipole antenna
     example, and described the PML in the boundary conditions guide.
     [PR 1048](https://github.com/awslabs/palace/pull/1048).
+
+#### Build system
+
+  - The superbuild and the Spack recipe patch MFEM with
+    [mfem/mfem#5518](https://github.com/mfem/mfem/pull/5518), which fixes the orientation of
+    some shared faces of a parallel `mfem::ParSubMesh`: spaces with several DOFs per face
+    (Nédélec of order 2 and above, H1 of order 4 and above) were wrong across processes, and
+    so were the region error indicators of substructuring.
+    [PR 995](https://github.com/awslabs/palace/pull/995).
 
 ## [0.20.0] - 2026-11-23
 

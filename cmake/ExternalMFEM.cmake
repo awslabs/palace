@@ -474,6 +474,13 @@ download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
   "https://github.com/mfem/mfem/commit/641e56439e63a1774f43bc2ba904797694a047ad.diff?full_index=1"
   418a36909e888844d03fbacf989f62e0b3127d8602dbcb4bf02a0523ba81e601
 )
+# https://github.com/mfem/mfem/pull/5518
+# ParSubMesh: orientation of the shared faces whose parent orientation is a rotation.
+download_patch(MFEM_PATCH_FILES "${MFEM_PATCH_DIR}"
+  mfem_pr5518.diff
+  "https://github.com/mfem/mfem/compare/3001edfcf4fd91535273ebdf450e9fa4c7bd6776...ec92e77c63715a2673fdfe415b7935fcfb8d62ce.diff"
+  7d39edc1f76e05242a30f42a2cd17f8d76bf5d657c1c0a66d251b2024e4601e7
+)
 
 # https://github.com/mfem/mfem/pull/5639
 # Consistent order of the shared entities of ParSubMesh groups across ranks.

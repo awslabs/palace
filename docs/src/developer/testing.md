@@ -641,6 +641,14 @@ rsync -am --include='*/' --include='*.csv' --exclude='*' \
 Repeat (or loop) over `case`/`config`/`subdir` to re-baseline several cases
 at once, as the old `baseline` script did.
 
+The references of the substructuring cases (`substructuring_*`) are regular
+simulations, not substructured outputs, which would then only reproduce
+themselves: re-baseline them by running the configuration without
+`"Solver"/"Substructuring"`. An online case runs its `setup_config` (the offline
+run that writes the model and the mesh of the region it reads) first, in the same
+staging directory; its reference is the regular simulation of the offline
+configuration, on the full mesh.
+
 #### Adding a new regression case
 
  1. Drop the config and mesh/input files under

@@ -27,6 +27,8 @@ target_sources(${LIB_TARGET_NAME}
   ${CMAKE_CURRENT_SOURCE_DIR}/mesh.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/output_functionals.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/point_field_evaluator.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/substructure.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/substructuremodel.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurl.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/curlcurlmass.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/integ/diffusion.cpp

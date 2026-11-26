@@ -1,0 +1,16 @@
+{
+  "Problem": { "Type": "Magnetostatic", "Output": "postpro/two_films" },
+  "Model": { "Mesh": "mesh/two_films_split.msh", "L0": 1.0e-6 },
+  "Domains": { "Materials": [
+    { "Attributes": [1], "Permeability": 1.0 },
+    { "Attributes": [2], "Permeability": 1.0 } ] },
+  "Boundaries": {
+    "PEC": { "Attributes": [1] },
+    "FluxLoop": [
+      { "Index": 1, "FilmAttributes": [2], "HoleAttributes": [3], "FluxAmounts": [1.0], "Direction": [0.0,0.0,1.0] },
+      { "Index": 2, "FilmAttributes": [4], "HoleAttributes": [5], "FluxAmounts": [1.0], "Direction": [0.0,0.0,1.0] } ] },
+  "Solver": { "Order": 1,
+    "Magnetostatic": { "Save": 0 },
+    "Linear": { "KSPType": "CG", "Tol": 1e-10, "MaxIts": 500 },
+    "Substructuring": { "Region": { "Attributes": [1] }, "Environment": { "Attributes": [2] } } }
+}

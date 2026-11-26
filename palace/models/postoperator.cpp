@@ -154,7 +154,9 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
     surf_post_op(boundaries.postpro, solver_t, fem_op->GetMaterialOp(),
                  fem_op->GetH1Space(), fem_op->GetNDSpace(),
                  boundaries.GetSheetAttributes()),
-    interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace())
+    interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace(),
+              solver.substructuring ? solver.substructuring->region_attributes
+                                    : std::vector<int>{})
 {
   // Define primary grid-functions.
   if constexpr (HasVGridFunction<solver_t>())
@@ -1732,9 +1734,12 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // the frequency (of an eigenmode).
     // Without a stored electric energy of a frequency-dependent material (the same on
     // every process), the energies with it, and the participations in the total, are
-    // left empty.
+    // left empty. A given total (substructuring, whose materials are constant) is both.
     const double omega = measurement_cache.freq.real();
-    const auto [energy, material] = dom_post_op.GetElectricFieldEnergies(field, omega);
+    const auto [energy, material] =
+        total_field_energy ? DomainPostOperator::ElectricFieldEnergies{*total_field_energy,
+                                                                       *total_field_energy}
+                           : dom_post_op.GetElectricFieldEnergies(field, omega);
     measurement_cache.domain_E_field_energy_all = energy;
     measurement_cache.domain_E_field_energy_material = material;
 
@@ -1768,8 +1773,9 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // A broken magnetostatic solution has no grid function, but its L-vector.
     auto &field = A ? *A : *B;
     const bool use_l = (a_l.Size() > 0);
-    auto energy = use_l ? dom_post_op.GetMagneticFieldEnergy(a_l, field.GetComm())
-                        : dom_post_op.GetMagneticFieldEnergy(field);
+    auto energy = total_field_energy ? *total_field_energy
+                  : use_l ? dom_post_op.GetMagneticFieldEnergy(a_l, field.GetComm())
+                          : dom_post_op.GetMagneticFieldEnergy(field);
     measurement_cache.domain_H_field_energy_all = energy;
 
     for (const auto &[idx, data] : dom_post_op.M_i)

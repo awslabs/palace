@@ -269,6 +269,11 @@ public:
       Ceed ceed, mfem::Geometry::Type geom, const ceed::CeedGeomFactorData &data,
       ceed::CeedElementSubset subset = ceed::CeedElementSubset::Full) const;
 
+  // Return a new element restriction object (owned by the caller) for the given mesh
+  // elements of the given element geometry type.
+  CeedElemRestriction BuildCeedElemRestriction(Ceed ceed, mfem::Geometry::Type geom,
+                                               const std::vector<int> &indices) const;
+
   // Return the element restriction object for the elements of the given geometry factor
   // data restricted to the elements with the given (global, sorted) domain attributes (see
   // Mesh::GetCeedGeomFactorData), or for the full element index list if attr_list is empty.

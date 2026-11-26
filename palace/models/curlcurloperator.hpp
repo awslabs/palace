@@ -10,6 +10,7 @@
 #include <set>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
@@ -26,9 +27,6 @@ namespace palace
 class IoData;
 class Mesh;
 class Units;
-template <ProblemType T>
-class PostOperator;
-
 namespace config
 {
 
@@ -150,14 +148,12 @@ private:
   // Assemble the London sheet mass M_sheet = ∫_Σ (1/L_ksq) A_t·v_t on first use.
   void EnsureSheetMass();
 
-  // Assemble the stiffness matrix on every level of the solution space: curl-curl (μ⁻¹),
-  // London domains ((μλ²)⁻¹), the kinetic sheet term (1/L_ksq, unbroken spaces only), and
-  // the gauge shift · (1/µ) ∫|A|² outside the London domains. The domain and boundary mass
-  // coefficients are added to f and fb, for the auxiliary operators.
-  std::vector<std::unique_ptr<Operator>>
-  AssembleStiffness(double shift, MaterialPropertyCoefficient &f,
-                    MaterialPropertyCoefficient &fb) const;
-  std::vector<std::unique_ptr<Operator>> AssembleStiffness() const;
+  // Add the stiffness coefficients: curl-curl (μ⁻¹) to df, the London domains ((μλ²)⁻¹)
+  // and, for shift > 0, the gauge shift · (1/µ) ∫|A|² outside them to f, and the kinetic
+  // sheet term (1/L_ksq, unbroken spaces only) to fb.
+  void AddStiffnessCoefficients(double shift, MaterialPropertyCoefficient &df,
+                                MaterialPropertyCoefficient &f,
+                                MaterialPropertyCoefficient &fb) const;
 
   // True if the shift is positive, with a superconductor (sheet or London domain) or the
   // auxiliary smoother, whose gradient operator the shift makes definite.
@@ -172,6 +168,23 @@ private:
                                 const mfem::Array<int> &pc_dbc_attr,
                                 std::vector<mfem::Array<int>> &h1_dbc_tdof_lists);
 
+  // Optional restriction of the stiffness form, and of the sheet terms on a broken space,
+  // to a set of domains.
+  AssemblyDomains assembly_domains;
+
+  // The stiffness form on the finest solution space, with the coefficients its integrators
+  // point to (AddStiffnessCoefficients, with the gauge shift given), assembled on the
+  // assembly domains if set: the volume terms if volume, the sheet terms of an unbroken
+  // space if sheets (the broken sheet matrix is added to the assembled operators, see
+  // AddBrokenSheetMatrix).
+  struct StiffnessForm
+  {
+    MaterialPropertyCoefficient df, f, fb;
+    BilinearForm k;
+  };
+  std::unique_ptr<StiffnessForm> GetStiffnessForm(bool volume = true, bool sheets = true,
+                                                  double shift = 0.0) const;
+
   mfem::Array<int>
   SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                           const std::map<int, config::FluxLoopData> &fluxloop,
@@ -185,6 +198,10 @@ public:
                    ProblemType problem_type, const Units &units,
                    const std::vector<std::unique_ptr<Mesh>> &mesh);
   CurlCurlOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+
+  // The domains to which the stiffness form (GetUnconstrainedStiffnessMatrix) is restricted
+  // while an AssemblyDomains::Restriction is in scope.
+  AssemblyDomains &GetAssemblyDomains() { return assembly_domains; }
 
   // Return material operator for postprocessing.
   const MaterialOperator &GetMaterialOp() const { return mat_op; }
@@ -254,6 +271,15 @@ public:
   // Ampere's law.
   std::unique_ptr<Operator> GetStiffnessMatrix();
 
+  // Terms of the stiffness matrix on the finest solution space without the essential
+  // boundary conditions, for substructuring, which eliminates its own sets of true DOFs:
+  // the volume terms (curl-curl) if volume, and the superconductor sheet terms (on a broken
+  // space, of the one-sided sheets and the two-sided films) if sheets. Assembled, or
+  // applied matrix-free (partially assembled, the sheet terms on a broken space assembled)
+  // if not assemble.
+  std::unique_ptr<ParOperator> GetUnconstrainedStiffnessMatrix(bool volume, bool sheets,
+                                                               bool assemble = true);
+
   // True if any flux loop drives a London (finite-λ) superconductor film, whose free
   // interior gives the shifted-penalty operator a residual 1-D gradient null space.
   bool HasLondonFluxLoops() const { return !london_flux_loops_.empty(); }
@@ -307,13 +333,9 @@ public:
   // specified excited boundaries.
   void GetCurrentExcitationVector(int idx, Vector &RHS);
 
-  // Assemble flux loop excitation vector for specified flux loop index
-  template <ProblemType T>
-  void GetFluxExcitationVector(int idx, Vector &RHS, PostOperator<T> &post_op);
-
-  template <ProblemType T>
-  void GetFluxExcitationVector(int idx, Vector &RHS, PostOperator<T> &post_op,
-                               Vector *boundary_values);
+  // Assemble flux loop excitation vector for specified flux loop index (and, if
+  // boundary_values is non-null, its fluxoid generator a_h).
+  void GetFluxExcitationVector(int idx, Vector &RHS, Vector *boundary_values = nullptr);
 
   // True if flux loop idx has a London (finite-λ) film. Its flux excitation uses the
   // shifted London sheet penalty ½∫(1/L_ksq)|A_t − a_h|² (RHS = M_sheet·a_h), and the
@@ -328,12 +350,7 @@ public:
   }
 
   // Build the London cut cohomology generator a_h for the given flux loop.
-  template <ProblemType T>
-  Vector SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op) const;
-
-  template <ProblemType T>
-  void SolveSurfaceCurlProblem(int flux_loop_idx, PostOperator<T> &post_op,
-                               Vector &result) const;
+  Vector SolveSurfaceCurlProblem(int flux_loop_idx) const;
 
   // Get the associated MPI communicator.
   MPI_Comm GetComm() const { return GetNDSpace().GetComm(); }
