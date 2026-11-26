@@ -1381,14 +1381,16 @@ TEST_CASE_METHOD(
   CHECK(low.table == "UNDER-RESOLVED");
   CHECK(low.preflight.at("UnderResolvedLengthShare").get<double>() > 0.0);
   CHECK(low.flags.find(flag) != std::string::npos);
-  // (2) A bar at LargestM (twice it above every cell): both MARGINAL, NO flag (share 0),
-  // and the table reads no UNDER-RESOLVED (its m90 within twice the bar).
-  const Words high = Run("high", Bars("high", largest));
+  // (2) A bar at 0.6 LargestM (above every cell's half, so twice it above every cell, while
+  // the bar itself is below LargestM: the limit is twice the bar, not the bar): both
+  // MARGINAL, NO flag (share 0), and the table reads no UNDER-RESOLVED (its m90 within
+  // twice the bar).
+  const Words high = Run("high", Bars("high", 0.6 * largest));
   CHECK(high.preflight.at("Status") == "MARGINAL");
   CHECK(high.table == "MARGINAL");
   CHECK(high.preflight.at("UnderResolvedLengthShare").get<double>() == 0.0);
   CHECK(high.flags.find(flag) == std::string::npos);
-  CHECK(high.table_m90 <= 2.0 * largest);
+  CHECK(high.table_m90 <= 2.0 * 0.6 * largest);
   // (3) Twice the bar just below LargestM: flagged, LargestM above the limit; the table's
   // h/R m90 is at most LargestM (the PREFLIGHT reads every cell the table weighs).
   const Words edge = Run("edge", Bars("edge", 0.49 * largest));
