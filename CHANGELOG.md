@@ -36,9 +36,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     ``h/R``, `palace.json` `Preflight[]` records `UnderResolvedLengthShare` and `LargestM`
     on every row, and the `"PreflightOnly"` rows of that `Type` add the flags word
     `cells beyond twice the bar: may read UNDER-RESOLVED after the solve`. Without the
-    flag no cell is beyond twice the bar, so the table's energy-weighted ``m_{90}`` cannot
-    exceed it on that mesh whatever the field: a pre-solve `MARGINAL` without the flag
-    cannot become `UNDER-RESOLVED` after the solve.
+    flag no cell is beyond twice the bar (``h/R`` read by the census's bin centre, as the
+    table's ``m_{90}``), so the table's energy-weighted ``m_{90}`` cannot exceed it on
+    that mesh whatever the field: a pre-solve `MARGINAL` without the flag cannot become
+    `UNDER-RESOLVED` after the solve.
   - `surface-participation.csv` gains one column, `S corner+cluster share (fraction)`: the
     share of a row's within-R corrected energy served by corner and spatial-cluster models
     (whose trace map onto 16-knot rings is an open item); `flags` adds
@@ -138,8 +139,10 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     call and stop with the same message; a library CSV file is read in one pass by the
     table parser's own rules without stopping (`TryParseTable`, the same table bit for
     bit), since a build without MFEM exceptions (the containers) cannot catch the parser's
-    stop, and the solve form then stops with the parser's message naming the file.
-    Corrected solve runs are unchanged. The census
+    stop. A solve form stopped by a non-numeric library cell now prints a message that
+    names the file (`Response matrix file "<path>": Could not parse CSV table from
+    string! ...`, where it printed `Could not parse CSV table from string!`); its exit
+    status is unchanged. Other corrected solve runs are unchanged. The census
     reuses the manifest pass's identification: on a designers' chip (one node of 192
     cores) it was printed about 114 minutes after the start (measured
     before the matrix-step prediction, which adds one eigendecomposition per model on the
