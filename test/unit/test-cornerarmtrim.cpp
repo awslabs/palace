@@ -14,6 +14,8 @@
 #include <limits>
 #include <map>
 #include <memory>
+#include <optional>
+#include <random>
 #include <set>
 #include <sstream>
 #include <string>
@@ -7538,6 +7540,214 @@ TEST_CASE("SurfaceResponseOperator mirror arm direction of a rounded virtual cor
     feature.portions = {on_image};
     CHECK_FALSE(MirrorArmDirection(identification, feature, identification.real_segments));
   }
+}
+
+namespace
+{
+
+// The corner-arm passes' acceptance as their loops read it (ApplyCornerArmTrim: a cell on
+// the second arm meeting [0, exit); ApplyCornerArmExtension: the cell's near end at the
+// claim end), for the candidate test below.
+std::optional<double> ArmCoordinate(const std::array<double, 3> &point,
+                                    const std::array<double, 3> &vertex,
+                                    const std::array<double, 3> &arm,
+                                    const std::array<double, 3> &n, double tolerance)
+{
+  std::array<double, 3> r{};
+  double w = 0.0, a = 0.0, t2 = 0.0;
+  for (int d = 0; d < 3; d++)
+  {
+    r[d] = point[d] - vertex[d];
+    w += r[d] * n[d];
+    a += r[d] * arm[d];
+  }
+  for (int d = 0; d < 3; d++)
+  {
+    const double t = r[d] - (a * arm[d] + w * n[d]);
+    t2 += t * t;
+  }
+  if (std::abs(w) > tolerance || std::sqrt(t2) > tolerance)
+  {
+    return std::nullopt;
+  }
+  return a;
+}
+
+using ArmPatch = config::ElectrostaticSolverData::ResponseCorrectionPatchData;
+
+// The cell ends' arm coordinates of a patch the passes' first test admits, else nullopt.
+std::optional<std::array<double, 2>> ArmCell(const ArmPatch &patch,
+                                             const std::array<double, 3> &vertex,
+                                             const std::array<double, 3> &arm,
+                                             const std::array<double, 3> &n, double tol)
+{
+  const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
+  if (patch.provenance.coupon_depth <= 0.0 || patch.weight <= 0.0 || c1 <= c0)
+  {
+    return std::nullopt;
+  }
+  const auto ends = OwnEdgeCellEnds(patch);
+  const auto a0 = ArmCoordinate(ends[0], vertex, arm, n, tol);
+  const auto a1 = ArmCoordinate(ends[1], vertex, arm, n, tol);
+  if (!a0 || !a1)
+  {
+    return std::nullopt;
+  }
+  return std::array<double, 2>{std::min(*a0, *a1), std::max(*a0, *a1)};
+}
+
+bool TrimReads(const ArmPatch &patch, const std::array<double, 3> &vertex,
+               const std::array<double, 3> &arm, const std::array<double, 3> &n,
+               double exit, double tol)
+{
+  const auto a = ArmCell(patch, vertex, arm, n, tol);
+  const double scale =
+      std::max(1.0, patch.longitudinal_cell[1] - patch.longitudinal_cell[0]);
+  return a && (*a)[1] > tol && (*a)[0] < exit - 1.0e-12 * scale &&
+         std::min((*a)[1], exit) - std::max((*a)[0], 0.0) > 1.0e-12 * scale;
+}
+
+}  // namespace
+
+TEST_CASE("Corner-arm patch candidates hold every patch the corner-arm passes read",
+          "[surfaceresponseoperator][cornerarmtrim][Serial]")
+{
+  // Lane v1prefast C1: the trim's and the extension's patch loops run on the candidates of
+  // CornerArmPatchCandidates::Near; every patch their tests accept must be one of them.
+  const double R = 1.9e-3, tol = 1.0e-3 * R;
+  const std::array<double, 3> n = {0.0, 0.0, 1.0};
+  std::mt19937 rng(20261126);
+  std::uniform_real_distribution<double> unit(0.0, 1.0);
+  struct Arm
+  {
+    std::array<double, 3> vertex, arm;
+    double exit, claim_end;
+  };
+  std::vector<Arm> arms;
+  std::vector<ArmPatch> patches;
+  // A cell of `length` from its own-edge end `end` along `dir` (the own-edge offset
+  // random).
+  auto AddPatch =
+      [&](const std::array<double, 3> &end, const std::array<double, 3> &dir, double length)
+  {
+    ArmPatch patch;
+    patch.axis_w = dir;
+    patch.axis_u = {-dir[1], dir[0], 0.0};
+    patch.provenance.edge_offset = (unit(rng) - 0.5) * R;
+    patch.provenance.coupon_depth = unit(rng) < 0.9 ? 1.0 : 0.0;
+    patch.longitudinal_cell = {-0.5 * length, 0.5 * length};
+    for (int d = 0; d < 3; d++)
+    {
+      patch.origin[d] =
+          end[d] + 0.5 * length * dir[d] - patch.provenance.edge_offset * patch.axis_u[d];
+    }
+    patches.push_back(patch);
+  };
+  for (int k = 0; k < 60; k++)
+  {
+    const double angle = k % 3 == 0   ? 0.0
+                         : k % 3 == 1 ? 0.25 * M_PI
+                                      : 2.0 * M_PI * unit(rng);
+    Arm a;
+    a.vertex = {40.0 * R * unit(rng), 40.0 * R * unit(rng), 0.0};
+    a.arm = {std::cos(angle), std::sin(angle), 0.0};
+    a.exit = (1.0 + 0.4 * unit(rng)) * R;
+    a.claim_end = a.exit + (0.1 + unit(rng)) * R;
+    arms.push_back(a);
+    const std::array<double, 3> across = {-a.arm[1], a.arm[0], 0.0};
+    for (int j = 0; j < 12; j++)
+    {
+      // An own-edge end off the arm by up to 0.99 x tol along, across and out of plane.
+      const double along = j % 2 ? a.claim_end : (2.0 * unit(rng) - 0.5) * R;
+      const double da = (2.0 * unit(rng) - 1.0) * 0.99 * tol;
+      const double dt = (2.0 * unit(rng) - 1.0) * 0.99 * tol;
+      const double dw = (2.0 * unit(rng) - 1.0) * 0.99 * tol;
+      std::array<double, 3> end{};
+      for (int d = 0; d < 3; d++)
+      {
+        end[d] = a.vertex[d] + (along + da) * a.arm[d] + dt * across[d] + dw * n[d];
+      }
+      const double s = j % 4 < 2 ? 1.0 : -1.0;
+      AddPatch(end, {s * a.arm[0], s * a.arm[1], 0.0}, (0.2 + 3.0 * unit(rng)) * R);
+    }
+  }
+  for (int k = 0; k < 3000; k++)
+  {
+    const double angle = 2.0 * M_PI * unit(rng);
+    AddPatch({45.0 * R * unit(rng), 45.0 * R * unit(rng), 0.0},
+             {std::cos(angle), std::sin(angle), 0.0}, (0.2 + 4.0 * unit(rng)) * R);
+  }
+  patches[17].origin[0] = std::numeric_limits<double>::quiet_NaN();
+  CornerArmPatchCandidates candidates(patches, tol);
+  auto Holds = [](const std::vector<std::size_t> &near, std::size_t p)
+  { return std::binary_search(near.begin(), near.end(), p); };
+  auto Point = [](const Arm &a, double s)
+  {
+    return std::array<double, 3>{a.vertex[0] + s * a.arm[0], a.vertex[1] + s * a.arm[1],
+                                 a.vertex[2] + s * a.arm[2]};
+  };
+  std::size_t trim_reads = 0, extension_reads = 0, largest = 0;
+  for (const auto &a : arms)
+  {
+    const auto trim = candidates.Near(a.vertex, Point(a, a.exit));
+    const auto extension = candidates.Near(Point(a, a.claim_end), Point(a, a.claim_end));
+    for (const auto *near : {&trim, &extension})
+    {
+      CHECK(std::is_sorted(near->begin(), near->end()));
+      CHECK(std::adjacent_find(near->begin(), near->end()) == near->end());
+      CHECK(Holds(*near, 17));  // a non-finite cell end: always a candidate
+      largest = std::max(largest, near->size());
+    }
+    for (std::size_t p = 0; p < patches.size(); p++)
+    {
+      if (TrimReads(patches[p], a.vertex, a.arm, n, a.exit, tol))
+      {
+        trim_reads++;
+        CHECK(Holds(trim, p));
+      }
+      const auto cell = ArmCell(patches[p], a.vertex, a.arm, n, tol);
+      if (cell && std::abs((*cell)[0] - a.claim_end) <= tol)
+      {
+        extension_reads++;
+        CHECK(Holds(extension, p));
+      }
+    }
+  }
+  CHECK(trim_reads > 100);
+  CHECK(extension_reads > 50);
+  CHECK(largest < patches.size() / 20);  // the tree filters
+  // A patch changed after the construction is read from its current cell: one far from the
+  // first arm moved onto its claim end is a candidate only once it is marked Changed.
+  const auto &a = arms.front();
+  const auto claim = Point(a, a.claim_end);
+  std::size_t q = patches.size();
+  for (std::size_t p = 60 * 12; p < patches.size() && q == patches.size(); p++)
+  {
+    const auto ends = OwnEdgeCellEnds(patches[p]);
+    if (std::hypot(ends[0][0] - claim[0], ends[0][1] - claim[1]) > 10.0 * R &&
+        std::hypot(ends[1][0] - claim[0], ends[1][1] - claim[1]) > 10.0 * R)
+    {
+      q = p;
+    }
+  }
+  REQUIRE(q < patches.size());
+  patches[q].axis_w = a.arm;
+  patches[q].axis_u = {-a.arm[1], a.arm[0], 0.0};
+  patches[q].provenance.coupon_depth = 1.0;
+  patches[q].longitudinal_cell = {-0.5 * R, 0.5 * R};
+  for (int d = 0; d < 3; d++)
+  {
+    patches[q].origin[d] = claim[d] + 0.5 * R * a.arm[d] -
+                           patches[q].provenance.edge_offset * patches[q].axis_u[d];
+  }
+  REQUIRE(ArmCell(patches[q], a.vertex, a.arm, n, tol).has_value());
+  CHECK_FALSE(Holds(candidates.Near(claim, claim), q));
+  candidates.Changed(q);
+  CHECK(Holds(candidates.Near(claim, claim), q));
+  // A non-finite query and a degenerate tolerance read every patch.
+  const double nan = std::numeric_limits<double>::quiet_NaN();
+  CHECK(candidates.Near({nan, 0.0, 0.0}, claim).size() == patches.size());
+  CHECK(CornerArmPatchCandidates(patches, 0.0).Near(claim, claim).size() == patches.size());
 }
 
 }  // namespace palace

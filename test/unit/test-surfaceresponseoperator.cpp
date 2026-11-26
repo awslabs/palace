@@ -8178,6 +8178,39 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #endif
 }
 
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "SurfaceResponseOperator knife-edge census on helper ranks",
+                 "[surfaceresponseoperator][3d][features][census][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  // Lane v1prefast C2: the preflight's cluster-composition band of the rounded islands'
+  // spatial cluster is the same on every rank count (one rank computes its two passes
+  // itself; on two ranks rank 1 computes both; on more, ranks 1 and 2 one each).
+  json config = HighOrderSpatialConfig(test::CrackPolicy::Legacy);
+  auto spatial_mesh = MakeIslandMesh(true, false, false, true);
+  const auto path = temp.temp_dir / "surface-response-requirements-census-helpers.json";
+  {
+    IoData iodata(config, false);
+    iodata.boundaries.cracked_attributes.insert(9);
+    iodata.boundaries.cracked_attributes.insert(10);
+    WriteSurfaceResponseRequirements(iodata, *spatial_mesh, path.string());
+  }
+  std::ifstream input(path);
+  REQUIRE(input);
+  const json band =
+      json::parse(input)["Identification"]["KnifeEdgeCensus"]["ClusterComposition"];
+  // The one cluster keeps its composition at both radii: a pass read wrongly (no records,
+  // or another cluster's) would count it changed.
+  CHECK(band["Clusters"].get<int>() == 1);
+  CHECK(band["ClustersBelow"].get<int>() == 0);
+  CHECK(band["ClustersAbove"].get<int>() == 0);
+  CHECK(band["Below"].get<double>() == 0.0);
+  CHECK(band["Above"].get<double>() == 0.0);
+#endif
+}
+
 TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator unpatched pair",
                  "[surfaceresponseoperator][3d][features][unpatchedpair][Serial][Parallel]")
 {

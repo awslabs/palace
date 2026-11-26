@@ -7720,6 +7720,82 @@ TEST_CASE("SurfaceResponseIdentificationMirrorBandChains",
   }
 }
 
+TEST_CASE("SurfaceResponseIdentificationKnifeEdgeCensusRecordsOfAnotherRank",
+          "[surfaceresponseidentification][census][Serial]")
+{
+  // Lane v1prefast C2: the cluster-composition band read from records computed elsewhere
+  // (ClusterCompositionRecords on the same input, as the census's helper ranks compute
+  // them) is the band the census computes itself, read in its order (R (1 - band), then
+  // R (1 + band)). The pads of the knife-edge census case: C joins the cluster at R (1 + 1
+  // %).
+  const double R = 1.9;
+  const auto input = MakeInput({{Rectangle(0.0, 0.0, 8.0, 8.0), 0, 1.0},
+                                {Rectangle(11.0, 0.0, 14.0, 8.0), 1, 1.0},
+                                {Rectangle(17.82, 0.0, 25.82, 8.0), 2, 1.0}},
+                               R);
+  const auto own = IdentifyMetalPerimeter(input);
+  auto helped = input;
+  std::vector<int> order;
+  helped.composition_records = [&](int index)
+  {
+    order.push_back(index);
+    return ClusterCompositionRecords(input, index);
+  };
+  const auto result = IdentifyMetalPerimeter(helped);
+  CHECK(order == std::vector<int>{0, 1});
+  CHECK(result.knife_edge_census == own.knife_edge_census);
+  const auto band = nlohmann::json::parse(result.knife_edge_census)["ClusterComposition"];
+  INFO(band.dump());
+  CHECK(band["ClustersAbove"].get<int>() >= 1);
+  CHECK(band["ClustersBelow"].get<int>() == 0);
+  CHECK(ClusterCompositionRecords(input, 0) == ClusterCompositionRecords(input, 0));
+  CHECK(ClusterCompositionRecords(input, 0) != ClusterCompositionRecords(input, 1));
+  // A truncated record is refused, not read.
+  helped.composition_records = [&](int index)
+  { return ClusterCompositionRecords(input, index).substr(1); };
+  CHECK_THROWS(IdentifyMetalPerimeter(helped));
+}
+
+TEST_CASE("SurfaceResponseIdentificationSupportExcludedAndTruncationSegments",
+          "[surfaceresponseidentification][cornercontainment][Serial]")
+{
+  // Lane v1prefast C4 (ClusterSupport reads the excluded and the truncation segments from
+  // two ascending lists built after the exclusions): the lead-end cluster of the
+  // SpatialSupportContract layout (R = 2 um; box x in [-12.873, 12.873], y in [-5, 12] um)
+  // with an isolated 2 x 3 um stub inside its box whose right edge lies on a simulation cut
+  // (truncation segments) and whose left edge carries an input exclusion (rule B1).
+  const double R = 2.0;
+  LoopSpec stub{Rectangle(6.0, 5.0, 8.0, 8.0), 2, 100.0};
+  stub.truncation_edges = {1};
+  auto input = MakeInput({{Rectangle(-40.0, -10.0, 40.0, 0.0), 0, 100.0},
+                          {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0},
+                          stub},
+                         R);
+  std::size_t excluded = 0;
+  for (auto &segment : input.segments)
+  {
+    if (segment.p0[0] == 6.0 && segment.p1[0] == 6.0)
+    {
+      segment.exclusion = std::make_pair("Port", "the stub's left edge (test)");
+      excluded++;
+    }
+  }
+  REQUIRE(excluded > 0);
+  const auto result = IdentifyMetalPerimeter(input);
+  const auto *cluster = ClusterContaining(result, input, {0.0, 1.0});
+  REQUIRE(cluster != nullptr);
+  const auto &support = cluster->spatial_support;
+  INFO(support["Truncation"].dump()
+       << " " << support["Context"]["ExcludedSegments"].dump());
+  // The stub's 3 um edges: one truncation segment and one excluded piece, 1.5 R each.
+  CHECK(support["Truncation"]["Segments"].get<int>() == 1);
+  CHECK_THAT(support["Truncation"]["LengthOverR"].get<double>(), WithinAbs(1.5, 1.0e-9));
+  const auto &excluded_record = support["Context"]["ExcludedSegments"];
+  CHECK(excluded_record["Pieces"].get<int>() == 1);
+  CHECK_THAT(excluded_record["LengthOverR"].get<double>(), WithinAbs(1.5, 1.0e-9));
+  CHECK(excluded_record["Entries"][0]["Class"] == "Port");
+}
+
 TEST_CASE("SurfaceResponseIdentificationCornerContainment",
           "[surfaceresponseidentification][cornercontainment][Serial]")
 {
@@ -8166,6 +8242,34 @@ TEST_CASE("SurfaceResponseIdentificationCornerContainment",
     const auto copy =
         DeserializeIdentificationResult(SerializeIdentificationResult(result));
     CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
+  }
+  // Lane v1prefast C3 (the read skips a site whose `inside` cannot reach the quantum): the
+  // island's two left corners 0.2 um inside and 0.2 um outside the claims box's x1 face
+  // both fire against the box T5 reads (BoxBeforeOverR: inside = R + its x1 - the island's
+  // left); 4 um outside, they stay quiet.
+  for (const double depth : {0.2, -0.2, -4.0})
+  {
+    const auto [input, result] = Identify(1.0, {Island(x1 - depth)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    INFO("depth " << depth << " um");
+    if (depth > -1.0)
+    {
+      REQUIRE(support.contains("CornerContainment"));
+      const auto &containment = support["CornerContainment"];
+      const double face = DeviceBox(*cluster, containment["BoxBeforeOverR"], R)[2];
+      REQUIRE(containment["Vertices"].size() == 2);
+      for (const auto &vertex : containment["Vertices"])
+      {
+        CHECK_THAT(vertex["InsideOverR"].get<double>(),
+                   WithinAbs(1.0 + (face - (x1 - depth)) / R, 1.0e-5));
+      }
+    }
+    else
+    {
+      CHECK(!support.contains("CornerContainment"));
+    }
   }
 }
 

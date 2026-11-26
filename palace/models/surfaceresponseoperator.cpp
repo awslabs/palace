@@ -10623,6 +10623,97 @@ void ClassifyCandidateFeatureLaws(IdentificationResult &result,
   }
 }
 
+// Lane v1prefast C2, the knife-edge census's helper ranks: the identification input's metal
+// faces from the root to the other ranks of `comm` (vertex count, vertices, normal; as
+// doubles), unpacked on those ranks into `faces`.
+void BroadcastIdentificationFaces(std::vector<IdentificationFace> &faces, MPI_Comm comm)
+{
+  std::vector<double> values;
+  if (Mpi::Root(comm))
+  {
+    values.push_back(static_cast<double>(faces.size()));
+    for (const auto &face : faces)
+    {
+      values.push_back(static_cast<double>(face.vertices.size()));
+      for (const auto &vertex : face.vertices)
+      {
+        values.insert(values.end(), vertex.begin(), vertex.end());
+      }
+      values.insert(values.end(), face.normal.begin(), face.normal.end());
+    }
+  }
+  std::int64_t count = static_cast<std::int64_t>(values.size());
+  Mpi::Broadcast(1, &count, 0, comm);
+  values.resize(static_cast<std::size_t>(count));
+  Mpi::BroadcastLarge(count, values.data(), 0, comm);
+  if (Mpi::Root(comm))
+  {
+    return;
+  }
+  std::size_t at = 0;
+  faces.resize(static_cast<std::size_t>(values[at++]));
+  for (auto &face : faces)
+  {
+    face.vertices.resize(static_cast<std::size_t>(values[at++]));
+    for (auto &vertex : face.vertices)
+    {
+      for (auto &x : vertex)
+      {
+        x = values[at++];
+      }
+    }
+    for (auto &x : face.normal)
+    {
+      x = values[at++];
+    }
+  }
+}
+
+// One helper's share: the census records of pass `index` (ClusterCompositionRecords) to the
+// root of `comm` with tag `index`: a status (0, or 1 with the error text instead of the
+// records), the byte count, the bytes in chunks.
+void SendCensusRecords(const IdentificationInput &input, int index, MPI_Comm comm)
+{
+  std::int64_t status = 0;
+  std::string bytes;
+  try
+  {
+    bytes = ClusterCompositionRecords(input, index);
+  }
+  catch (const std::exception &error)
+  {
+    status = 1;
+    bytes = error.what();
+  }
+  std::int64_t header[2] = {status, static_cast<std::int64_t>(bytes.size())};
+  MPI_Send(header, 2, MPI_INT64_T, 0, index, comm);
+  const std::int64_t chunk = std::int64_t(1) << 28;
+  for (std::int64_t at = 0; at < header[1]; at += chunk)
+  {
+    MPI_Send(bytes.data() + at, static_cast<int>(std::min(chunk, header[1] - at)), MPI_CHAR,
+             0, index, comm);
+  }
+}
+
+// The root's read of pass `index` from rank `source` of `comm`; a helper's failure stops
+// the run with its text when `raise` (the census reads the pass), else is dropped (a
+// drain).
+std::string ReceiveCensusRecords(int source, int index, MPI_Comm comm, bool raise)
+{
+  std::int64_t header[2] = {0, 0};
+  MPI_Recv(header, 2, MPI_INT64_T, source, index, comm, MPI_STATUS_IGNORE);
+  std::string bytes(static_cast<std::size_t>(header[1]), '\0');
+  const std::int64_t chunk = std::int64_t(1) << 28;
+  for (std::int64_t at = 0; at < header[1]; at += chunk)
+  {
+    MPI_Recv(bytes.data() + at, static_cast<int>(std::min(chunk, header[1] - at)), MPI_CHAR,
+             source, index, comm, MPI_STATUS_IGNORE);
+  }
+  MFEM_VERIFY(header[0] == 0 || !raise,
+              "Knife-edge census pass " << index << " on rank " << source << ": " << bytes);
+  return bytes;
+}
+
 IdentificationResult RunGeometryIdentification(
     MPI_Comm comm, const MetalEdgeGeometry &geometry,
     const std::vector<EdgeSegment3D> &framed_segments, const ProcessLibrary &library,
@@ -10882,6 +10973,23 @@ IdentificationResult RunGeometryIdentification(
   // The identification runs on the root only (the global metal faces exist there alone;
   // decision 82 infrastructure) and the result is broadcast: every rank builds the same
   // patches from the same feature list, no rank replicates the identification state.
+  // DESIGN section 9 (i): the knife-edge census is a preflight diagnostic (on for the
+  // preflight, off for a solve run) unless the config says otherwise. Lane v1prefast C2:
+  // with more than one rank its two silent identifications (R (1 -/+ band)) run on ranks 1
+  // and 2 (rank 1 alone on two ranks) while the root runs the main one; the root sends them
+  // the input's metal faces (the rest of the input is replicated) and reads their records
+  // in the census's order, draining what its census does not read.
+  const bool knife_edge_census = request && request->knife_edge_census
+                                     ? *request->knife_edge_census
+                                     : requirements != nullptr;
+  const int census_helpers = knife_edge_census ? std::min(2, Mpi::Size(comm) - 1) : 0;
+  MPI_Comm census_comm = MPI_COMM_NULL;
+  if (census_helpers > 0)
+  {
+    const int rank = Mpi::Rank(comm);
+    MPI_Comm_split(comm, rank <= census_helpers ? 0 : MPI_UNDEFINED, rank, &census_comm);
+  }
+  auto CensusHelper = [&](int index) { return census_helpers == 1 ? 1 : 1 + index; };
   IdentificationResult result;
   MirrorMergeSummary mirror_summary;
   {
@@ -10898,12 +11006,26 @@ IdentificationResult RunGeometryIdentification(
       }
       // Stage counts, wall times and progress of the identification.
       input.log = [](const std::string &line) { Mpi::Print("{}", line); };
-      // DESIGN section 9 (i): the knife-edge census is a preflight diagnostic (on for the
-      // preflight, off for a solve run) unless the config says otherwise.
-      input.knife_edge_census = request && request->knife_edge_census
-                                    ? *request->knife_edge_census
-                                    : requirements != nullptr;
+      input.knife_edge_census = knife_edge_census;
+      std::array<bool, 2> census_read = {false, false};
+      if (census_comm != MPI_COMM_NULL)
+      {
+        BroadcastIdentificationFaces(input.faces, census_comm);
+        input.composition_records = [&](int index)
+        {
+          census_read[static_cast<std::size_t>(index)] = true;
+          return ReceiveCensusRecords(CensusHelper(index), index, census_comm, true);
+        };
+      }
       result = IdentifyMetalPerimeter(input);
+      input.composition_records = nullptr;
+      for (int index = 0; index < 2 && census_comm != MPI_COMM_NULL; index++)
+      {
+        if (!census_read[static_cast<std::size_t>(index)])
+        {
+          ReceiveCensusRecords(CensusHelper(index), index, census_comm, false);
+        }
+      }
       if (mirror_band.extended)
       {
         // The extended run (the real faces reflected into the band on the root) merged
@@ -10934,6 +11056,24 @@ IdentificationResult RunGeometryIdentification(
       input.faces.clear();
       input.faces.shrink_to_fit();
       buffer = SerializeIdentificationResult(result);
+    }
+    else if (census_comm != MPI_COMM_NULL)
+    {
+      // A helper of the knife-edge census: the root's faces, then its pass(es).
+      BroadcastIdentificationFaces(input.faces, census_comm);
+      for (int index = 0; index < 2; index++)
+      {
+        if (CensusHelper(index) == Mpi::Rank(comm))
+        {
+          SendCensusRecords(input, index, census_comm);
+        }
+      }
+      input.faces.clear();
+      input.faces.shrink_to_fit();
+    }
+    if (census_comm != MPI_COMM_NULL)
+    {
+      MPI_Comm_free(&census_comm);
     }
     std::int64_t size = static_cast<std::int64_t>(buffer.size());
     Mpi::Broadcast(1, &size, 0, comm);
@@ -12437,6 +12577,102 @@ MirrorArmDirection(const IdentificationResult &identification,
   return arm ? arm : chord;
 }
 
+std::array<Point3D, 2> OwnEdgeCellEnds(const ResponsePatchData &patch)
+{
+  std::array<Point3D, 2> ends;
+  for (int e = 0; e < 2; e++)
+  {
+    ends[e] = patch.origin;
+    for (int d = 0; d < 3; d++)
+    {
+      ends[e][d] += patch.provenance.edge_offset * patch.axis_u[d] +
+                    patch.longitudinal_cell[e] * patch.axis_w[d];
+    }
+  }
+  return ends;
+}
+
+CornerArmPatchCandidates::CornerArmPatchCandidates(
+    const std::vector<ResponsePatchData> &patches_, double tolerance)
+  : patches(patches_), every(!(std::isfinite(tolerance) && tolerance > 0.0))
+{
+  std::vector<std::pair<Point3D, Point3D>> cells;
+  double scale = 1.0;
+  for (std::size_t p = 0; p < patches.size() && !every; p++)
+  {
+    // The passes' first test (unchanged patches keep failing it; changed ones are read by
+    // Near from their current cell).
+    const auto &patch = patches[p];
+    if (patch.provenance.coupon_depth <= 0.0 || patch.weight <= 0.0 ||
+        patch.longitudinal_cell[1] <= patch.longitudinal_cell[0])
+    {
+      continue;
+    }
+    const auto ends = OwnEdgeCellEnds(patch);
+    bool finite = true;
+    for (const auto &end : ends)
+    {
+      for (const double x : end)
+      {
+        finite = finite && std::isfinite(x);
+        scale = std::isfinite(x) ? std::max(scale, std::abs(x)) : scale;
+      }
+    }
+    (finite ? indexed : non_finite).push_back(p);
+    if (finite)
+    {
+      cells.emplace_back(ends[0], ends[1]);
+    }
+  }
+  widen = 4.0 * tolerance + 1.0e-12 * scale;
+  if (!cells.empty())
+  {
+    index.emplace(cells);
+  }
+}
+
+std::vector<std::size_t> CornerArmPatchCandidates::Near(const Point3D &p0,
+                                                        const Point3D &p1) const
+{
+  std::vector<std::size_t> near;
+  const auto finite = [](const Point3D &x)
+  { return std::isfinite(x[0]) && std::isfinite(x[1]) && std::isfinite(x[2]); };
+  if (every || !finite(p0) || !finite(p1))
+  {
+    // A non-finite arm reads every patch as on it (the passes' comparisons all fail).
+    near.resize(patches.size());
+    std::iota(near.begin(), near.end(), std::size_t(0));
+    return near;
+  }
+  if (index)
+  {
+    for (const std::size_t i : index->Query(p0, p1, widen))
+    {
+      near.push_back(indexed[i]);
+    }
+  }
+  near.insert(near.end(), non_finite.begin(), non_finite.end());
+  for (const std::size_t p : changed)
+  {
+    const auto ends = OwnEdgeCellEnds(patches[p]);
+    bool meets = true;
+    for (int d = 0; d < 3; d++)
+    {
+      const double lo = std::min(ends[0][d], ends[1][d]);
+      const double hi = std::max(ends[0][d], ends[1][d]);
+      meets = meets && std::isfinite(ends[0][d]) && std::isfinite(ends[1][d]) &&
+              hi >= std::min(p0[d], p1[d]) - widen && lo <= std::max(p0[d], p1[d]) + widen;
+    }
+    if (meets || !std::all_of(ends.begin(), ends.end(), finite))
+    {
+      near.push_back(p);
+    }
+  }
+  std::sort(near.begin(), near.end());
+  near.erase(std::unique(near.begin(), near.end()), near.end());
+  return near;
+}
+
 namespace
 {
 
@@ -12552,6 +12788,7 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
   std::vector<ResponseCorrectionData::CornerArmTrimData> records;
   const double tolerance = kSignatureParameterToleranceOverRadius * R;
   constexpr double pi = 3.14159265358979323846;
+  CornerArmPatchCandidates candidates(patches, tolerance);
   std::set<int> patched_corners;
   for (const auto &patch : patches)
   {
@@ -12615,7 +12852,7 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
     // first-order split share one stretch, so the stretches are merged before they are
     // emitted (each counted once).
     std::vector<std::pair<double, double>> stretches;
-    for (std::size_t p = 0; p < patches.size(); p++)
+    for (const std::size_t p : candidates.Near(vertex, Add(vertex, Scale(exit, arm))))
     {
       auto &patch = patches[p];
       const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
@@ -12659,6 +12896,7 @@ std::vector<ResponseCorrectionData::CornerArmTrimData> ApplyCornerArmTrim(
       const double kept_lo = slope > 0.0 ? std::max(c0, c_cut) : c0;
       const double kept_hi = slope > 0.0 ? c1 : std::min(c1, c_cut);
       ClipLongitudinalCell(patch, a_hi > exit ? kept_lo : 0.0, a_hi > exit ? kept_hi : 0.0);
+      candidates.Changed(p);
       // The geometric length removed: the co-located patches of a first-order split share
       // one cell (model weights summing to 1), so each counts its model weight of it; the
       // per-patch record keeps the full removed length (the A7 audit weights it itself).
@@ -12826,6 +13064,7 @@ std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtens
   std::vector<ResponseCorrectionData::CornerArmExtensionData> records;
   const double tolerance = kSignatureParameterToleranceOverRadius * R;
   constexpr double pi = 3.14159265358979323846;
+  CornerArmPatchCandidates candidates(patches, tolerance);
   std::set<int> patched_corners;
   for (const auto &patch : patches)
   {
@@ -12885,7 +13124,8 @@ std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtens
       extension.exit_over_radius = exit / R;
       extension.claim_end_over_radius = *claim_end / R;
       extension.stretch_length = *claim_end - exit;
-      for (std::size_t p = 0; p < patches.size(); p++)
+      const Point3D claim_end_point = Add(vertex, Scale(*claim_end, arm));
+      for (const std::size_t p : candidates.Near(claim_end_point, claim_end_point))
       {
         auto &patch = patches[p];
         const double c0 = patch.longitudinal_cell[0], c1 = patch.longitudinal_cell[1];
@@ -12922,6 +13162,7 @@ std::vector<ResponseCorrectionData::CornerArmExtensionData> ApplyCornerArmExtens
         const double c_exit = c0 + (exit - a0) / slope;
         const double extended = a_lo - exit;
         ClipLongitudinalCell(patch, slope > 0.0 ? c_exit : c0, slope > 0.0 ? c1 : c_exit);
+        candidates.Changed(p);
         extension.extended_cell_length += extended * patch.provenance.model_weight;
         extension.hosted = true;
         record.cells.emplace_back(p, extended);

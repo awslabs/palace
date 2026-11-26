@@ -3587,6 +3587,10 @@ private:
   std::map<int, std::size_t> chain_index;
   Point3D n_ref{};
   std::vector<std::optional<std::pair<std::string, std::string>>> segment_exclusion;
+  // The excluded (non-truncation) and the truncation segments in ascending order, fixed
+  // once the exclusions are (ClassifyPlanes): ClusterSupport's two segment reads (lane
+  // v1prefast C4).
+  std::vector<std::size_t> excluded_segment_list, truncation_segment_list;
   // Metal plane of every run (distinct offsets along the reference process normal on the
   // decision grid): features never span two planes (decision 82(1)); metal of another
   // plane within 2R is the CrossLayer exclusion.
@@ -12320,7 +12324,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     // The excluded perimeter segments on the plane inside the clip (rule B1): straight,
     // clipped by Liang-Barsky, never on the cluster's claims (claims are feature runs).
     const Point3D plane_normal = Normalize(Cross(x, y));
-    for (std::size_t i = 0; i < input.segments.size(); i++)
+    for (const std::size_t i : excluded_segment_list)
     {
       const auto &segment = input.segments[i];
       const bool excluded =
@@ -13539,7 +13543,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   std::size_t truncation_segments = 0;
   double truncation_length = 0.0;
   const Point3D plane_normal = Normalize(Cross(x, y));
-  for (std::size_t i = 0; i < input.segments.size(); i++)
+  for (const std::size_t i : truncation_segment_list)
   {
     const auto &segment = input.segments[i];
     if (!segment.truncation)
@@ -13810,6 +13814,30 @@ Identifier::ReadCornerContainment(const ClusterPlaneBox &own,
       continue;
     }
     const auto segments = CornerWindowSegments(site);
+    {
+      // Lane v1prefast C3: this site's `inside` first, by the loop's own expressions in its
+      // order; a site clearly short of the trigger (inside > quantum) keeps nothing, so it
+      // is skipped before the clips against every box of the plane (a site within a
+      // relative 1e-6 of the trigger runs the full read below, whatever the rounding).
+      double inside_first = 0.0;
+      for (const auto &[p3, q3] : segments)
+      {
+        const Point2 p = Local(own, p3), q = Local(own, q3);
+        const double length = std::hypot(q[0] - p[0], q[1] - p[1]);
+        if (length <= half_quantum)
+        {
+          continue;
+        }
+        if (const auto own_interval = ClipInterval(p, q, own.box))
+        {
+          inside_first += (own_interval->second - own_interval->first) * length;
+        }
+      }
+      if (inside_first < (1.0 - 1.0e-6) * quantum)
+      {
+        continue;
+      }
+    }
     double inside = 0.0, outside_every = 0.0, window_length = 0.0;
     nlohmann::json window = nlohmann::json::array();
     // This site's own band (its record's BandOverR / ShortfallsOverR / Steps); the
@@ -14653,39 +14681,121 @@ nlohmann::json Identifier::KnifeEdgeCensus() const
 // counts on the Below (R (1 - band)) or Above (R (1 + band)) side, with the number of
 // clusters affected. Reported like the other bands (Below / Above / Total in length units)
 // and in the identification log; costs two more identifications on the root rank.
+// One SpatialEdgeCluster as the cluster-composition band reads it: EdgeCount, the sorted
+// member vertices, the claimed length and the claimed intervals per segment.
+struct ClusterRecord
+{
+  int edge_count = 0;
+  std::vector<std::size_t> vertices;
+  double length = 0.0;
+  std::map<std::size_t, std::vector<Interval>> portions;  // per segment
+};
+
+std::vector<ClusterRecord> ClusterRecordsOf(const IdentificationResult &r)
+{
+  std::vector<ClusterRecord> records;
+  for (const auto &feature : r.features)
+  {
+    if (feature.type != "SpatialEdgeCluster")
+    {
+      continue;
+    }
+    ClusterRecord record;
+    record.edge_count = feature.signature.value("EdgeCount", 0);
+    record.vertices = feature.vertices;
+    std::sort(record.vertices.begin(), record.vertices.end());
+    record.length = feature.length;
+    for (const auto &portion : feature.portions)
+    {
+      record.portions[portion.segment].emplace_back(std::min(portion.s0, portion.s1),
+                                                    std::max(portion.s0, portion.s1));
+    }
+    records.push_back(std::move(record));
+  }
+  return records;
+}
+
+// The records as bytes for another rank (lane v1prefast C2): every integer as 8 bytes,
+// every double as its 8 bytes, the portions in the map's (segment) order.
+std::string SerializeClusterRecords(const std::vector<ClusterRecord> &records)
+{
+  std::string bytes;
+  auto Put = [&](auto value) { bytes.append(reinterpret_cast<const char *>(&value), 8); };
+  Put(static_cast<std::uint64_t>(records.size()));
+  for (const auto &record : records)
+  {
+    Put(static_cast<std::int64_t>(record.edge_count));
+    Put(static_cast<std::uint64_t>(record.vertices.size()));
+    for (const std::size_t v : record.vertices)
+    {
+      Put(static_cast<std::uint64_t>(v));
+    }
+    Put(record.length);
+    Put(static_cast<std::uint64_t>(record.portions.size()));
+    for (const auto &[segment, intervals] : record.portions)
+    {
+      Put(static_cast<std::uint64_t>(segment));
+      Put(static_cast<std::uint64_t>(intervals.size()));
+      for (const auto &[a, b] : intervals)
+      {
+        Put(a);
+        Put(b);
+      }
+    }
+  }
+  return bytes;
+}
+
+std::vector<ClusterRecord> DeserializeClusterRecords(const std::string &bytes)
+{
+  std::size_t at = 0;
+  auto Get = [&](auto &value)
+  {
+    static_assert(sizeof(value) == 8);
+    MFEM_VERIFY(at + 8 <= bytes.size(), "Truncated cluster-composition records!");
+    std::memcpy(&value, bytes.data() + at, 8);
+    at += 8;
+  };
+  std::uint64_t count = 0;
+  Get(count);
+  std::vector<ClusterRecord> records(count);
+  for (auto &record : records)
+  {
+    std::int64_t edge_count = 0;
+    std::uint64_t vertices = 0, segments = 0;
+    Get(edge_count);
+    record.edge_count = static_cast<int>(edge_count);
+    Get(vertices);
+    record.vertices.resize(vertices);
+    for (auto &v : record.vertices)
+    {
+      std::uint64_t vertex = 0;
+      Get(vertex);
+      v = static_cast<std::size_t>(vertex);
+    }
+    Get(record.length);
+    Get(segments);
+    for (std::uint64_t k = 0; k < segments; k++)
+    {
+      std::uint64_t segment = 0, intervals = 0;
+      Get(segment);
+      Get(intervals);
+      auto &portions = record.portions[static_cast<std::size_t>(segment)];
+      portions.resize(intervals);
+      for (auto &[a, b] : portions)
+      {
+        Get(a);
+        Get(b);
+      }
+    }
+  }
+  MFEM_VERIFY(at == bytes.size(), "Trailing bytes in cluster-composition records!");
+  return records;
+}
+
 nlohmann::json Identifier::ClusterCompositionBand(const IdentificationResult &result) const
 {
-  struct ClusterRecord
-  {
-    int edge_count = 0;
-    std::vector<std::size_t> vertices;
-    double length = 0.0;
-    std::map<std::size_t, std::vector<Interval>> portions;  // per segment
-  };
-  auto Clusters = [](const IdentificationResult &r)
-  {
-    std::vector<ClusterRecord> records;
-    for (const auto &feature : r.features)
-    {
-      if (feature.type != "SpatialEdgeCluster")
-      {
-        continue;
-      }
-      ClusterRecord record;
-      record.edge_count = feature.signature.value("EdgeCount", 0);
-      record.vertices = feature.vertices;
-      std::sort(record.vertices.begin(), record.vertices.end());
-      record.length = feature.length;
-      for (const auto &portion : feature.portions)
-      {
-        record.portions[portion.segment].emplace_back(std::min(portion.s0, portion.s1),
-                                                      std::max(portion.s0, portion.s1));
-      }
-      records.push_back(std::move(record));
-    }
-    return records;
-  };
-  const std::vector<ClusterRecord> at_R = Clusters(result);
+  const std::vector<ClusterRecord> at_R = ClusterRecordsOf(result);
   nlohmann::json band = {{"BandRelative", kKnifeEdgeBandRelative},
                          {"Clusters", at_R.size()},
                          {"Rule",
@@ -14698,11 +14808,16 @@ nlohmann::json Identifier::ClusterCompositionBand(const IdentificationResult &re
                           "counts (ClustersBelow / ClustersAbove of Clusters)"}};
   double below = 0.0, above = 0.0;
   std::size_t clusters_below = 0, clusters_above = 0;
+  int index = 0;
   for (const double factor : {1.0 - kKnifeEdgeBandRelative, 1.0 + kKnifeEdgeBandRelative})
   {
-    Identifier other(original_input, R * factor);
-    const IdentificationResult other_result = other.Identify();
-    const std::vector<ClusterRecord> at_other = Clusters(other_result);
+    // Another rank's records of the same silent identification when given (lane v1prefast
+    // C2), else this rank's own.
+    const std::vector<ClusterRecord> at_other =
+        original_input.composition_records
+            ? DeserializeClusterRecords(original_input.composition_records(index))
+            : ClusterRecordsOf(Identifier(original_input, R * factor).Identify());
+    index++;
     std::map<std::size_t, std::vector<std::size_t>> by_segment;  // segment -> clusters
     for (std::size_t c = 0; c < at_other.size(); c++)
     {
@@ -16054,6 +16169,19 @@ IdentificationResult Identifier::Identify()
   {
     stage.Begin("planes / exclusions");
     ClassifyPlanes();
+    for (std::size_t i = 0; i < input.segments.size(); i++)
+    {
+      const auto &segment = input.segments[i];
+      if (!segment.truncation &&
+          (segment.exclusion || (i < segment_exclusion.size() && segment_exclusion[i])))
+      {
+        excluded_segment_list.push_back(i);
+      }
+      if (segment.truncation)
+      {
+        truncation_segment_list.push_back(i);
+      }
+    }
     {
       std::size_t excluded_runs = 0, cross_layer_runs = 0;
       for (std::size_t r = 0; r < runs.size(); r++)
@@ -16327,6 +16455,15 @@ IdentificationResult Identifier::Identify()
 }
 
 }  // namespace
+
+std::string ClusterCompositionRecords(const IdentificationInput &input, int index)
+{
+  // The radius of the census's pass `index` (R x (1 -/+ band), R = the input's radius).
+  const double factor =
+      index == 0 ? 1.0 - kKnifeEdgeBandRelative : 1.0 + kKnifeEdgeBandRelative;
+  return SerializeClusterRecords(
+      ClusterRecordsOf(Identifier(input, input.radius * factor).Identify()));
+}
 
 IdentificationResult IdentifyMetalPerimeter(const IdentificationInput &input)
 {
