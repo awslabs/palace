@@ -1333,7 +1333,9 @@ TEST_CASE("Config Linear PML preconditioner options", "[config][Serial]")
                      {"Linear", linear}}}};
     IoData iodata(config, false);
     const auto resolved = IoData::ConcretizeDefaults(iodata, config);
-    CHECK(resolved["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>() ==
+    CHECK(resolved["Solver"]["Linear"].contains("ComplexCoarseSolve") ==
+          !iodata.solver.linear.complex_coarse_auto);
+    CHECK(resolved["Solver"]["Linear"].value("ComplexCoarseSolve", false) ==
           iodata.solver.linear.complex_coarse_solve);
     CHECK(resolved["Solver"]["Linear"]["PMLSmootherThreshold"].get<double>() ==
           iodata.solver.linear.pml_smoother_threshold);
@@ -2494,7 +2496,9 @@ TEST_CASE("ConcretizeDefaults", "[config][Serial]")
                      {"Solver", std::move(solver)}};
       IoData iodata(config, false);
       config = IoData::ConcretizeDefaults(iodata, config);
-      CHECK(config["Solver"]["Linear"]["ComplexCoarseSolve"].get<bool>() ==
+      CHECK(config["Solver"]["Linear"].contains("ComplexCoarseSolve") ==
+            !iodata.solver.linear.complex_coarse_auto);
+      CHECK(config["Solver"]["Linear"].value("ComplexCoarseSolve", false) ==
             iodata.solver.linear.complex_coarse_solve);
       return iodata.solver.linear;
     };
@@ -3214,6 +3218,109 @@ TEST_CASE("Linear solver ColumnOrdering ParMETIS", "[config][Serial]")
 #else
   CHECK(iodata.solver.linear.sym_factorization == SymbolicFactorization::METIS);
 #endif
+}
+
+TEST_CASE("Config Linear ComplexCoarseSolve", "[config][Serial]")
+{
+  // When omitted, the sparse direct solvers with an implementation in complex arithmetic
+  // choose between the real-valued approximation and the complex-valued matrix of a driven
+  // or eigenmode problem at setup, and the resolved configuration keeps the key omitted, so
+  // that it gives the same simulation. Where no choice is made at run time, the omitted key
+  // means false and is resolved as false. An explicit value is used and resolved as given.
+  auto MakeConfig = [](const char *problem, const json &linear)
+  {
+    return json{{"Problem", {{"Type", problem}, {"Output", "test_output"}}},
+                {"Model", {{"Mesh", "test.msh"}}},
+                {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                {"Boundaries", json::object()},
+                {"Solver",
+                 {{"Eigenmode", {{"Target", 1.0}}},
+                  {"Driven", {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}}},
+                  {"BoundaryMode", {{"Freq", 10.0}}},
+                  {"Linear", linear}}}};
+  };
+  auto Resolve = [](json config)
+  {
+    IoData iodata1(config, false);
+    const auto linear = iodata1.solver.linear;
+    config = IoData::ConcretizeDefaults(iodata1, config);
+    CHECK(config["Solver"]["Linear"].contains("ComplexCoarseSolve") ==
+          !linear.complex_coarse_auto);
+    CHECK(config["Solver"]["Linear"].value("ComplexCoarseSolve", false) ==
+          linear.complex_coarse_solve);
+    std::string err = ValidateConfig(config);
+    INFO("schema validation error: " << err);
+    CHECK(err.empty());
+    IoData iodata2(config, false);
+    CHECK(iodata2.solver.linear.complex_coarse_auto == linear.complex_coarse_auto);
+    CHECK(iodata2.solver.linear.complex_coarse_solve == linear.complex_coarse_solve);
+    return linear;
+  };
+
+  // The sparse direct solvers of this build.
+  std::vector<const char *> direct, direct_mp;
+#if defined(MFEM_USE_STRUMPACK)
+  direct.push_back("STRUMPACK");
+  direct_mp.push_back("STRUMPACK-MP");
+#endif
+#if defined(MFEM_USE_SUPERLU)
+  direct.push_back("SuperLU");
+#endif
+#if defined(MFEM_USE_MUMPS)
+  direct.push_back("MUMPS");
+#endif
+
+  SECTION("Omitted, chosen at run time")
+  {
+    const char *problem = GENERATE("Driven", "Eigenmode");
+    auto types = direct;
+    types.push_back("Default");
+    for (const char *type : types)
+    {
+      INFO("problem " << problem << ", type " << type);
+      json config = MakeConfig(problem, {{"Type", type}});
+      {
+        // Without a sparse direct solver in the build, the default is AMS.
+        const auto linear = Resolve(config);
+        CHECK(linear.complex_coarse_auto == (linear.type != LinearSolver::AMS));
+        CHECK_FALSE(linear.complex_coarse_solve);
+      }
+      for (const bool value : {false, true})
+      {
+        config["Solver"]["Linear"]["ComplexCoarseSolve"] = value;
+        const auto linear = Resolve(config);
+        CHECK_FALSE(linear.complex_coarse_auto);
+        CHECK(linear.complex_coarse_solve == (value && linear.type != LinearSolver::AMS));
+      }
+    }
+  }
+
+  SECTION("Omitted, false")
+  {
+    std::vector<std::pair<const char *, json>> cases = {
+        {"Eigenmode", {{"Type", "AMS"}}},
+        {"Eigenmode", {{"Type", "BoomerAMG"}}},
+        {"Eigenmode", {{"Type", "Jacobi"}}},
+        {"Electrostatic", json::object()},
+        {"Magnetostatic", json::object()}};
+    for (const char *type : direct_mp)
+    {
+      cases.push_back({"Eigenmode", {{"Type", type}}});
+    }
+    for (const char *type : direct)
+    {
+      cases.push_back({"Driven", {{"Type", type}, {"PCMatReal", true}}});
+      cases.push_back({"BoundaryMode", {{"Type", type}}});
+      cases.push_back({"Transient", {{"Type", type}}});
+    }
+    for (const auto &[problem, linear] : cases)
+    {
+      INFO("problem " << problem << ", linear " << linear.dump());
+      const auto resolved = Resolve(MakeConfig(problem, linear));
+      CHECK_FALSE(resolved.complex_coarse_auto);
+      CHECK_FALSE(resolved.complex_coarse_solve);
+    }
+  }
 }
 
 #if defined(MFEM_USE_CUDSS)

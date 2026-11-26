@@ -461,7 +461,8 @@ TEST_CASE("SpaceOperator real-valued coarse solve with PML regions",
 
   test::IntegrationSettingsGuard settings_guard;
   constexpr double omega = 2.0;
-  auto MakeSpaceOperator = [&](bool pc_mat_real, bool complex_coarse_solve)
+  auto MakeSpaceOperator =
+      [&](bool pc_mat_real, bool complex_coarse_solve, bool measured = false)
   {
     config::SolverData solver;
     solver.order = 2;
@@ -469,6 +470,10 @@ TEST_CASE("SpaceOperator real-valued coarse solve with PML regions",
     solver.linear.pc_mat_real = pc_mat_real;
     solver.linear.pc_mat_shifted = 0;
     solver.linear.complex_coarse_solve = complex_coarse_solve;
+    // A coarse solver which chooses between the real-valued approximation and the
+    // complex-valued operator: ComplexCoarseSolve omitted with a sparse direct solver.
+    solver.linear.complex_coarse_auto = measured;
+    solver.linear.type = measured ? LinearSolver::STRUMPACK : LinearSolver::DEFAULT;
     fem::DefaultIntegrationOrder::p_trial = solver.order;
     config::MaterialData vacuum;
     vacuum.attributes = {1, 2};
@@ -539,6 +544,72 @@ TEST_CASE("SpaceOperator real-valued coarse solve with PML regions",
     {
       CHECK_THAT(err, Catch::Matchers::WithinAbs(0.0, 1.0e-12));
     }
+    CHECK(!dynamic_cast<const ComplexMultigridOperator &>(*P).GetCoarseComplexChosen());
+    CHECK(
+        !dynamic_cast<const ComplexMultigridOperator &>(*P).GetCoarseCorrectionOperator());
+  }
+
+  // For a coarse solver which chooses between the two, the coarse-level operator is the
+  // one of the real-valued coarse solve, and the multigrid operator carries the correction
+  // which gives the complex-valued coarse-level operator, with the exact PML terms. Once
+  // the solver has chosen the latter (it sets the flag), the coarse level is assembled for
+  // it, without a correction.
+  {
+    auto Apply = [&](const ComplexOperator &B, const ComplexOperator *D, ComplexVector &y)
+    {
+      ComplexVector xc(x.Size());
+      xc.UseDevice(true);
+      xc.Real() = x;
+      xc.Imag() = 0.0;
+      y.SetSize(B.Height());
+      y.UseDevice(true);
+      B.Mult(xc, y);
+      if (D)
+      {
+        D->AddMult(xc, y);
+      }
+    };
+    auto Preconditioner = [&](SpaceOperator &space_op)
+    {
+      return space_op.GetPreconditionerMatrix<ComplexOperator>(
+          1.0 + 0.0i, 0.0 + 0.0i, -omega * omega + 0.0i, omega);
+    };
+    auto exact_op = MakeSpaceOperator(false, true);
+    auto approx_op = MakeSpaceOperator(false, false);
+    auto measured_op = MakeSpaceOperator(false, false, true);
+    const auto P_exact = Preconditioner(*exact_op), P_approx = Preconditioner(*approx_op);
+    ComplexVector y_exact, y_approx, y;
+    Apply(Coarse(P_exact), nullptr, y_exact);
+    Apply(Coarse(P_approx), nullptr, y_approx);
+    const double norm = linalg::Norml2(comm, y_exact);
+    auto Diff = [&](const ComplexVector &a, const ComplexVector &b)
+    {
+      ComplexVector d(a);
+      d -= b;
+      return linalg::Norml2(comm, d) / norm;
+    };
+    REQUIRE(Diff(y_approx, y_exact) > 1.0e-2);
+
+    auto P = Preconditioner(*measured_op);
+    const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+    REQUIRE(mg);
+    bool *chosen = mg->GetCoarseComplexChosen();
+    REQUIRE(chosen);
+    CHECK(!*chosen);
+    REQUIRE(mg->GetCoarseCorrectionOperator());
+    Apply(Coarse(P), nullptr, y);
+    CHECK(Diff(y, y_approx) <= 1.0e-12);
+    Apply(Coarse(P), mg->GetCoarseCorrectionOperator(), y);
+    CHECK(Diff(y, y_exact) <= 1.0e-12);
+
+    *chosen = true;
+    P = Preconditioner(*measured_op);
+    mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+    REQUIRE(mg);
+    CHECK(mg->GetCoarseComplexChosen() == chosen);
+    CHECK(!mg->GetCoarseCorrectionOperator());
+    Apply(Coarse(P), nullptr, y);
+    CHECK(Diff(y, y_exact) <= 1.0e-12);
   }
 }
 
@@ -2015,26 +2086,48 @@ TEST_CASE("Second-order absorbing boundary term of the coarse preconditioner",
   // given coarse-level solver and order of the absorbing boundary. A real ω takes the
   // real-ω overload of the driven solvers, a complex ω the one of the nonlinear eigenvalue
   // solver.
+  //
+  // With measured, ComplexCoarseSolve is omitted, for a coarse solver which chooses between
+  // the real-valued approximation and the complex-valued operator (the sparse direct
+  // solvers with an implementation in complex arithmetic): the correction which the
+  // multigrid operator carries for the coarse level is then added, and with chosen, the
+  // flag which such a solver sets when it chooses the complex-valued operator is set
+  // before the operator is assembled again.
   Vector x;
   auto ApplyLevel = [&](std::complex<double> omega, LinearSolver type,
                         bool complex_coarse_solve, int farfield_order, std::size_t l,
-                        Vector &yr, Vector &yi)
+                        Vector &yr, Vector &yi, bool measured = false, bool chosen = false)
   {
     auto test_solver = solver;
     test_solver.linear.type = type;
     test_solver.linear.complex_coarse_solve = complex_coarse_solve;
+    test_solver.linear.complex_coarse_auto = measured;
     auto test_boundaries = boundaries;
     test_boundaries.farfield.order = farfield_order;
     SpaceOperator space_op(test_solver, domains, test_boundaries, ProblemType::DRIVEN,
                            units, mesh);
-    auto P = (omega.imag() == 0.0)
+    auto Preconditioner = [&]()
+    {
+      return (omega.imag() == 0.0)
                  ? space_op.GetPreconditionerMatrix<ComplexOperator>(
                        1.0 + 0.0i, 1i * omega, -omega * omega, omega.real())
                  : space_op.GetPreconditionerMatrix<ComplexOperator>(1.0 + 0.0i, 1i * omega,
                                                                      -omega * omega, omega);
+    };
+    auto P = Preconditioner();
     const auto *mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
     REQUIRE(mg);
     REQUIRE(mg->GetNumLevels() == 2);
+    REQUIRE((mg->GetCoarseComplexChosen() != nullptr) == measured);
+    if (chosen)
+    {
+      *mg->GetCoarseComplexChosen() = true;
+      P = Preconditioner();
+      mg = dynamic_cast<const ComplexMultigridOperator *>(P.get());
+      REQUIRE(mg);
+    }
+    const auto *D = mg->GetCoarseCorrectionOperator();
+    REQUIRE((D != nullptr) == (measured && !chosen && farfield_order == 2));
     const auto &B = mg->GetOperatorAtLevel(l);
     if (x.Size() != B.Width())
     {
@@ -2048,6 +2141,10 @@ TEST_CASE("Second-order absorbing boundary term of the coarse preconditioner",
     xc.Real() = x;
     xc.Imag() = 0.0;
     B.Mult(xc, y);
+    if (D && l == 0)
+    {
+      D->AddMult(xc, y);
+    }
     yr = y.Real();
     yi = y.Imag();
   };
@@ -2109,6 +2206,26 @@ TEST_CASE("Second-order absorbing boundary term of the coarse preconditioner",
           CHECK(Diff(yr, yr_exact) <= 1.0e-12 * Norm(yr_exact));
           CHECK(Diff(yi, yi_exact) <= 1.0e-12 * Norm(yi_exact));
         }
+      }
+
+      // A coarse solver which chooses: the flipped coarse level plus its correction is the
+      // exact operator, and so is the coarse level once the solver has chosen the
+      // complex-valued operator. The first-order boundary has no correction.
+      for (auto type :
+           {LinearSolver::MUMPS, LinearSolver::SUPERLU, LinearSolver::STRUMPACK})
+      {
+        CAPTURE(static_cast<int>(type));
+        for (bool chosen : {false, true})
+        {
+          Vector yr, yi;
+          ApplyLevel(omega, type, false, 2, l, yr, yi, true, chosen);
+          CHECK(Diff(yr, yr_exact) <= 1.0e-12 * Norm(yr_exact));
+          CHECK(Diff(yi, yi_exact) <= 1.0e-12 * Norm(yi_exact));
+        }
+        Vector yr, yi;
+        ApplyLevel(omega, type, false, 1, l, yr, yi, true);
+        CHECK(Diff(yr, yr_first) <= 1.0e-12 * Norm(yr_first));
+        CHECK(Diff(yi, yi_first) <= 1.0e-12 * Norm(yi_first));
       }
     }
   }

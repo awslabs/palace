@@ -53,6 +53,13 @@ private:
   const bool pc_coarse_real;  // Coarse-level solver is applied to the real-valued Br + Bi
   const bool pml_subdomain;   // Provide the PML true DOFs for the PML subdomain correction
 
+  // The coarse-level solver chooses at setup between the real-valued Br + Bi and the
+  // complex-valued operator (see MeasureRealCoarseApproximation), and the flag which it
+  // sets when it chooses the complex-valued operator: the coarse level is assembled for
+  // the real-valued approximation until then, and for the complex-valued solve afterwards.
+  const bool pc_coarse_measured;
+  std::shared_ptr<bool> pc_coarse_complex_chosen;
+
   // Threshold of the PML stretch magnitude for the multigrid smoother masks (see
   // GetPreconditionerMatrix).
   const double pml_smoother_threshold;
@@ -225,7 +232,11 @@ private:
   // For the complex-valued preconditioner, pml_block optionally returns the operator of the
   // PML subdomain correction at the finest level: the PML and boundary terms only, which
   // are the terms of the rows and columns of the PML true DOFs not shared with elements
-  // outside of the PML regions (see GetPMLTrueDofs).
+  // outside of the PML regions (see GetPMLTrueDofs). For a coarse-level solver which
+  // chooses between the real-valued approximation and the complex-valued operator,
+  // dr_coarse and di_coarse return the real and imaginary parts of the complex-valued
+  // coarse-level operator minus the one which is assembled for the real-valued
+  // approximation (each is null if that part is the same on all processes).
   template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,
@@ -233,7 +244,9 @@ private:
                               std::vector<std::unique_ptr<Operator>> &br_aux_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_vec,
                               std::vector<std::unique_ptr<Operator>> &bi_aux_vec,
-                              std::unique_ptr<ComplexOperator> *pml_block = nullptr);
+                              std::unique_ptr<ComplexOperator> *pml_block = nullptr,
+                              std::unique_ptr<Operator> *dr_coarse = nullptr,
+                              std::unique_ptr<Operator> *di_coarse = nullptr);
   template <typename A3Type>
   void AssemblePreconditioner(std::complex<double> a0, std::complex<double> a1,
                               std::complex<double> a2, A3Type a3,

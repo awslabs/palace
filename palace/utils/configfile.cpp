@@ -2006,6 +2006,7 @@ LinearSolverData::LinearSolverData(const json &linear)
   pc_mat_real = linear.value("PCMatReal", pc_mat_real);
   pc_mat_shifted = linear.value("PCMatShifted", pc_mat_shifted);
   complex_coarse_solve = linear.value("ComplexCoarseSolve", complex_coarse_solve);
+  complex_coarse_auto = !linear.contains("ComplexCoarseSolve");
   drop_small_entries = linear.value("DropSmallEntries", drop_small_entries);
   pml_subdomain_solver = linear.value("PMLSubdomainSolver", pml_subdomain_solver);
   pml_smoother_threshold = linear.value("PMLSmootherThreshold", pml_smoother_threshold);

@@ -44,6 +44,8 @@ SpaceOperator::SpaceOperator(const config::SolverData &solver,
   : pc_mat_real(solver.linear.pc_mat_real), pc_mat_shifted(solver.linear.pc_mat_shifted),
     pc_coarse_real(UseRealCoarseApproximation(solver.linear)),
     pml_subdomain(solver.linear.pml_subdomain_solver == PMLSubdomainSolver::DIRECT),
+    pc_coarse_measured(MeasureRealCoarseApproximation(solver.linear)),
+    pc_coarse_complex_chosen(std::make_shared<bool>(false)),
     pml_smoother_threshold(solver.linear.pml_smoother_threshold), print_hdr(true),
     print_prec_hdr(true), dbc_attr(SetUpBoundaryProperties(boundaries.pec, *mesh.back())),
     nd_fecs(fem::ConstructFECollections<mfem::ND_FECollection>(
@@ -2131,7 +2133,8 @@ void SpaceOperator::AssemblePreconditioner(
     std::vector<std::unique_ptr<Operator>> &br_aux_vec,
     std::vector<std::unique_ptr<Operator>> &bi_vec,
     std::vector<std::unique_ptr<Operator>> &bi_aux_vec,
-    std::unique_ptr<ComplexOperator> *pml_block)
+    std::unique_ptr<ComplexOperator> *pml_block, std::unique_ptr<Operator> *dr_coarse,
+    std::unique_ptr<Operator> *di_coarse)
 {
   constexpr bool skip_zeros = false;
   // Cache geometry/material tensors for repeated CPU smoother applications. Only the
@@ -2182,9 +2185,16 @@ void SpaceOperator::AssemblePreconditioner(
   // flipped coarse copy only, it is replaced by its magnitude, as in the real
   // preconditioner (SurfaceTerms::AddFlippedPreconditionerBdrCoefficients, which adds a_k
   // and |a_k| to the flipped -a_k). The other levels keep a_k, as the system matrix does.
+  //
+  // A coarse-level solver which chooses between the two (pc_coarse_measured) is given the
+  // difference between the complex-valued coarse-level operator and the one for the
+  // real-valued approximation, so that it measures and factors the former (see
+  // ComplexCoarseSolver). Once it has chosen the complex-valued operator, the coarse level
+  // is assembled for it, as with ComplexCoarseSolve.
+  const bool coarse_real = pc_coarse_real && !*pc_coarse_complex_chosen;
   MaterialPropertyCoefficient dfbr_flip_add(mat_op.MaxCeedBdrAttribute()),
       dfbi_flip_add(mat_op.MaxCeedBdrAttribute());
-  if (pc_coarse_real)
+  if (coarse_real)
   {
     surface_terms.AddFlippedPreconditionerBdrCoefficients(a3, dfbr_flip_add, dfbi_flip_add);
   }
@@ -2234,7 +2244,7 @@ void SpaceOperator::AssemblePreconditioner(
   // the bulk material terms for a unit stretch. The finest level, which is the exact
   // preconditioner matrix, keeps the PML terms.
   std::optional<std::array<std::vector<PMLIntegrator>, 2>> coarse_pml;
-  if (pc_coarse_real && mat_op.HasPML() && GetNDSpaces().GetNumLevels() > 1)
+  if (coarse_real && mat_op.HasPML() && GetNDSpaces().GetNumLevels() > 1)
   {
     auto &[coarse_re, coarse_im] = coarse_pml.emplace();
     AppendPMLPencil(coarse_re, &coarse_im, nullptr, nullptr, mat_op, PMLFilter::STATIC, 0.0,
@@ -2253,7 +2263,7 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty[0])
   {
     br_vec = AssembleOperators(GetNDSpaces(), &dfr, &fr, &dfbr, &fbr, &fpr, &frbr, &fpbr,
-                               skip_zeros, assemble_q_data, pc_coarse_real, &dfbr_flip_add,
+                               skip_zeros, assemble_q_data, coarse_real, &dfbr_flip_add,
                                &pml_re, coarse_pml ? &(*coarse_pml)[0] : nullptr);
     br_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fr, &fbr, &frbr, skip_zeros,
                                       assemble_q_data, &aux_pml_re);
@@ -2261,10 +2271,59 @@ void SpaceOperator::AssemblePreconditioner(
   if (!empty[1])
   {
     bi_vec = AssembleOperators(GetNDSpaces(), &dfi, &fi, &dfbi, &fbi, &fpi, &frbi, &fpbi,
-                               skip_zeros, assemble_q_data, pc_coarse_real, &dfbi_flip_add,
+                               skip_zeros, assemble_q_data, coarse_real, &dfbi_flip_add,
                                &pml_im, coarse_pml ? &(*coarse_pml)[1] : nullptr);
     bi_aux_vec = AssembleAuxOperators(GetH1Spaces(), &fi, &fbi, &frbi, skip_zeros,
                                       assemble_q_data, &aux_pml_im);
+  }
+  if (coarse_real && dr_coarse && di_coarse)
+  {
+    // The complex-valued coarse-level operator minus the one assembled above: twice the
+    // second-order absorbing BC term, less what was added to its flipped copy, on the
+    // boundary elements, and the difference of the PML tensors with the stretch factors and
+    // with their magnitudes on the elements of the PML regions.
+    const auto &fespace = GetNDSpaces().GetFESpaceAtLevel(0);
+    auto Negative = [](const PMLPencil &c)
+    { return PMLPencil{-c.a0, -c.a1, -c.a2, -c.a2_floquet}; };
+    std::vector<PMLIntegrator> dpml_re, dpml_im;
+    if (coarse_pml)
+    {
+      dpml_re = pml_re;
+      dpml_im = pml_im;
+      AppendPMLPencil(dpml_re, &dpml_im, nullptr, nullptr, mat_op, PMLFilter::STATIC, 0.0,
+                      Negative({a0, a1, ShiftedMassCoefficient(a2, pc_mat_shifted), a2}),
+                      true);
+      AppendPMLPencil(dpml_re, &dpml_im, nullptr, nullptr, mat_op,
+                      PMLFilter::FREQUENCY_DEPENDENT, a3,
+                      Negative(ExtraSystemPMLPencil(a3, pc_mat_shifted)), true);
+    }
+    auto Difference = [](const MaterialPropertyCoefficient &dfb,
+                         const MaterialPropertyCoefficient &dfb_flip_add)
+    {
+      MaterialPropertyCoefficient d(dfb);
+      d *= 2.0;
+      if (!dfb_flip_add.empty())
+      {
+        d.AddCoefficient(dfb_flip_add.GetAttributeToMaterial(),
+                         dfb_flip_add.GetMaterialProperties(), -1.0);
+      }
+      return d;
+    };
+    const auto ddfbr = Difference(dfbr, dfbr_flip_add),
+               ddfbi = Difference(dfbi, dfbi_flip_add);
+    int differs[2] = {!ddfbr.empty() || !dpml_re.empty(),
+                      !ddfbi.empty() || !dpml_im.empty()};
+    Mpi::GlobalMax(2, differs, GetComm());
+    if (differs[0])
+    {
+      *dr_coarse = AssembleOperator(fespace, nullptr, nullptr, &ddfbr, nullptr, nullptr,
+                                    nullptr, nullptr, skip_zeros, false, &dpml_re);
+    }
+    if (differs[1])
+    {
+      *di_coarse = AssembleOperator(fespace, nullptr, nullptr, &ddfbi, nullptr, nullptr,
+                                    nullptr, nullptr, skip_zeros, false, &dpml_im);
+    }
   }
   if (pml_block)
   {
@@ -2513,10 +2572,13 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
   std::vector<std::unique_ptr<Operator>> br_vec(n_levels), bi_vec(n_levels),
       br_aux_vec(n_levels), bi_aux_vec(n_levels);
   std::unique_ptr<ComplexOperator> pml_block;
+  std::unique_ptr<Operator> dr_coarse, di_coarse;
   if (std::is_same_v<OperType, ComplexOperator> && !pc_mat_real)
   {
     AssemblePreconditioner(a0, a1, a2, a3, br_vec, br_aux_vec, bi_vec, bi_aux_vec,
-                           (pml_subdomain && mat_op.HasPML()) ? &pml_block : nullptr);
+                           (pml_subdomain && mat_op.HasPML()) ? &pml_block : nullptr,
+                           pc_coarse_measured ? &dr_coarse : nullptr,
+                           pc_coarse_measured ? &di_coarse : nullptr);
   }
   else
   {
@@ -2575,6 +2637,20 @@ std::unique_ptr<OperType> SpaceOperator::GetPreconditionerMatrix(ScalarType a0,
 
   if constexpr (std::is_same_v<OperType, ComplexOperator>)
   {
+    if (pc_coarse_measured)
+    {
+      // For a coarse solver which chooses between the real-valued approximation and the
+      // complex-valued operator.
+      std::unique_ptr<ComplexOperator> D;
+      if (dr_coarse || di_coarse)
+      {
+        auto D0 = std::make_unique<ComplexParOperator>(
+            std::move(dr_coarse), std::move(di_coarse), GetNDSpaces().GetFESpaceAtLevel(0));
+        D0->SetEssentialTrueDofs(nd_dbc_tdof_lists[0], Operator::DiagonalPolicy::DIAG_ZERO);
+        D = std::move(D0);
+      }
+      B->SetCoarseSolverChoice(pc_coarse_complex_chosen, std::move(D));
+    }
     if (pml_block)
     {
       // The PML regions are the subdomain of the subdomain correction of the multigrid

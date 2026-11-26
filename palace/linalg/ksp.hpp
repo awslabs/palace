@@ -36,6 +36,14 @@ MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata);
 // without ComplexCoarseSolve.
 bool UseRealCoarseApproximation(const config::LinearSolverData &linear);
 
+// Whether the coarse-level solver, a sparse direct solver with an implementation in complex
+// arithmetic, chooses at setup between the real-valued approximation and the complex-valued
+// operator, from a measurement (ComplexCoarseSolve omitted, see ComplexCoarseSolver). The
+// coarse-level operator is then assembled for the real-valued approximation until the
+// solver chooses the complex-valued operator, and the solver is also given the difference
+// between the two (see SpaceOperator::AssemblePreconditioner).
+bool MeasureRealCoarseApproximation(const config::LinearSolverData &linear);
+
 //
 // Linear solver class composing an iterative solver and preconditioner object.
 //

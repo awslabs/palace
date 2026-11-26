@@ -442,6 +442,15 @@ private:
   // by the multigrid smoothers (empty if none).
   std::vector<std::vector<int>> smoother_masks, aux_smoother_masks;
 
+  // For a coarse solver which chooses between the complex-valued operator of the coarsest
+  // level and its real-valued approximation (see ComplexCoarseSolver): the flag, shared
+  // with the assembler of the operators, which the solver sets when it chooses the
+  // complex-valued operator, so that the later operators are assembled for it, and, where
+  // the operator at level 0 is assembled for the real-valued approximation and differs
+  // from the complex-valued operator, the latter minus the former (null otherwise).
+  std::shared_ptr<bool> coarse_complex_chosen;
+  std::unique_ptr<OperType> coarse_correction_op;
+
 public:
   BaseMultigridOperator(std::size_t l) : OperType(0)
   {
@@ -487,6 +496,15 @@ public:
     static const std::vector<int> empty;
     return (l < aux_smoother_masks.size()) ? aux_smoother_masks[l] : empty;
   }
+  void SetCoarseSolverChoice(std::shared_ptr<bool> complex_chosen,
+                             std::unique_ptr<OperType> &&correction_op)
+  {
+    coarse_complex_chosen = std::move(complex_chosen);
+    coarse_correction_op = std::move(correction_op);
+  }
+  bool *GetCoarseComplexChosen() const { return coarse_complex_chosen.get(); }
+  const OperType *GetCoarseCorrectionOperator() const { return coarse_correction_op.get(); }
+
   auto GetNumLevels() const { return ops.size(); }
   auto GetNumAuxiliaryLevels() const { return aux_ops.size(); }
 

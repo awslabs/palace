@@ -451,15 +451,19 @@ warning suggests STRUMPACK or MUMPS if it is still inaccurate. Simulations with 
 therefore require a sparse direct solver (SuperLU_DIST, STRUMPACK, or MUMPS), and AMS is not
 supported with PML regions.
 
-The coarse-level solve uses the real-valued approximation of the operator, in which the PML
+With `"ComplexCoarseSolve": false`
+([`config["Solver"]["Linear"]["ComplexCoarseSolve"]`](../config/reference.md#config-solver-linear-complexcoarsesolve)),
+the coarse-level solve uses the real-valued approximation of the operator, in which the PML
 terms are those of the magnitudes of the stretch factors and do not absorb. A
-complex-valued coarse solve
-([`config["Solver"]["Linear"]["ComplexCoarseSolve"]`](../config/reference.md#config-solver-linear-complexcoarsesolve))
-typically reduces the number of iterations further, at the cost of the factorization of a
-complex-valued coarse-level matrix. It is needed for convergence with Floquet periodic
-boundaries at oblique incidence, and recommended for electrically large domains (several
-wavelengths across, such as the air region around a radiating antenna), where the number of
-iterations with the real-valued coarse solve grows quickly with the size of the domain.
+complex-valued coarse solve (`true`) typically reduces the number of iterations further, at
+the cost of the factorization of a complex-valued coarse-level matrix. It is needed for
+convergence with Floquet periodic boundaries at oblique incidence, and recommended for
+electrically large domains (several wavelengths across, such as the air region around a
+radiating antenna), where the number of iterations with the real-valued coarse solve grows
+quickly with the size of the domain. When the option is omitted, SuperLU_DIST, STRUMPACK,
+and MUMPS choose between the two from the measured error of the real-valued coarse solve
+for the complex-valued coarse-level operator (see
+[Driven problems in the frequency domain](problem.md#Driven-problems-in-the-frequency-domain)).
 
 When the PML regions hold a significant fraction of the unknowns (for example a layer on all
 of the faces of a small domain), the sparse direct solve of the PML regions can dominate the

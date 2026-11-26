@@ -29,6 +29,13 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - When `config["Solver"]["Linear"]["ComplexCoarseSolve"]` is omitted, SuperLU_DIST,
+    STRUMPACK, and MUMPS now choose at setup, for driven and eigenmode simulations, between
+    the real-valued approximation and the complex-valued coarse-level matrix: they measure
+    the error of the real-valued solve and switch, as with `true`, when it exceeds 1. This
+    reduces the linear solver iterations with absorbing boundaries, PML regions, Floquet
+    boundaries, wave ports, or many lossy boundaries. An explicit `true` or `false` is used
+    as given. SchemaVer 7-0-0 [PR XXXX](https://github.com/awslabs/palace/pull/XXXX).
   - Eigenmode simulations now postprocess the converged modes, with a warning, when fewer than
     `Solver.Eigenmode.N` modes converge within `Solver.Eigenmode.MaxIts` iterations,
     instead of aborting without output.

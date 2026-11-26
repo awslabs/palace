@@ -533,7 +533,9 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
   // ConfigurePreconditionerSolver uses the complex arithmetic solvers where they apply,
   // and they solve the ComplexParOperator of a simulation (assembled again for a new
   // operator after the previous assembly was released, essential boundary conditions
-  // eliminated) as the equivalent real-valued system of twice the size does.
+  // eliminated) as the equivalent real-valued system of twice the size does. With
+  // ComplexCoarseSolve omitted, the same solver chooses between the real-valued
+  // approximation and the complex-valued matrix from a measurement.
   MPI_Comm comm = Mpi::World();
   const auto type = GENERATE(from_range(SparseDirectSolverTypes()));
   INFO("type " << type);
@@ -616,8 +618,69 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
     }
   }
 
+  // ComplexCoarseSolve omitted: the measured choice, which measures the real-valued
+  // approximation (not the real-valued system of twice the size), also with the options
+  // above. This matrix, with a lossy dielectric, keeps the approximation or not depending
+  // on the measured errors.
+  {
+    auto measured_options = complex_options;
+    for (auto &options : measured_options)
+    {
+      options.erase("ComplexCoarseSolve");
+    }
+    for (const auto &options : measured_options)
+    {
+      INFO("options " << options.dump());
+      DrivenTestProblem problem(LinearOptions(type, options));
+      CHECK(problem.iodata.solver.linear.complex_coarse_auto);
+      auto ksp = problem.MakeKspSolver();
+      auto *pc = dynamic_cast<ComplexCoarseSolver *>(ksp->GetPreconditioner());
+      REQUIRE(pc);
+      ComplexVector E;
+      problem.Solve(*ksp, 1.0, E);
+      const auto err = pc->GetRealSolveError();
+      INFO("measured errors " << fmt::format("{:.6e}", fmt::join(err, ", ")));
+      REQUIRE(!err.empty());
+      CHECK(err.front() > 1.0e-3);
+      const bool complex = !(err.back() <= 1.0);
+      if (complex)
+      {
+        CHECK(IsComplexArithmeticSolver(type, pc->GetComplexSolver()));
+        CHECK(!pc->GetRealSolver());
+      }
+      else
+      {
+        CHECK(err.size() == 3);
+        CHECK(!pc->GetComplexSolver());
+        auto *real_pc =
+            dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(pc->GetRealSolver());
+        REQUIRE(real_pc);
+        CHECK(real_pc->GetSolver().Height() == n);
+      }
+      E -= E_ref;
+      CHECK(linalg::Norml2(comm, E) / linalg::Norml2(comm, E_ref) < 1.0e-8);
+
+      // The next operator of the solver is measured again only while the approximation is
+      // kept.
+      problem.Solve(*ksp, 1.2, E);
+      CHECK((pc->GetRealSolveError() == err) == complex);
+    }
+
+    // A model without losses is not measured: the real part alone is factored.
+    DrivenTestProblem problem(LinearOptions(type, json::object()), true);
+    auto ksp = problem.MakeKspSolver();
+    auto *pc = dynamic_cast<ComplexCoarseSolver *>(ksp->GetPreconditioner());
+    REQUIRE(pc);
+    ComplexVector E;
+    CHECK(problem.Solve(*ksp, 1.0, E) <= 2);
+    CHECK(pc->GetRealSolveError().empty());
+    CHECK(!pc->GetComplexSolver());
+    CHECK(pc->GetRealSolver());
+  }
+
   // The mixed precision solver of STRUMPACK keeps the real-valued solver, for the
-  // equivalent real-valued system of twice the size.
+  // equivalent real-valued system of twice the size, or for the real-valued approximation
+  // when ComplexCoarseSolve is omitted.
   if (type == "STRUMPACK")
   {
     DrivenTestProblem problem(
@@ -629,11 +692,24 @@ TEST_CASE("ComplexKspSolver sparse direct solver with ComplexCoarseSolve",
     problem.Solve(*ksp, 1.0, E);
     CHECK(pc->GetSolver().Height() == 2 * n);
   }
+  if (type == "STRUMPACK")
+  {
+    DrivenTestProblem problem(LinearOptions("STRUMPACK-MP", json::object()));
+    CHECK(!problem.iodata.solver.linear.complex_coarse_auto);
+    auto ksp = problem.MakeKspSolver();
+    auto *pc = dynamic_cast<MfemWrapperSolver<ComplexOperator> *>(ksp->GetPreconditioner());
+    REQUIRE(pc);
+    ComplexVector E;
+    problem.Solve(*ksp, 1.0, E);
+    CHECK(pc->GetSolver().Height() == n);
+  }
 
   // The real-valued approximation, and the real-valued preconditioner matrix of PCMatReal
-  // (also with ComplexCoarseSolve): the real-valued solver, for a matrix of the same size.
-  for (const auto &options : {json{{"ComplexCoarseSolve", false}},
-                              json{{"ComplexCoarseSolve", true}, {"PCMatReal", true}}})
+  // (also with ComplexCoarseSolve, or without the key): the real-valued solver, for a
+  // matrix of the same size.
+  for (const auto &options :
+       {json{{"ComplexCoarseSolve", false}},
+        json{{"ComplexCoarseSolve", true}, {"PCMatReal", true}}, json{{"PCMatReal", true}}})
   {
     INFO("options " << options.dump());
     DrivenTestProblem problem(LinearOptions(type, options));

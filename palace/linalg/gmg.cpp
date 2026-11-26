@@ -8,6 +8,7 @@
 #include <vector>
 #include <mfem.hpp>
 #include "linalg/chebyshev.hpp"
+#include "linalg/complexcoarse.hpp"
 #include "linalg/distrelaxation.hpp"
 #include "linalg/rap.hpp"
 #include "utils/communication.hpp"
@@ -132,6 +133,15 @@ void GeometricMultigridSolver<OperType>::SetOperator(const OperType &op)
                      dynamic_cast<ChebyshevSmoother1stKind<OperType> *>(B[l].get()))
         {
           cheby_1st->SetMask(mg_op->GetSmootherMask(l));
+        }
+      }
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        if (auto *coarse_pc = dynamic_cast<ComplexCoarseSolver *>(B[l].get());
+            coarse_pc && l == 0)
+        {
+          coarse_pc->SetChoiceContext(mg_op->GetCoarseComplexChosen(),
+                                      mg_op->GetCoarseCorrectionOperator());
         }
       }
       B[l]->SetOperator(mg_op->GetOperatorAtLevel(l));

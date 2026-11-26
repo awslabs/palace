@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-1-1",
+  "$id": "urn:palace:schema:7-0-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3559,8 +3559,7 @@
         },
         "ComplexCoarseSolve": {
           "type": "boolean",
-          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver (not supported with AMS or BoomerAMG). When `false`, uses the real-valued approximation.",
-          "default": false
+          "description": "When `true`, uses the true complex-valued system matrix for the coarse-level solver (not supported with AMS or BoomerAMG). When `false`, uses the real-valued approximation, the sum of the real and imaginary parts of the matrix. If omitted, SuperLU_DIST, STRUMPACK, and MUMPS choose at setup for driven and eigenmode simulations (unless `\"PCMatReal\"` is `true`): they factor the real-valued approximation and measure its error for the complex-valued matrix over up to three successive solves of a pseudo-random vector which is fixed on the mesh. When a measured value exceeds 1 (the real-valued solve is not a contraction), the complex-valued matrix is factored instead, as with `true`, also for the later frequencies or eigenvalue shifts on the same mesh, which are not measured. Each mesh of an adaptive mesh refinement is measured again, and a matrix without imaginary part is not measured. In all other cases, and for the wave port mode solves, which inherit this key, an omitted key means `false`."
         },
         "DropSmallEntries": {
           "type": "boolean",

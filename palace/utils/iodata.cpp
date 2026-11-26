@@ -897,6 +897,20 @@ void IoData::CheckConfiguration()
                  ToString(solver.linear.type));
     solver.linear.complex_coarse_solve = false;
   }
+  if (solver.linear.complex_coarse_auto &&
+      !((problem.type == ProblemType::DRIVEN || problem.type == ProblemType::EIGENMODE) &&
+        (solver.linear.type == LinearSolver::SUPERLU ||
+         solver.linear.type == LinearSolver::STRUMPACK ||
+         solver.linear.type == LinearSolver::MUMPS) &&
+        !solver.linear.pc_mat_real))
+  {
+    // An omitted "ComplexCoarseSolve" is chosen at run time, from a measurement, by the
+    // sparse direct solvers with an implementation in complex arithmetic, for the
+    // complex-valued preconditioner matrix of a 3D frequency domain problem (see
+    // ComplexCoarseSolver). Everywhere else it means false, as for the mode solver of
+    // wave ports.
+    solver.linear.complex_coarse_auto = false;
+  }
   if (solver.linear.pc_mat_shifted < 0)
   {
     if (problem.type == ProblemType::DRIVEN && solver.linear.type == LinearSolver::AMS)

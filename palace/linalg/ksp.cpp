@@ -132,14 +132,25 @@ auto MakeWrapperSolver(const config::LinearSolverData &linear, U &&...args)
       linear.complex_coarse_solve, linear.drop_small_entries, linear.reorder_reuse);
 }
 
-// Whether the sparse direct solvers which support it factor the complex-valued matrix of a
-// complex-valued coarse solve in complex arithmetic, instead of the equivalent real-valued
-// system of twice the size (see MfemWrapperSolver). With PCMatReal, the matrix is
-// real-valued. A matrix whose imaginary part is zero is then factored in real arithmetic
-// (see ComplexCoarseSolver).
+// Whether the sparse direct solvers which support it build a ComplexCoarseSolver: with
+// ComplexCoarseSolve, to factor the complex-valued matrix in complex arithmetic instead of
+// the equivalent real-valued system of twice the size (see MfemWrapperSolver), and when it
+// is omitted, to choose between the complex-valued matrix and its real-valued approximation
+// from a measurement. With PCMatReal, the matrix is real-valued. A matrix whose imaginary
+// part is zero is factored in real arithmetic in both cases.
 [[maybe_unused]] bool UseComplexArithmetic(const config::LinearSolverData &linear)
 {
-  return linear.complex_coarse_solve && !linear.pc_mat_real;
+  return (linear.complex_coarse_solve || linear.complex_coarse_auto) && !linear.pc_mat_real;
+}
+
+// The measurement vector of a ComplexCoarseSolver for the coarsest space: empty unless
+// ComplexCoarseSolve is omitted.
+[[maybe_unused]] Vector
+ComplexCoarseMeasurementVector(const config::LinearSolverData &linear,
+                               const FiniteElementSpaceHierarchy &fespaces)
+{
+  return MeasureRealCoarseApproximation(linear) ? MeshNoise(fespaces.GetFESpaceAtLevel(0))
+                                                : Vector();
 }
 
 // Sparse direct solver for the PML subdomain correction of the geometric multigrid
@@ -288,7 +299,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                     comm, linear.sym_factorization, linear.superlu_3d,
                     linear.drop_small_entries, linear.reorder_reuse, print);
               },
-              verbose > 0);
+              verbose > 0, ComplexCoarseMeasurementVector(linear, fespaces));
           break;
         }
       }
@@ -321,7 +332,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                     linear.strumpack_lossy_precision, linear.drop_small_entries,
                     linear.reorder_reuse, print);
               },
-              verbose > 0);
+              verbose > 0, ComplexCoarseMeasurementVector(linear, fespaces));
           break;
         }
       }
@@ -365,7 +376,7 @@ ConfigurePreconditionerSolver(const config::LinearSolverData &linear,
                     comm, pc_mat_sym, linear.sym_factorization, blr_tol,
                     linear.drop_small_entries, linear.reorder_reuse, print);
               },
-              verbose > 0);
+              verbose > 0, ComplexCoarseMeasurementVector(linear, fespaces));
           break;
         }
       }
@@ -456,8 +467,20 @@ bool UseRealCoarseApproximation(const config::LinearSolverData &linear)
 {
   // ConfigurePreconditionerSolver builds Jacobi, which applies the complex-valued diagonal,
   // a ComplexCoarseSolver, or an MfemWrapperSolver, which is given the complex-valued
-  // matrix with ComplexCoarseSolve and Br + Bi otherwise (see MakeWrapperSolver).
+  // matrix with ComplexCoarseSolve and Br + Bi otherwise (see MakeWrapperSolver). A
+  // ComplexCoarseSolver without ComplexCoarseSolve starts from Br + Bi (see
+  // MeasureRealCoarseApproximation).
   return !linear.complex_coarse_solve && linear.type != LinearSolver::JACOBI;
+}
+
+bool MeasureRealCoarseApproximation(const config::LinearSolverData &linear)
+{
+  // The cases in which ConfigurePreconditionerSolver builds a ComplexCoarseSolver without
+  // ComplexCoarseSolve.
+  return !linear.complex_coarse_solve && linear.complex_coarse_auto &&
+         !linear.pc_mat_real &&
+         (linear.type == LinearSolver::SUPERLU || linear.type == LinearSolver::STRUMPACK ||
+          linear.type == LinearSolver::MUMPS);
 }
 
 MatrixSymmetry GetPreconditionerMatrixSymmetry(const IoData &iodata)
@@ -522,6 +545,14 @@ void BaseKspSolver<OperType>::SetOperators(const OperType &op, const OperType &p
     const auto *mg_pc = dynamic_cast<const GeometricMultigridSolver<OperType> *>(pc.get());
     if (mg_op && !mg_pc)
     {
+      if constexpr (std::is_same_v<OperType, ComplexOperator>)
+      {
+        if (auto *coarse_pc = dynamic_cast<ComplexCoarseSolver *>(pc.get()))
+        {
+          coarse_pc->SetChoiceContext(mg_op->GetCoarseComplexChosen(),
+                                      mg_op->GetCoarseCorrectionOperator());
+        }
+      }
       pc->SetOperator(mg_op->GetFinestOperator());
     }
     else

@@ -81,7 +81,6 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
                 {"MGAuxiliarySmoother", static_cast<bool>(linear.mg_smooth_aux)},
                 {"PCMatReal", linear.pc_mat_real},
                 {"PCMatShifted", static_cast<bool>(linear.pc_mat_shifted)},
-                {"ComplexCoarseSolve", linear.complex_coarse_solve},
                 {"DropSmallEntries", linear.drop_small_entries},
                 {"PMLSubdomainSolver", ToString(linear.pml_subdomain_solver)},
                 {"PMLSmootherThreshold", linear.pml_smoother_threshold},
@@ -108,7 +107,11 @@ void ConcretizeLinear(const config::LinearSolverData &linear, json &j_linear)
 
   // An explicit "ComplexCoarseSolve": true is disabled for the linear solver types which
   // do not support it (see IoData::CheckConfiguration): write the value which is used.
-  j_linear["ComplexCoarseSolve"] = linear.complex_coarse_solve;
+  // The key stays omitted when the coarse solver chooses at run time.
+  if (!linear.complex_coarse_auto)
+  {
+    j_linear["ComplexCoarseSolve"] = linear.complex_coarse_solve;
+  }
 }
 
 void ConcretizeEigenmode(const config::EigenSolverData &eigenmode, json &j_eigen)
