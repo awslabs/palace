@@ -433,12 +433,6 @@ struct SubstructuringSolver::Impl
   bool ModesMatch(const std::vector<int> &ids, const std::vector<mfem::Vector> &xd,
                   std::vector<int> &col, std::vector<char> &need) const;
 
-  // Gather an interface-row-distributed array (width w) to rank 0 (full, global row order).
-  std::vector<double> GatherRows(const std::vector<double> &rows, int w) const;
-
-  // Scatter a full (rank 0) interface-row array of width w onto the owned rows.
-  void ScatterRows(const std::vector<double> &full, int w, std::vector<double> &rows) const;
-
   // Append a symmetric interface operator on gamma_grid (its local part) to the model as
   // the record tag, by its lower triangle by columns (see TriangleSize): each rank takes
   // its share of the triangle from the grid (ShareFromGrid), which rank 0 writes in rank

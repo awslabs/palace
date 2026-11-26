@@ -312,21 +312,6 @@ std::vector<char> MatchSignaturePoints(const std::vector<double> &candidates, in
   return match;
 }
 
-std::vector<int> SignatureMap::SavedRows(int g0, int m) const
-{
-  std::vector<int> saved;
-  for (int g = g0; g < g0 + m; g++)
-  {
-    for (const auto &[a, c] : rows[g])
-    {
-      saved.push_back(a);
-    }
-  }
-  std::sort(saved.begin(), saved.end());
-  saved.erase(std::unique(saved.begin(), saved.end()), saved.end());
-  return saved;
-}
-
 SignatureMap MatchSignatureBasis(const std::vector<double> &current,
                                  const std::vector<double> &saved, int width)
 {
@@ -1479,6 +1464,63 @@ SubstructureInterface::SubstructureInterface(InterfaceClasses &&classes,
   MPI_Allgatherv(mine.data(), count, HYPRE_MPI_BIG_INT, tdofs.data(), counts.data(),
                  offsets.data(), HYPRE_MPI_BIG_INT, comm);
 }
+
+namespace
+{
+
+// A row of w values, so that the counts of a row exchange are rows (n w entries can
+// overflow an int).
+class RowType
+{
+public:
+  RowType(int w, MPI_Datatype value)
+  {
+    MPI_Type_contiguous(w, value, &type);
+    MPI_Type_commit(&type);
+  }
+  ~RowType() { MPI_Type_free(&type); }
+  RowType(const RowType &) = delete;
+  RowType &operator=(const RowType &) = delete;
+  MPI_Datatype type;
+};
+
+}  // namespace
+
+template <typename T>
+std::vector<T> SubstructureInterface::ScatterRows(MPI_Comm comm, const std::vector<T> &full,
+                                                  int w) const
+{
+  std::vector<T> rows(static_cast<std::size_t>(count) * w, T(0.0));
+  if (w == 0)
+  {
+    return rows;
+  }
+  const RowType row(w, mpi::DataType<T>());
+  MPI_Scatterv(Mpi::Root(comm) ? full.data() : nullptr, counts.data(), offsets.data(),
+               row.type, rows.data(), count, row.type, 0, comm);
+  return rows;
+}
+
+template <typename T>
+std::vector<T> SubstructureInterface::GatherRows(MPI_Comm comm, const std::vector<T> &rows,
+                                                 int w) const
+{
+  const bool root = Mpi::Root(comm);
+  std::vector<T> full(root ? static_cast<std::size_t>(size) * w : 0, T(0.0));
+  if (w == 0)
+  {
+    return full;
+  }
+  const RowType row(w, mpi::DataType<T>());
+  MPI_Gatherv(rows.data(), count, row.type, root ? full.data() : nullptr, counts.data(),
+              offsets.data(), row.type, 0, comm);
+  return full;
+}
+
+template std::vector<double>
+SubstructureInterface::ScatterRows(MPI_Comm, const std::vector<double> &, int) const;
+template std::vector<double>
+SubstructureInterface::GatherRows(MPI_Comm, const std::vector<double> &, int) const;
 
 bool FingerprintsMatch(std::span<const double> a, std::span<const double> b,
                        std::size_t n_counts, double tol, bool complex)

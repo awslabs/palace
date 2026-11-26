@@ -11,27 +11,6 @@
 namespace palace
 {
 
-namespace
-{
-
-// A row of w doubles, so that the counts of a row exchange are rows (n w entries can
-// overflow an int).
-class RowType
-{
-public:
-  explicit RowType(int w)
-  {
-    MPI_Type_contiguous(w, MPI_DOUBLE, &type);
-    MPI_Type_commit(&type);
-  }
-  ~RowType() { MPI_Type_free(&type); }
-  RowType(const RowType &) = delete;
-  RowType &operator=(const RowType &) = delete;
-  MPI_Datatype type;
-};
-
-}  // namespace
-
 void SubstructuringSolver::Impl::ComputeSourceModes(const std::vector<int> &ids,
                                                     const std::vector<Source> &src)
 {
@@ -502,42 +481,6 @@ bool SubstructuringSolver::Impl::ModesMatch(const std::vector<int> &ids,
   return ok;
 }
 
-std::vector<double> SubstructuringSolver::Impl::GatherRows(const std::vector<double> &rows,
-                                                           int w) const
-{
-  MPI_Comm comm = parent_fes.GetComm();
-  const bool root = (Mpi::Rank(comm) == 0);
-  std::vector<double> full;
-  if (w == 0)
-  {
-    return full;
-  }
-  const std::vector<int> &cnt = iface.counts, &disp = iface.offsets;
-  if (root)
-  {
-    full.assign(static_cast<std::size_t>(iface.size) * w, 0.0);
-  }
-  const RowType row(w);
-  MPI_Gatherv(rows.data(), iface.count, row.type, root ? full.data() : nullptr, cnt.data(),
-              disp.data(), row.type, 0, comm);
-  return full;
-}
-
-void SubstructuringSolver::Impl::ScatterRows(const std::vector<double> &full, int w,
-                                             std::vector<double> &rows) const
-{
-  rows.assign(static_cast<std::size_t>(iface.count) * w, 0.0);
-  if (w == 0)
-  {
-    return;
-  }
-  const std::vector<int> &cnt = iface.counts, &disp = iface.offsets;
-  MPI_Comm comm = parent_fes.GetComm();
-  const RowType row(w);
-  MPI_Scatterv(Mpi::Rank(comm) == 0 ? full.data() : nullptr, cnt.data(), disp.data(),
-               row.type, rows.data(), iface.count, row.type, 0, comm);
-}
-
 void SubstructuringSolver::Impl::ApplyAeeInvMulti(
     const std::vector<const mfem::Vector *> &X, const std::vector<mfem::Vector *> &Y) const
 {
@@ -568,7 +511,7 @@ void SubstructuringSolver::Impl::CondenseRows(const std::vector<const mfem::Vect
       }
     }
   }
-  ScatterRows(full, nv, rows);
+  rows = iface.ScatterRows(parent_fes.GetComm(), full, nv);
 }
 
 void SubstructuringSolver::Impl::MaterializeWithEnergy()

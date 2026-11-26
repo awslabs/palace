@@ -653,7 +653,8 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
   // orientations, as a different partition gives): the true-DOF bases of second-order
   // Nédélec elements differ beyond signs on the faces. The signature map must transform a
   // linear form and the mass matrix of one space into those of the other (dual quantities,
-  // x_cur = M^-T x_saved).
+  // x_cur = M^-T x_saved), the matrix from the shares of its lower triangle onto a grid of
+  // the processes, as a model's S_E is read (see RedistributeTriangle).
   const int order = GENERATE(1, 2);
   CAPTURE(order);
   mfem::Mesh base = mfem::Mesh::MakeCartesian3D(2, 2, 2, mfem::Element::TETRAHEDRON);
@@ -747,39 +748,55 @@ TEST_CASE("Saved Nédélec DOFs are mapped across meshes and partitions",
     CHECK(blocks > 0);  // face DOFs whose basis is not a signed permutation of the other's
   }
   const auto b = map.DualRows(b_s, 1);
-  // M in thirds of its rows (as ranks hold them), each from the saved rows it combines.
-  const int n = static_cast<int>(b_s.size()), third = (n + 2) / 3;
-  std::vector<double> M;
-  for (int g0 = 0; g0 < n; g0 += third)
+  const int n = static_cast<int>(b_s.size());
+  std::vector<std::vector<std::pair<int, double>>> to(n);
+  for (int g = 0; g < n; g++)
   {
-    const int m = std::min(third, n - g0);
-    std::vector<int> read;
-    const auto Mg =
-        map.DualMatrix<double>(g0, m,
-                               [&](int a, double *x)
-                               {
-                                 read.push_back(a);
-                                 std::copy_n(&M_s[static_cast<std::size_t>(a) * n], n, x);
-                               });
-    CHECK(read == map.SavedRows(g0, m));
-    CHECK(read.size() < static_cast<std::size_t>(n));
-    M.insert(M.end(), Mg.begin(), Mg.end());
+    for (const auto &[a, c] : map.rows[g])
+    {
+      to[a].emplace_back(g, c);
+    }
   }
-  REQUIRE(M.size() == M_c.size());
-  double db = 0.0, mb = 0.0, dM = 0.0, mM = 0.0;
+  MPI_Comm comm = Mpi::World();
+  const BlockCyclicGrid grid(comm, n, Mpi::Size(comm), 2);
+  std::vector<double> M(grid.LocalSize(), 0.0);
+  RedistributeTriangle<double>(
+      comm, n,
+      [&](long long e, long long m, double *x)
+      {
+        auto [a, c] = TriangleEntry(n, e);
+        for (long long k = 0; k < m; k++)
+        {
+          x[k] = M_s[static_cast<std::size_t>(c) * n + a];
+          if (++a == n)
+          {
+            a = ++c;
+          }
+        }
+      },
+      to, [&](int g, int h) { return grid.Owner(g, h); },
+      [&](int g, int h) { return grid.LocalIndex(g, h); }, M);
+  double db = 0.0, mb = 0.0, dM[2] = {0.0, 0.0};
   for (std::size_t i = 0; i < b.size(); i++)
   {
     db = std::max(db, std::abs(b[i] - b_c[i]));
     mb = std::max(mb, std::abs(b_c[i]));
   }
-  for (std::size_t q = 0; q < M.size(); q++)
+  for (int jl = 0; jl < grid.LocalCols(); jl++)
   {
-    dM = std::max(dM, std::abs(M[q] - M_c[q]));
-    mM = std::max(mM, std::abs(M_c[q]));
+    for (int il = 0; il < grid.LocalRows(); il++)
+    {
+      const double ref =
+          M_c[static_cast<std::size_t>(grid.GlobalCol(jl)) * n + grid.GlobalRow(il)];
+      dM[0] = std::max(
+          dM[0], std::abs(M[il + static_cast<std::size_t>(grid.LeadingDim()) * jl] - ref));
+      dM[1] = std::max(dM[1], std::abs(ref));
+    }
   }
-  CAPTURE(blocks, db, mb, dM, mM);
+  Mpi::GlobalMax(2, dM, comm);
+  CAPTURE(blocks, db, mb, dM[0], dM[1]);
   CHECK(db <= 1.0e-12 * mb);
-  CHECK(dM <= 1.0e-12 * mM);
+  CHECK(dM[0] <= 1.0e-12 * dM[1]);
 }
 
 namespace

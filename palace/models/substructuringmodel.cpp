@@ -107,10 +107,11 @@ void SubstructuringSolver::Impl::AppendSourceModes(const std::string &path)
 {
   BlockTimer bt(Timer::IO);
   const int K = static_cast<int>(src_ids.size());
-  const std::vector<double> G_full = GatherRows(SG_rows, K);
-  const std::vector<double> H_full = GatherRows(SH_rows, K);
+  const std::vector<double> G_full = iface.GatherRows(parent_fes.GetComm(), SG_rows, K);
+  const std::vector<double> H_full = iface.GatherRows(parent_fes.GetComm(), SH_rows, K);
   const std::vector<double> Hkin_full =
-      have_skin ? GatherRows(SHkin_rows, K) : std::vector<double>();
+      have_skin ? iface.GatherRows(parent_fes.GetComm(), SHkin_rows, K)
+                : std::vector<double>();
   const long long k = K, n = iface.size;
   const long long size =
       static_cast<long long>(sizeof(int)) * (1 + k) +
@@ -615,7 +616,7 @@ void SubstructuringSolver::Impl::AppendModes(const std::string &path)
 {
   BlockTimer bt(Timer::IO);
   const int K = static_cast<int>(mode_ids.size());
-  const std::vector<double> G_full = GatherRows(G_rows, K);
+  const std::vector<double> G_full = iface.GatherRows(parent_fes.GetComm(), G_rows, K);
   const long long k = K, n = iface.size;
   AppendRecord(path, kModesTag,
                static_cast<long long>(sizeof(int)) * (1 + k) +
@@ -684,7 +685,8 @@ void SubstructuringSolver::Impl::LoadSections(const std::string &path,
   auto interface_rows = [&](Modes &m, std::vector<double> &rows)
   {
     const std::vector<double> saved_rows = m.Next<double>(nG * m.K);
-    ScatterRows(root ? map.DualRows(saved_rows, m.K) : std::vector<double>(), m.K, rows);
+    rows = iface.ScatterRows(
+        comm, root ? map.DualRows(saved_rows, m.K) : std::vector<double>(), m.K);
   };
   if (Modes m = read_modes(kModesTag, 1, 1); !m.p.empty())
   {
