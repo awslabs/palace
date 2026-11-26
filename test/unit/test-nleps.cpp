@@ -747,6 +747,27 @@ RunQuasiNewton(const DiagonalLorentzProblem &p,
   return r;
 }
 
+// The diagonal entries of a DiagonalLorentzProblem whose dofs 1 to n have the entries kc,
+// after a decoupled dof 0, all on the first process. The c vector of the Quasi-Newton
+// eigenvalue update holds the same entries on every process (from srand(111)), and on macOS
+// the first of them, 8.8e-4, is small: with an eigenvector on the first dof of a process,
+// the iteration then depends on the platform.
+std::vector<double> CoupledDofs(const std::vector<double> &kc)
+{
+  std::vector<double> k = {1.0e4};
+  k.insert(k.end(), kc.begin(), kc.end());
+  AddDecoupledDofs(k, 1.0e4, static_cast<int>(k.size()));
+  return k;
+}
+
+// Check that no process has its first dof among dofs 1 to n.
+void RequireNotFirstDofs(const DiagonalLorentzProblem &p, long long n)
+{
+  int first_coupled = (p.LocalSize() > 0 && p.gid[0] >= 1 && p.gid[0] <= n) ? 1 : 0;
+  Mpi::GlobalMax(1, &first_coupled, Mpi::World());
+  REQUIRE(first_coupled == 0);
+}
+
 // The root of dof k with the larger (upper) or smaller (lower) imaginary part.
 std::complex<double> UpperRoot(const DiagonalLorentzProblem &p, double k)
 {
@@ -766,23 +787,22 @@ std::complex<double> LowerRoot(const DiagonalLorentzProblem &p, double k)
 
 // The iteration from an initial guess can converge to an eigenvalue other than the one the
 // guess approximates, farther from the target. Here the guess nearest the target 1.5i (at
-// 2.16i, with the eigenvector of dof 1) converges to the upper root of dof 1 at 2.567i,
-// and the next one (at 2.30i, with the eigenvector of dof 0) to the upper root of dof 0
+// 2.16i, with the eigenvector of dof 2) converges to the upper root of dof 2 at 2.567i,
+// and the next one (at 2.30i, with the eigenvector of dof 1) to the upper root of dof 1
 // at 2.153i, nearer the target. The guesses nearer the target than the eigenvalues found
 // are refined too, and the nearest eigenvalue is returned: stopping at the first converged
-// eigenvalue would return the root of dof 1.
+// eigenvalue would return the root of dof 2.
 TEST_CASE("Quasi-Newton returns the eigenvalue nearest the target of those found",
           "[nleps][Serial][Parallel]")
 {
   constexpr double tol = 1.0e-10;
-  std::vector<double> k = {4.0, 6.0, 9.0};
-  AddDecoupledDofs(k, 1.0e4);
-  const DiagonalLorentzProblem p(k);
+  const DiagonalLorentzProblem p(CoupledDofs({4.0, 6.0, 9.0}));
+  RequireNotFirstDofs(p, 3);
   const auto l0 = UpperRoot(p, 4.0), l1 = UpperRoot(p, 6.0);
   REQUIRE(l0.imag() < 2.16);
   REQUIRE(l1.imag() > 2.30);
   const auto r = RunQuasiNewton(
-      p, {{std::complex<double>(0.0, 2.16), 1}, {std::complex<double>(0.0, 2.30), 0}}, 1,
+      p, {{std::complex<double>(0.0, 2.16), 2}, {std::complex<double>(0.0, 2.30), 1}}, 1,
       1.5, tol);
   CAPTURE(r.out);
   REQUIRE(r.eig.size() == 1);
@@ -794,31 +814,30 @@ TEST_CASE("Quasi-Newton returns the eigenvalue nearest the target of those found
 
 // The initial guesses left once the requested eigenvalues are found are refined if they are
 // nearer the target than the eigenvalue found, in frequency and in the complex plane. Here
-// the guess with the eigenvector of dof 1, the upper root of dof 1 at 2.567i, is the most
-// accurate, and is refined first. The other guess, with the eigenvector of dof 0, has the
-// frequency of the upper root of dof 0 at 2.153i, nearer the target 1.5i, and a damping
+// the guess with the eigenvector of dof 2, the upper root of dof 2 at 2.567i, is the most
+// accurate, and is refined first. The other guess, with the eigenvector of dof 1, has the
+// frequency of the upper root of dof 1 at 2.153i, nearer the target 1.5i, and a damping
 // (real part) larger by d. With d = 0 it is nearer the target in the complex plane too: it
-// is refined, and the root of dof 0 is returned. With d = 1 it is farther, as the guess of
+// is refined, and the root of dof 1 is returned. With d = 1 it is farther, as the guess of
 // a strongly damped mode, and is not refined.
 TEST_CASE("Quasi-Newton refines the guesses nearer the target in the complex plane",
           "[nleps][Serial][Parallel]")
 {
   constexpr double tol = 1.0e-10;
-  std::vector<double> k = {4.0, 6.0, 9.0};
-  AddDecoupledDofs(k, 1.0e4);
-  const DiagonalLorentzProblem p(k);
+  const DiagonalLorentzProblem p(CoupledDofs({4.0, 6.0, 9.0}));
+  RequireNotFirstDofs(p, 3);
   const auto l0 = UpperRoot(p, 4.0), l1 = UpperRoot(p, 6.0);
   const double d = GENERATE(0.0, 1.0);
   const std::complex<double> s(0.0, 1.5), guess0(l0.real() - d, l0.imag() + 1.0e-3);
   REQUIRE((std::abs(guess0 - s) < std::abs(l1 - s)) == (d == 0.0));
-  const auto r = RunQuasiNewton(p, {{l1, 1}, {guess0, 0}}, 1, s.imag(), tol);
+  const auto r = RunQuasiNewton(p, {{l1, 2}, {guess0, 1}}, 1, s.imag(), tol);
   CAPTURE(r.out, d);
   REQUIRE(r.eig.size() == 1);
   const auto expected = (d == 0.0) ? l0 : l1;
   CAPTURE(r.eig[0], expected);
   CHECK(std::abs(r.eig[0] - expected) <= 1.0e-8 * std::abs(expected));
   CHECK(r.backward_error[0] <= tol);
-  CHECK(r.dof[0] == ((d == 0.0) ? 0 : 1));
+  CHECK(r.dof[0] == ((d == 0.0) ? 1 : 2));
   if (Mpi::Root(Mpi::World()))
   {
     const std::regex converged(R"(Quasi-Newton converged)");
@@ -830,22 +849,21 @@ TEST_CASE("Quasi-Newton refines the guesses nearer the target in the complex pla
 }
 
 // A degenerate eigenvalue at the last position of those returned is returned with all its
-// eigenpairs found. Here dofs 1 and 2 have the same roots, and their guesses, the most
-// accurate, give the two requested eigenpairs. The guess of dof 0 is nearer the target, and
-// its root is found next: the two eigenpairs of the root of dofs 1 and 2 are returned with
+// eigenpairs found. Here dofs 2 and 3 have the same roots, and their guesses, the most
+// accurate, give the two requested eigenpairs. The guess of dof 1 is nearer the target, and
+// its root is found next: the two eigenpairs of the root of dofs 2 and 3 are returned with
 // it, three eigenpairs for the two requested. The eigenvectors of the degenerate eigenvalue
-// are any two independent combinations of those of dofs 1 and 2.
+// are any two independent combinations of those of dofs 2 and 3.
 TEST_CASE("Quasi-Newton returns all the eigenpairs found of the last eigenvalue",
           "[nleps][Serial][Parallel]")
 {
   constexpr double tol = 1.0e-10;
-  std::vector<double> k = {4.0, 6.0, 6.0, 9.0};
-  AddDecoupledDofs(k, 1.0e4);
-  const DiagonalLorentzProblem p(k);
+  const DiagonalLorentzProblem p(CoupledDofs({4.0, 6.0, 6.0, 9.0}));
+  RequireNotFirstDofs(p, 4);
   const auto l0 = UpperRoot(p, 4.0), l1 = UpperRoot(p, 6.0);
   const std::complex<double> offset(1.0e-6, 1.0e-6);
   const auto r = RunQuasiNewton(
-      p, {{l1 + offset, 1}, {l1 + offset, 2}, {l0 + 1.0e3 * offset, 0}}, 2, 1.5, tol);
+      p, {{l1 + offset, 2}, {l1 + offset, 3}, {l0 + 1.0e3 * offset, 1}}, 2, 1.5, tol);
   CAPTURE(r.out);
   REQUIRE(r.eig.size() == 3);
   const std::vector<std::complex<double>> expected = {l0, l1, l1};
@@ -856,15 +874,15 @@ TEST_CASE("Quasi-Newton returns all the eigenpairs found of the last eigenvalue"
     CHECK(r.backward_error[m] <= tol);
   }
   CHECK(r.weight[0] >= 1.0 - 1.0e-12);
-  CHECK(r.dof[0] == 0);
-  CHECK(std::min(r.dof[1], r.dof[2]) == 1);
-  CHECK(std::max(r.dof[1], r.dof[2]) == 2);
+  CHECK(r.dof[0] == 1);
+  CHECK(std::min(r.dof[1], r.dof[2]) == 2);
+  CHECK(std::max(r.dof[1], r.dof[2]) == 3);
 }
 
 // The eigenvectors of distinct eigenvalues of a nonlinear eigenvalue problem can be
 // linearly dependent: here every dof has two roots above the target 0.5i (one on each side
-// of the Lorentz pole at |λ| = 1) with the same eigenvector. The lower roots of dofs 0 and
-// 1 are found and deflated first; the eigenvector of each upper root is then in the span
+// of the Lorentz pole at |λ| = 1) with the same eigenvector. The lower roots of dofs 1 and
+// 2 are found and deflated first; the eigenvector of each upper root is then in the span
 // of the deflated eigenvectors. Such an eigenpair cannot be deflated with minimality index
 // 1 (its part orthogonal to the deflated eigenvectors is rounding error), but it is an
 // eigenpair of T(λ): all four are returned, converged, each on its dof. Deflating them
@@ -874,14 +892,13 @@ TEST_CASE("Quasi-Newton finds eigenpairs with linearly dependent eigenvectors",
           "[nleps][Serial][Parallel]")
 {
   constexpr double tol = 1.0e-10;
-  std::vector<double> k = {4.0, 9.0};
-  AddDecoupledDofs(k, 1.0e4);
-  const DiagonalLorentzProblem p(k);
+  const DiagonalLorentzProblem p(CoupledDofs({4.0, 9.0}));
+  RequireNotFirstDofs(p, 2);
   const std::vector<std::pair<std::complex<double>, long long>> roots = {
-      {LowerRoot(p, 4.0), 0},
-      {LowerRoot(p, 9.0), 1},
-      {UpperRoot(p, 4.0), 0},
-      {UpperRoot(p, 9.0), 1}};
+      {LowerRoot(p, 4.0), 1},
+      {LowerRoot(p, 9.0), 2},
+      {UpperRoot(p, 4.0), 1},
+      {UpperRoot(p, 9.0), 2}};
   // The initial guesses are the roots, off by 1e-3, with the eigenvectors of their dofs.
   std::vector<std::pair<std::complex<double>, long long>> guesses;
   for (const auto &[l, j] : roots)
