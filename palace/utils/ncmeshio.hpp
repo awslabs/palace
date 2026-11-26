@@ -33,6 +33,9 @@ void RebalanceRootAligned(mfem::ParMesh &mesh, double tol);
 // its NCMesh: MFEM's mesh transformations only move the vertices.
 void ScaleNCMeshCoordinates(mfem::Mesh &mesh, double length_scale);
 
+// The coordinates which ScaleNCMeshCoordinates scales, or null if it scales none.
+mfem::Array<mfem::real_t> *GetNCMeshCoordinates(mfem::Mesh &mesh);
+
 // What ReadNCMeshCoarse keeps of a mesh file for PartitionNCMeshFile.
 struct NCMeshFile;
 

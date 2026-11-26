@@ -1326,7 +1326,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  mesh::ScopedDimensionalizeMesh dimensional_mesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0,
                      {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   DimensionalizeGridFunctions(units, E, B, V, A);
@@ -1363,7 +1363,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
   paraview_bdr->SetTime(paraview_time);
   paraview->Save();
   paraview_bdr->Save();
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  dimensional_mesh.Restore();
   ScaleGridFunctions(1.0 / mesh_Lc0,
                      {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   NondimensionalizeGridFunctions(units, E, B, V, A);
@@ -1391,7 +1391,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   // there isn't a need to ever access the element neighbors. We set the time to some
   // non-used value to make the step identifiable within the data collection.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  mesh::ScopedDimensionalizeMesh dimensional_mesh(mesh, mesh_Lc0);
   paraview->SetCycle(paraview_max_cycle + 1);
   if (paraview->GetTime() < 1.0)
   {
@@ -1446,7 +1446,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   {
     paraview->RegisterVCoeffField(name, gf);
   }
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  dimensional_mesh.Restore();
   Mpi::Barrier(fem_op->GetComm());
 }
 
@@ -1470,7 +1470,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step,
   // Given the electric field and magnetic flux density, write the fields to disk for
   // visualization. Write the mesh coordinates in the same units as originally input.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  mesh::ScopedDimensionalizeMesh dimensional_mesh(mesh, mesh_Lc0);
   ScaleGridFunctions(mesh_Lc0,
                      {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   DimensionalizeGridFunctions(units, E, B, V, A);
@@ -1633,7 +1633,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctions(double time, int step,
     write_grid_function(*Sn_gf, "Sn");
   }
 
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  dimensional_mesh.Restore();
   ScaleGridFunctions(1.0 / mesh_Lc0,
                      {E.get(), B.get(), V.get(), A.get(), En.get(), Bt_inplane.get()});
   NondimensionalizeGridFunctions(units, E, B, V, A);
@@ -1661,7 +1661,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
   // once, outside of any excitation subfolders, since all the excitations of a driven
   // simulation share the mesh, and the error indicator combines them.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
-  mesh::DimensionalizeMesh(mesh, mesh_Lc0);
+  mesh::ScopedDimensionalizeMesh dimensional_mesh(mesh, mesh_Lc0);
 
   // Create output directory if it doesn't exist (node-local filesystem aware).
   EnsureDirectory(fs::path(gridfunction_output_dir), fem_op->GetComm());
@@ -1709,7 +1709,7 @@ void PostOperator<solver_t>::WriteMFEMGridFunctionsFinal(const ErrorIndicator *i
       },
       error);
 
-  mesh::NondimensionalizeMesh(mesh, mesh_Lc0);
+  dimensional_mesh.Restore();
   AbortOnOutputFileErrors(fem_op->GetComm(), error);
 }
 

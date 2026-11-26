@@ -2199,7 +2199,8 @@ TEST_CASE("circular_hole_london_nc_amr", "[Serial][Parallel][Regression]")
 TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regression]")
 {
   palace::test::RegressionOptions opts;
-  opts.rtol = 1.0e-5;
+  // Split by the vertex order set at load, which differs by compiler (Intel off by 3.0e-5).
+  opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
   opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.paraview_fields = false;
@@ -2207,6 +2208,40 @@ TEST_CASE("circular_hole_london_nc_amr_rebalance", "[Serial][Parallel][Regressio
   palace::test::RunRegressionCase("circular_hole_london",
                                   "circular_hole_nc_amr_rebalance.json", "nc_amr_rebalance",
                                   opts);
+}
+
+// London flux film under two conformal AMR steps, each followed by a forced rebalance
+// ("MaximumImbalance" 1.0), which marks the gathered mesh afresh from its geometry only:
+// the marks of each refinement, and so the mesh, are the same for any number of processes
+// from 2 on. On 1 process nothing rebalances and the refinements keep their own marks. At
+// exact ties of edge lengths the marks depend on the compiler (icx rounds the lengths
+// otherwise), which moves the indicator norm by 1.5e-3: it is compared at 5e-3, the rest at
+// 1e-4. Omits [GPU]: adaptive cases skip GPU CI.
+TEST_CASE("circular_hole_london_conformal_amr_rebalance", "[Serial][Parallel][Regression]")
+{
+  if (palace::Mpi::Size(palace::Mpi::World()) < 2)
+  {
+    SKIP("On 1 process nothing rebalances, so the refinements keep their own marks");
+  }
+  palace::test::RegressionOptions opts;
+  opts.rtol = 1.0e-4;
+  opts.atol = 1.0e-16;
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
+  opts.paraview_fields = false;
+  opts.linear_solver_policy = force_default_solver;
+  auto indicator_opts = opts;
+  indicator_opts.rtol = 5.0e-3;
+  for (const auto *file : {"error-indicators.csv", "iteration1/error-indicators.csv",
+                           "iteration2/error-indicators.csv"})
+  {
+    opts.custom_checks[file] = [indicator_opts](palace::Table &actual,
+                                                palace::Table &reference,
+                                                const std::filesystem::path &)
+    { palace::test::CompareCSVFiles(actual, reference, indicator_opts); };
+  }
+  palace::test::RunRegressionCase("circular_hole_london",
+                                  "circular_hole_conformal_amr_rebalance.json",
+                                  "conformal_amr_rebalance", opts);
 }
 
 // Mixed current-flux excitation. The current-flux mutual M[1][2] is measured from a surface
@@ -3968,6 +4003,8 @@ TEST_CASE("microstrip_wave_adaptive", "[Serial][Parallel][GPU][Regression]")
   palace::test::RegressionOptions opts;
   opts.rtol = 1.0e-4;
   opts.atol = 1.0e-16;
+  // Vertex orders move the indicator min. (~1e-6) by 1e-10; S <= 3e-9, E 4e-10, Norm 6e-6.
+  opts.excluded_columns = {"Maximum", "Minimum", "Mean"};
   opts.skip_rowcount = true;
   opts.paraview_fields = false;
   palace::test::RunRegressionCase("microstrip", "microstrip_wave_adaptive.json",

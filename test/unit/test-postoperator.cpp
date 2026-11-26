@@ -1066,6 +1066,97 @@ TEST_CASE_METHOD(test::SharedTempDir, "Field export",
   }
 }
 
+TEST_CASE_METHOD(test::SharedTempDir, "Field output leaves the mesh coordinates unchanged",
+                 "[postoperator][gridfunction][paraview][Serial][Parallel]")
+{
+  // Writing fields scales the mesh to the units of its input and back. Its coordinates must
+  // come back bit for bit, not scaled back by 1 / L: the marking of a conformal mesh for
+  // refinement (at a rebalance, for example) compares edge lengths exactly, so a change by
+  // round-off would change the adapted mesh.
+  Units units(0.496, 1.453);
+  IoData iodata = IoData(units);
+  iodata.domains.materials.emplace_back().attributes = {1};
+  iodata.boundaries.pec.attributes = {1};
+  iodata.problem.type = ProblemType::ELECTROSTATIC;
+  iodata.problem.output_formats.paraview = true;
+  iodata.problem.output_formats.gridfunction = true;
+  iodata.problem.output = temp_dir.string();
+  iodata.solver.electrostatic.n_post = 1;
+  iodata.CheckConfiguration();
+
+  constexpr int resolution = 3;
+  constexpr double length = 12.2;
+  auto serial_mesh = std::make_unique<mfem::Mesh>(
+      mfem::Mesh::MakeCartesian3D(resolution, resolution, resolution,
+                                  mfem::Element::TETRAHEDRON, length, length, length));
+  for (int i = 0; i < serial_mesh->GetNV(); i++)
+  {
+    // Generic coordinates, which scaling back would not all give back.
+    double *x = serial_mesh->GetVertex(i);
+    const double s = 0.1 * std::sin(1.7 * x[0] + 2.3 * x[1] + 0.9 * x[2] + i);
+    x[0] += s;
+    x[1] += 2.0 * s;
+    x[2] += 3.0 * s;
+  }
+  auto comm = Mpi::World();
+  if (Mpi::Size(comm) > serial_mesh->GetNE())
+  {
+    SKIP("Mesh has fewer elements than processes");
+  }
+  iodata.model.Lc = mesh::ComputeReferenceLength(serial_mesh, comm);
+  iodata.NondimensionalizeInputs(serial_mesh);
+  const auto mesh_Lc0 = iodata.units.GetMeshLengthRelativeScale();
+
+  // Scaling back by 1 / L would not give back every coordinate.
+  {
+    mfem::Mesh copy(*serial_mesh);
+    mesh::DimensionalizeMesh(copy, mesh_Lc0);
+    mesh::NondimensionalizeMesh(copy, mesh_Lc0);
+    int changed = 0;
+    for (int i = 0; i < copy.GetNV(); i++)
+    {
+      changed +=
+          !std::equal(copy.GetVertex(i), copy.GetVertex(i) + 3, serial_mesh->GetVertex(i));
+    }
+    REQUIRE(changed > 0);
+  }
+
+  std::vector<std::unique_ptr<Mesh>> mesh;
+  mesh.push_back(
+      std::make_unique<Mesh>(std::make_unique<mfem::ParMesh>(comm, *serial_mesh)));
+  auto &pmesh = mesh.front()->Get();
+  REQUIRE(dynamic_cast<const mfem::ParGridFunction *>(pmesh.GetNodes()));
+
+  // What the output scales: the vertices, the nodes, and the face-neighbor nodes. With
+  // nodes, MFEM exchanges only the face-neighbor nodes: face_nbr_vertices is allocated but
+  // never set, so its values are uninitialized (NaN on some platforms) and are left out.
+  auto Coordinates = [&pmesh]()
+  {
+    std::vector<double> x;
+    for (int i = 0; i < pmesh.GetNV(); i++)
+    {
+      x.insert(x.end(), pmesh.GetVertex(i), pmesh.GetVertex(i) + 3);
+    }
+    const auto &nodes = static_cast<const mfem::ParGridFunction &>(*pmesh.GetNodes());
+    x.insert(x.end(), nodes.HostRead(), nodes.HostRead() + nodes.Size());
+    const auto &nbr_nodes = nodes.FaceNbrData();
+    x.insert(x.end(), nbr_nodes.HostRead(), nbr_nodes.HostRead() + nbr_nodes.Size());
+    return x;
+  };
+
+  LaplaceOperator laplace_op(iodata, mesh);
+  PostOperator<ProblemType::ELECTROSTATIC> post_op(iodata, laplace_op);
+  const auto &Grad = laplace_op.GetGradMatrix();
+  Vector V(Grad.Width()), E(Grad.Height());
+  V = 0.0;
+  E = 0.0;
+  const auto x0 = Coordinates();
+  post_op.MeasureAndPrintAll(0, V, E, 0);
+  CHECK(Coordinates() == x0);
+  post_op.MeasureFinalize(ErrorIndicator());
+  CHECK(Coordinates() == x0);
+}
+
 TEST_CASE("Dimensional field output", "[postoperator][Serial][Parallel]")
 {
   // The output of the fields redimensionalizes the mesh, undoes the effect of the mesh

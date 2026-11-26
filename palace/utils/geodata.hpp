@@ -104,6 +104,29 @@ void DimensionalizeMesh(mfem::Mesh &mesh, double L);
 void NondimensionalizeMesh(mfem::Mesh &mesh, double L);
 void Nondimensionalize(const Units &units, mfem::Mesh &mesh);
 
+// Dimensionalize a mesh, as DimensionalizeMesh does, to write it, and give its coordinates
+// back exactly on Restore or destruction. Scaling back by 1/L would change them by
+// round-off, and the marking of a conformal mesh for refinement (at a rebalance, for
+// example) compares edge lengths exactly: writing fields would then change the adapted
+// mesh.
+class ScopedDimensionalizeMesh
+{
+private:
+  mfem::Mesh *mesh;
+  mfem::Array<mfem::Vertex> vertices, face_nbr_vertices;
+  mfem::Array<mfem::real_t> nc_coordinates;
+  mfem::Vector nodes, face_nbr_nodes;
+
+public:
+  ScopedDimensionalizeMesh(mfem::Mesh &mesh, double L);
+  ScopedDimensionalizeMesh(const ScopedDimensionalizeMesh &) = delete;
+  ScopedDimensionalizeMesh &operator=(const ScopedDimensionalizeMesh &) = delete;
+  ~ScopedDimensionalizeMesh() { Restore(); }
+
+  // Put the coordinates of the mesh back as they were before scaling. Done once.
+  void Restore();
+};
+
 // Struct containing flags for the (global) mesh element types.
 struct ElementTypeInfo
 {
