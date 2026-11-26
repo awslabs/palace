@@ -3587,6 +3587,10 @@ private:
   std::map<int, std::size_t> chain_index;
   Point3D n_ref{};
   std::vector<std::optional<std::pair<std::string, std::string>>> segment_exclusion;
+  // The excluded (non-truncation) and the truncation segments in ascending order, fixed
+  // once the exclusions are (ClassifyPlanes): ClusterSupport's two segment reads (lane
+  // v1prefast C4).
+  std::vector<std::size_t> excluded_segment_list, truncation_segment_list;
   // Metal plane of every run (distinct offsets along the reference process normal on the
   // decision grid): features never span two planes (decision 82(1)); metal of another
   // plane within 2R is the CrossLayer exclusion.
@@ -12320,7 +12324,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
     // The excluded perimeter segments on the plane inside the clip (rule B1): straight,
     // clipped by Liang-Barsky, never on the cluster's claims (claims are feature runs).
     const Point3D plane_normal = Normalize(Cross(x, y));
-    for (std::size_t i = 0; i < input.segments.size(); i++)
+    for (const std::size_t i : excluded_segment_list)
     {
       const auto &segment = input.segments[i];
       const bool excluded =
@@ -13539,7 +13543,7 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
   std::size_t truncation_segments = 0;
   double truncation_length = 0.0;
   const Point3D plane_normal = Normalize(Cross(x, y));
-  for (std::size_t i = 0; i < input.segments.size(); i++)
+  for (const std::size_t i : truncation_segment_list)
   {
     const auto &segment = input.segments[i];
     if (!segment.truncation)
@@ -16078,6 +16082,19 @@ IdentificationResult Identifier::Identify()
   {
     stage.Begin("planes / exclusions");
     ClassifyPlanes();
+    for (std::size_t i = 0; i < input.segments.size(); i++)
+    {
+      const auto &segment = input.segments[i];
+      if (!segment.truncation &&
+          (segment.exclusion || (i < segment_exclusion.size() && segment_exclusion[i])))
+      {
+        excluded_segment_list.push_back(i);
+      }
+      if (segment.truncation)
+      {
+        truncation_segment_list.push_back(i);
+      }
+    }
     {
       std::size_t excluded_runs = 0, cross_layer_runs = 0;
       for (std::size_t r = 0; r < runs.size(); r++)

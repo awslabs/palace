@@ -7720,6 +7720,46 @@ TEST_CASE("SurfaceResponseIdentificationMirrorBandChains",
   }
 }
 
+TEST_CASE("SurfaceResponseIdentificationSupportExcludedAndTruncationSegments",
+          "[surfaceresponseidentification][cornercontainment][Serial]")
+{
+  // Lane v1prefast C4 (ClusterSupport reads the excluded and the truncation segments from
+  // two ascending lists built after the exclusions): the lead-end cluster of the
+  // SpatialSupportContract layout (R = 2 um; box x in [-12.873, 12.873], y in [-5, 12] um)
+  // with an isolated 2 x 3 um stub inside its box whose right edge lies on a simulation cut
+  // (truncation segments) and whose left edge carries an input exclusion (rule B1).
+  const double R = 2.0;
+  LoopSpec stub{Rectangle(6.0, 5.0, 8.0, 8.0), 2, 100.0};
+  stub.truncation_edges = {1};
+  auto input = MakeInput({{Rectangle(-40.0, -10.0, 40.0, 0.0), 0, 100.0},
+                          {Rectangle(-1.0, 1.0, 1.0, 40.0), 1, 100.0},
+                          stub},
+                         R);
+  std::size_t excluded = 0;
+  for (auto &segment : input.segments)
+  {
+    if (segment.p0[0] == 6.0 && segment.p1[0] == 6.0)
+    {
+      segment.exclusion = std::make_pair("Port", "the stub's left edge (test)");
+      excluded++;
+    }
+  }
+  REQUIRE(excluded > 0);
+  const auto result = IdentifyMetalPerimeter(input);
+  const auto *cluster = ClusterContaining(result, input, {0.0, 1.0});
+  REQUIRE(cluster != nullptr);
+  const auto &support = cluster->spatial_support;
+  INFO(support["Truncation"].dump()
+       << " " << support["Context"]["ExcludedSegments"].dump());
+  // The stub's 3 um edges: one truncation segment and one excluded piece, 1.5 R each.
+  CHECK(support["Truncation"]["Segments"].get<int>() == 1);
+  CHECK_THAT(support["Truncation"]["LengthOverR"].get<double>(), WithinAbs(1.5, 1.0e-9));
+  const auto &excluded_record = support["Context"]["ExcludedSegments"];
+  CHECK(excluded_record["Pieces"].get<int>() == 1);
+  CHECK_THAT(excluded_record["LengthOverR"].get<double>(), WithinAbs(1.5, 1.0e-9));
+  CHECK(excluded_record["Entries"][0]["Class"] == "Port");
+}
+
 TEST_CASE("SurfaceResponseIdentificationCornerContainment",
           "[surfaceresponseidentification][cornercontainment][Serial]")
 {
