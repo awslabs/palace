@@ -397,6 +397,10 @@ protected:
   // Optional Maxwell surface response correction. The ordinary measurement cache,
   // surface-Q.csv, and primary E/D fields remain the raw thin-metal result.
   std::unique_ptr<SurfaceResponseOperator> surface_response_op;
+  // The request's tolerated library mismatches (surfaceresponselibrarycheck.hpp): the rows
+  // they act on carry the flags word (AddSurfaceParticipationRows).
+  const config::ElectrostaticSolverData::ResponseCorrectionData::LibraryMismatchRecord
+      *library_mismatch = nullptr;
   // The impedance-metal rule (Solver.SurfaceResponseCorrection.ImpedanceMetalRule "Record";
   // decisions 2006 / 2012 / 2024; EXPERIMENTAL): the film resolution; the CANDIDATE
   // operator ALWAYS built beside the operator of record in Record (a twin of it when the

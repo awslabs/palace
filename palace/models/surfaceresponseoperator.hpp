@@ -765,6 +765,10 @@ private:
     // Factor on the domain correction only (ResponseCorrectionPatchData::domain_weight): 0
     // for a ForeignExcludedEdge cell (decision 553), whose surface matrices keep `weight`.
     double domain_weight = 1.0;
+    // The patch's model (blend) weight (ResponseCorrectionPatchData::provenance
+    // .model_weight; the members of an interpolated feature sum to 1): the length-weighted
+    // census counts a feature's edge once (ConfigureResolutionTypes).
+    double model_weight = 1.0;
     // Conductor-consistency probes (decision 277): the device potential at the conductor
     // vertices of a spatial surface-mortar trace mesh, sampled as the last
     // probe_point_count points of the patch (after the quadrature points and the
@@ -2565,12 +2569,20 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
 // side) whose relative permittivity (every principal value of Domains.Materials) is neither
 // 1 (vacuum) nor `substrate_permittivity`, within the relative tolerance 1e-10: per
 // material entry (its index in Domains.Materials) the adjacent domain attributes.
-// Collective over the mesh's communicator. The run warns with them; no value depends on
-// them.
+// Collective over the mesh's communicator. The run judges them by the rule of
+// surfaceresponselibrarycheck.hpp (CheckSubstratePermittivity, after the mesh).
 std::map<int, std::vector<int>>
 FindSubstratePermittivityMismatches(const IoData &iodata, const mfem::ParMesh &mesh,
                                     const std::set<int> &boundary_attributes,
                                     double substrate_permittivity);
+
+// THE CHECK OF A CONFIGURATION AGAINST ITS LIBRARY AT LOAD
+// (surfaceresponselibrarycheck.hpp): called by palace::Run and RunSurfaceResponsePreflight
+// before the mesh. On the root the library is read by the run's own reader (PreflightOnly:
+// `preflight`, as the requirements read it) and every row the configuration and the library
+// decide is found; one message; a STOP stops every rank together; the tolerated mismatches
+// go to the request's record on every rank. Nothing without a Library.
+void CheckResponseLibraryAtLoad(const IoData &iodata, MPI_Comm comm, bool preflight);
 
 // The magnetic (inductive) leaves of a fabrication-process library as the operator would
 // load them, without a device (mx-sc-magnetic DESIGN-v2 section 3; the Phase-1 gate G-d

@@ -38,6 +38,21 @@ inline constexpr const char *kParticipationSheetServedFlag = "Ls sheet served as
 inline constexpr const char *kParticipationSheetNotServedFlag =
     "metal law not served: raw there";
 
+// The flags word of a value that a mismatch between the configuration and its library
+// affects and the run tolerates (surfaceresponselibrarycheck.hpp; SurfaceParticipationRow
+// library_mismatch): the mismatches, their sizes and estimated effects are in palace.json
+// SurfaceResponse.LibraryMismatch.
+inline constexpr const char *kParticipationLibraryMismatchFlag =
+    "library mismatch tolerated";
+// Whether a tolerated mismatch acts on a row: an interface row of a listed target
+// interface, a region row of a listed Type (a Type total: through its members).
+inline bool LibraryMismatchActsOn(const std::set<int> &interfaces,
+                                  const std::set<std::string> &types, int interface,
+                                  const std::string &type, bool region)
+{
+  return interfaces.count(interface) > 0 || (region && types.count(type) > 0);
+}
+
 // The flag S (lane v1verdict1; ROBUSTNESS-REGISTER G19; bench-heldout round 4, DESIGNER
 // RULE): S = the share of a value's within-R corrected energy (its census cell's
 // fixed-trace fabricated energy) served by spatial-basis models, corner and spatial-cluster
@@ -209,6 +224,9 @@ struct SurfaceParticipationRow
   // lies on a metal the rule does not serve (raw there). A Type's value sums every feature
   // of the run, so both are set on every row of the run; flags print their words.
   bool sheet_served = false, sheet_not_served = false;
+  // Not a column: a tolerated library mismatch acts on this value (an interface row of a
+  // listed target interface; a region row or a Type total of an affected Type).
+  bool library_mismatch = false;
   std::vector<ParticipationHistoryEntry> history;
   std::map<int, double> mode_ports;
 };
@@ -238,7 +256,9 @@ inline constexpr const char *kParticipationPreflightReason =
 std::vector<SurfaceParticipationRow>
 PreflightParticipationRows(const std::map<int, std::string> &targets,
                            const std::set<int> &regions,
-                           const std::vector<ResolutionPreflightRow> &preflight);
+                           const std::vector<ResolutionPreflightRow> &preflight,
+                           const std::set<int> &mismatch_interfaces = {},
+                           const std::set<std::string> &mismatch_types = {});
 
 // The verdict inputs of a target row from its cells (nullptr = no cell: no census reading /
 // NOT-MEASURED): m90 and m50 of the census cell (the resolution word is set by the join,

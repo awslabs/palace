@@ -130,6 +130,9 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
   const bool world_root = Mpi::Root(comm);
   const int world_size = Mpi::Size(comm);
 
+  // The configuration against its response library, before the mesh (a stop here costs
+  // seconds, not the mesh load).
+  CheckResponseLibraryAtLoad(iodata, comm, false);
   auto solver = MakeSolver(iodata, world_root, world_size, omp_threads, git_tag);
   MFEM_VERIFY(solver, "Unknown problem type in palace::Run!");
 
@@ -146,6 +149,7 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
   solver->SaveMetadata(BlockTimer::GlobalTimer());
   solver->SaveMetadata(peak_mem);
   solver->SaveMetadata(peak_node_mem);
+  solver->SaveLibraryMismatchMetadata();
   Mpi::Print(comm, "\n");
 }
 
@@ -165,6 +169,7 @@ std::string SurfaceResponsePreflightKey(const IoData &iodata)
 int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
                                 const char *git_tag)
 {
+  CheckResponseLibraryAtLoad(iodata, comm, true);
   auto solver = MakeSolver(iodata, Mpi::Root(comm), Mpi::Size(comm), omp_threads, git_tag);
   MFEM_VERIFY(solver, "Unknown problem type in surface-response preflight!");
   auto mesh = LoadMesh(iodata, comm, *solver);
@@ -180,6 +185,8 @@ int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,
                                    const SurfaceResponsePreflightOutcome &outcome)
 {
   MPI_Comm comm = mesh.back()->GetComm();
+  // The tolerated library mismatches (final after the requirements' substrate check).
+  solver.SaveLibraryMismatchMetadata();
   auto &request = iodata.problem.type == ProblemType::ELECTROSTATIC
                       ? iodata.solver.electrostatic.response_correction
                       : iodata.solver.surface_response_correction;

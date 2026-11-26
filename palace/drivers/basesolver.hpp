@@ -192,6 +192,8 @@ public:
   // diagnostics record is moved into palace.json (SurfaceResponseOperator::
   // ReleaseStatistics), so the operator is not read after it.
   void SaveMetadata(SurfaceResponseOperator &response) const;
+  // SurfaceResponse.LibraryMismatch of palace.json (both forms, at the end of the run).
+  void SaveLibraryMismatchMetadata() const;
   // The impedance-metal rule's candidate block (ImpedanceMetalRule "Record"; root):
   // palace.json SurfaceResponse.ImpedanceRuleCandidate = `block` (marked "CANDIDATE: NOT OF
   // RECORD"); called only in RECORD mode, after the operator's metadata.

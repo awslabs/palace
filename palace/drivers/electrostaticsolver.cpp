@@ -15,6 +15,7 @@
 #include "models/laplaceoperator.hpp"
 #include "models/postoperator.hpp"
 #include "models/surfaceparticipationtable.hpp"
+#include "models/surfaceresponselibrarycheck.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/collectiveenvironment.hpp"
 #include "utils/communication.hpp"
@@ -3326,6 +3327,14 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
         indices.insert(interface);
       }
       const auto regions = post_op.GetRegionInterfaces(indices);
+      // The rows a tolerated library mismatch acts on (surfaceresponselibrarycheck.hpp).
+      const auto &mismatch_request = iodata.solver.electrostatic.response_correction;
+      const auto mismatch_interfaces =
+          mismatch_request ? LibraryMismatchInterfaces(mismatch_request->library_mismatch)
+                           : std::set<int>{};
+      const auto mismatch_types =
+          mismatch_request ? LibraryMismatchTypes(mismatch_request->library_mismatch)
+                           : std::set<std::string>{};
       auto Quality = [](double participation, double loss_tangent)
       {
         return participation == 0.0 || loss_tangent == 0.0
@@ -3353,6 +3362,8 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
           row.q_raw = Quality(row.p_raw, raw.loss_tangent);
           row.q_corrected = Quality(row.p_corrected, fixed_trace.loss_tangent);
           row.confidence = confidence;
+          row.library_mismatch = LibraryMismatchActsOn(mismatch_interfaces, mismatch_types,
+                                                       interface, row.type, row.region);
           if (coverage_targets.count(interface) == 0)
           {
             SetParticipationNotTarget(row);

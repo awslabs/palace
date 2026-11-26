@@ -22,6 +22,7 @@
 #include "models/spaceoperator.hpp"
 #include "models/surfacepostoperator.hpp"
 #include "models/surfaceresponsefilmrule.hpp"
+#include "models/surfaceresponselibrarycheck.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "models/surfaceresponseresolution.hpp"
 #include "utils/communication.hpp"
@@ -894,6 +895,27 @@ void BaseSolver::SaveMetadata(const PortExcitations &excitation_helper) const
   }
 }
 
+void BaseSolver::SaveLibraryMismatchMetadata() const
+{
+  // The mismatches with the library the run tolerates (surfaceresponselibrarycheck.hpp):
+  // written only when there is one.
+  for (const auto *config : {iodata.solver.electrostatic.response_correction
+                                 ? &*iodata.solver.electrostatic.response_correction
+                                 : nullptr,
+                             iodata.solver.surface_response_correction
+                                 ? &*iodata.solver.surface_response_correction
+                                 : nullptr})
+  {
+    if (root && config && !config->library_mismatch.Empty())
+    {
+      json meta = LoadMetadata(post_dir);
+      meta["SurfaceResponse"]["LibraryMismatch"] =
+          LibraryMismatchJson(config->library_mismatch);
+      WriteMetadata(post_dir, meta);
+    }
+  }
+}
+
 void BaseSolver::SaveImpedanceRuleCandidateMetadata(const nlohmann::json &block) const
 {
   if (root)
@@ -1337,7 +1359,13 @@ BaseSolver::WritePreflightResolutionCensus(SurfaceResponseOperator &response,
   if (surface_participation)
   {
     surface_participation->WritePreflightLevel(
-        PreflightParticipationRows(types, regions, record.preflight), unknowns, comm);
+        PreflightParticipationRows(
+            types, regions, record.preflight,
+            request ? LibraryMismatchInterfaces(request->library_mismatch)
+                    : std::set<int>{},
+            request ? LibraryMismatchTypes(request->library_mismatch)
+                    : std::set<std::string>{}),
+        unknowns, comm);
     SaveSurfaceResponseMetadata("ParticipationTable", surface_participation->Metadata());
   }
   PreflightCensusOutcome outcome;

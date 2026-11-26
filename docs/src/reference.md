@@ -1826,26 +1826,54 @@ matrices:
 ```
 
 Thickness uses the application mesh coordinate unit, like `MatchingRadius`. Palace
-requires an entry for every interface type represented by a version-3 model. Before
-automatic 2D or 3D matching, it also requires every selected runtime interface to have
-the same type, thickness, and relative permittivity. A mismatch is fatal because the
-surface-response matrices already include both layer properties. Version-1 and
-version-2 libraries remain usable, but Palace warns that their interface properties
-cannot be verified when they omit this metadata.
+requires an entry for every interface type represented by a version-3 model. The
+surface-response matrices already include both layer properties, so every selected
+runtime interface is compared with its type's entry. Version-1 and version-2 libraries
+remain usable, but Palace warns that their interface properties cannot be verified when
+they omit this metadata.
 
 The numbers above are one process's: copy the values from the `Fabrication` block of the
-library you use, never from this page (a device configuration written for silicon at 11.47
-does not match a library whose process uses 11.45 for its `MS` layer and its substrate).
-Before it corrects anything, Palace compares a device configuration with the library as
-follows:
+library you use, never from this page. Palace compares a device configuration with its
+library ONCE, at load, before the mesh is read (a designer learns every mismatch in the
+first seconds, all in one message); only the substrate, which needs the mesh, is compared
+after it.
+
+THE RULE. A mismatch is tolerated while its estimated effect on a corrected value stays
+within 1 %: inside, one warning lists every mismatching entry with its size and its
+estimated effect, and the run goes on; beyond, the run stops with the same list. The
+effect of one mismatch is its factor times its relative size ``|c / l - 1|`` (``c`` the
+configuration's value, ``l`` the library's); the effects acting on one target interface
+add (its own layer's permittivity and thickness, and the substrate's), and the 1 % applies
+to that sum. With `"Developer": true` a stop of the rule becomes a warning. The factors
+were measured on an electrostatic window of the CTX-002 design (Order 3, three terminals,
+six target interfaces), one value of the configuration moved by +0.175 % and +1 % with
+the library unchanged, as the move of the corrected value minus the move of the raw
+value (the largest over the window's values, rounded up): a layer's permittivity `MA`
+0.90, `MS` 0.94, `SA` 0.87, and a layer's thickness `MA` 0.91, `MS` 0.95, `SA` 0.94, each
+on its own type only; the substrate's permittivity `MA` 0.16, `MS` 1.86, `SA` 0.11. Alone,
+a layer may thus differ by about 1 % and the substrate by about 0.5 %.
 
 | In the device configuration | In the library | On a mismatch |
 |:--- |:--- |:--- |
-| `Thickness` of every target `Boundaries.Postprocessing.Dielectric` entry (mesh units) | `Fabrication.InterfaceLayers.<Type>.Thickness` | error: the run stops |
-| `Permittivity` of every target `Dielectric` entry | `Fabrication.InterfaceLayers.<Type>.Permittivity` | error: the run stops; the message names the library value and the entry to change |
-| the largest `EdgeDistances` value of every target entry (mesh units) | `MatchingRadius` | error: the run stops |
+| `Thickness` of every target `Boundaries.Postprocessing.Dielectric` entry (mesh units) | `Fabrication.InterfaceLayers.<Type>.Thickness` | THE RULE (was: the run stops at any difference) |
+| `Permittivity` of every target `Dielectric` entry | `Fabrication.InterfaceLayers.<Type>.Permittivity` | THE RULE (was: the run stops at any difference) |
+| `Domains.Materials` `Permittivity` of the domains next to the corrected metal (after the mesh) | `Fabrication.SubstratePermittivity` (and 1 for vacuum) | THE RULE (was: a warning at any size); at load the run stops already when no configured material other than vacuum could pass it, else one line names the materials that could be the substrate |
+| the largest `EdgeDistances` value of every target entry (mesh units) | `MatchingRadius` | the run stops (any difference) |
+| a target entry's `Type` | an `InterfaceLayers` entry of that type | the run stops |
+| `Model.L0` | `Fabrication.LengthUnit`, when the library states it (`m`, `cm`, `mm`, `um`, `nm`) | the run stops |
+| the metal laws of the device | a model of a parked law (conductivity, rational impedance) | the run stops without `"Developer": true`, every such model named |
+| `TargetInterfaces`, `AutomaticEdges` | - | the run stops (unchanged, now at load) |
 | the boundary law of the metal (`PEC`, `Impedance` with its `Rs` / `Ls` / `Cs`, ...) | each model's `BoundaryCondition` | no error: the features have no model (Missing, uncorrected); the warning names the law when the library holds the same geometry under another law |
-| `Domains.Materials` `Permittivity` of the domains next to the corrected metal | `Fabrication.SubstratePermittivity` (and 1 for vacuum) | a warning only: the library's coupons were computed with the library's substrate |
+
+The library file itself (opened, read, its `Version`, its entries) is read at load by the
+reader of the run, so its refusals also come before the mesh. The load message prints the
+library's fabricated profile (`MetalThickness`, `OveretchDepth`, `SidewallAngle`,
+`TopRoundingRadius`, `BottomRoundingRadius`); the configuration has no profile to compare
+with. A tolerated mismatch is named in the outputs: the flags word `library mismatch
+tolerated` on every affected row of `surface-participation.csv`, and
+`SurfaceResponse.LibraryMismatch` in `palace.json` (`Mismatches` with `Quantity`, `Entry`,
+`Config`, `Library`, `Mismatch` and `EstimatedEffect` per type; `EstimatedEffectPerType`;
+`Interfaces`; `BeyondRule`); without a mismatch neither is written.
 
 `OpenContourPaths` is required when conductor cuts interrupt the free matching contour.
 Each one-based `Indices` list orders a disjoint subset of `BasisPoints` from
@@ -3760,7 +3788,10 @@ above) or `NOT-EVALUATED` (no reading); never `RESOLVED`. It is the word the tab
 at a first iteration, there from the energy-weighted census. The weights: an edge patch its
 longitudinal cell length; a spatial patch (corner and cluster models; no cell) as much as
 edge patches with as many knots (its knot count times the edge patches' cell length per
-knot of the same `Type` and plane; by its knots alone where there is no edge patch).
+knot of the same `Type` and plane; by its knots alone where there is no edge patch); each
+times the patch's model weight, so that an interpolated feature (two or three models, each
+with its own patches, their weights summing to 1) counts its edge once, as the energy
+census does (`EdgeLength` is then the length the census reads, once per edge).
 `LengthM90` is that census's 90 % quantile of ``h/R`` (the bin-centre rule of the energy
 census); `Status` its word; `EdgePatches`, `EdgeLength`, `SpatialPatches` and the shares
 `EdgeShares` / `SpatialShares` by the census bars below stay as numbers (no word is made of

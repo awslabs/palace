@@ -348,10 +348,10 @@ void SetParticipationNotTarget(SurfaceParticipationRow &row)
   row.reason = not_target + ": raw only";
 }
 
-std::vector<SurfaceParticipationRow>
-PreflightParticipationRows(const std::map<int, std::string> &targets,
-                           const std::set<int> &regions,
-                           const std::vector<ResolutionPreflightRow> &preflight)
+std::vector<SurfaceParticipationRow> PreflightParticipationRows(
+    const std::map<int, std::string> &targets, const std::set<int> &regions,
+    const std::vector<ResolutionPreflightRow> &preflight,
+    const std::set<int> &mismatch_interfaces, const std::set<std::string> &mismatch_types)
 {
   std::vector<SurfaceParticipationRow> rows;
   for (const auto &[interface, type] : targets)
@@ -377,6 +377,12 @@ PreflightParticipationRows(const std::map<int, std::string> &targets,
     if (census != preflight.end() && census->UnderResolvedCells())
     {
       row.flags += std::string("; ") + kParticipationPreflightUnderResolvedCellsFlag;
+    }
+    row.library_mismatch = LibraryMismatchActsOn(mismatch_interfaces, mismatch_types,
+                                                 interface, type, row.region);
+    if (row.library_mismatch)
+    {
+      row.flags += std::string("; ") + kParticipationLibraryMismatchFlag;
     }
     row.reason = kParticipationPreflightReason;
     rows.push_back(std::move(row));
@@ -532,6 +538,16 @@ AddParticipationTypeTotals(const std::vector<SurfaceParticipationRow> &rows)
     total->q_raw += 1.0 / row.q_raw;
     total->q_corrected += 1.0 / row.q_corrected;
     total->reason = total->reason.empty() ? row.reason : total->reason;
+    if (row.library_mismatch && !total->library_mismatch)
+    {
+      // A PreflightOnly row's flags are set with the row (a solve-form row's later, by
+      // ParticipationFlags): the word follows the first affected member.
+      total->library_mismatch = true;
+      if (!total->flags.empty())
+      {
+        total->flags += std::string("; ") + kParticipationLibraryMismatchFlag;
+      }
+    }
   }
   std::vector<SurfaceParticipationRow> out;
   out.reserve(rows.size() + 3 * groups.size());
@@ -712,6 +728,10 @@ std::string ParticipationFlags(const SurfaceParticipationRow &row)
   if (row.sheet_not_served)
   {
     parts.push_back(kParticipationSheetNotServedFlag);
+  }
+  if (row.library_mismatch)
+  {
+    parts.push_back(kParticipationLibraryMismatchFlag);
   }
   if (row.spatial_share >= kParticipationSpatialShareFlagAt)
   {
