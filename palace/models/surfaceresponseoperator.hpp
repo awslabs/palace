@@ -14,6 +14,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -45,6 +46,7 @@ struct FilmRuleResolution;
 class LaplaceOperator;
 class MaterialOperator;
 class SpaceOperator;
+class Table;
 class Units;
 struct IdentifiedFeature;
 struct IdentificationResult;
@@ -2543,6 +2545,14 @@ SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outc
 // error text verbatim, the text a one-rank run stops with, so that it does not depend on
 // the rank count.
 [[noreturn]] void RaiseKnifeEdgeCensusFailure(const std::string &text);
+
+// STEP 4c (lane v1verdict1 fix round, MAJOR-1): a library CSV file's contents read into
+// `table` by the rules of Table(table_str) (text_columns false), in one pass and without
+// stopping, since a build without MFEM exceptions (the containers) cannot catch that
+// parser's stop: empty, `table` equal to the parser's table; else the first refused cell's
+// message (a cell beyond the header's columns, or one that is not a double; shown
+// printable). The response-matrix readers parse through it.
+std::string TryParseTable(std::string_view table_str, Table &table);
 
 // Classify the configured automatic surface-response neighborhoods without assembling a
 // finite-element operator or solving a field problem. The deterministic JSON manifest

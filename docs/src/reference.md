@@ -3829,9 +3829,10 @@ refuses, a placed discovery placeholder, a response model whose fabricated domai
 matrix step refuses (a negative-energy mode beyond roundoff, by the operator's own test), or
 a library file the operator's model loop refuses: a basis-point, domain-matrix or
 surface-matrix file that cannot be read, holds a cell the table parser refuses (text, a
-binary file, a cell beyond the header's columns: validated before parsing by the parser's
-own rules, since a build without MFEM exceptions cannot catch the parser's stop), or does
-not fit its basis points (a missing column or entry, a non-finite entry, another size), a
+binary file, a cell beyond the header's columns: read in one pass by the parser's own
+rules without stopping, since a build without MFEM exceptions cannot catch the parser's
+stop), or does not fit its basis points (a missing column or entry, a non-finite entry,
+another size), a
 surface-matrix file that reads but lacks a mapped coupon's response (a header-only file),
 blend sources without the same coupon interfaces, or interface mappings without surface
 matrices), `PreflightOnly` builds no census, prints one line
@@ -3842,9 +3843,10 @@ each once, with EVERY refused file's message in the loop's order (basis points, 
 matrices, the matrix step, the interface mappings, surface matrices, the blend, the coupon
 check; the first is the one the solve form stops with; a model whose basis-point file is
 refused adds `(its matrices are not checked without its basis points)`):
-`response model "<name>": <message> <message>`, models separated by `; `. Every census that is not
-evaluated (these reasons, an explicit `"GeometryFailurePolicy": "FailClosed"`, a whole-run
-raw fallback, a problem type without a census) is named by its one line, and the same line is
+`response model "<name>": <message> <message>`, models separated by `; `. Every census
+that is not evaluated (these reasons, an explicit `"GeometryFailurePolicy": "FailClosed"`,
+a whole-run raw fallback, a problem type without a census) is named by its one line, and
+the same line is
 `SurfaceResponse.ResolutionCensusNotEvaluated` of `palace.json` (absent when the census is
 built). On `"PatchConstruction": "Legacy"` (a developer option) the requirements
 manifest's `Complete` is the features comparison's: the `"UnmatchedPolicy": "Error"` line

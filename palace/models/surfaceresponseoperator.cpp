@@ -31,6 +31,7 @@
 #include <utility>
 #include <vector>
 #include <Eigen/Dense>
+#include <scn/scan.h>
 #include <nlohmann/json.hpp>
 #include "fem/coefficient.hpp"
 #include "fem/fespace.hpp"
@@ -21813,11 +21814,110 @@ std::string UnreadableResponseMatrixMessage(const std::string &path)
   return "Unable to read response matrix file \"" + path + "\"!";
 }
 
+// The table parser's tokenizing (palace/utils/tablecsv.cpp: sv_split_r, trim_space), the
+// same statements, for TryParseTable.
+class CsvFields
+{
+  std::string_view full, delimiters;
+  std::size_t start = 0;
+
+public:
+  CsvFields(std::string_view full_, std::string_view delimiters_)
+    : full(full_), delimiters(delimiters_)
+  {
+  }
+  std::string_view next()
+  {
+    const std::size_t end = full.find_first_of(delimiters, start);
+    auto out = full.substr(start, end - start);
+    start = (end == std::string_view::npos) ? end : end + 1;
+    return out;
+  }
+  bool at_end() const { return start == full.size() || start == std::string_view::npos; }
+};
+
+std::string_view CsvTrim(std::string_view str_v)
+{
+  auto prefix = str_v.find_first_not_of(" \t\f\v");
+  str_v.remove_prefix(std::min(prefix, str_v.size()));
+  auto suffix = str_v.find_last_not_of(" \t\f\v");
+  str_v.remove_suffix(std::min(str_v.size() - 1 - suffix, str_v.size()));
+  return str_v;
+}
+
+// A cell in a message: at most 40 bytes, a byte outside printable ASCII as \xNN (a binary
+// file's bytes would not be valid text in the log or in palace.json).
+std::string CsvCellShown(std::string_view cell)
+{
+  std::string shown;
+  for (std::size_t k = 0; k < std::min<std::size_t>(cell.size(), 40); k++)
+  {
+    const auto byte = static_cast<unsigned char>(cell[k]);
+    shown += (byte >= 0x20 && byte < 0x7f && byte != '"')
+                 ? std::string(1, cell[k])
+                 : fmt::format("\\x{:02x}", static_cast<unsigned int>(byte));
+  }
+  return cell.size() > 40 ? shown + "..." : shown;
+}
+
+}  // namespace
+
+std::string TryParseTable(std::string_view table_str, Table &table)
+{
+  // Table(table_str)'s rules (text_columns false: every library reader's table; its default
+  // separators and empty-cell value) in ONE pass, without stopping: the header row's
+  // entries are the columns col_<i> (their text trimmed); a cell of a later row that is
+  // not empty and not the empty-cell value must lie within them and parse as a double
+  // (scn::scan<double>, "{}") and is appended to its column.
+  table = Table();
+  if (table_str.empty())
+  {
+    return {};
+  }
+  CsvFields rows(table_str, table.print_row_separator);
+  {
+    CsvFields entries(rows.next(), table.print_col_separator);
+    for (std::size_t col_i = 0; !entries.at_end(); col_i++)
+    {
+      table.insert(fmt::format("col_{}", col_i), std::string(CsvTrim(entries.next())));
+    }
+  }
+  for (std::size_t row = 2; !rows.at_end(); row++)
+  {
+    CsvFields entries(rows.next(), table.print_col_separator);
+    for (std::size_t col_i = 0; !entries.at_end(); col_i++)
+    {
+      const auto cell = CsvTrim(entries.next());
+      if ((cell == table.col_options.empty_cell_val) || (cell.empty()))
+      {
+        continue;
+      }
+      if (col_i >= table.n_cols())
+      {
+        return fmt::format(
+            "CSV entry \"{}\" of row {} lies beyond the header's {} column(s)",
+            CsvCellShown(cell), row, table.n_cols());
+      }
+      const auto result = scn::scan<double>(cell, "{}");
+      if (!result)
+      {
+        return fmt::format("Could not parse CSV entry \"{}\" as double",
+                           CsvCellShown(cell));
+      }
+      table[col_i] << result->value();
+    }
+  }
+  return {};
+}
+
+namespace
+{
+
 std::string TryReadTable(const std::string &path, Table &table)
 {
-  // TableWithCSVFile(path, true)'s reading, its cells VALIDATED BEFORE PARSING by the
-  // parser's own rules (MAJOR-1 of the fix round: a build without MFEM exceptions cannot
-  // catch the parser's abort): a refused cell returns the parser's message.
+  // TableWithCSVFile(path, true)'s reading, parsed ONCE by TryParseTable (the parser's
+  // rules without stopping: MAJOR-1 of the fix round, a build without MFEM exceptions
+  // cannot catch the parser's stop): a refused cell returns the parser's message.
   std::ifstream file(path, std::ios_base::in);
   if (!file.good())
   {
@@ -21825,14 +21925,13 @@ std::string TryReadTable(const std::string &path, Table &table)
   }
   std::stringstream buffer;
   buffer << file.rdbuf();
-  const std::string contents = buffer.str();
-  const std::string cells = TableCellsError(contents);
+  Table input;
+  const std::string cells = TryParseTable(buffer.str(), input);
   if (!cells.empty())
   {
     return ReaderMessage("Response matrix file \"", path,
                          "\": Could not parse CSV table from string! ", cells, "!");
   }
-  Table input(contents);
   if (input.empty())
   {
     return UnreadableResponseMatrixMessage(path);

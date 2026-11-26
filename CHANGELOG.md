@@ -135,11 +135,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `SurfaceResponse.ResolutionCensusNotEvaluated` of
     `palace.json`), and the exit status is the one the preflight had before. The model
     files are read by non-aborting forms of their readers, which the solve form's readers
-    call and stop with the same message; a library CSV file's cells are validated before
-    parsing by the table parser's own rules (`TableCellsError`), since a build without
-    MFEM exceptions (the containers) cannot catch the parser's stop, and the solve form
-    then stops with the parser's message naming the file. Corrected solve runs are
-    unchanged. The census
+    call and stop with the same message; a library CSV file is read in one pass by the
+    table parser's own rules without stopping (`TryParseTable`, the same table bit for
+    bit), since a build without MFEM exceptions (the containers) cannot catch the parser's
+    stop, and the solve form then stops with the parser's message naming the file.
+    Corrected solve runs are unchanged. The census
     reuses the manifest pass's identification: on a designers' chip (one node of 192
     cores) it was printed about 114 minutes after the start (measured
     before the matrix-step prediction, which adds one eigendecomposition per model on the

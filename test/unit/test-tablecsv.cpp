@@ -1,15 +1,11 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iterator>
 #include <limits>
 #include <sstream>
-#include <string>
-#include <utility>
-#include <vector>
 #include <fmt/format.h>
 #include <scn/scan.h>
 #include <catch2/catch_test_macros.hpp>
@@ -862,8 +858,7 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir, "TableCSV_EmptyTableWritesHeaderO
 // AppendRowsAndClear has started, WriteFullTableTrunc / WriteTableIncremental are refused,
 // and AppendRowsAndClear is refused once another writer has put rows on disk.
 TEST_CASE_METHOD(palace::test::PerRankTempDir,
-                 "TableCSV incremental writers are exclusive per table",
-                 "[tablecsv][Serial]")
+                 "TableCSV incremental writers are exclusive per table", "[tablecsv][Serial]")
 {
   if (!Mpi::Root(Mpi::World()))
   {
@@ -916,62 +911,4 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
     REQUIRE_NOTHROW(out.WriteFullTableTrunc());
     CHECK_THROWS_WITH(out.AppendRowsAndClear(), ContainsSubstring(full_or_incremental));
   }
-}
-
-// STEP 4c (lane v1verdict1 fix round, MAJOR-1): TableCellsError, the check a library reader
-// runs before parsing (a build without MFEM exceptions cannot catch the parser's abort),
-// refuses exactly the tables the Table parser refuses, by its rules.
-TEST_CASE("TableCellsError refuses exactly what the Table parser refuses",
-          "[tablecsv][Serial]")
-{
-  std::string bytes;
-  for (int k = 0; k < 4096; k++)
-  {
-    bytes += static_cast<char>(k % 256);
-  }
-  const std::vector<std::pair<std::string, bool>> tables = {
-      {"", true},
-      {"a,b,c\n", true},
-      {"a,b,c\n1,2,3\n", true},
-      {"a,b,c\n1,2,3", true},
-      {"  a,  b,  c,  \n 1.0e+00, 2.0e-01,  +3.5,  \n", true},
-      {"a,b,c\n1,NULL,3\n4,,6\n", true},
-      {"a,b,c\n1,2,3,\n", true},
-      {"a,b,c\n1,2,3,4\n", false},
-      {"a,b,c\n1,abc,3\n", false},
-      {"a,b\n1,e5\n", false},
-      {bytes, false},
-  };
-  // Cells whose fate is scn's (a lone sign; a NaN with a tail): the agreement only.
-  const std::vector<std::string> scn_cells = {"a,b,c\n1,2,+\n", "a,b\n1,nan-x\n"};
-  auto Agree = [](const std::string &text)
-  {
-    INFO("table \"" << text.substr(0, 40) << "\"");
-    const std::string error = TableCellsError(text);
-    if (error.empty())
-    {
-      CHECK_NOTHROW(Table{std::string_view(text)});
-    }
-    else
-    {
-      CHECK_THROWS_WITH(
-          Table{std::string_view(text)},
-          Catch::Matchers::ContainsSubstring("Could not parse CSV table from string!"));
-      CHECK(std::all_of(error.begin(), error.end(),
-                        [](char c) { return c >= 0x20 && c < 0x7f; }));
-    }
-    return error.empty();
-  };
-  for (const auto &[text, readable] : tables)
-  {
-    CHECK(Agree(text) == readable);
-  }
-  for (const auto &text : scn_cells)
-  {
-    Agree(text);
-  }
-  CHECK(TableCellsError("a,b,c\n1,abc,3\n") ==
-        "Could not parse CSV entry \"abc\" as double");
-  CHECK(TableCellsError("a,b,c\n1,2,3,4\n") ==
-        "CSV entry \"4\" of row 2 lies beyond the header's 3 column(s)");
 }

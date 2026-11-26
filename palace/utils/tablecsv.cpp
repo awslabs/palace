@@ -328,65 +328,6 @@ Table::Table(std::string_view table_str,
   }
 }
 
-std::string TableCellsError(std::string_view table_str)
-{
-  // The constructor's rules (text_columns false; the default separators and empty-cell
-  // value) without reading into a table: the header row's entries are the columns; a cell
-  // of a later row that is not empty and not the empty-cell value must lie within them and
-  // parse as a double.
-  if (table_str.empty())
-  {
-    return {};
-  }
-  // A cell in a message: at most 40 bytes, a byte outside printable ASCII as \xNN (a
-  // binary file's bytes would not be valid text in the log or in palace.json).
-  auto Shown = [](std::string_view cell)
-  {
-    std::string shown;
-    for (std::size_t k = 0; k < std::min<std::size_t>(cell.size(), 40); k++)
-    {
-      const auto byte = static_cast<unsigned char>(cell[k]);
-      shown += (byte >= 0x20 && byte < 0x7f && byte != '"')
-                   ? std::string(1, cell[k])
-                   : fmt::format("\\x{:02x}", static_cast<unsigned int>(byte));
-    }
-    return cell.size() > 40 ? shown + "..." : shown;
-  };
-  const Table defaults;
-  sv_split_r row_split(table_str, defaults.print_row_separator);
-  std::size_t n_cols = 0;
-  {
-    sv_split_r entries(row_split.next(), defaults.print_col_separator);
-    for (; !entries.at_end(); n_cols++)
-    {
-      entries.next();
-    }
-  }
-  for (std::size_t row = 2; !row_split.at_end(); row++)
-  {
-    sv_split_r entries(row_split.next(), defaults.print_col_separator);
-    for (std::size_t col_i = 0; !entries.at_end(); col_i++)
-    {
-      const auto entry_trim = trim_space(entries.next());
-      if ((entry_trim == defaults.col_options.empty_cell_val) || (entry_trim.empty()))
-      {
-        continue;
-      }
-      if (col_i >= n_cols)
-      {
-        return fmt::format(
-            "CSV entry \"{}\" of row {} lies beyond the header's {} column(s)",
-            Shown(entry_trim), row, n_cols);
-      }
-      if (!scn::scan<double>(entry_trim, "{}"))
-      {
-        return fmt::format("Could not parse CSV entry \"{}\" as double", Shown(entry_trim));
-      }
-    }
-  }
-  return {};
-}
-
 // explicit instantiation to avoid fmt inclusion.
 template void Table::append_header(fmt::memory_buffer &) const;
 template void Table::append_row(fmt::memory_buffer &, std::size_t) const;

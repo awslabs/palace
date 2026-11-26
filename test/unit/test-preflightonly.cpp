@@ -7,9 +7,13 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <iostream>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -995,17 +999,20 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                          "\" is missing an upper-triangular entry!",
                      1);
   // (l)-(p) The fix round. (l) / (m) A cell the Table parser refuses (a text cell, a binary
-  // file): validated before parsing by the parser's own rules (a build without MFEM
-  // exceptions cannot catch the parser's abort), the parser's message, printable.
-  auto CellsMessage = [](const fs::path &path)
+  // file): read by TryParseTable, the parser's rules without stopping (a build without MFEM
+  // exceptions cannot catch the parser's stop), the parser's message, printable.
+  auto Cells = [](const fs::path &path)
+  {
+    Table table;
+    return TryParseTable(ReadBytes(path), table);
+  };
+  auto CellsMessage = [&](const fs::path &path)
   {
     return "Response matrix file \"" + path.string() +
-           "\": Could not parse CSV table from string! " +
-           TableCellsError(ReadBytes(path)) + "!";
+           "\": Could not parse CSV table from string! " + Cells(path) + "!";
   };
-  CHECK(TableCellsError(ReadBytes(text_cell_matrix)) ==
-        "Could not parse CSV entry \"abc\" as double");
-  const std::string binary_cells = TableCellsError(ReadBytes(binary_matrix));
+  CHECK(Cells(text_cell_matrix) == "Could not parse CSV entry \"abc\" as double");
+  const std::string binary_cells = Cells(binary_matrix);
   CHECK(binary_cells.rfind("Could not parse CSV entry \"\\x0d\\x0e", 0) == 0);
   CHECK(std::all_of(binary_cells.begin(), binary_cells.end(),
                     [](char c) { return c >= 0x20 && c < 0x7f; }));
@@ -1403,4 +1410,171 @@ TEST_CASE_METHOD(
     CHECK(words->preflight.at("LargestM") == built_in.preflight.at("LargestM"));
   }
 #endif
+}
+
+namespace
+{
+
+// Two tables equal field by field, every value by its 64-bit pattern; `why` the first
+// difference.
+bool SameTable(const Table &a, const Table &b, std::string &why)
+{
+  if (a.n_cols() != b.n_cols() || a.n_rows() != b.n_rows() ||
+      a.print_col_separator != b.print_col_separator ||
+      a.print_row_separator != b.print_row_separator ||
+      a.col_options.empty_cell_val != b.col_options.empty_cell_val)
+  {
+    why = "shape or options";
+    return false;
+  }
+  for (auto x = a.cbegin(), y = b.cbegin(); x != a.cend(); ++x, ++y)
+  {
+    if (x->name != y->name || x->header_text != y->header_text ||
+        x->column_group_idx != y->column_group_idx ||
+        x->min_left_padding != y->min_left_padding ||
+        x->float_precision != y->float_precision || x->fmt_sign != y->fmt_sign ||
+        x->print_as_int != y->print_as_int || x->print_as_text != y->print_as_text ||
+        x->text != y->text || x->data.size() != y->data.size())
+    {
+      why = "column " + x->name;
+      return false;
+    }
+    for (std::size_t i = 0; i < x->data.size(); i++)
+    {
+      std::uint64_t p, q;
+      std::memcpy(&p, &x->data[i], sizeof p);
+      std::memcpy(&q, &y->data[i], sizeof q);
+      if (p != q)
+      {
+        why = "column " + x->name + " value " + std::to_string(i);
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// TryParseTable against Table(text): 0 the same table, 1 both refuse, -1 they differ.
+int TryParseAgrees(const std::string &text, std::string &why)
+{
+  Table parsed;
+  const std::string error = TryParseTable(text, parsed);
+  Table reference;
+  try
+  {
+    reference = Table(std::string_view(text));
+  }
+  catch (const std::exception &)
+  {
+    why = error.empty() ? "Table refuses, TryParseTable reads" : "";
+    return error.empty() ? -1 : 1;
+  }
+  if (!error.empty())
+  {
+    why = "TryParseTable refuses (" + error + "), Table reads";
+    return -1;
+  }
+  return SameTable(parsed, reference, why) ? 0 : -1;
+}
+
+}  // namespace
+
+// STEP 4c (lane v1verdict1 fix round, MAJOR-1): TryParseTable, the one-pass read of a
+// library CSV file that does not stop, reads a table bit for bit as Table(text) does and
+// refuses exactly what Table refuses. PALACE_TEST_TRYPARSE_FILES = a file of paths, one per
+// line, adds every listed file (the offline check over the libraries in use).
+TEST_CASE(
+    "TryParseTable reads a table bit for bit as Table does and refuses what it refuses",
+    "[preflightonly][Serial]")
+{
+  std::string bytes;
+  for (int k = 0; k < 4096; k++)
+  {
+    bytes += static_cast<char>(k % 256);
+  }
+  // The forms the libraries use (the domain and surface matrices' padded columns, trailing
+  // commas and spaces), number spellings, line ends, empty and NULL cells; then the broken
+  // kinds the review's configs hold.
+  const std::vector<std::string> readable = {
+      "",
+      "a,b,c\n",
+      "a,b,c\n1,2,3\n",
+      "a,b,c\n1,2,3",
+      "  basis_i,  basis_j,                   Q_ij (J)\n 1.00e+00, 1.00e+00,        "
+      "+2.995585045759e-14\n 1.00e+00, 2.00e+00,        -8.989348939090e-15\n",
+      "interface,     edge,                      R (m),  basis_i,                   Q_ij "
+      "(J),"
+      "        \n 1.00e+00, 1.00e+00,        +2.000000000000e-07, 1.00e+00,        "
+      "+2.151925645156e-23,        \n",
+      "x,y,z\n-1.8999999999999999e+00,-1.8999999999999999e+00,0.0000000000000000e+00\n",
+      "a,b\n1,NULL\n,4\n",
+      "a,b\n1e5,-2.5E-03\n+3,.5\n",
+      "a,b,c,d\nnan,-nan,inf,-inf\n",
+      "a,b\nNaN,Infinity\n",
+      "a,b\r\n1,2\r\n3,4\r\n",
+      "a,b\n1,2\n\n",
+      "a,b\n1,2\n\n\n",
+      "a,b\n\t1 ,\v2\f\n",
+      "a,b\n1,2,\n",
+      "a,b\n1,2, ,\n",
+      "a,b,c\n1\n",
+      "a,a\n1,2\n",
+      "a,b\n1,2 3\n",
+      "a,b\n1,nan-x\n"};
+  const std::vector<std::string> broken = {"a,b,c\n1,2,3,4\n", "a,b\n1,abc\n", "a,b\n1,+\n",
+                                           "a,b\n1,e5\n",      "\n1,2\n",      bytes};
+  std::string why;
+  int read = 0, refused = 0;
+  for (const auto &text : readable)
+  {
+    INFO("table \"" << text.substr(0, 60) << "\"");
+    const int agree = TryParseAgrees(text, why);
+    INFO(why);
+    CHECK(agree >= 0);
+    read += agree == 0;
+    refused += agree == 1;
+  }
+  CHECK(read >= 18);  // the parser's own verdict on a spelling decides; both must agree
+  for (const auto &text : broken)
+  {
+    INFO("table \"" << text.substr(0, 20) << "\"");
+    CHECK(TryParseAgrees(text, why) == 1);  // the review's broken kinds: both refuse
+  }
+  Table table;
+  CHECK(TryParseTable("a,b,c\n1,abc,3\n", table) ==
+        "Could not parse CSV entry \"abc\" as double");
+  CHECK(TryParseTable("a,b,c\n1,2,3,4\n", table) ==
+        "CSV entry \"4\" of row 2 lies beyond the header's 3 column(s)");
+  const std::string binary = TryParseTable(bytes, table);
+  CHECK(std::all_of(binary.begin(), binary.end(),
+                    [](char c) { return c >= 0x20 && c < 0x7f; }));
+  // The offline check: every listed file, parsed by both.
+  if (const char *list = std::getenv("PALACE_TEST_TRYPARSE_FILES"))
+  {
+    std::ifstream paths(list);
+    std::string path;
+    long long int files = 0, equal = 0, both_refuse = 0, differ = 0, bytes_read = 0;
+    while (std::getline(paths, path))
+    {
+      if (path.empty())
+      {
+        continue;
+      }
+      const std::string text = ReadBytes(path);
+      const int agree = TryParseAgrees(text, why);
+      files++;
+      bytes_read += static_cast<long long int>(text.size());
+      equal += agree == 0;
+      both_refuse += agree == 1;
+      if (agree < 0)
+      {
+        differ++;
+        std::cout << "TRYPARSE-DIFFERS " << path << ": " << why << "\n";
+      }
+    }
+    std::cout << "TRYPARSE-FILES files=" << files << " bytes=" << bytes_read
+              << " equal=" << equal << " both-refuse=" << both_refuse
+              << " differ=" << differ << "\n";
+    CHECK(differ == 0);
+  }
 }
