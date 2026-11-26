@@ -3737,6 +3737,118 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   }
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "coaxial_lumped_anchor_synth: anchor solve of the synthesized circuit",
+                 "[Serial][Parallel][Regression]")
+{
+  // The coaxial line of coaxial_lumped_pec_synth, driven by a 50 Ω lumped port at one end
+  // and terminated by an inductive lumped port at the other, which is not excited and has
+  // an anchor. Through the driven solver, the exported matrices and orthogonalization
+  // matrix must have the anchor column after the port modes, whose coordinates v satisfy
+  // (Re L⁻¹ + ν² Re C) v = s e_p on the rows and columns of the basis, at the default
+  // screening frequency of the resolved configuration.
+  namespace fs = std::filesystem;
+  constexpr double L = 1.0e-9, f_min = 0.5;
+  const std::string mesh =
+      std::string(PALACE_TEST_DATA_DIR) + "/regression/input/coaxial/mesh/coaxial.msh";
+  nlohmann::json config = {
+      {"Problem", {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir.string()}}},
+      {"Model", {{"Mesh", mesh}, {"L0", 1.0e-3}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 2.08}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {2}}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"Attributes", {3}},
+           {"R", 50.0},
+           {"Direction", "+R"},
+           {"Excitation", 1}},
+          {{"Index", 2},
+           {"Attributes", {4}},
+           {"L", L},
+           {"Direction", "+R"},
+           {"SynthesisAnchor", true}}}}}},
+      {"Solver",
+       {{"Order", 2},
+        {"Device", "CPU"},
+        {"Driven",
+         {{"MinFreq", f_min},
+          {"MaxFreq", 20.0},
+          {"FreqStep", 0.5},
+          {"AdaptiveTol", 1.0e-4},
+          {"AdaptiveCircuitSynthesis", true},
+          {"SaveStep", 0}}},
+        {"Linear",
+         {{"Type", "Default"}, {"KSPType", "GMRES"}, {"Tol", 1.0e-12}, {"MaxIts", 400}}}}}};
+  MPI_Comm comm = palace::Mpi::World();
+  palace::IoData iodata(config, false);
+  // The screening frequency, one tenth of the lowest sweep frequency by default, as the
+  // resolved configuration records it.
+  const double f_nu =
+      palace::IoData::ConcretizeDefaults(
+          iodata, config)["Solver"]["Driven"]["AdaptiveCircuitSynthesisAnchorFreq"]
+          .get<double>();
+  CHECK_THAT(f_nu, Catch::Matchers::WithinRel(0.1 * f_min, 1.0e-12));
+  palace::MakeOutputFolder(iodata, comm);
+  palace::BlockTimer::Reset();
+  palace::Run(iodata, comm, palace::utils::ConfigureOmp());
+  palace::Mpi::Barrier(comm);
+  if (!palace::Mpi::Root(comm))
+  {
+    return;
+  }
+
+  // A synthesized matrix (column c header = node label, data[r] = M(r, c)).
+  auto read = [](const fs::path &p, std::vector<std::string> &labels) -> Eigen::MatrixXd
+  {
+    REQUIRE(fs::is_regular_file(p));
+    palace::TableWithCSVFile w(p.string(), true);
+    palace::Table &t = w.table;
+    Eigen::MatrixXd M(t.n_rows(), t.n_cols());
+    labels.clear();
+    for (std::size_t c = 0; c < t.n_cols(); c++)
+    {
+      labels.push_back(t[c].header_text);
+      for (std::size_t r = 0; r < t.n_rows(); r++)
+      {
+        M(r, c) = t[c].data[r];
+      }
+    }
+    return M;
+  };
+  std::vector<std::string> labels, labels_R, labels_L;
+  const Eigen::MatrixXd C = read(temp_dir / "rom-C-re.csv", labels);
+  const Eigen::MatrixXd L_inv = read(temp_dir / "rom-Linv-re.csv", labels_L);
+  const Eigen::MatrixXd R = read(temp_dir / "rom-orthogonalization-matrix-R.csv", labels_R);
+  REQUIRE(labels.size() >= 3);
+  CHECK(labels[0] == "port_1_re");
+  CHECK(labels[1] == "port_2_re");
+  CHECK(labels[2] == "anchor_2_re");
+  CHECK(labels_L == labels);
+  const long n = R.rows();
+  REQUIRE(R.cols() == n);
+  REQUIRE(labels_R.size() == static_cast<std::size_t>(n));
+  CHECK(labels_R[2] == "anchor_2_re");
+  REQUIRE(C.rows() >= n);
+
+  const double nu = 2.0 * std::numbers::pi * f_nu * 1.0e9;
+
+  // The coordinates of the anchor, with the port rows divided by their diagonal entries.
+  Eigen::VectorXd v = R.col(2);
+  for (long i = 0; i < 2; i++)
+  {
+    v(i) /= R(i, i);
+  }
+  const Eigen::VectorXd r =
+      (L_inv.topLeftCorner(n, n) + nu * nu * C.topLeftCorner(n, n)) * v;
+  Eigen::VectorXd r_off = r;
+  r_off(1) = 0.0;
+  INFO("identity residual " << r_off.norm() / std::abs(r(1)));
+  CHECK(r_off.norm() <= 1.0e-8 * std::abs(r(1)));
+}
+
 TEST_CASE("rational_impedance", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;
