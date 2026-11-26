@@ -3833,7 +3833,7 @@ solve-form run stops there).
 
 Every corrected electrostatic, eigenmode or driven run writes `surface-participation.csv` at
 the top level of its output directory: one row per (adaptive iteration, point, excitation,
-interface), the same 27 columns for the three problem types, appended at the end of every
+interface), the same 28 columns for the three problem types, appended at the end of every
 converged level (the file of a finished run holds every level; the iteration archive leaves
 it at the top level; a new run in the directory replaces it; a level whose solve did not
 converge adds nothing). It changes no other output. The columns: `iteration` (1 = the first
@@ -3850,7 +3850,8 @@ one: the same values; never another corrected column), `corrected / raw`, `Q raw
 against the joined row of the previous level, a fraction, information only; the log prints
 it in %), `change per doubling (%; an interface row: its Type's)` (the indicator below; an
 `interface` row prints its `Type`'s, the value its words are of, beside its own plain
-change), `convergence`, `flags` and `reason`. `scope` names THE VALUE a row's verdicts are
+change), `convergence`, `S corner+cluster share (fraction)` (below), `flags` and
+`reason`. `scope` names THE VALUE a row's verdicts are
 of: `Type` (interface 0: the sum over the `Type`'s whole target interfaces of the point,
 ``Q = 1 / \sum 1/Q_i``; the value the rule was measured on), `region` (an entry with a
 `Region`: its box value) or `interface` (one whole interface: its own p and change, and its
@@ -3862,7 +3863,16 @@ box on coarse elements reads UNDER-RESOLVED where its `Type` does not. No value 
 response target, reason `NOT-TARGET: raw only`, and on a raw fallback run, reason
 `RawFallback: <classes>`); `flags` lists the verdicts not met (resolution, coverage,
 `regime`, `confidence`, convergence, and `developer: MarkNotApplied` where that policy
-marked the cell). Rows join the previous level's row of the same point, excitation and
+marked the cell). `S corner+cluster share (fraction)` is the share of the row's
+within-R corrected energy (its census cell's fixed-trace fabricated energy: the `Type`'s, or
+the box's) served by spatial-basis models, corner and spatial-cluster models, whose map of
+the device trace onto their 16-knot rings is not within 1 % on the library's own corner
+test: at ``S \ge 5`` % a held-out reading found SA off by up to ``5 S`` points and MS by up
+to ``6 S`` (``S`` below 5 %: no effect seen), and `flags` adds
+`S >= 5% on corner and cluster models`; with more than 10 % of that energy on
+spatial-cluster models it adds `over 10% on cluster models`. Information only: no value
+changes (`nan` without a census reading, on a `NOT-TARGET` row and on a `PreflightOnly`
+row). Rows join the previous level's row of the same point, excitation and
 interface; a driven row only at the same frequency (10⁻¹² relative). Each row keeps the
 history of its value through these joins.
 

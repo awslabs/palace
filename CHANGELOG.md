@@ -30,6 +30,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `SpatialStatus` are removed; the shares stay as numbers); `LengthM90` (``h/R``) is
     added; a `"PreflightOnly"` row reads the bare word (no `PREFLIGHT ` label). The words
     of a solved level and the energy-weighted census are unchanged.
+  - `surface-participation.csv` gains one column, `S corner+cluster share (fraction)`: the
+    share of a row's within-R corrected energy served by corner and spatial-cluster models
+    (whose trace map onto 16-knot rings is an open item); `flags` adds
+    `S >= 5% on corner and cluster models` at 5 % or more and `over 10% on cluster models`
+    above 10 % on cluster models. No value changes.
   - Purely inductive `Impedance` sheets are served by the perfect-conductor library models
     by default: `"ImpedanceMetalRule"` of `Solver.SurfaceResponseCorrection` defaults to
     `"Apply"` (was `"Off"`; the electrostatic block's default stays `"Off"`). A sheet with

@@ -5,6 +5,7 @@
 #define PALACE_MODELS_SURFACE_RESPONSE_RESOLUTION_HPP
 
 #include <array>
+#include <limits>
 #include <map>
 #include <ostream>
 #include <string>
@@ -106,12 +107,18 @@ std::array<double, 3> ResolutionHistogramQuantiles(const double *histogram);
 
 // The per-cell sums of one measurement: per (Type, plane slot; slot 0 = every plane) the
 // energy of the patches of each status (R, M, U, NO-BARS, NE), the m histogram (patches
-// with a reading and a positive energy), the patch count and the not-evaluated count.
+// with a reading and a positive energy), the patch count and the not-evaluated count, and
+// (the flag S, lane v1verdict1) the energy of the patches of spatial-basis models (corner
+// and spatial-cluster models) and of spatial-cluster models alone.
 // Formed per rank inside the response's per-patch loop, summed once (collective).
 struct ResolutionAccumulator
 {
   static constexpr int kStatusBins = 5;
-  static constexpr int kStride = kStatusBins + kResolutionHistogramBins + 2;
+  static constexpr int kPatchCount = kStatusBins + kResolutionHistogramBins;
+  static constexpr int kNotEvaluatedCount = kPatchCount + 1;
+  static constexpr int kSpatialEnergy = kPatchCount + 2;
+  static constexpr int kClusterEnergy = kPatchCount + 3;
+  static constexpr int kStride = kPatchCount + 4;
   int types = 0, slots = 0;
   std::vector<double> values;
   void Reset(int types_, int slots_);
@@ -123,15 +130,18 @@ struct ResolutionAccumulator
   {
     return values.data() + (type * slots + slot) * kStride;
   }
-  // One patch's energy `energy` of Type `type` on plane slot `plane_slot` (>= 1).
-  void Add(int type, int plane_slot, ResolutionStatus status, double m, double energy);
+  // One patch's energy `energy` of Type `type` on plane slot `plane_slot` (>= 1); `spatial`
+  // its model has a spatial basis, `cluster` it is a spatial-cluster model.
+  void Add(int type, int plane_slot, ResolutionStatus status, double m, double energy,
+           bool spatial = false, bool cluster = false);
   // CUT-PLAN step 4 (lane v1table): per target with a Region (its interface index) ONE
   // slot of the same sums over the patches that add to the box, each patch's fixed-trace
   // fabricated energy on that interface counted with its region share s_p (ruling 2251),
   // so that a box's census is its own patches'. Summed apart from `values`
   // (SurfaceResponseOperator::MeasureRegionResolution); empty without Region targets.
   std::map<int, std::vector<double>> regions;
-  void AddRegion(int interface, ResolutionStatus status, double m, double energy);
+  void AddRegion(int interface, ResolutionStatus status, double m, double energy,
+                 bool spatial = false, bool cluster = false);
 };
 
 // One row of surface-response-resolution.csv.
@@ -145,6 +155,11 @@ struct ResolutionCell
   std::array<double, 4>
       shares{};  // R, M, U, NE of the cell's energy (nan: no bars / energy)
   std::array<double, 3> quantiles{};  // m10, m50, m90 (nan: no reading)
+  // The flag S (lane v1verdict1; G19): the shares of the cell's energy on spatial-basis
+  // (corner and spatial-cluster) models and on spatial-cluster models (nan: no energy). Not
+  // a column of surface-response-resolution.csv.
+  double spatial_share = std::numeric_limits<double>::quiet_NaN();
+  double cluster_share = std::numeric_limits<double>::quiet_NaN();
   ResolutionStatus status = ResolutionStatus::NOT_EVALUATED;
   std::string reason;
 };

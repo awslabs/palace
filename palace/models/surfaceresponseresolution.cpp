@@ -284,8 +284,10 @@ namespace
 {
 
 // One patch's sums in one slot: the status bins in the order R, M, U, NO-BARS, NE; the
-// histogram after them; then the patch count and the not-evaluated count.
-void AddResolutionPatch(double *values, ResolutionStatus status, double m, double energy)
+// histogram after them; then the patch count and the not-evaluated count, the energy on
+// spatial-basis models and on spatial-cluster models.
+void AddResolutionPatch(double *values, ResolutionStatus status, double m, double energy,
+                        bool spatial, bool cluster)
 {
   const int bin = status == ResolutionStatus::RESOLVED         ? 0
                   : status == ResolutionStatus::MARGINAL       ? 1
@@ -297,15 +299,17 @@ void AddResolutionPatch(double *values, ResolutionStatus status, double m, doubl
   {
     values[ResolutionAccumulator::kStatusBins + ResolutionHistogramBin(m)] += energy;
   }
-  values[ResolutionAccumulator::kStride - 2] += 1.0;
-  values[ResolutionAccumulator::kStride - 1] +=
+  values[ResolutionAccumulator::kPatchCount] += 1.0;
+  values[ResolutionAccumulator::kNotEvaluatedCount] +=
       status == ResolutionStatus::NOT_EVALUATED ? 1.0 : 0.0;
+  values[ResolutionAccumulator::kSpatialEnergy] += spatial ? energy : 0.0;
+  values[ResolutionAccumulator::kClusterEnergy] += cluster ? energy : 0.0;
 }
 
 }  // namespace
 
 void ResolutionAccumulator::Add(int type, int plane_slot, ResolutionStatus status, double m,
-                                double energy)
+                                double energy, bool spatial, bool cluster)
 {
   // Slot 0 (every plane), then the patch's plane slot (none when <= 0: no located census).
   for (const int slot : {0, plane_slot > 0 ? plane_slot : -1})
@@ -314,16 +318,16 @@ void ResolutionAccumulator::Add(int type, int plane_slot, ResolutionStatus statu
     {
       continue;
     }
-    AddResolutionPatch(Slot(type, slot), status, m, energy);
+    AddResolutionPatch(Slot(type, slot), status, m, energy, spatial, cluster);
   }
 }
 
 void ResolutionAccumulator::AddRegion(int interface, ResolutionStatus status, double m,
-                                      double energy)
+                                      double energy, bool spatial, bool cluster)
 {
   auto &sums = regions[interface];
   sums.resize(kStride, 0.0);
-  AddResolutionPatch(sums.data(), status, m, energy);
+  AddResolutionPatch(sums.data(), status, m, energy, spatial, cluster);
 }
 
 ResolutionStatus ResolutionShareStatus(const std::array<double, 4> &shares)
@@ -348,13 +352,12 @@ ResolutionCell ComputeResolutionCell(const double *slot, const std::string &type
                                      double energy_scale, const std::string &reason)
 {
   constexpr int bins = ResolutionAccumulator::kStatusBins;
-  constexpr int stride = ResolutionAccumulator::kStride;
   ResolutionCell cell;
   cell.type = type;
   cell.all_planes = all_planes;
   cell.plane = plane;
-  cell.patches = std::llround(slot[stride - 2]);
-  cell.not_evaluated = std::llround(slot[stride - 1]);
+  cell.patches = std::llround(slot[ResolutionAccumulator::kPatchCount]);
+  cell.not_evaluated = std::llround(slot[ResolutionAccumulator::kNotEvaluatedCount]);
   cell.shares.fill(kNaN);
   cell.quantiles.fill(kNaN);
   cell.energy = kNaN;
@@ -385,6 +388,8 @@ ResolutionCell ComputeResolutionCell(const double *slot, const std::string &type
     return cell;
   }
   cell.shares[3] = slot[4] / total;
+  cell.spatial_share = slot[ResolutionAccumulator::kSpatialEnergy] / total;
+  cell.cluster_share = slot[ResolutionAccumulator::kClusterEnergy] / total;
   if (bars_hold)
   {
     cell.shares[0] = slot[0] / total;

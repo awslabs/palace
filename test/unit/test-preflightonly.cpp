@@ -308,7 +308,7 @@ TEST_CASE_METHOD(
     FAIL("no column " << name);
     return std::size_t(0);
   };
-  REQUIRE(solved_rows[0] == rows[0]);  // the same 27 columns
+  REQUIRE(solved_rows[0] == rows[0]);  // the same 28 columns
   // ONE verdict (lane v1verdict1): the Type's pre-solve word is bare, the table's word of
   // the census weighted by length (LengthM90, h / R) with no convergence: never RESOLVED;
   // the retired share-rule words are gone.
@@ -345,7 +345,7 @@ TEST_CASE_METHOD(
     for (const char *name :
          {"p raw", "p corrected", "corrected / raw", "Q raw", "Q corrected", "h/R m90",
           "h/R m50", "uncovered+pending share of W", "change corrected", "change raw",
-          "change per doubling"})
+          "change per doubling", "S corner+cluster share"})
     {
       INFO(name);
       CHECK(row[Index(name)] == "nan");
@@ -858,8 +858,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   // solve form stops with that message. (g) and (h) are the Maxwell configs of the second
   // step-4b review (on Electrostatic a missing basis-point file stops main's preflight
   // too).
-  auto LibraryFileRefused =
-      [&](const fs::path &library, const std::string &message, bool solve_form = true)
+  auto LibraryFileRefused = [&](const fs::path &library, const std::string &message,
+                                int models, bool solve_form = true)
   {
     const auto refused = Run(library, "", "");
     NoCensus(refused, message + " (a solve-form run stops there)\n");
@@ -880,7 +880,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         }
         return count;
       };
-      CHECK(Count("response model \"") >= 1);
+      CHECK(Count("response model \"") == models);
       CHECK(Count("response model \"") == Count(message));
     }
     if (solve_form)
@@ -888,20 +888,26 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       SolveFormStops(library, message);
     }
   };
-  // (f) A surface-matrix file that cannot be read: ReadTable's message.
-  LibraryFileRefused(surface_absent, "Unable to read response matrix file \"" +
-                                         absent_surface.string() + "\"!");
+  // (f) A surface-matrix file that cannot be read: ReadTable's message. (f), (g), (h) touch
+  // both census models (the edge and the corner), (i)-(k) the edge model alone.
+  LibraryFileRefused(
+      surface_absent,
+      "Unable to read response matrix file \"" + absent_surface.string() + "\"!", 2);
   // (i) / (j) / (k) A domain matrix that does not fit its basis points, without its Q
   // column, without an upper-triangular entry (the 30 sweep rows of the named exception
   // were (i)'s class).
-  LibraryFileRefused(short_library, "Response matrix \"" + short_matrix.string() +
-                                        "\" and basis point file have inconsistent sizes!");
-  LibraryFileRefused(no_column_library, "Response matrix file \"" +
-                                            no_column_matrix.string() +
-                                            "\" is missing column \"Q_ij (J)\"!");
-  LibraryFileRefused(no_entry_library, "Response matrix file \"" +
-                                           no_entry_matrix.string() +
-                                           "\" is missing an upper-triangular entry!");
+  LibraryFileRefused(short_library,
+                     "Response matrix \"" + short_matrix.string() +
+                         "\" and basis point file have inconsistent sizes!",
+                     1);
+  LibraryFileRefused(no_column_library,
+                     "Response matrix file \"" + no_column_matrix.string() +
+                         "\" is missing column \"Q_ij (J)\"!",
+                     1);
+  LibraryFileRefused(no_entry_library,
+                     "Response matrix file \"" + no_entry_matrix.string() +
+                         "\" is missing an upper-triangular entry!",
+                     1);
   if (!electrostatic)
   {
     // (g) A basis-point file that cannot be opened: the prediction on the root at any rank
@@ -910,10 +916,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     LibraryFileRefused(points_absent,
                        "Unable to open response-correction basis point file \"" +
                            absent_points.string() + "\"!",
-                       Mpi::Size(comm) == 1);
+                       2, Mpi::Size(comm) == 1);
     // (h) Interface mappings without surface matrices (ComputeSurfaceResponseMatrices).
-    LibraryFileRefused(no_surface, "Response-correction interface mappings require surface "
-                                   "response matrices!");
+    LibraryFileRefused(no_surface,
+                       "Response-correction interface mappings require surface "
+                       "response matrices!",
+                       2);
   }
 #endif
 }

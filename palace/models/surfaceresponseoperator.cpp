@@ -42087,13 +42087,18 @@ SurfaceResponseOperator::GetElectrostaticResponse(
       const int plane_slot = patch_index < resolution_plane_slots.size()
                                  ? resolution_plane_slots[patch_index]
                                  : 0;
+      // The flag S (lane v1verdict1): the patch's model kind.
+      static const std::string cluster_topology =
+          TopologyName(LibraryTopology::SPATIAL_EDGE_CLUSTER);
+      const bool cluster = model.topology == cluster_topology;
       for (int t = 0; t < resolution->types; t++)
       {
-        resolution->Add(t, plane_slot, status, m, resolution_energy[t]);
+        resolution->Add(t, plane_slot, status, m, resolution_energy[t], model.spatial_basis,
+                        cluster);
       }
       for (const auto &[interface, energy] : region_resolution_energy)
       {
-        resolution->AddRegion(interface, status, m, energy);
+        resolution->AddRegion(interface, status, m, energy, model.spatial_basis, cluster);
       }
     }
   }
@@ -42809,13 +42814,18 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
       const int plane_slot = patch_index < resolution_plane_slots.size()
                                  ? resolution_plane_slots[patch_index]
                                  : 0;
+      // The flag S (lane v1verdict1): the patch's model kind.
+      static const std::string cluster_topology =
+          TopologyName(LibraryTopology::SPATIAL_EDGE_CLUSTER);
+      const bool cluster = model.topology == cluster_topology;
       for (int t = 0; t < resolution->types; t++)
       {
-        resolution->Add(t, plane_slot, status, m, resolution_energy[t]);
+        resolution->Add(t, plane_slot, status, m, resolution_energy[t], model.spatial_basis,
+                        cluster);
       }
       for (const auto &[interface, energy] : region_resolution_energy)
       {
-        resolution->AddRegion(interface, status, m, energy);
+        resolution->AddRegion(interface, status, m, energy, model.spatial_basis, cluster);
       }
     }
     double path_scale_squared = 0.0;
