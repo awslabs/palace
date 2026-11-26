@@ -22,6 +22,7 @@
 #include <unordered_map>
 #include <mfem.hpp>
 #include "utils/enum_string.hpp"
+#include "utils/prefastprofile.hpp"
 
 namespace palace
 {
@@ -3456,6 +3457,10 @@ void BoundingBox(const Point3D &a, const Point3D &b, Point3D &lo, Point3D &hi)
   }
 }
 
+// PREFAST profile: the wall seconds and calls of ClusterSupport (all identifications).
+double prefast_cluster_support_seconds = 0.0;
+std::size_t prefast_cluster_support_calls = 0;
+
 // Wall-clock stage timer and throttled progress lines through IdentificationInput::log.
 class StageLog
 {
@@ -3466,6 +3471,7 @@ public:
   {
     name = stage;
     started = last = std::chrono::steady_clock::now();
+    prefast::Mark("id-B " + stage + (log ? "" : " (silent)"));
   }
   // A progress line at most every 10 s: fraction of the stage's loop done (optionally of a
   // named inner loop, e.g. the candidate frames of one cluster signature).
@@ -3490,6 +3496,7 @@ public:
   }
   void End(const std::string &counts)
   {
+    prefast::Mark("id-E " + name + (log ? "" : " (silent)"));
     if (!log)
     {
       return;
@@ -11681,6 +11688,16 @@ Identifier::ClusterSupport(std::size_t c, const std::vector<SignaturePortion> &p
                            double span_cap_over_R, bool face_crossing_tilt_rule,
                            const std::array<double, 4> *corner_containment_box) const
 {
+  struct PrefastSupportClock
+  {
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    ~PrefastSupportClock()
+    {
+      prefast_cluster_support_seconds +=
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+      prefast_cluster_support_calls++;
+    }
+  } prefast_support_clock;
   using Point2 = std::array<double, 2>;
   ClusterSupportResult out;
   const double snap = kSupportFaceSnapOverRadius;
@@ -14229,6 +14246,10 @@ void Identifier::EmitClusters()
             .count();
   }
 
+  prefast::Mark("emit-stage1-E support_seconds=" +
+                std::to_string(prefast_cluster_support_seconds) +
+                " support_calls=" + std::to_string(prefast_cluster_support_calls) +
+                " canonical_seconds=" + std::to_string(signature_seconds));
   // Stage 2: T5, the excluded-corner containment rule (the header's contract; boxgrow
   // DESIGN 7.1 / 7.2 / 8), one pass over the T2 / T3 / T4-final boxes of stage 1.
   {
@@ -14700,8 +14721,10 @@ nlohmann::json Identifier::ClusterCompositionBand(const IdentificationResult &re
   std::size_t clusters_below = 0, clusters_above = 0;
   for (const double factor : {1.0 - kKnifeEdgeBandRelative, 1.0 + kKnifeEdgeBandRelative})
   {
+    prefast::Mark("ke-composition-identify-B factor=" + std::to_string(factor));
     Identifier other(original_input, R * factor);
     const IdentificationResult other_result = other.Identify();
+    prefast::Mark("ke-composition-identify-E factor=" + std::to_string(factor));
     const std::vector<ClusterRecord> at_other = Clusters(other_result);
     std::map<std::size_t, std::vector<std::size_t>> by_segment;  // segment -> clusters
     for (std::size_t c = 0; c < at_other.size(); c++)
@@ -16292,7 +16315,9 @@ IdentificationResult Identifier::Identify()
   {
     stage.Begin("knife-edge census");
     nlohmann::json census = KnifeEdgeCensus();
+    prefast::Mark("ke-distance-E");
     census["ClusterComposition"] = ClusterCompositionBand(result);
+    prefast::Mark("ke-composition-E");
     result.knife_edge_census = census.dump();
     {
       // The census is in mesh units (the manifest scales it to its length unit); the log

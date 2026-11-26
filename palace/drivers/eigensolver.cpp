@@ -32,6 +32,7 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/permittivitymodel.hpp"
+#include "utils/prefastprofile.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -320,7 +321,9 @@ EigenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
   // values for the mass matrix PEC dof shift the Dirichlet eigenvalues out of the
   // computational range. The damping matrix may be nullptr.
   BlockTimer bt0(Timer::CONSTRUCT);
+  prefast::Mark("solve-spaceop-B");
   SpaceOperator space_op(iodata, mesh);
+  prefast::Mark("solve-spaceop-E");
   auto K = space_op.GetStiffnessMatrix<ComplexOperator>(Operator::DIAG_ONE);
   auto C = space_op.GetDampingMatrix<ComplexOperator>(Operator::DIAG_ZERO);
   const bool has_C = (C != nullptr);

@@ -34,6 +34,7 @@
 #include "utils/memoryreporting.hpp"
 #include "utils/metadatafile.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/prefastprofile.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -1257,9 +1258,12 @@ PreflightCensusOutcome BaseSolver::PreflightMaxwellResolutionCensus(
     bool fail_closed) const
 {
   BlockTimer bt(Timer::CONSTRUCT);
+  prefast::Mark("census-spaceop-B");
   SpaceOperator space_op(iodata, mesh);
+  prefast::Mark("census-spaceop-E");
   auto response =
       std::make_unique<SurfaceResponseOperator>(iodata, space_op, response_geometry);
+  prefast::Mark("census-response-E");
   response->SetPatchRecordResidency(
       SurfaceResponseOperator::PatchRecordResidency::ROOT_ONLY);
   if (PreflightCensusStopsFailClosed(*response, fail_closed, space_op.GetComm()))

@@ -23,6 +23,7 @@
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/timer.hpp"
+#include "utils/prefastprofile.hpp"
 #include "utils/versions.hpp"
 
 #if defined(MFEM_USE_STRUMPACK)
@@ -180,6 +181,9 @@ int main(int argc, char *argv[])
     // than the setup itself, so it gets its own row.
     BlockTimer bt(Timer::MPI_STARTUP);
     Mpi::Init(argc, argv);
+    palace::prefast::Mark("main-mpi-init-E");
+    palace::prefast::Mark("affinity cpus=" + palace::prefast::AllowedCpus() + " hw=" +
+                          std::to_string(std::thread::hardware_concurrency()));
   }
   // Every return from main is a normal shutdown; an exit() before it (a library's die())
   // skips this guard and Mpi's destructor aborts all ranks instead of blocking in

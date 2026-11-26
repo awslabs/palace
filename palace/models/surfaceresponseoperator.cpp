@@ -55,6 +55,7 @@
 #include "utils/metaledge.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
+#include "utils/prefastprofile.hpp"
 #include "utils/timer.hpp"
 #include "utils/units.hpp"
 
@@ -10935,6 +10936,7 @@ IdentificationResult RunGeometryIdentification(
       input.faces.shrink_to_fit();
       buffer = SerializeIdentificationResult(result);
     }
+    prefast::Mark("rgi-root-identified");
     std::int64_t size = static_cast<std::int64_t>(buffer.size());
     Mpi::Broadcast(1, &size, 0, comm);
     if (!root)
@@ -10946,6 +10948,7 @@ IdentificationResult RunGeometryIdentification(
     {
       result = DeserializeIdentificationResult(buffer);
     }
+    prefast::Mark("rgi-bcast-E");
     int counts[3] = {mirror_summary.continued_features,
                      mirror_summary.mirror_formed_features,
                      mirror_summary.image_only_features};
@@ -11574,6 +11577,7 @@ IdentificationResult RunGeometryIdentification(
   mirror_band.record = DescribeMirrorBand(
       mirror_band.planes, mirror_band.extension, mirror_summary, result, band_over_radius,
       requirements ? requirements->CoordinateScale() : 1.0);
+  prefast::Mark("rgi-pre-manifest");
   if (!requirements || !root)
   {
     return result;  // the manifest is built and written on the root
@@ -14651,8 +14655,25 @@ FeaturePatchSummary BuildFeaturePatches(
                record.ineligible_members);
   };
 
+  // PREFAST profile: wall seconds and counts of the feature loop by feature type.
+  struct PrefastFeatureClock
+  {
+    std::map<std::string, std::pair<double, std::size_t>> &acc;
+    std::string type;
+    std::chrono::steady_clock::time_point t0 = std::chrono::steady_clock::now();
+    ~PrefastFeatureClock()
+    {
+      auto &entry = acc[type];
+      entry.first +=
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+      entry.second++;
+    }
+  };
+  std::map<std::string, std::pair<double, std::size_t>> prefast_feature_seconds;
+  prefast::Mark("bfp-loop-B");
   for (const auto &feature : identification.features)
   {
+    PrefastFeatureClock prefast_clock{prefast_feature_seconds, feature.type};
     foot_indices.clear();  // the side chains below are this feature's locals
     double feature_length = 0.0;
     for (const auto &portion : feature.portions)
@@ -15838,6 +15859,19 @@ FeaturePatchSummary BuildFeaturePatches(
       summary.first_order_missing_features++;
     }
   }
+  prefast::Mark("bfp-loop-E");
+  {
+    int prefast_rank = 0;
+    MPI_Comm_rank(MPI_COMM_WORLD, &prefast_rank);
+    if (prefast_rank <= 1)
+    {
+      for (const auto &[type, entry] : prefast_feature_seconds)
+      {
+        prefast::Mark("bfp-type " + type + " seconds=" + std::to_string(entry.first) +
+                      " count=" + std::to_string(entry.second));
+      }
+    }
+  }
   // setupmem (decision 1546): two log-only census instants inside the patch build (the
   // setup plateau before the placement), under PALACE_RESPONSE_MEMORY_CENSUS; the
   // identification's and the segments' vectors by their own storage only (shallow).
@@ -15872,6 +15906,7 @@ FeaturePatchSummary BuildFeaturePatches(
   {
     place();
   }
+  prefast::Mark("bfp-deferred-E");
   // LongitudinalAxisOutOfTolerance: one entry per affected feature (ascending id), after
   // every placer (the deferred R-9 pairs and mean-keyed clusters included) has run.
   for (const auto &[feature_id, fallback] : longitudinal_axis_fallbacks)
@@ -15916,6 +15951,7 @@ FeaturePatchSummary BuildFeaturePatches(
     }
   }
 
+  prefast::Mark("bfp-uncovered-B");
   // Uncovered requirements (decision 394, F2): the portions of every unmatched feature as
   // global sub-segments of the perimeter, in the order of the feature list.
   result.uncovered_portions.clear();
@@ -15973,10 +16009,13 @@ FeaturePatchSummary BuildFeaturePatches(
   // square.
   // The exclusion-energy export's portions (idfix DESIGN section 8): the corner-arm trims'
   // stretches join the identification's excluded / unclaimed classes.
+  prefast::Mark("bfp-exclusion-B");
   result.exclusion_portions = CollectIdentificationExclusionPortions(identification, R);
+  prefast::Mark("bfp-armtrim-B");
   result.corner_arm_trims =
       ApplyCornerArmTrim(identification, result.patches, result.uncovered_portions, R,
                          &result.exclusion_portions);
+  prefast::Mark("bfp-armext-B");
   // Corner-arm extension (decision 511 O2 (i)): the arm cells of a matched corner whose
   // claim ends beyond the square exit (a rounded corner: t_d + R from the virtual corner)
   // begin at the exit.
@@ -15984,13 +16023,16 @@ FeaturePatchSummary BuildFeaturePatches(
       ApplyCornerArmExtension(identification, result.patches, result.uncovered_portions, R);
   // Mirror arm trim (boundary-cut DESIGN 2.2.3): the real arm's cells of every virtual
   // corner begin at s_half = (R + s) / 2.
+  prefast::Mark("bfp-mirror-B");
   result.mirror_arm_trims = ApplyMirrorArmTrim(identification, result.patches, R);
+  prefast::Mark("bfp-vertexraw-B");
   // The within-R raw footprint of every vertex coupon (F-DB-a, DESIGN 2.1): the feature's
   // claimed portions, a trimmed corner's second-arm stretch [R, s), an extended corner's
   // claims clipped at the exit.
   FillVertexRawClaims(identification, result.patches, result.corner_arm_trims,
                       result.corner_arm_extensions, result.mirror_arm_trims, R);
   PatchBuildCensus("inside the patch build (at its end)");
+  prefast::Mark("bfp-E");
   return summary;
 }
 
@@ -16257,11 +16299,13 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
   const auto geometry_started = std::chrono::steady_clock::now();
   auto GeometryStageLine = [&](const std::string &text)
   {
+    prefast::Mark("b3d " + text.substr(0, text.find(':')));
     Mpi::Print(
         "  Metal perimeter {} ({:.2f} s)\n", text,
         std::chrono::duration<double>(std::chrono::steady_clock::now() - geometry_started)
             .count());
   };
+  prefast::Mark("b3d-B");
   auto geometry = ExtractMetalEdgeGeometry(mesh, iodata.boundaries, surface);
   const GeometryFailurePolicy geometry_policy =
       ResolveGeometryFailurePolicy(request, requirements != nullptr);
@@ -24549,9 +24593,11 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
                                                           : "PatchConstruction Legacy"));
   }
 
+  prefast::Mark("req-build3d-E");
   const auto statistics_record =
       BuildAutomaticStatistics(parallel_mesh.GetComm(), statistics);
   requirements.SetStatistics(statistics_record);
+  prefast::Mark("req-statistics-E");
   // The shared identification (ruling R4): this pass's result before the dry run below
   // changes it, the ranks keeping their local patches (the C6 residence) until the census
   // operator restores them; none when nothing is matched (a solve form records
@@ -24565,7 +24611,9 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   }
   const auto patches_path =
       (std::filesystem::path(path).parent_path() / "surface-response-patches.csv").string();
+  prefast::Mark("req-share-E");
   auto manifest = requirements.Build();
+  prefast::Mark("req-manifest-build-E");
   manifest["MeshDimension"] = parallel_mesh.Dimension();
   manifest["Maxwell"] = maxwell;
   if (apply_film)
@@ -24639,6 +24687,7 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   int identification_recorded =
       parallel_mesh.Dimension() == 3 && manifest.contains("Identification") ? 1 : 0;
   Mpi::Broadcast(1, &identification_recorded, 0, parallel_mesh.GetComm());
+  prefast::Mark("req-dryrun-B");
   if (identification_recorded)
   {
     // The placement's records on the dry run, computed on every rank (the geometry-only
@@ -24708,9 +24757,11 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
     // partial-stretch records (decision 984) are read on the intact patches like `records`.
     const auto partial_records = FindTranslationalStretchPartiallyInsideSpatialSupport(
         patches.patches, boxes, 3, continuation_tolerance);
+    prefast::Mark("req-dryrun-before-ownership");
     const auto ownership =
         ApplyContinuationOwnership(patches.patches, boxes, 3, continuation_tolerance,
                                    patches.matching_radius, &preflight_ledger);
+    prefast::Mark("req-dryrun-ownership-E");
     auto &diagnostics = manifest["Identification"]["Diagnostics"];
     // Corner-arm trim (decision 394 F1) and uncovered requirements (decision 394 F2) of the
     // built patches: the dry run's cells are the trimmed ones; the uncovered portions are
@@ -24838,6 +24889,7 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
     // Domain-boundary exclusions (decision 258) on the placed dry run: the excluded
     // patches are written with weight 0; their uncorrected CELL length enters the
     // inventory next to Missing (not a library gap), the portion sum alongside.
+    prefast::Mark("req-dryrun-domainboundary-B");
     const auto exclusions = FindDomainBoundaryExclusions(
         const_cast<mfem::ParMesh &>(parallel_mesh), patches.patches, BasisPoints,
         [&](int model_idx) { return spatial_basis.at(model_idx); },
@@ -25087,6 +25139,7 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   // Geometry fallbacks (USER decision 1000 (b) / 1001): the record + the Summary leaf +
   // the LOW-confidence banner ONLY when a converted site fired (a manifest without one
   // keeps its bytes); under the preflight default FailClosed the abort follows the write.
+  prefast::Mark("req-dryrun-E");
   const GeometryFailurePolicy geometry_policy = ResolveGeometryFailurePolicy(request, true);
   nlohmann::json geometry_fallbacks;
   if (!patches.geometry_fallbacks.empty())
@@ -25104,14 +25157,18 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   }
   if (Mpi::Root(parallel_mesh.GetComm()))
   {
+    prefast::Mark("req-write-manifest-B");
     WriteOutputFile(path,
                     [&](std::ostream &output) { output << manifest.dump(2) << '\n'; });
+    prefast::Mark("req-write-patches-B");
     if (parallel_mesh.Dimension() == 3)
     {
       WriteSurfaceResponsePatches(patches, requirements, patches_path);
     }
+    prefast::Mark("req-write-E");
   }
   Mpi::Barrier(parallel_mesh.GetComm());
+  prefast::Mark("req-written-barrier-E");
   Mpi::Print(parallel_mesh.GetComm(),
              "\nSurface-response process-library preflight complete:\n Manifest: {}\n",
              path);
@@ -36475,6 +36532,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     const FilmRuleResolution *candidate_film_rule, bool law_reading)
 {
   BlockTimer setup_timer(Timer::CONSTRUCT_RESPONSE);
+  prefast::Mark("srop-B");
   // Ruling 2251: the claim record of the targets with a Region, only when an entry has one.
   region_claims_requested =
       std::any_of(iodata.boundaries.postpro.dielectric.begin(),
@@ -36626,6 +36684,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
       diagnostics_ptr = &local_diagnostics;
     }
   }
+  prefast::Mark("srop-geometry-E");
   const auto &config = *config_ptr;
   if (film_seam)
   {
@@ -37039,6 +37098,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   }
   // decision 1553: every rank, every mode (a failure of the root's matrices above).
   ExchangeModelMatrixStatus(fespace.GetComm(), model_matrix_error, "in the model loop");
+  prefast::Mark("srop-models-E");
   if (iodata.model.refinement.max_it == 0)
   {
     // Round 3 M2-e (decision 1501; the round-2b B3 release moved here from the drivers):
@@ -37065,7 +37125,8 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   // C2; the electrostatic constructor's rule): the default log is byte-identical.
   auto placement = ApplyPlacementOwnership(
       config, &movable_config->patches, model_indices, basis_points, coordinate_scale,
-      dimension, cached_geometry, std::getenv("PALACE_RESPONSE_SETUP_TIMING") != nullptr);
+      dimension, cached_geometry, true);
+  prefast::Mark("srop-placement-E");
   if (raw_fallback)
   {
     return;  // H8: every patch excluded by the domain boundary (recorded)
@@ -38344,6 +38405,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
   malloc_trim(0);
 #endif
   PrintResponseMemoryCensus("after the construction (Maxwell)", cached_geometry.get());
+  prefast::Mark("srop-E");
 #else
   MFEM_ABORT("Maxwell surface response correction requires MFEM_USE_GSLIB!");
 #endif

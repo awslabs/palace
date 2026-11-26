@@ -24,6 +24,7 @@
 #include "utils/iodata.hpp"
 #include "utils/memoryreporting.hpp"
 #include "utils/outputfile.hpp"
+#include "utils/prefastprofile.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -133,8 +134,11 @@ void Run(IoData &iodata, MPI_Comm comm, int omp_threads, const char *git_tag)
   auto solver = MakeSolver(iodata, world_root, world_size, omp_threads, git_tag);
   MFEM_VERIFY(solver, "Unknown problem type in palace::Run!");
 
+  prefast::Mark("run-loadmesh-B");
   auto mesh = LoadMesh(iodata, comm, *solver);
+  prefast::Mark("run-loadmesh-E");
   solver->SolveEstimateMarkRefine(mesh);
+  prefast::Mark("run-solve-E");
 
   auto peak_mem = memory_reporting::GetPeakMemoryStats(comm);
   auto peak_node_mem = memory_reporting::GetPeakNodeMemoryStats(comm);
@@ -167,12 +171,17 @@ int RunSurfaceResponsePreflight(IoData &iodata, MPI_Comm comm, int omp_threads,
 {
   auto solver = MakeSolver(iodata, Mpi::Root(comm), Mpi::Size(comm), omp_threads, git_tag);
   MFEM_VERIFY(solver, "Unknown problem type in surface-response preflight!");
+  prefast::Mark("pre-loadmesh-B");
   auto mesh = LoadMesh(iodata, comm, *solver);
+  prefast::Mark("pre-loadmesh-E");
   MFEM_VERIFY(!mesh.empty(), "Surface-response preflight produced no mesh!");
   const auto outcome = WriteSurfaceResponseRequirements(
       iodata, *mesh.back(),
       (fs::path(iodata.problem.output) / "surface-response-requirements.json").string());
-  return FinishSurfaceResponsePreflight(iodata, *solver, mesh, outcome);
+  prefast::Mark("pre-requirements-E");
+  const int rc = FinishSurfaceResponsePreflight(iodata, *solver, mesh, outcome);
+  prefast::Mark("pre-finish-E");
+  return rc;
 }
 
 int FinishSurfaceResponsePreflight(IoData &iodata, const BaseSolver &solver,

@@ -47,6 +47,7 @@
 #include "utils/metadatafile.hpp"
 #include "utils/outputdir.hpp"
 #include "utils/tablecsv.hpp"
+#include "utils/prefastprofile.hpp"
 #include "utils/timer.hpp"
 
 #include <mfem/config/config.hpp>
@@ -569,8 +570,10 @@ PostOperator<solver_t>::PostOperator(
           record_setup_start = std::chrono::steady_clock::now();
           record_setup_bytes = memory_reporting::GetCurrentMemory();
         }
+        prefast::Mark("postop-response-B");
         surface_response_op =
             std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
+        prefast::Mark("postop-response-E");
         if (impedance_film_rule)
         {
           record_setup_seconds = std::chrono::duration<double>(
@@ -581,8 +584,10 @@ PostOperator<solver_t>::PostOperator(
       }
       else
       {
+        prefast::Mark("postop-response-B");
         surface_response_op =
             std::make_unique<SurfaceResponseOperator>(iodata, fem_op_, response_geometry);
+        prefast::Mark("postop-response-E");
       }
       // Lane fix-response-memory (decisions 1446 / 1447): the gathered per-patch records of
       // every measurement live on the root only (their consumers are the root's prints).
@@ -650,6 +655,7 @@ PostOperator<solver_t>::PostOperator(
         const auto census_interfaces = surface_response_op->GetCoverageInterfaces();
         surface_response_op->ConfigureResolutionTypes(
             GetInterfaceTypes(&census_interfaces));
+        prefast::Mark("solve-census-E");
       }
       surface_response_exclusion_energy_enabled =
           surface_response_op->ExclusionEnergyRequested();

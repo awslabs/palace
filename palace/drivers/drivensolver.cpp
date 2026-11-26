@@ -32,6 +32,7 @@
 #include "utils/communication.hpp"
 #include "utils/iodata.hpp"
 #include "utils/prettyprint.hpp"
+#include "utils/prefastprofile.hpp"
 #include "utils/timer.hpp"
 
 namespace palace
@@ -91,7 +92,9 @@ DrivenSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
 {
   // Set up the spatial discretization and frequency sweep.
   BlockTimer bt0(Timer::CONSTRUCT);
+  prefast::Mark("solve-spaceop-B");
   SpaceOperator space_op(iodata, mesh);
+  prefast::Mark("solve-spaceop-E");
   const auto &port_excitations = space_op.GetPortExcitations();
   SaveMetadata(port_excitations);
 
