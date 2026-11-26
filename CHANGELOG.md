@@ -548,6 +548,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Performance Improvements
 
+  - The surface-response geometry passes at chip scale, every output unchanged (lane
+    v1prefast; decision 2403 (3)): the corner-arm trim and extension read the patches near
+    each corner arm (an AABB tree over the own-edge cells) instead of every patch; the
+    identification's T5 corner-containment read skips a corner site whose inside length
+    cannot reach the quantum before clipping it against every cluster box, and
+    `ClusterSupport` reads the excluded and the truncation segments from two lists built
+    once; the preflight's knife-edge census runs its two identifications at R (1 -/+ 0.01)
+    on ranks 1 and 2 beside the root's own (on one rank as before); `PreflightOnly`'s
+    census operator takes the dry run's domain-boundary containment test when its mesh and
+    tested input are identical (`DomainBoundaryContainmentInputBytes`). On the designers'
+    flip chip (1.6 M patches, 192 ranks) the identification takes 2 minutes (18 before; 54
+    in the preflight), the patch build 2.5 minutes (28) on every rank, and the census comes
+    after about 33 minutes in the solve form (74) and 36 in `PreflightOnly` (114) before the
+    containment reuse; of what remains, the mesh load is 15 minutes.
   - The surface-response correction's per-evaluation memory no longer grows on every rank
     with the GLOBAL patch and point counts (lane fix-response-memory; USER decision 1439,
     decisions 1446 / 1447; results bitwise): the gathered per-patch records of every
