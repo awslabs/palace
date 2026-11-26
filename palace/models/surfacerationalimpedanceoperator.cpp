@@ -218,6 +218,30 @@ SurfaceRationalImpedanceOperator::EvalRobinCoefficient(int idx,
   return s * (EvalPoly(bdr.den, s) / N);
 }
 
+double SurfaceRationalImpedanceOperator::GetStaticRobinCoefficient(int idx) const
+{
+  // With the lowest nonzero coefficients N(s) ~ n s^zn and D(s) ~ d s^zd as s → 0, the
+  // Robin coefficient is g(s) = s·D/N ~ (d/n) s^(1 + zd - zn), also when N and D have a
+  // common factor s.
+  const auto &bdr = boundaries[idx];
+  auto LowestOrder = [](const std::vector<double> &p)
+  {
+    std::size_t z = 0;
+    while (z < p.size() && p[p.size() - 1 - z] == 0.0)
+    {
+      z++;
+    }
+    MFEM_VERIFY(z < p.size(), "Rational impedance boundary has a zero polynomial!");
+    return z;
+  };
+  const std::size_t zn = LowestOrder(bdr.num), zd = LowestOrder(bdr.den);
+  MFEM_VERIFY(zn <= zd + 1, "Rational impedance boundary has a transmission zero of order "
+                                << zn - zd << " at s = 0, where iω/Zs is singular!");
+  return (zn == zd + 1)
+             ? bdr.den[bdr.den.size() - 1 - zd] / bdr.num[bdr.num.size() - 1 - zn]
+             : 0.0;
+}
+
 bool SurfaceRationalImpedanceOperator::CheckPassivity(int idx, double omega)
 {
   // Passivity necessary condition on the imaginary axis: Re{Zs} >= 0 <=> Re{Ys} >= 0, with

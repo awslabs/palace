@@ -47,6 +47,20 @@ enum class ProblemType : char;
 //
 class SpaceOperator
 {
+public:
+  // Tag selecting the quasistatic (ω → 0) limit of the frequency-dependent terms A2(ω), as
+  // an alternative to a real or complex frequency in GetExtraSystemMatrix and
+  // GetPreconditionerMatrix. Used by the screened quasistatic anchor solves of circuit
+  // synthesis; see AddExtraSystemBdrCoefficients(QuasistaticLimit, ...) for which boundary
+  // terms survive the limit (the volume terms of frequency-dependent materials do not).
+  struct QuasistaticLimit
+  {
+    // Square of the screening frequency s = ν of the anchor solves, at which the capacitive
+    // (s²) terms of the rational surface impedances, which circuit synthesis puts in the
+    // capacitance matrix, and the finite conductivity terms are evaluated.
+    double nu2 = 0.0;
+  };
+
 private:
   const bool pc_mat_real;     // Use real-valued matrix for preconditioner
   const bool pc_mat_shifted;  // Use shifted mass matrix for preconditioner
@@ -167,6 +181,23 @@ private:
                                                        MaterialPropertyCoefficient &dfb,
                                                        MaterialPropertyCoefficient &fb,
                                                        MaterialPropertyCoefficient &frb);
+  // Quasistatic overloads: stamp the ω → 0 limit of A2(ω), keeping only the boundary terms
+  // with a finite, nonzero DC limit
+  // (SurfaceTerms::AddStaticExtraSystemBdrMassCoefficients). Boundaries that are singular
+  // (second-order farfield) or have no mode (wave ports) at ω = 0 are never evaluated
+  // there, so the second-order farfield terms (dfb, frb, fpb) stay empty.
+  void AddExtraSystemBdrCoefficients(QuasistaticLimit, MaterialPropertyCoefficient &dfbr,
+                                     MaterialPropertyCoefficient &dfbi,
+                                     MaterialPropertyCoefficient &fbr,
+                                     MaterialPropertyCoefficient &fbi,
+                                     MaterialPropertyCoefficient &frbr,
+                                     MaterialPropertyCoefficient &frbi,
+                                     MaterialPropertyCoefficient *fpbr,
+                                     MaterialPropertyCoefficient *fpbi);
+  void AddRealPreconditionerExtraSystemBdrCoefficients(QuasistaticLimit,
+                                                       MaterialPropertyCoefficient &dfb,
+                                                       MaterialPropertyCoefficient &fb,
+                                                       MaterialPropertyCoefficient &frb);
   void AddRealPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   void AddImagPeriodicCoefficients(double coeff, MaterialPropertyCoefficient &f);
   // Floquet terms of second-order farfield boundaries, with a frequency dependent Floquet
@@ -201,6 +232,18 @@ private:
   void
   AddFrequencyDependentPermittivityA2Coefficients(std::complex<double> omega,
                                                   MaterialPropertyCoefficient &f) const;
+  // The volume A2 terms vanish in the quasistatic limit: the pole terms r s²/(s − p) of
+  // the nonzero poles and the Djordjevic-Sarkar terms tend to zero as s → 0, and the exact
+  // zero poles are conductivity, which vanishes with the damping term. No coefficients.
+  void AddFrequencyDependentPermittivityA2Coefficients(QuasistaticLimit,
+                                                       MaterialPropertyCoefficient &,
+                                                       MaterialPropertyCoefficient &) const
+  {
+  }
+  void AddFrequencyDependentPermittivityA2Coefficients(QuasistaticLimit,
+                                                       MaterialPropertyCoefficient &) const
+  {
+  }
 
   // Helper functions for excitation vector assembly. The first adds the real part of the
   // frequency independent excitation to RHS1r, and its imaginary part (nonzero for a
@@ -219,9 +262,10 @@ private:
   // Helper functions to build the preconditioner matrix. The type of a3 selects the
   // frequency-dependent (A2) stamping path: double dispatches to the real-ω overload of
   // AddExtraSystemBdrCoefficients (driven/boundary-mode: Floquet term included, cached
-  // wave-port Initialize), while std::complex dispatches to the complex-ω overload
-  // (eigenmode nonlinear solve: exact analytic continuation, uncached wave-port EVP).
-  // Frequency-dependent PML terms are analytic in ω and evaluated at a3 in both cases.
+  // wave-port Initialize), std::complex to the complex-ω overload (eigenmode nonlinear
+  // solve: exact analytic continuation, uncached wave-port EVP), and QuasistaticLimit to
+  // the ω → 0 limit (quasistatic anchor solves, without PML regions). Frequency-dependent
+  // PML terms are analytic in ω and evaluated at a3 for a real or complex ω.
   // For the complex-valued preconditioner, pml_block optionally returns the operator of the
   // PML subdomain correction at the finest level: the PML and boundary terms only, which
   // are the terms of the rows and columns of the PML true DOFs not shared with elements
@@ -407,6 +451,15 @@ public:
   // them.
   bool HasExtraSystemBdrTerms() const;
 
+  // Quasistatic overload: the ω → 0 limit of A2(ω), for the screened quasistatic
+  // (inductive-limit) anchor solves of circuit synthesis. The static system stiffness is
+  // then K + A2(QuasistaticLimit). Only boundaries with a finite, nonzero DC term
+  // contribute (an inductive rational surface impedance, Zs(s) ~ s·L as s → 0), with the
+  // capacitive terms of the rational surface impedances at the screening frequency; returns
+  // null when there are none. See AddExtraSystemBdrCoefficients(QuasistaticLimit, ...).
+  std::unique_ptr<ComplexOperator>
+  GetExtraSystemMatrix(QuasistaticLimit, Operator::DiagonalPolicy diag_policy);
+
   // Construct the ω-independent boundary mass matrix M_{μ⁻¹,p} for a single wave port,
   // returned with PEC essential DoF rows handled by `diag_policy`. The full wave-port
   // contribution to the system matrix at frequency ω is `i·k_{n,p}(ω)·M_{μ⁻¹,p}` with
@@ -551,9 +604,10 @@ public:
   // The a3 type is an explicit caller choice of the A2 stamping path, independent of the
   // a3 value: double selects the real-ω path (driven/boundary-mode: Floquet term
   // included, cached wave-port EVP), std::complex<double> the complex-ω analytic
-  // continuation (eigenmode nonlinear solve: no Floquet term, uncached wave-port EVP). The
-  // choice cannot be inferred from Im(a3) == 0 because the HYBRID eigenmode seed needs the
-  // complex stamping at real frequencies.
+  // continuation (eigenmode nonlinear solve: no Floquet term, uncached wave-port EVP), and
+  // QuasistaticLimit the ω → 0 limit (quasistatic anchor solves). The choice cannot be
+  // inferred from Im(a3) == 0 because the HYBRID eigenmode seed needs the complex stamping
+  // at real frequencies.
   template <typename OperType, typename ScalarType, typename A3Type>
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, A3Type a3);

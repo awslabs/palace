@@ -99,6 +99,12 @@ public:
   // is singular (Zs = 0) at s.
   std::complex<double> EvalRobinCoefficient(int idx, std::complex<double> s) const;
 
+  // The static limit of the Robin coefficient of boundary idx, lim g(s) as s → 0: nonzero
+  // when Zs has a simple zero at s = 0 (Zs ~ s·L, an inductive sheet, which carries DC
+  // current; D(0)/N'(0) in lowest terms), and zero when Zs(0) is nonzero or infinite.
+  // Errors for a zero of higher order, where the admittance iω/Zs is singular at s = 0.
+  double GetStaticRobinCoefficient(int idx) const;
+
   // Warn (once for each boundary) when the impedance of boundary idx is not passive at the
   // real frequency ω: Re{Zs(iω)} < 0. Returns whether it warned.
   bool CheckPassivity(int idx, double omega);

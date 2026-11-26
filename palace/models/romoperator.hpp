@@ -656,6 +656,43 @@ public:
   // orthogonalisation tolerance).
   void AddWavePortModesForSynthesis(double omega_ref);
 
+  // Solve the screened quasistatic system (K₀ + ν²M) x = b_p for each anchor-flagged
+  // lumped port p, with the drive b_p = W v_p of the port node (the inner-product weight
+  // applied to the basis vector v_p of the port, whose projection onto the basis is e_p),
+  // and add the solution to the PROM basis (labels "anchor_<idx>"). K₀ is the
+  // static system stiffness, K plus the DC limit of the frequency-dependent terms
+  // (SpaceOperator::GetExtraSystemMatrix(QuasistaticLimit, ...)): nonzero only for an
+  // inductive rational surface impedance (with the capacitive terms of the rational
+  // surface impedances and the surface conductivity terms at the screening frequency),
+  // since wave-port, surface-conductivity, and
+  // frequency-dependent permittivity terms vanish at DC like the damping matrix, and the
+  // second-order farfield pole at ω = 0 is omitted. When no port inductance is negative,
+  // the positive screening term makes the system symmetric positive definite, so the solve
+  // cannot resonate with band or near-degenerate basis modes; a negative port inductance
+  // makes it indefinite, and singular when ν² = −ω_m² for a mode of the linearized model
+  // with ω_m² < 0. With ν well below the sweep band the solution is the quasistatic
+  // (inductive-limit) response of the port. Must be called after
+  // AddLumpedPortModesForSynthesis and before the offline sampling loop, so the leading
+  // port-mode block and the RHS1r projection bookkeeping stay consistent.
+  //
+  // The exported column satisfies the screened identity L⁻¹ v + ν² C v = s e_p, and the
+  // unscreened L-column identity L⁻¹ v = s e_p up to O((ν/ω)²). The static response of
+  // the port in the reduced model is accurate to O(ν⁴) all the same: the Galerkin error of
+  // its quadratic form is the square of the O(ν²) field error.
+  //
+  // With several screening frequencies, in ascending order, the lowest gives the
+  // quasistatic anchor above ("anchor_<idx>") and each other frequency ν_k adds the
+  // screened response x(ν_k) of every anchored port as its own basis vector
+  // ("anchor_<idx>_nu<k>", k = 1, 2, ...).
+  void AddLumpedPortAnchorModesForSynthesis(const std::vector<double> &nu);
+
+  // Number of lumped ports with an anchor solve ("SynthesisAnchor").
+  std::size_t NumSynthesisAnchorPorts() const;
+  void AddLumpedPortAnchorModesForSynthesis(double nu)
+  {
+    AddLumpedPortAnchorModesForSynthesis(std::vector<double>{nu});
+  }
+
   // Add field configuration to the reduced-order basis and update the PROM. Requires a name
   // "node_label". This will be printed in the header of the csv files when printing PROM
   // matrices. It is needed to distinguish port and solution field configuration as well as

@@ -462,4 +462,62 @@ TEST_CASE("SurfaceTerms absorbing boundary next to a frequency-dependent materia
   }
 }
 
+TEST_CASE("SurfaceTerms static limit of the boundary mass terms",
+          "[surfaceterms][Serial][Parallel]")
+{
+  // The static limits of the frequency-dependent boundary mass terms, for the quasistatic
+  // anchor solves of circuit synthesis: on each attribute, the unit coefficient of a term
+  // times the limit of its scale c(s), s = iω, as s → 0, which is nonzero only for a
+  // rational impedance with a simple zero at s = 0. Here an inductive sheet Zs(s) = 0.3 s
+  // on the attributes 3, 4 (c(s) = 1/0.3, with the impedance split between the faces of
+  // attribute 4), a parallel RL sheet Zs(s) = s / (0.5 s + 2) on the attribute 5 (c(0) =
+  // 2), and a series RL sheet Zs(s) = 0.3 s + 2 on the attribute 6 (c(0) = 0), with the
+  // finite conductivity boundary of the attributes 1, 2 (c(0) = 0).
+  CubeSurfaceTerms cube({RationalImpedance({3, 4}, {0.3, 0.0}, {1.0}),
+                         RationalImpedance({5}, {1.0, 0.0}, {0.5, 2.0}),
+                         RationalImpedance({6}, {0.3, 2.0}, {1.0})});
+  auto &terms = cube.Get();
+  REQUIRE(terms.GetNumExtraSystemBdrMassTerms() == 4);
+  auto fb = cube.Coefficient();
+  terms.AddStaticExtraSystemBdrMassCoefficients(fb);
+  const std::vector<std::vector<int>> term_attrs = {{1, 2}, {3, 4}, {5}, {6}};
+  const std::vector<double> limits = {0.0, 1.0 / 0.3, 2.0, 0.0};
+  for (int i = 0; i < terms.GetNumExtraSystemBdrMassTerms(); i++)
+  {
+    CAPTURE(i);
+    if (i > 0)
+    {
+      const std::complex<double> c = terms.GetExtraSystemBdrMassTermScale(i, 1.0e-8);
+      CHECK(std::abs(c - limits[i]) <= 1.0e-8);
+    }
+    auto unit = cube.Coefficient();
+    terms.AddExtraSystemBdrMassTermCoefficients(i, unit);
+    for (int attr : term_attrs[i])
+    {
+      CAPTURE(attr);
+      if (limits[i] == 0.0)
+      {
+        CHECK_FALSE(cube.Has(fb, attr));
+      }
+      else
+      {
+        REQUIRE(cube.Has(fb, attr));
+        CHECK_THAT(cube.Value(fb, attr),
+                   WithinRel(limits[i] * cube.Value(unit, attr), 1.0e-14));
+      }
+    }
+  }
+  CHECK_THAT(cube.Value(fb, 4), WithinRel(0.5 * cube.Value(fb, 3), 1.0e-14));
+
+  // The same parallel RL sheet with a common factor s, Zs(s) = s² / (0.5 s² + 2 s), and a
+  // transmission zero of order two, Zs(s) = s², which has no static limit.
+  CubeSurfaceTerms common({RationalImpedance({5}, {1.0, 0.0, 0.0}, {0.5, 2.0, 0.0})});
+  auto fb_common = common.Coefficient();
+  common.Get().AddStaticExtraSystemBdrMassCoefficients(fb_common);
+  CHECK_THAT(common.Value(fb_common, 5), WithinRel(cube.Value(fb, 5), 1.0e-14));
+  CubeSurfaceTerms singular({RationalImpedance({5}, {1.0, 0.0, 0.0}, {1.0})});
+  auto fb_singular = singular.Coefficient();
+  CHECK_THROWS(singular.Get().AddStaticExtraSystemBdrMassCoefficients(fb_singular));
+}
+
 }  // namespace palace

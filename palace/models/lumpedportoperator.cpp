@@ -28,6 +28,7 @@ LumpedPortData::LumpedPortData(const config::LumpedPortData &data,
                                const MaterialOperator &mat_op, const mfem::ParMesh &mesh)
   : mat_op(mat_op), excitation(data.excitation), active(data.active),
     include_in_synthesis(data.include_in_synthesis),
+    synthesis_anchor(data.synthesis_anchor),
     excitation_weight(ExcitationWeight(data.excitation_amplitude, data.excitation_phase))
 {
   // Check inputs. Only one of the circuit or per square properties should be specified
