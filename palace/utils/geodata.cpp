@@ -20,6 +20,7 @@
 #include <fmt/ranges.h>
 #include "fem/coefficient.hpp"
 #include "fem/interpolator.hpp"
+#include "fem/substructure.hpp"
 #include "utils/communication.hpp"
 #include "utils/diagnostic.hpp"
 #include "utils/filesystem.hpp"
@@ -44,6 +45,10 @@ constexpr auto MSH_FLT_PRECISION = std::numeric_limits<double>::max_digits10;
 // Load the serial mesh from disk.
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &, bool,
                                      const config::BoundaryData &);
+
+// Add the collar of the model's mesh of the region to the serial mesh of an online
+// substructuring run whose elements are all in the region (see AddRegionCollar).
+void AddModelCollar(std::unique_ptr<mfem::Mesh> &, const IoData &);
 
 // Read a serial mesh from a stream like the mfem::Mesh stream constructor, but removing the
 // boundary elements which are not faces of any element of the mesh.
@@ -175,6 +180,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm, bool parallel_nc
     if (Mpi::Root(comm) && !nc_file)
     {
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      AddModelCollar(smesh, iodata);
       use_mesh_partitioner &= smesh->Conforming();
     }
     Mpi::Broadcast(1, &use_mesh_partitioner, 0, comm);
@@ -192,6 +198,7 @@ std::unique_ptr<mfem::Mesh> Load(IoData &iodata, MPI_Comm comm, bool parallel_nc
     {
       // Only one process per node reads the serial mesh when not using the partitioner.
       smesh = LoadMesh(iodata.model.mesh, iodata.model.remove_curvature, iodata.boundaries);
+      AddModelCollar(smesh, iodata);
       MFEM_VERIFY(!(smesh->Nonconforming() && use_mesh_partitioner),
                   "Cannot use mesh partitioner on a nonconforming mesh!");
     }
@@ -3056,6 +3063,26 @@ double RebalanceMesh(const IoData &iodata, std::unique_ptr<mfem::ParMesh> &mesh,
 
 namespace
 {
+
+void AddModelCollar(std::unique_ptr<mfem::Mesh> &mesh, const IoData &iodata)
+{
+  const auto &sub = iodata.solver.substructuring;
+  if (!sub || !sub->Online() || !RegionElementsOnly(*mesh, sub->region_attributes))
+  {
+    return;
+  }
+  const std::string path = RegionMeshPath(sub->model_file);
+  MFEM_VERIFY(fs::exists(path), "The mesh holds the region only, and the model's mesh of "
+                                "the region ("
+                                    << path << "), which gives the collar, is missing!");
+  if (auto merged = AddRegionCollar(*mesh, path, sub->region_attributes))
+  {
+    Mpi::Print("Added the collar of the model's mesh of the region ({}) to the mesh: {:d} "
+               "elements\n",
+               path, merged->GetNE() - mesh->GetNE());
+    mesh = std::move(merged);
+  }
+}
 
 std::unique_ptr<mfem::Mesh> LoadMesh(const std::string &mesh_file, bool remove_curvature,
                                      const config::BoundaryData &boundaries)

@@ -42,6 +42,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     sweep, and saved, and later sweeps solve only the region, also after a redesign or
     re-meshing of it. An exact offline sweep gives the outputs of the whole device.
     SchemaVer 6-2-1. [PR 1044](https://github.com/awslabs/palace/pull/1044).
+  - Substructuring offline runs also write the interface as a Gmsh mesh of its faces
+    (`environment_interface.msh`), for meshing a redesigned region against it, and online
+    runs take a mesh of the region alone, adding the environment elements of the model's
+    mesh of the region. An interface which differs from the model's is rejected at a point
+    where it does. [PR 1275](https://github.com/awslabs/palace/pull/1275).
 
 #### Interface Changes
 

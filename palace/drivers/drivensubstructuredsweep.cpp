@@ -248,8 +248,9 @@ void DrivenSubstructuredSweep::SetUpModel()
       }
     }
     const auto region_mesh = RegionMeshPath(model_path);
-    const std::vector<char> written = ds->WriteRegionMesh(
-        region_mesh, port_attrs, iodata.units.GetMeshLengthRelativeScale());
+    const std::vector<char> written =
+        ds->WriteRegionMesh(region_mesh, InterfaceMeshPath(model_path), port_attrs,
+                            iodata.units.GetMeshLengthRelativeScale(), iodata.model.L0);
     model.environment = EnvironmentRecord::Make(space_op.GetNDSpace().GetParMesh(),
                                                 sub.environment_attributes,
                                                 *iodata.resolved_config, written);

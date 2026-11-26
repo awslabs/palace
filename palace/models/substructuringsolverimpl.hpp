@@ -547,8 +547,10 @@ struct SubstructuringSolver::Impl
   // touching the region's Dirichlet DOFs (set on Γ by boundary conditions of the
   // environment) and, in magnetostatics, those of the surface currents and of the flux
   // loops not in env_loops (their films whole), whose excitations need their boundaries,
-  // and the two-sided films of RegionFilmClosure. Collective.
-  std::vector<char> WriteRegionMesh(const std::string &path);
+  // and the two-sided films of RegionFilmClosure, and the interface (see
+  // palace::WriteRegionMesh). Collective.
+  std::vector<char> WriteRegionMesh(const std::string &path,
+                                    const std::string &interface_path);
 
   // Abort if a loaded model was condensed from a different environment than the current
   // one.

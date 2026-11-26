@@ -254,12 +254,14 @@ public:
   InterfaceBoundaryAttributes(const std::vector<int> &bdr_attributes) const;
 
   // Write a mesh of the region for online runs, in mesh length units (coordinates times
-  // length_scale): the region, and the environment elements on the boundary elements with
-  // the given attributes (the environment's ports, whose excitations and outputs need
-  // them). Returns the local environment elements written. Collective.
+  // length_scale, of length_unit m): the region, and the environment elements on the
+  // boundary elements with the given attributes (the environment's ports, whose excitations
+  // and outputs need them), and the interface (see palace::WriteRegionMesh). Returns the
+  // local environment elements written. Collective.
   std::vector<char> WriteRegionMesh(const std::string &path,
+                                    const std::string &interface_path,
                                     const std::vector<int> &port_attributes,
-                                    double length_scale) const;
+                                    double length_scale, double length_unit) const;
 
   // The wave ports in the environment (each wave port lies inside one side).
   std::vector<int> EnvironmentWavePorts() const;

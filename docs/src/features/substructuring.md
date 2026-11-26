@@ -88,6 +88,15 @@ A redesign of the region is re-meshed inside the mesh of the region with
 [`examples/substructuring/remesh_region.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/remesh_region.py)
 and `--region-mesh` (see [Example: qubit lattice](@ref substructuring-lattice-example)).
 
+The offline run also writes the interface, the faces between the region and the environment, for
+a mesher to mesh a redesigned region against: a Gmsh 2.2 mesh (`environment_interface.msh`, next to
+the model) in the mesh's length units, at its geometric order (2 at most), with a `$PalaceInterface`
+section of its format version, its geometric and discretization orders and the mesh's length unit
+in m. An online run also takes a mesh of the region alone, with the interface's faces as boundary
+elements: *Palace* adds the environment elements of the model's mesh of the region (next to the
+model), which share its vertices and nodes on the interface. An interface which differs from the
+model's is rejected at a point where it does.
+
 In electrostatics and magnetostatics (driven runs are described in
 [Driven problems](#Driven-problems)), the remaining settings (terminals, materials,
 `"Solver"/"Order"`, ...) are those of the regular simulation, except `"KSPType"`, `"Tol"` and

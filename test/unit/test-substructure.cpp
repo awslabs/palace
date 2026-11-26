@@ -9,10 +9,13 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <map>
 #include <memory>
 #include <numeric>
 #include <random>
+#include <sstream>
+#include <string>
 #include <type_traits>
 #include <vector>
 #include <mfem.hpp>
@@ -544,6 +547,30 @@ TEST_CASE("H1 DOFs at the points of saved ones", "[substructure][Serial]")
   CHECK_FALSE(match[2]);
 }
 
+TEST_CASE("An interface DOF without counterpart is told by its point",
+          "[substructure][Serial]")
+{
+  // A saved DOF without a current one at its point first, then a current one without a
+  // saved one, in mesh length units; else the sizes.
+  const std::vector<double> saved = {0.1, 0.2, 0.3, 0.5, -0.2, 0.0};
+  std::vector<char> saved_matched;
+  MatchSignaturePoints({0.5, -0.2, 0.0, 0.1, 0.2, 0.3 + 1.0e-6}, 3, saved, 3,
+                       &saved_matched);
+  CHECK(saved_matched == std::vector<char>{0, 1});
+  auto message = [&](const std::vector<double> &current)
+  {
+    return InterfaceDiffersMessage(current, 3, saved, 3, 10.0, "postpro/environment.model");
+  };
+  using Catch::Matchers::ContainsSubstring;
+  CHECK_THAT(message({0.5, -0.2, 0.0, 0.1, 0.2, 0.4}),
+             ContainsSubstring("at (1, 2, 3)") &&
+                 ContainsSubstring("postpro/environment_interface.msh"));
+  CHECK_THAT(message({0.5, -0.2, 0.0, 0.1, 0.2, 0.3, 0.7, 0.8, 0.9}),
+             ContainsSubstring("at (7, 8, 9)"));
+  CHECK_THAT(message({0.1, 0.2, 0.3, 0.5, -0.2, 0.0}),
+             ContainsSubstring("(2 DOFs)") && !ContainsSubstring(" at ("));
+}
+
 TEST_CASE("Saved DOFs are matched in large sets", "[substructure][Serial]")
 {
   // Random signatures, permuted, perturbed below the matching tolerance and, for Nédélec
@@ -927,6 +954,156 @@ TEST_CASE("The parts of a model record pass through rank 0 in chunks",
   }
   CHECK(got == expected);
   CHECK(most <= chunk);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "The interface of a curved mesh shares its nodes",
+                 "[substructure][Serial][Parallel]")
+{
+  // Γ of a second-order mesh of n^3 cubes split at x = 0.5 (n^2 squares of two triangles):
+  // six-node triangles on its (n + 1)^2 vertices and 3 n^2 + 2 n edges.
+  constexpr int n = 2;
+  auto serial = mfem::Mesh::MakeCartesian3D(n, n, n, mfem::Element::TETRAHEDRON);
+  for (int e = 0; e < serial.GetNE(); e++)
+  {
+    mfem::Vector c;
+    serial.GetElementCenter(e, c);
+    serial.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+  }
+  serial.SetAttributes();
+  serial.SetCurvature(2);
+  mfem::ParMesh mesh(Mpi::World(), serial);
+  mfem::H1_FECollection fec(1, 3);
+  mfem::ParFiniteElementSpace fespace(&mesh, &fec);
+  const auto path = (temp_dir / "curved_interface.msh").string();
+  WriteRegionMesh((temp_dir / "curved_region.mesh").string(), path, fespace, {1}, {2},
+                  std::vector<char>(fespace.GetTrueVSize(), 0), 1.0, 1.0e-6);
+  std::ifstream in(path);
+  std::map<std::string, std::vector<std::string>> sections;
+  for (std::string line, name; std::getline(in, line);)
+  {
+    if (line.starts_with("$End"))
+    {
+      name.clear();
+    }
+    else if (line.starts_with("$"))
+    {
+      name = line;
+    }
+    else
+    {
+      sections[name].push_back(line);
+    }
+  }
+  CHECK(std::stoi(sections["$Nodes"].front()) == (n + 1) * (n + 1) + 3 * n * n + 2 * n);
+  REQUIRE(std::stoi(sections["$Elements"].front()) == 2 * n * n);
+  for (std::size_t i = 1; i < sections["$Elements"].size(); i++)
+  {
+    std::istringstream element(sections["$Elements"][i]);
+    int id, type;
+    element >> id >> type;
+    CHECK(type == 9);
+  }
+  CHECK(sections["$PalaceInterface"] ==
+        std::vector<std::string>{"version 1", "geometric_order 2", "order 1",
+                                 "length_unit 9.9999999999999995e-07"});
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir, "A mesh of the region takes its collar back",
+                 "[substructure][Serial]")
+{
+  // A curved model's mesh of the region (1) and its collar (2), and the region alone: the
+  // collar added gives back each element with its nodes, and the boundary elements. With a
+  // vertex of Γ moved, the collar's face there is told.
+  auto mesh =
+      mfem::Mesh::MakeCartesian3D(3, 2, 2, mfem::Element::TETRAHEDRON, 1.5, 1.0, 1.0);
+  for (int e = 0; e < mesh.GetNE(); e++)
+  {
+    mfem::Vector c;
+    mesh.GetElementCenter(e, c);
+    mesh.SetAttribute(e, (c(0) < 0.5) ? 1 : 2);
+  }
+  mesh.SetAttributes();
+  mesh.SetCurvature(2);
+  mfem::GridFunction &nodes = *mesh.GetNodes();
+  mfem::VectorFunctionCoefficient bend(3,
+                                       [](const mfem::Vector &x, mfem::Vector &y)
+                                       {
+                                         y = x;
+                                         y(1) += 0.05 * std::sin(3.0 * x(0)) * x(2);
+                                       });
+  nodes.ProjectCoefficient(bend);
+  const std::string path = (temp_dir / "collar_region.mesh").string();
+  {
+    std::ofstream out(path);
+    out.precision(std::numeric_limits<double>::max_digits10);
+    mesh.Print(out);
+  }
+  mfem::Mesh model(path.c_str(), 1, 0, false);
+  mfem::Array<int> region_attrs({1});
+  mfem::Mesh region(mfem::SubMesh::CreateFromDomain(model, region_attrs));
+  const auto merged = AddRegionCollar(region, path, {1});
+  REQUIRE(merged);
+  REQUIRE(merged->GetNE() == model.GetNE());
+  CHECK(merged->GetNBE() == model.GetNBE());
+  // Each element by its vertices, with its attribute and nodes.
+  auto elements = [](const mfem::Mesh &m)
+  {
+    std::map<std::vector<long long>, std::pair<int, std::vector<long long>>> els;
+    auto key = [](const double *x, std::vector<long long> &k)
+    {
+      for (int d = 0; d < 3; d++)
+      {
+        k.push_back(std::llround(1.0e9 * x[d]));
+      }
+    };
+    mfem::Array<int> v, vdofs;
+    mfem::Vector values;
+    for (int e = 0; e < m.GetNE(); e++)
+    {
+      m.GetElementVertices(e, v);
+      std::vector<std::vector<long long>> corners;
+      for (int i : v)
+      {
+        corners.emplace_back();
+        key(m.GetVertex(i), corners.back());
+      }
+      std::ranges::sort(corners);
+      std::vector<long long> k;
+      for (const auto &c : corners)
+      {
+        k.insert(k.end(), c.begin(), c.end());
+      }
+      m.GetNodes()->FESpace()->GetElementVDofs(e, vdofs);
+      m.GetNodes()->GetSubVector(vdofs, values);
+      std::vector<long long> n;
+      for (int i = 0; i < values.Size(); i++)
+      {
+        n.push_back(std::llround(1.0e9 * values(i)));
+      }
+      els[k] = {m.GetAttribute(e), n};
+    }
+    return els;
+  };
+  CHECK(elements(*merged) == elements(model));
+
+  // A vertex of Γ under the collar moved off it.
+  mfem::Array<int> v;
+  int moved = -1;
+  for (int f = 0; f < region.GetNumFaces() && moved < 0; f++)
+  {
+    int e1, e2;
+    region.GetFaceElements(f, &e1, &e2);
+    region.GetFaceVertices(f, v);
+    if (e2 < 0 && std::abs(region.GetVertex(v[0])[0] - 0.5) < 1.0e-12)
+    {
+      moved = v[0];
+    }
+  }
+  REQUIRE(moved >= 0);
+  region.GetVertex(moved)[1] += 1.0e-3;
+  CHECK_THROWS_WITH(AddRegionCollar(region, path, {1}),
+                    Catch::Matchers::ContainsSubstring("a face of Gamma under the collar"));
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir, "Records of a substructuring model file",

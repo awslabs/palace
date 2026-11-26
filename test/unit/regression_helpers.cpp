@@ -159,11 +159,13 @@ std::set<std::string> ExpectedMetadataFiles(int max_its, const IoData &iodata)
   {
     expected.insert("iteration" + std::to_string(i) + "/palace.json");
   }
-  // The model of an offline substructuring run, and the mesh of the region next to it (of a
-  // conforming mesh, as every offline case has).
+  // The model of an offline substructuring run, and the mesh of the region and the
+  // interface next to it (of a conforming mesh of geometric order 2 at most, as every
+  // offline case has).
   if (!substructuring::SaveModelPath(iodata).empty())
   {
-    expected.insert({"environment.model", "environment_region.mesh"});
+    expected.insert(
+        {"environment.model", "environment_region.mesh", "environment_interface.msh"});
   }
   return expected;
 }
@@ -546,7 +548,6 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
     MakeOutputFolder(setup, comm);
     BlockTimer::Reset();
     palace::Run(setup, comm, omp_threads, /*git_tag=*/nullptr);
-    require_mesh(config, stage.path());
     if (effective_opts.after_setup)
     {
       // A step that fails on some ranks (it may run on rank 0 only) fails the case on all.
@@ -567,6 +568,8 @@ void RunRegressionCase(std::string_view case_dir, std::string_view config_json,
       }
       REQUIRE(ok);
     }
+    // The setup run or after_setup may write the case's mesh.
+    require_mesh(config, stage.path());
   }
   IoData iodata = LoadCaseIoData(std::move(config), effective_opts);
   MakeOutputFolder(iodata, comm);

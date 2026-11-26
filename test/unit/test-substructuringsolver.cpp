@@ -1763,6 +1763,63 @@ TEST_CASE_METHOD(
                     Catch::Matchers::ContainsSubstring("Excitation 2 has no DOFs"));
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "SubstructuringSolver tells where the mesh of the region differs from Γ",
+                 "[substructure][Serial][Parallel]")
+{
+  // On the mesh of the region, the vertex at the center of Γ (x = 0.5), which the collar
+  // does not touch, moved: the online run tells the model's interface DOF there.
+  const std::string model_path =
+      (temp_dir / "substruct_moved" / "environment.model").string();
+  auto make_config = [&](const std::string &mode)
+  {
+    json config = {
+        {"Problem", {{"Type", "Electrostatic"}, {"Output", "test_output"}}},
+        {"Model", {{"Mesh", "test.msh"}}},
+        {"Domains", {{"Materials", {{{"Attributes", {1, 2}}, {"Permittivity", 1.0}}}}}},
+        {"Boundaries",
+         {{"Ground", {{"Attributes", {3}}}},
+          {"Terminal",
+           {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}}},
+        {"Solver",
+         {{"Order", 1},
+          {"Substructuring",
+           {{"Region", {{"Attributes", {1}}}}, {"Environment", {{"Attributes", {2}}}}}}}}};
+    test::SetModelRun(config, mode, model_path);
+    return IoData(config, false);
+  };
+  auto capacitance = [](const IoData &iodata, std::unique_ptr<mfem::ParMesh> &&pmesh)
+  {
+    std::vector<std::unique_ptr<Mesh>> mesh;
+    mesh.push_back(std::make_unique<Mesh>(std::move(pmesh)));
+    SubstructuringSolver ss(iodata, mesh);
+    ss.CondenseEnvironment();
+    return ss.CapacitanceMatrix({1, 2});
+  };
+  (void)capacitance(make_config("Offline"), MakeSplitCube(4));
+  mfem::Mesh serial(RegionMeshPath(model_path).c_str());
+  int center = -1;
+  for (int v = 0; v < serial.GetNV(); v++)
+  {
+    const double *x = serial.GetVertex(v);
+    if (std::hypot(x[0] - 0.5, x[1] - 0.5, x[2] - 0.5) < 1.0e-12)
+    {
+      center = v;
+    }
+  }
+  REQUIRE(center >= 0);
+  serial.GetVertex(center)[1] += 0.01;
+  if (mfem::GridFunction *nodes = serial.GetNodes())
+  {
+    mfem::Array<int> vdofs;
+    nodes->FESpace()->GetVertexVDofs(center, vdofs);
+    (*nodes)(vdofs[1]) += 0.01;
+  }
+  CHECK_THROWS_WITH(capacitance(make_config("Online"),
+                                std::make_unique<mfem::ParMesh>(Mpi::World(), serial)),
+                    Catch::Matchers::ContainsSubstring("model at (0.5, 0.5, 0.5)"));
+}
+
 TEST_CASE("SubstructuringSolver magnetostatics ignores terminals",
           "[substructure][Serial][Parallel]")
 {
