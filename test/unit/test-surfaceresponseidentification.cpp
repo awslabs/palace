@@ -8167,6 +8167,34 @@ TEST_CASE("SurfaceResponseIdentificationCornerContainment",
         DeserializeIdentificationResult(SerializeIdentificationResult(result));
     CHECK(copy.ToJson(1.0) == result.ToJson(1.0));
   }
+  // Lane v1prefast C3 (the read skips a site whose `inside` cannot reach the quantum): the
+  // island's two left corners 0.2 um inside and 0.2 um outside the claims box's x1 face
+  // both fire against the box T5 reads (BoxBeforeOverR: inside = R + its x1 - the island's
+  // left); 4 um outside, they stay quiet.
+  for (const double depth : {0.2, -0.2, -4.0})
+  {
+    const auto [input, result] = Identify(1.0, {Island(x1 - depth)});
+    const auto *cluster = ClusterContaining(result, input, probe);
+    REQUIRE(cluster != nullptr);
+    const auto &support = cluster->spatial_support;
+    INFO("depth " << depth << " um");
+    if (depth > -1.0)
+    {
+      REQUIRE(support.contains("CornerContainment"));
+      const auto &containment = support["CornerContainment"];
+      const double face = DeviceBox(*cluster, containment["BoxBeforeOverR"], R)[2];
+      REQUIRE(containment["Vertices"].size() == 2);
+      for (const auto &vertex : containment["Vertices"])
+      {
+        CHECK_THAT(vertex["InsideOverR"].get<double>(),
+                   WithinAbs(1.0 + (face - (x1 - depth)) / R, 1.0e-5));
+      }
+    }
+    else
+    {
+      CHECK(!support.contains("CornerContainment"));
+    }
+  }
 }
 
 TEST_CASE("SurfaceResponseIdentificationMirrorFormedContract",

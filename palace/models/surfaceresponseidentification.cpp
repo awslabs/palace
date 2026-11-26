@@ -13810,6 +13810,30 @@ Identifier::ReadCornerContainment(const ClusterPlaneBox &own,
       continue;
     }
     const auto segments = CornerWindowSegments(site);
+    {
+      // Lane v1prefast C3: this site's `inside` first, by the loop's own expressions in its
+      // order; a site clearly short of the trigger (inside > quantum) keeps nothing, so it
+      // is skipped before the clips against every box of the plane (a site within a
+      // relative 1e-6 of the trigger runs the full read below, whatever the rounding).
+      double inside_first = 0.0;
+      for (const auto &[p3, q3] : segments)
+      {
+        const Point2 p = Local(own, p3), q = Local(own, q3);
+        const double length = std::hypot(q[0] - p[0], q[1] - p[1]);
+        if (length <= half_quantum)
+        {
+          continue;
+        }
+        if (const auto own_interval = ClipInterval(p, q, own.box))
+        {
+          inside_first += (own_interval->second - own_interval->first) * length;
+        }
+      }
+      if (inside_first < (1.0 - 1.0e-6) * quantum)
+      {
+        continue;
+      }
+    }
     double inside = 0.0, outside_every = 0.0, window_length = 0.0;
     nlohmann::json window = nlohmann::json::array();
     // This site's own band (its record's BandOverR / ShortfallsOverR / Steps); the
