@@ -3765,10 +3765,26 @@ knot of the same `Type` and plane; by its knots alone where there is no edge pat
 census); `Status` its word; `EdgePatches`, `EdgeLength`, `SpatialPatches` and the shares
 `EdgeShares` / `SpatialShares` by the census bars below stay as numbers (no word is made of
 them). On measured meshes this word agreed with the table's first-iteration word on 225 of
-225 first levels of three designs' ladders and on 21 of 21 rows of the merge tier, with no
-reading better than the table's; on refined levels the energy concentrates where the
-length weight does not follow, and the pre-solve word can read `UNDER-RESOLVED` where the
-table reads `MARGINAL` (101 of 678 ladder rows), never the reverse there.
+225 first levels of three designs' ladders and on 21 of 21 rows of the merge tier. It can
+read better than the table's later word: a length-weighted ``m_{90}`` does not see a short,
+coarse stretch that carries the field (a junction lead: the v1 transmon mesh refined once at
+order 4 reads `MARGINAL` before the solve and `UNDER-RESOLVED` in the table after it).
+Hence THE FLAG OF CELLS BEYOND TWICE THE BAR: where at least one patch of a row's census is
+coarser than twice the bar (``h/R > 2 B``, ``2`` being the verdict's `UnderResolvedFactor`;
+``h/R`` read by the census's bin centre, as the table's ``m_{90}``), the PREFLIGHT line
+adds `cells beyond twice the bar: <share> % of the length, largest h/R <m>: may read
+UNDER-RESOLVED after the solve`, and the rows of that `Type` in a PreflightOnly
+`surface-participation.csv` add the flags word `cells beyond twice the bar: may read
+UNDER-RESOLVED after the solve` (its region rows too). Every `Preflight` row records
+`UnderResolvedLengthShare` (the share of the census weight with ``h/R > 2 B``; `0` when
+none, `null` at orders without a bar) and `LargestM` (the largest ``h/R``). THE
+GUARANTEE: WITHOUT THE FLAG NO CELL IS BEYOND TWICE THE BAR, so the table's energy-weighted
+``m_{90}`` cannot exceed ``2 B`` on that mesh whatever the field: a pre-solve `MARGINAL`
+without the flag cannot become `UNDER-RESOLVED` after the solve (a `Type`'s all-planes
+census reads every patch the table's census of that mesh can weigh, a box's included, with
+the same ``h/R``). At orders without a bar there is no flag. On refined levels the
+pre-solve word can also read `UNDER-RESOLVED` where the table reads `MARGINAL` (101 of 678
+ladder rows).
 
 RESOLVED IS NECESSARY, NOT SUFFICIENT: it says that the mesh at the trace contour is as fine
 as the interim bars ask, never that a corrected value is accurate (the exact-trace floor,
@@ -3812,15 +3828,21 @@ its census (`"UnmatchedPolicy": "Error"` with missing requirements, a library it
 refuses, a placed discovery placeholder, a response model whose fabricated domain matrix its
 matrix step refuses (a negative-energy mode beyond roundoff, by the operator's own test), or
 a library file the operator's model loop refuses: a basis-point, domain-matrix or
-surface-matrix file that cannot be read or does not fit its basis points (a missing column
-or entry, a non-finite entry, another size), or interface mappings without surface
+surface-matrix file that cannot be read, holds a cell the table parser refuses (text, a
+binary file, a cell beyond the header's columns: validated before parsing by the parser's
+own rules, since a build without MFEM exceptions cannot catch the parser's stop), or does
+not fit its basis points (a missing column or entry, a non-finite entry, another size), a
+surface-matrix file that reads but lacks a mapped coupon's response (a header-only file),
+blend sources without the same coupon interfaces, or interface mappings without surface
 matrices), `PreflightOnly` builds no census, prints one line
 `Resolution census: not evaluated: <why> (a solve-form run stops there)`
 and ends with the exit status it had before the census existed (0, or 3 after a
 `FailClosed` summary). For the library files the line names EVERY model the loop refuses,
-each with the solve form's message of its first refused file in the loop's order (basis
-points, domain matrices, the matrix step, the interface mappings, surface matrices):
-`response model "<name>": <message>`, separated by `; `. Every census that is not
+each once, with EVERY refused file's message in the loop's order (basis points, domain
+matrices, the matrix step, the interface mappings, surface matrices, the blend, the coupon
+check; the first is the one the solve form stops with; a model whose basis-point file is
+refused adds `(its matrices are not checked without its basis points)`):
+`response model "<name>": <message> <message>`, models separated by `; `. Every census that is not
 evaluated (these reasons, an explicit `"GeometryFailurePolicy": "FailClosed"`, a whole-run
 raw fallback, a problem type without a census) is named by its one line, and the same line is
 `SurfaceResponse.ResolutionCensusNotEvaluated` of `palace.json` (absent when the census is
@@ -3870,7 +3892,7 @@ the device trace onto their 16-knot rings is not within 1 % on the library's own
 test: at ``S \ge 5`` % a held-out reading found SA off by up to ``5 S`` points and MS by up
 to ``6 S`` (``S`` below 5 %: no effect seen), and `flags` adds
 `S >= 5% on corner and cluster models`; with more than 10 % of that energy on
-spatial-cluster models it adds `over 10% on cluster models`. Information only: no value
+spatial-cluster models it adds `S over 10% on cluster models`. Information only: no value
 changes (`nan` without a census reading, on a `NOT-TARGET` row and on a `PreflightOnly`
 row). Rows join the previous level's row of the same point, excitation and
 interface; a driven row only at the same frequency (10⁻¹² relative). Each row keeps the
@@ -3964,7 +3986,9 @@ all-planes word of the PREFLIGHT line above: `MARGINAL`, `UNDER-RESOLVED`, `NO-B
 `NOT-EVALUATED`, never `RESOLVED`; a `region` row `NOT-EVALUATED`: a box has no census of
 its own before a solve), `coverage`, `regime`, `confidence` and `convergence` read
 `NOT-COMPUTED`, `flags` reads `PREFLIGHT-ONLY` (no `Ls` sheet word: those words qualify a
-value) and `reason` says why
+value), followed by `; cells beyond twice the bar: may read UNDER-RESOLVED after the solve`
+on every row of a `Type` whose census has a cell beyond twice the bar (the flag above; its
+region rows too), and `reason` says why
 (`PREFLIGHT-ONLY: no solve; values not computed; resolution = the table's rule on the census weighted by length (no field before a solve); no convergence evaluated: never RESOLVED`);
 `SurfaceResponse.ParticipationTable` records `"PreflightOnly": true`. The pre-solve word
 and the word of the first solve are the same rule on two weights (length, energy) and may

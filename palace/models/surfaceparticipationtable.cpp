@@ -363,20 +363,21 @@ PreflightParticipationRows(const std::map<int, std::string> &targets,
     row.type = type;
     row.region = regions.count(interface) > 0;
     std::string word(ResolutionStatusName(ResolutionStatus::NOT_EVALUATED));
-    if (!row.region)
+    const auto census = std::find_if(preflight.begin(), preflight.end(),
+                                     [&](const ResolutionPreflightRow &r)
+                                     { return r.all_planes && r.type == type; });
+    if (!row.region && census != preflight.end())
     {
-      const auto census = std::find_if(preflight.begin(), preflight.end(),
-                                       [&](const ResolutionPreflightRow &r)
-                                       { return r.all_planes && r.type == type; });
-      if (census != preflight.end())
-      {
-        word = census->resolution;
-      }
+      word = census->resolution;
     }
     row.resolution = word;
     row.coverage = row.regime = row.confidence = row.convergence =
         kParticipationNotComputed;
     row.flags = kParticipationPreflightFlags;
+    if (census != preflight.end() && census->UnderResolvedCells())
+    {
+      row.flags += std::string("; ") + kParticipationPreflightUnderResolvedCellsFlag;
+    }
     row.reason = kParticipationPreflightReason;
     rows.push_back(std::move(row));
   }
@@ -979,11 +980,12 @@ void SurfaceParticipationTable::WritePreflightLevel(
   preflight_only = true;
   rows_written += rows.size();
   iterations = 1;
-  Mpi::Print(comm,
-             "\nSurface participation (surface-participation.csv), PreflightOnly: {:d} "
-             "row(s) of iteration 1 ({:d} unknowns), the resolution cells \"PREFLIGHT "
-             "<word>\" of the census PREFLIGHT; no solve, no value computed (NaN)\n",
-             rows.size(), unknowns);
+  Mpi::Print(
+      comm,
+      "\nSurface participation (surface-participation.csv), PreflightOnly: {:d} "
+      "row(s) of iteration 1 ({:d} unknowns), the resolution cells the table's word "
+      "of the census PREFLIGHT (never RESOLVED); no solve, no value computed (NaN)\n",
+      rows.size(), unknowns);
 }
 
 void SurfaceParticipationTable::AppendRows(const std::vector<SurfaceParticipationRow> &rows)

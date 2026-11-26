@@ -186,6 +186,14 @@ void WriteResolutionRows(std::ostream &output, const std::string &keys,
 // a reading). The word (`resolution`) is the per-iteration table's word of that m90 with no
 // convergence evaluated (ParticipationResolutionWord, set by the census operator): never
 // RESOLVED. The edge and spatial shares by the census bars stay as numbers.
+// THE FLAG (lane v1verdict1 fix round; BLOCKER-1): largest_m = the h/R of the coarsest
+// patch with a reading as the table's m90 reads h/R (the centre of the highest histogram
+// bin with weight; NaN without a reading); under_resolved_share = the weight of the bins
+// whose centre is above the table's UNDER-RESOLVED limit U (UnderResolvedFactor x the bar)
+// over the total (0 when none; NaN without a bar or a reading). A row is flagged iff
+// under_resolved_share > 0, i.e. iff largest_m > U. Every all-planes row reads every patch
+// the table's census of that mesh can weigh, with the same h/R and bin, so WITHOUT THE FLAG
+// no table m90 of that mesh exceeds U: no UNDER-RESOLVED word after the solve.
 struct ResolutionPreflightRow
 {
   std::string type;
@@ -195,7 +203,10 @@ struct ResolutionPreflightRow
   double edge_length = 0.0;  // m
   std::array<double, 4> edge_shares{}, spatial_shares{};
   std::array<double, 3> length_quantiles{};
+  double largest_m = std::numeric_limits<double>::quiet_NaN();
+  double under_resolved_share = std::numeric_limits<double>::quiet_NaN();
   std::string resolution = "NOT-EVALUATED";
+  bool UnderResolvedCells() const { return under_resolved_share > 0.0; }
 };
 // Per (Type, slot): [5 edge-length bins][5 spatial-count bins][edge count][spatial count]
 // [edge knots][the edge-length histogram][the spatial-knot histogram] (histograms of
@@ -205,10 +216,19 @@ inline constexpr int kResolutionPreflightSpatialHistogram =
     kResolutionPreflightEdgeHistogram + kResolutionHistogramBins;
 inline constexpr int kResolutionPreflightStride =
     kResolutionPreflightSpatialHistogram + kResolutionHistogramBins;
+// One patch's PREFLIGHT sums in one slot (the census operator's per-patch add): an EDGE
+// patch (`length` > 0) adds its length to its status bin and, with a reading, to the edge
+// histogram at m; any other patch counts in the spatial bins and, with a reading, adds its
+// `knots` to the spatial histogram at m.
+void AddResolutionPreflightPatch(double *slot, ResolutionStatus status, double m,
+                                 double length, double knots);
+// `under_resolved_m`: the table's UNDER-RESOLVED limit U in h/R at the run's order (NaN:
+// no bar), for largest_m / under_resolved_share.
 ResolutionPreflightRow ComputeResolutionPreflightRow(const double *slot,
                                                      const std::string &type,
                                                      bool all_planes, double plane,
-                                                     bool bars_hold, double length_scale);
+                                                     bool bars_hold, double length_scale,
+                                                     double under_resolved_m);
 // The PREFLIGHT line: per row its word and its length m90, with the rule's bar `bar` (NaN:
 // none at `order`) and its UNDER-RESOLVED limit `under_resolved_bar` in the header.
 std::string ResolutionPreflightLine(const std::vector<ResolutionPreflightRow> &rows,

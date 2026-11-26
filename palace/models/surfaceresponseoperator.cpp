@@ -21803,12 +21803,29 @@ std::string UnreadableResponseMatrixMessage(const std::string &path)
 
 std::string TryReadTable(const std::string &path, Table &table)
 {
-  TableWithCSVFile input(path, true);
-  if (input.table.empty())
+  // TableWithCSVFile(path, true)'s reading, its cells VALIDATED BEFORE PARSING by the
+  // parser's own rules (MAJOR-1 of the fix round: a build without MFEM exceptions cannot
+  // catch the parser's abort): a refused cell returns the parser's message.
+  std::ifstream file(path, std::ios_base::in);
+  if (!file.good())
   {
     return UnreadableResponseMatrixMessage(path);
   }
-  table = std::move(input.table);
+  std::stringstream buffer;
+  buffer << file.rdbuf();
+  const std::string contents = buffer.str();
+  const std::string cells = TableCellsError(contents);
+  if (!cells.empty())
+  {
+    return ReaderMessage("Response matrix file \"", path,
+                         "\": Could not parse CSV table from string! ", cells, "!");
+  }
+  Table input(contents);
+  if (input.empty())
+  {
+    return UnreadableResponseMatrixMessage(path);
+  }
+  table = std::move(input);
   return {};
 }
 
@@ -22826,6 +22843,10 @@ ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
 
 // A model's per-coupon-interface surface response matrices: the file itself, or for an
 // interpolated model (config blend) the weighted sum of its sources' files.
+// The blend's shared-interface check (also PreflightOnly's prediction).
+constexpr const char *kBlendedSurfaceInterfacesRefusal =
+    "Interpolated response model sources do not share the same coupon interfaces!";
+
 std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     bool fabricated, int expected_size, std::optional<double> within_radius)
@@ -22858,9 +22879,7 @@ std::map<int, mfem::DenseMatrix> BlendedSurfaceResponseMatrices(
     {
       interfaces = source_interfaces;
     }
-    MFEM_VERIFY(source_interfaces == interfaces,
-                "Interpolated response model sources do not share the same coupon "
-                "interfaces!");
+    MFEM_VERIFY(source_interfaces == interfaces, kBlendedSurfaceInterfacesRefusal);
   }
   return result;
 }
@@ -23108,6 +23127,35 @@ std::string SurfaceResponseInterfaceMappingRefusal(
   return {};
 }
 
+// The coupon check of ComputeSurfaceResponseMatrices (MAJOR-1 of the fix round: also
+// PreflightOnly's prediction, once the surface matrices read): every interface mapping
+// names positive interfaces and a coupon both blended surface-matrix sets carry.
+std::string SurfaceResponseCouponRefusal(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
+    const std::set<int> &fabricated, const std::set<int> &thin)
+{
+  for (const auto &mapping : config.interfaces)
+  {
+    if (!(mapping.target > 0 && mapping.coupon > 0 &&
+          fabricated.count(mapping.coupon) > 0 && thin.count(mapping.coupon) > 0))
+    {
+      return "Response-correction interface mapping refers to a missing coupon "
+             "surface response!";
+    }
+  }
+  return {};
+}
+
+std::set<int> SurfaceResponseInterfaces(const std::map<int, mfem::DenseMatrix> &matrices)
+{
+  std::set<int> interfaces;
+  for (const auto &[interface, matrix] : matrices)
+  {
+    interfaces.insert(interface);
+  }
+  return interfaces;
+}
+
 SurfaceResponseMatrices ComputeSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const Units &units, double matching_radius)
@@ -23135,14 +23183,13 @@ SurfaceResponseMatrices ComputeSurfaceResponseMatrices(
   const double scale = voltage_scale * voltage_scale / energy_scale;
 
   SurfaceResponseMatrices result;
+  const std::string coupon_refusal = SurfaceResponseCouponRefusal(
+      config, SurfaceResponseInterfaces(fabricated), SurfaceResponseInterfaces(thin));
+  MFEM_VERIFY(coupon_refusal.empty(), coupon_refusal);
   for (const auto &mapping : config.interfaces)
   {
     const auto fabricated_it = fabricated.find(mapping.coupon);
     const auto thin_it = thin.find(mapping.coupon);
-    MFEM_VERIFY(mapping.target > 0 && mapping.coupon > 0 &&
-                    fabricated_it != fabricated.end() && thin_it != thin.end(),
-                "Response-correction interface mapping refers to a missing coupon "
-                "surface response!");
     mfem::DenseMatrix fabricated_contribution(fabricated_it->second);
     fabricated_contribution *= scale;
     auto [fabricated_target, fabricated_inserted] =
@@ -25649,55 +25696,107 @@ namespace
 {
 
 // STEP 4c (lane v1verdict1): PreflightOnly's prediction of the operator's model loop on one
-// model, its FIRST refusal in the loop's order (empty when the loop accepts the model): its
-// basis points, its domain matrices and the matrix step's test
-// (DomainResponseMatrixRefusal), its interface mappings and its surface matrices (a spatial
-// model's at `matching_radius`, as the operator reads them), each by the reader's Try form.
+// model: EVERY refusal of its files in the loop's order (MINOR-4 of the fix round; empty
+// when the loop accepts the model, each message ending with '!', joined by ' '): its basis
+// points, its domain matrices and the matrix step's test (DomainResponseMatrixRefusal),
+// its interface mappings, its surface matrices (a spatial model's at `matching_radius`, as
+// the operator reads them), the blend's shared interfaces and the coupon check (MAJOR-1),
+// each by the reader's Try form or the operator's own check. The first is the one the
+// solve form stops with. Without its basis points the matrices' size is unknown.
 std::string ResponseModelRefusal(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     const Units &units, double matching_radius)
 {
+  std::string refusals;
+  auto Accept = [&](const std::string &message)
+  {
+    refusals += (refusals.empty() || message.empty() ? "" : " ") + message;
+    return message.empty();
+  };
   std::vector<std::array<double, 3>> points = config.constructed_basis_points;
-  std::string message =
-      points.empty() ? TryReadBasisPoints(config.basis_points, points) : std::string();
+  if (points.empty() && !Accept(TryReadBasisPoints(config.basis_points, points)))
+  {
+    return refusals + " (its matrices are not checked without its basis points)";
+  }
   const int expected_size = static_cast<int>(points.size()) + config.conductor_state_count;
-  message =
-      message.empty() ? DomainResponseMatrixRefusal(config, expected_size, units) : message;
-  message = message.empty() ? SurfaceResponseInterfaceMappingRefusal(config) : message;
-  if (!message.empty() || config.fabricated_surface_matrix.empty() ||
+  auto Files = [&](bool fabricated, bool surface)
+  {
+    std::vector<std::string> files;
+    for (const auto &source : config.blend)
+    {
+      files.push_back(
+          surface
+              ? (fabricated ? source.fabricated_surface_matrix : source.thin_surface_matrix)
+              : (fabricated ? source.fabricated_matrix : source.thin_matrix));
+    }
+    if (config.blend.empty())
+    {
+      files = {surface ? (fabricated ? config.fabricated_surface_matrix
+                                     : config.thin_surface_matrix)
+                       : (fabricated ? config.fabricated_matrix : config.thin_matrix)};
+    }
+    return files;
+  };
+  bool domain_read = true;
+  for (const bool fabricated : {true, false})
+  {
+    for (const auto &file : Files(fabricated, false))
+    {
+      mfem::DenseMatrix matrix;
+      domain_read = Accept(TryReadDenseDomainResponseMatrix(file, expected_size, matrix)) &&
+                    domain_read;
+    }
+  }
+  if (domain_read)
+  {
+    Accept(DomainResponseMatrixRefusal(config, expected_size, units));  // the matrix step
+  }
+  if (!Accept(SurfaceResponseInterfaceMappingRefusal(config)) ||
+      config.fabricated_surface_matrix.empty() ||
       (config.spatial_basis && !(std::isfinite(matching_radius) && matching_radius > 0.0)))
   {
-    return message;  // no surface matrices, or the operator's own radius check stops it
+    return refusals;  // no surface matrices, or the operator's own radius check stops it
   }
   std::optional<double> within_radius;
   if (config.spatial_basis)
   {
     within_radius = units.Dimensionalize<Units::ValueType::LENGTH>(matching_radius);
   }
+  // Per kind (fabricated, then thin) its files, then the blend's shared interfaces (the
+  // operator checks each source as it reads it); the coupon check once both kinds read.
+  std::array<std::set<int>, 2> interfaces;
+  bool surface_read = true;
   for (const bool fabricated : {true, false})
   {
-    std::vector<std::string> files;
-    for (const auto &source : config.blend)
-    {
-      files.push_back(fabricated ? source.fabricated_surface_matrix
-                                 : source.thin_surface_matrix);
-    }
-    if (config.blend.empty())
-    {
-      files = {fabricated ? config.fabricated_surface_matrix : config.thin_surface_matrix};
-    }
-    for (const auto &file : files)
+    std::vector<std::set<int>> sources;
+    for (const auto &file : Files(fabricated, true))
     {
       const std::map<int, mfem::DenseMatrix> *matrices = nullptr;
-      message =
-          TryReadSurfaceResponseMatrices(file, expected_size, within_radius, matrices);
-      if (!message.empty())
+      if (Accept(
+              TryReadSurfaceResponseMatrices(file, expected_size, within_radius, matrices)))
       {
-        return message;
+        sources.push_back(SurfaceResponseInterfaces(*matrices));
       }
     }
+    if (sources.size() != Files(fabricated, true).size())
+    {
+      surface_read = false;
+      continue;
+    }
+    if (std::any_of(sources.begin(), sources.end(),
+                    [&](const std::set<int> &source) { return source != sources.front(); }))
+    {
+      Accept(kBlendedSurfaceInterfacesRefusal);
+      surface_read = false;
+      continue;
+    }
+    interfaces[fabricated ? 0 : 1] = sources.front();
   }
-  return {};
+  if (surface_read)
+  {
+    Accept(SurfaceResponseCouponRefusal(config, interfaces[0], interfaces[1]));
+  }
+  return refusals;
 }
 
 }  // namespace
@@ -25718,14 +25817,16 @@ SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outc
   if (Mpi::Root(comm))
   {
     std::string refusals;
+    std::set<std::pair<std::string, std::string>> named;  // MINOR-2: each pair once
     for (const auto &model : outcome.census_models)
     {
       const auto refusal = ResponseModelRefusal(model, iodata.units, matching_radius);
-      if (!refusal.empty())
+      const std::string name =
+          model.name.empty() ? fmt::format("model-{}", model.idx) : model.name;
+      if (!refusal.empty() && named.emplace(name, refusal).second)
       {
-        refusals += fmt::format(
-            "{}response model \"{}\": {}", refusals.empty() ? "" : "; ",
-            model.name.empty() ? fmt::format("model-{}", model.idx) : model.name, refusal);
+        refusals += fmt::format("{}response model \"{}\": {}", refusals.empty() ? "" : "; ",
+                                name, refusal);
       }
     }
     if (!refusals.empty())
@@ -35001,48 +35102,32 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
   {
     double m = 0.0;
     const auto status = ResolutionPatchStatusOf(i, &m);
-    const int bin = status == ResolutionStatus::RESOLVED         ? 0
-                    : status == ResolutionStatus::MARGINAL       ? 1
-                    : status == ResolutionStatus::UNDER_RESOLVED ? 2
-                    : status == ResolutionStatus::NO_BARS        ? 3
-                                                                 : 4;
     const double length =
         patches[i].mortar_longitudinal_strip[1] - patches[i].mortar_longitudinal_strip[0];
     const int plane_slot =
         i < resolution_plane_slots.size() ? resolution_plane_slots[i] : 0;
     const double knots =
         i < resolution_readings.size() ? resolution_readings[i].knots : 0.0;
-    // ONE verdict (decision 2403 (3)): the census weighted by length, patches with a
-    // reading (the energy census's condition) into the histograms.
-    const bool reading = status != ResolutionStatus::NOT_EVALUATED;
-    const int m_bin = reading ? ResolutionHistogramBin(m) : 0;
+    // ONE verdict (decision 2403 (3)): the census weighted by length, EVERY patch of the
+    // list the energy census reads (its two per-patch loops), with the same h/R and bin,
+    // into every Type (the flag's guarantee, ResolutionPreflightRow).
     for (int t = 0; t < type_count; t++)
     {
       for (const int slot : {0, plane_slot > 0 ? plane_slot : -1})
       {
-        if (slot < 0)
+        if (slot >= 0)
         {
-          continue;
-        }
-        double *values = sums.data() + (t * slots + slot) * kResolutionPreflightStride;
-        if (length > 0.0)
-        {
-          values[bin] += length;
-          values[10] += 1.0;
-          values[12] += knots;
-          values[kResolutionPreflightEdgeHistogram + m_bin] += reading ? length : 0.0;
-        }
-        else
-        {
-          values[5 + bin] += 1.0;
-          values[11] += 1.0;
-          values[kResolutionPreflightSpatialHistogram + m_bin] += reading ? knots : 0.0;
+          AddResolutionPreflightPatch(sums.data() +
+                                          (t * slots + slot) * kResolutionPreflightStride,
+                                      status, m, length, knots);
         }
       }
     }
   }
   Mpi::GlobalSum(static_cast<int>(sums.size()), sums.data(), fespace.GetComm());
   resolution_run_record.preflight.clear();
+  const double bar = resolution_verdict_bars.CensusBar(resolution_order);
+  const double under_resolved_m = resolution_verdict_bars.under_resolved_factor * bar;
   for (int t = 0; t < type_count; t++)
   {
     for (int slot = 0; slot < slots; slot++)
@@ -35050,7 +35135,7 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
       resolution_run_record.preflight.push_back(ComputeResolutionPreflightRow(
           sums.data() + (t * slots + slot) * kResolutionPreflightStride,
           resolution_types[t], slot == 0, slot == 0 ? 0.0 : resolution_planes[slot - 1],
-          resolution_bars_hold, resolution_length_scale));
+          resolution_bars_hold, resolution_length_scale, under_resolved_m));
       // The table's word of this census at a first iteration (no convergence evaluated:
       // never SETTLED, so never RESOLVED; a Type's census, not a box's).
       auto &row = resolution_run_record.preflight.back();
@@ -35059,11 +35144,9 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
                                      resolution_verdict_bars, resolution_problem);
     }
   }
-  const double bar = resolution_verdict_bars.CensusBar(resolution_order);
   Mpi::Print(fespace.GetComm(), "\n{}",
              ResolutionPreflightLine(resolution_run_record.preflight, resolution_enabled,
-                                     resolution_order, bar,
-                                     resolution_verdict_bars.under_resolved_factor * bar));
+                                     resolution_order, bar, under_resolved_m));
 }
 
 ResolutionAccumulator SurfaceResponseOperator::NewResolutionAccumulator() const

@@ -48,7 +48,8 @@ inline constexpr double kParticipationSpatialShareFlagAt = 0.05;
 inline constexpr double kParticipationClusterShareFlagAbove = 0.10;
 inline constexpr const char *kParticipationSpatialShareFlag =
     "S >= 5% on corner and cluster models";
-inline constexpr const char *kParticipationClusterShareFlag = "over 10% on cluster models";
+inline constexpr const char *kParticipationClusterShareFlag =
+    "S over 10% on cluster models";
 
 // The verdict data (lane meshrule VERDICT-INPUT.md and its check; DATA, not code: the
 // built-in values are the repository file palace/models/surfaceparticipationverdict.json,
@@ -221,8 +222,15 @@ struct SurfaceParticipationRow
 // region row NOT-EVALUATED: a box has no census of its own before a solve), whose
 // coverage, regime, confidence and convergence read kParticipationNotComputed, whose flags
 // read kParticipationPreflightFlags and whose reason is kParticipationPreflightReason.
+// Where the Type's all-planes PREFLIGHT row has cells beyond twice the bar
+// (ResolutionPreflightRow::UnderResolvedCells, the larger set: a box's patches are among
+// them), every row of that Type, region rows too, adds the flags word
+// kParticipationPreflightUnderResolvedCellsFlag; without it the table cannot read
+// UNDER-RESOLVED on that mesh after the solve.
 inline constexpr const char *kParticipationNotComputed = "NOT-COMPUTED";
 inline constexpr const char *kParticipationPreflightFlags = "PREFLIGHT-ONLY";
+inline constexpr const char *kParticipationPreflightUnderResolvedCellsFlag =
+    "cells beyond twice the bar: may read UNDER-RESOLVED after the solve";
 inline constexpr const char *kParticipationPreflightReason =
     "PREFLIGHT-ONLY: no solve; values not computed; resolution = the table's rule on the "
     "census weighted by length (no field before a solve); no convergence evaluated: "

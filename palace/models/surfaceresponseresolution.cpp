@@ -283,18 +283,23 @@ void ResolutionAccumulator::Reset(int types_, int slots_)
 namespace
 {
 
+// The status bins' order R, M, U, NO-BARS, NE (the census sums' and the PREFLIGHT's).
+int ResolutionStatusBin(ResolutionStatus status)
+{
+  return status == ResolutionStatus::RESOLVED         ? 0
+         : status == ResolutionStatus::MARGINAL       ? 1
+         : status == ResolutionStatus::UNDER_RESOLVED ? 2
+         : status == ResolutionStatus::NO_BARS        ? 3
+                                                      : 4;
+}
+
 // One patch's sums in one slot: the status bins in the order R, M, U, NO-BARS, NE; the
 // histogram after them; then the patch count and the not-evaluated count, the energy on
 // spatial-basis models and on spatial-cluster models.
 void AddResolutionPatch(double *values, ResolutionStatus status, double m, double energy,
                         bool spatial, bool cluster)
 {
-  const int bin = status == ResolutionStatus::RESOLVED         ? 0
-                  : status == ResolutionStatus::MARGINAL       ? 1
-                  : status == ResolutionStatus::UNDER_RESOLVED ? 2
-                  : status == ResolutionStatus::NO_BARS        ? 3
-                                                               : 4;
-  values[bin] += energy;
+  values[ResolutionStatusBin(status)] += energy;
   if (status != ResolutionStatus::NOT_EVALUATED && energy > 0.0)
   {
     values[ResolutionAccumulator::kStatusBins + ResolutionHistogramBin(m)] += energy;
@@ -444,10 +449,32 @@ void WriteResolutionRows(std::ostream &output, const std::string &keys,
   }
 }
 
+void AddResolutionPreflightPatch(double *slot, ResolutionStatus status, double m,
+                                 double length, double knots)
+{
+  // A patch with a reading (the energy census's condition) enters the histograms.
+  const bool reading = status != ResolutionStatus::NOT_EVALUATED;
+  const int m_bin = reading ? ResolutionHistogramBin(m) : 0;
+  if (length > 0.0)
+  {
+    slot[ResolutionStatusBin(status)] += length;
+    slot[10] += 1.0;
+    slot[12] += knots;
+    slot[kResolutionPreflightEdgeHistogram + m_bin] += reading ? length : 0.0;
+  }
+  else
+  {
+    slot[5 + ResolutionStatusBin(status)] += 1.0;
+    slot[11] += 1.0;
+    slot[kResolutionPreflightSpatialHistogram + m_bin] += reading ? knots : 0.0;
+  }
+}
+
 ResolutionPreflightRow ComputeResolutionPreflightRow(const double *slot,
                                                      const std::string &type,
                                                      bool all_planes, double plane,
-                                                     bool bars_hold, double length_scale)
+                                                     bool bars_hold, double length_scale,
+                                                     double under_resolved_m)
 {
   ResolutionPreflightRow row;
   row.type = type;
@@ -484,6 +511,23 @@ ResolutionPreflightRow ComputeResolutionPreflightRow(const double *slot,
                    length_per_knot * slot[kResolutionPreflightSpatialHistogram + k];
   }
   row.length_quantiles = ResolutionHistogramQuantiles(histogram.data());
+  // THE FLAG: the coarsest bin with weight, and the weight above the table's UNDER-RESOLVED
+  // limit (by bin centre, as the table's m90 compares). Every patch with a reading has a
+  // positive weight here (its cell length, or its knots times a positive length per knot).
+  double total = 0.0, beyond = 0.0;
+  for (int k = 0; k < kResolutionHistogramBins; k++)
+  {
+    if (histogram[k] > 0.0)
+    {
+      total += histogram[k];
+      row.largest_m = ResolutionHistogramCentre(k);
+      beyond += ResolutionHistogramCentre(k) > under_resolved_m ? histogram[k] : 0.0;
+    }
+  }
+  if (total > 0.0 && std::isfinite(under_resolved_m))
+  {
+    row.under_resolved_share = beyond / total;
+  }
   return row;
 }
 
@@ -504,19 +548,28 @@ std::string ResolutionPreflightLine(const std::vector<ResolutionPreflightRow> &r
       "{:d}: {}):",
       order,
       std::isfinite(bar)
-          ? fmt::format("B = {:g} R, UNDER-RESOLVED above {:g} R", bar, under_resolved_bar)
+          ? fmt::format("B = {:g} R, UNDER-RESOLVED above {:g} R; a row with cells beyond "
+                        "twice the bar says so, and a row without them has no cell "
+                        "beyond twice the bar, so the table cannot read UNDER-RESOLVED "
+                        "after the solve on this mesh",
+                        bar, under_resolved_bar)
           : std::string("no bar at this order (NO-BARS)"));
   for (const auto &row : rows)
   {
     line += fmt::format(
-        " {} {}: {} (length m90 {}; edge {:d} patches, {:.3e} m; spatial {:d} patches);",
+        " {} {}: {} (length m90 {}; edge {:d} patches, {:.3e} m; spatial {:d} patches{});",
         row.type,
         row.all_planes ? std::string("all planes") : fmt::format("z {:.1f} um", row.plane),
         row.resolution,
         std::isnan(row.length_quantiles[2])
             ? std::string("n/a")
             : fmt::format("{:.3g} R", row.length_quantiles[2]),
-        row.edge_patches, row.edge_length, row.spatial_patches);
+        row.edge_patches, row.edge_length, row.spatial_patches,
+        row.UnderResolvedCells()
+            ? fmt::format("; cells beyond twice the bar: {:.3g} % of the length, largest "
+                          "h/R {:.3g}: may read UNDER-RESOLVED after the solve",
+                          100.0 * row.under_resolved_share, row.largest_m)
+            : std::string());
   }
   return line + "\n";
 }
@@ -628,6 +681,8 @@ nlohmann::json ResolutionRunMetadata(const ResolutionRunRecord &record, int leve
          {"SpatialPatches", row.spatial_patches},
          {"SpatialShares", shares(row.spatial_shares)},
          {"LengthM90", JsonNumber(row.length_quantiles[2])},
+         {"UnderResolvedLengthShare", JsonNumber(row.under_resolved_share)},
+         {"LargestM", JsonNumber(row.largest_m)},
          {"Status", row.resolution}});
   }
   metadata["Preflight"] = std::move(preflight);

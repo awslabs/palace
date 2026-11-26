@@ -202,6 +202,13 @@ public:
   [[nodiscard]] std::string format_table() const;
 };
 
+// STEP 4c (lane v1verdict1 fix round, MAJOR-1): the message of the first cell that
+// Table(table_str) refuses (text_columns false: every library reader's table), checked by
+// the constructor's own rules without stopping; empty when it reads every cell. A build
+// without MFEM exceptions (the containers) cannot catch the constructor's abort, so a
+// reader that must not stop validates first.
+std::string TableCellsError(std::string_view table_str);
+
 // Wrapper for storing Table to csv file.
 
 class TableWithCSVFile

@@ -29,11 +29,20 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     share-rule words of the census bars are retired from the PREFLIGHT (`EdgeStatus` and
     `SpatialStatus` are removed; the shares stay as numbers); `LengthM90` (``h/R``) is
     added; a `"PreflightOnly"` row reads the bare word (no `PREFLIGHT ` label). The words
-    of a solved level and the energy-weighted census are unchanged.
+    of a solved level and the energy-weighted census are unchanged. The word can read
+    better than the table's later word (a short, coarse, energy-carrying stretch such as a
+    junction lead); hence a FLAG: where a cell of a row's census is coarser than twice
+    the bar, the PREFLIGHT line gives the share of the length beyond it and the largest
+    ``h/R``, `palace.json` `Preflight[]` records `UnderResolvedLengthShare` and `LargestM`
+    on every row, and the `"PreflightOnly"` rows of that `Type` add the flags word
+    `cells beyond twice the bar: may read UNDER-RESOLVED after the solve`. Without the
+    flag no cell is beyond twice the bar, so the table's energy-weighted ``m_{90}`` cannot
+    exceed it on that mesh whatever the field: a pre-solve `MARGINAL` without the flag
+    cannot become `UNDER-RESOLVED` after the solve.
   - `surface-participation.csv` gains one column, `S corner+cluster share (fraction)`: the
     share of a row's within-R corrected energy served by corner and spatial-cluster models
     (whose trace map onto 16-knot rings is an open item); `flags` adds
-    `S >= 5% on corner and cluster models` at 5 % or more and `over 10% on cluster models`
+    `S >= 5% on corner and cluster models` at 5 % or more and `S over 10% on cluster models`
     above 10 % on cluster models. No value changes.
   - Purely inductive `Impedance` sheets are served by the perfect-conductor library models
     by default: `"ImpedanceMetalRule"` of `Solver.SurfaceResponseCorrection` defaults to
@@ -115,14 +124,22 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     (`"UnmatchedPolicy": "Error"` with missing requirements, a library its reader refuses, a
     response model whose fabricated domain matrix its matrix step refuses, a library file
     its model loop refuses: a basis-point, domain-matrix or surface-matrix file that cannot
-    be read or does not fit its basis points, or interface mappings without surface
+    be read, holds a cell the table parser refuses (text, a binary file, a cell beyond the
+    header's columns), does not fit its basis points, or lacks a mapped coupon's response
+    (a header-only surface file), blend sources without the same coupon interfaces, or
+    interface mappings without surface
     matrices, an explicit `"GeometryFailurePolicy": "FailClosed"` with a fallback) no
     census is built,
-    one line says why (for library files every refused model with the solve form's
-    message; also kept as `SurfaceResponse.ResolutionCensusNotEvaluated` of
+    one line says why (for library files every refused model once, with every refused
+    file's message, the first being the solve form's; also kept as
+    `SurfaceResponse.ResolutionCensusNotEvaluated` of
     `palace.json`), and the exit status is the one the preflight had before. The model
     files are read by non-aborting forms of their readers, which the solve form's readers
-    call and stop with the same message. Corrected solve runs are unchanged. The census
+    call and stop with the same message; a library CSV file's cells are validated before
+    parsing by the table parser's own rules (`TableCellsError`), since a build without
+    MFEM exceptions (the containers) cannot catch the parser's stop, and the solve form
+    then stops with the parser's message naming the file. Corrected solve runs are
+    unchanged. The census
     reuses the manifest pass's identification: on a designers' chip (one node of 192
     cores) it was printed about 114 minutes after the start (measured
     before the matrix-step prediction, which adds one eigendecomposition per model on the

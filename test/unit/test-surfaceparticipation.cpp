@@ -883,7 +883,7 @@ TEST_CASE("Surface participation join, history, words and flags across levels",
   s_row.spatial_share = 0.2;
   s_row.cluster_share = 0.1001;
   CHECK(ParticipationFlags(s_row) ==
-        "S >= 5% on corner and cluster models; over 10% on cluster models");
+        "S >= 5% on corner and cluster models; S over 10% on cluster models");
   CHECK(s_row.p_corrected == third[0].p_corrected);
   SetParticipationNotTarget(s_row);
   CHECK(std::isnan(s_row.spatial_share));
@@ -1195,6 +1195,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOn
   std::vector<ResolutionPreflightRow> preflight(3);
   preflight[0].type = "SA";
   preflight[0].resolution = "UNDER-RESOLVED";
+  preflight[0].under_resolved_share = 0.05;  // SA: cells beyond twice the bar
   preflight[1].type = "SA";
   preflight[1].all_planes = false;  // a plane's word is not the Type's
   preflight[1].resolution = "MARGINAL";
@@ -1224,7 +1225,13 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOn
     {
       CHECK(*word == kParticipationNotComputed);
     }
-    CHECK(row.flags == kParticipationPreflightFlags);
+    // The flag of cells beyond twice the bar on every SA row, its box's too (the larger
+    // set: the Type's all-planes census).
+    CHECK(row.flags == (row.type == "SA"
+                            ? std::string(kParticipationPreflightFlags) + "; " +
+                                  kParticipationPreflightUnderResolvedCellsFlag
+                            : std::string(kParticipationPreflightFlags)));
+    CHECK(row.flags.find(',') == std::string::npos);
     CHECK(row.reason == kParticipationPreflightReason);
     CHECK(row.reason.find(',') == std::string::npos);  // a text cell holds no comma
   }
@@ -1238,6 +1245,16 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOn
   CHECK(text.find("PREFLIGHT ") == std::string::npos);
   CHECK(text.find("S corner+cluster share (fraction)") != std::string::npos);
   CHECK(text.find("12345") != std::string::npos);
+  {
+    // The SA total, its interface row and its box's row.
+    int flagged = 0;
+    const std::string flag = kParticipationPreflightUnderResolvedCellsFlag;
+    for (auto at = text.find(flag); at != std::string::npos; at = text.find(flag, at + 1))
+    {
+      flagged++;
+    }
+    CHECK(flagged == 3);
+  }
   CHECK(text.find("MOVING") == std::string::npos);
   CHECK(text.find("FIRST-ITERATION") == std::string::npos);
   std::size_t not_computed = 0;

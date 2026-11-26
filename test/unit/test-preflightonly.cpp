@@ -12,6 +12,7 @@
 #include <iomanip>
 #include <iterator>
 #include <limits>
+#include <map>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -31,6 +32,7 @@
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
+#include "utils/tablecsv.hpp"
 #include "utils/timer.hpp"
 
 using namespace palace;
@@ -358,6 +360,32 @@ TEST_CASE_METHOD(
     CHECK(row[Index("flags")] == kParticipationPreflightFlags);
     CHECK(row[Index("reason")] == kParticipationPreflightReason);
   }
+  // THE FLAG's guarantee on a real mesh (lane v1verdict1 fix round, BLOCKER-1): a Type's
+  // all-planes PREFLIGHT row reads every cell its table census weighs, by the same h/R:
+  // every solved row's h/R m90 is at most the row's LargestM. Order 1: no bar, no share.
+  std::map<std::string, double> largest;
+  for (const auto &row : census.at("Preflight"))
+  {
+    CHECK(row.at("UnderResolvedLengthShare").is_null());
+    if (row.at("Plane").is_null())
+    {
+      REQUIRE(row.at("LargestM").is_number());
+      largest[row.at("Type").get<std::string>()] = row.at("LargestM").get<double>();
+    }
+  }
+  int m90_read = 0;
+  for (std::size_t r = 1; r < solved_rows.size(); r++)
+  {
+    const double m90 = std::stod(solved_rows[r][Index("h/R m90")]);
+    if (std::isfinite(m90))
+    {
+      INFO("solved row " << r);
+      REQUIRE(largest.count(solved_rows[r][Index("Type")]) == 1);
+      CHECK(m90 <= largest.at(solved_rows[r][Index("Type")]) * (1.0 + 1.0e-5));  // print
+      m90_read++;
+    }
+  }
+  CHECK(m90_read > 0);
   CHECK(Block(preflight, "ParticipationTable").at("PreflightOnly") == true);
   CHECK_FALSE(Block(solve, "ParticipationTable").contains("PreflightOnly"));
 #endif
@@ -544,6 +572,18 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const fs::path no_column_library = temp.temp_dir / (stem + "-no-column.json");
   const fs::path no_entry_matrix = temp.temp_dir / (stem + "-no-entry-fabricated.csv");
   const fs::path no_entry_library = temp.temp_dir / (stem + "-no-entry.json");
+  // The fix round (MAJOR-1, MINOR-3, MINOR-4): a non-numeric domain cell, a binary domain
+  // file, a header-only surface file, an absent thin surface file, two refused files of one
+  // model.
+  const fs::path text_cell_matrix = temp.temp_dir / (stem + "-text-cell-fabricated.csv");
+  const fs::path text_cell_library = temp.temp_dir / (stem + "-text-cell.json");
+  const fs::path binary_matrix = temp.temp_dir / (stem + "-binary-fabricated.csv");
+  const fs::path binary_library = temp.temp_dir / (stem + "-binary.json");
+  const fs::path header_surface = temp.temp_dir / (stem + "-header-only-surface.csv");
+  const fs::path header_library = temp.temp_dir / (stem + "-header-only.json");
+  const fs::path absent_thin_surface = temp.temp_dir / (stem + "-absent-thin-surface.csv");
+  const fs::path thin_absent = temp.temp_dir / (stem + "-thin-surface-absent.json");
+  const fs::path two_files = temp.temp_dir / (stem + "-two-files.json");
   if (Mpi::Root(comm))
   {
     mfem::Mesh serial = MakeSerialIslandMesh();
@@ -652,6 +692,25 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
           no_entry_output << row << q << "\n";
         }
       }
+      // The fix round: the first Q cell not a number; 4 kB of bytes 0-255 (not text).
+      std::ofstream text_cell_output(text_cell_matrix), binary_output(binary_matrix);
+      text_cell_output << header << "\n" << std::setprecision(17);
+      for (const auto &[i, j, q] : entries)
+      {
+        text_cell_output << i + 1 << "," << j + 1 << ",";
+        if (&q == &std::get<2>(entries.front()))
+        {
+          text_cell_output << "abc\n";
+        }
+        else
+        {
+          text_cell_output << q << "\n";
+        }
+      }
+      for (int k = 0; k < 4096; k++)
+      {
+        binary_output.put(static_cast<char>(k % 256));
+      }
     }
     json negative = sa, unreadable = sa;
     negative["Models"][0]["FabricatedMatrix"] = negative_matrix.string();
@@ -685,6 +744,33 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     std::ofstream(surface_absent) << surface.dump(2) << "\n";
     std::ofstream(points_absent) << points.dump(2) << "\n";
     std::ofstream(no_surface) << mappings.dump(2) << "\n";
+    // The fix round: the edge model's fabricated domain matrix with a text cell or binary;
+    // the edge model's fabricated surface matrix its header line only (it reads: no coupon
+    // response); every model's thin surface matrix absent; the edge model's fabricated
+    // domain matrix AND its thin surface matrix absent (one model, two refused files).
+    json text_cell = sa, binary = sa, header_only = sa, thin = sa, two = sa;
+    text_cell["Models"][0]["FabricatedMatrix"] = text_cell_matrix.string();
+    binary["Models"][0]["FabricatedMatrix"] = binary_matrix.string();
+    {
+      std::ifstream input(sa["Models"][0]["FabricatedSurfaceMatrix"].get<std::string>());
+      std::string header;
+      std::getline(input, header);
+      std::ofstream(header_surface) << header << "\n";
+    }
+    header_only["Models"][0]["FabricatedSurfaceMatrix"] = header_surface.string();
+    for (auto &model : thin["Models"])
+    {
+      model["ThinSurfaceMatrix"] = absent_thin_surface.string();
+    }
+    two["Models"][0]["FabricatedMatrix"] = absent_matrix.string();
+    two["Models"][0]["ThinSurfaceMatrix"] = absent_thin_surface.string();
+    for (const auto &[library, data] :
+         {std::pair{text_cell_library, &text_cell}, std::pair{binary_library, &binary},
+          std::pair{header_library, &header_only}, std::pair{thin_absent, &thin},
+          std::pair{two_files, &two}})
+    {
+      std::ofstream(library) << data->dump(2) << "\n";
+    }
   }
   Mpi::Barrier(comm);
   json config = electrostatic ? ConvexIslandConfig(test::CrackPolicy::Default)
@@ -908,15 +994,75 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                      "Response matrix file \"" + no_entry_matrix.string() +
                          "\" is missing an upper-triangular entry!",
                      1);
+  // (l)-(p) The fix round. (l) / (m) A cell the Table parser refuses (a text cell, a binary
+  // file): validated before parsing by the parser's own rules (a build without MFEM
+  // exceptions cannot catch the parser's abort), the parser's message, printable.
+  auto CellsMessage = [](const fs::path &path)
+  {
+    return "Response matrix file \"" + path.string() +
+           "\": Could not parse CSV table from string! " +
+           TableCellsError(ReadBytes(path)) + "!";
+  };
+  CHECK(TableCellsError(ReadBytes(text_cell_matrix)) ==
+        "Could not parse CSV entry \"abc\" as double");
+  const std::string binary_cells = TableCellsError(ReadBytes(binary_matrix));
+  CHECK(binary_cells.rfind("Could not parse CSV entry \"\\x0d\\x0e", 0) == 0);
+  CHECK(std::all_of(binary_cells.begin(), binary_cells.end(),
+                    [](char c) { return c >= 0x20 && c < 0x7f; }));
+  LibraryFileRefused(text_cell_library, CellsMessage(text_cell_matrix), 1);
+  LibraryFileRefused(binary_library, CellsMessage(binary_matrix), 1);
+  // (n) The edge model's fabricated surface matrix its header only: it reads, and the
+  // coupon check after the surface matrices are read refuses it (a spatial model's reader
+  // refuses such a file itself: no within-R rows).
+  LibraryFileRefused(header_library,
+                     "Response-correction interface mapping refers to a missing coupon "
+                     "surface response!",
+                     1);
+  // (o) Every model's THIN surface matrix absent (MINOR-3: the prediction reads it too).
+  LibraryFileRefused(
+      thin_absent,
+      "Unable to read response matrix file \"" + absent_thin_surface.string() + "\"!", 2);
+  // (p) MINOR-4: one model, two refused files: both named, in the loop's order; the solve
+  // form stops with the first.
+  const std::string first = "Unable to read response matrix file \"" +
+                            absent_matrix.string() + "\"!",
+                    second = "Unable to read response matrix file \"" +
+                             absent_thin_surface.string() + "\"!";
+  LibraryFileRefused(two_files, first + " " + second, 1, false);
+  SolveFormStops(two_files, first);
+  // (q) MINOR-2: a model listed twice among the census models (as a Maxwell run lists a
+  // runtime model's copies) is named once with its message.
+  {
+    json run = config;
+    run[correction_key]["Library"] = no_file.string();
+    IoData iodata(run, false);
+    config::ElectrostaticSolverData::ResponseCorrectionModelData model;
+    model.name = "listed-twice";
+    model.basis_points = absent_points.string();
+    SurfaceResponsePreflightOutcome outcome;
+    outcome.census_models = {model, model};
+    const std::string line = SurfaceResponsePreflightModelRefusal(outcome, iodata, comm);
+    const std::string named = "response model \"listed-twice\": Unable to open ";
+    CHECK(line.find(named) != std::string::npos);
+    CHECK(line.find(named) == line.rfind(named));
+  }
   if (!electrostatic)
   {
     // (g) A basis-point file that cannot be opened: the prediction on the root at any rank
-    // count; the solve form serially only (in parallel one rank's reader can stop while
-    // the others wait in a collective, which a test program cannot observe and go on).
+    // count (the matrices' size is then unknown: not checked); the solve form serially only
+    // (in parallel one rank's reader can stop while the others wait in a collective, which
+    // a test program cannot observe and go on).
+    const std::string points_message =
+        "Unable to open response-correction basis point file \"" + absent_points.string() +
+        "\"!";
     LibraryFileRefused(points_absent,
-                       "Unable to open response-correction basis point file \"" +
-                           absent_points.string() + "\"!",
-                       2, Mpi::Size(comm) == 1);
+                       points_message +
+                           " (its matrices are not checked without its basis points)",
+                       2, false);
+    if (Mpi::Size(comm) == 1)
+    {
+      SolveFormStops(points_absent, points_message);
+    }
     // (h) Interface mappings without surface matrices (ComputeSurfaceResponseMatrices).
     LibraryFileRefused(no_surface,
                        "Response-correction interface mappings require surface "
@@ -1083,6 +1229,176 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   {
     INFO("SurfaceResponse.Resolution." << member);
     CHECK(Block(shared).at(member) == Block(solve).at(member));
+  }
+#endif
+}
+
+// The fix round of lane v1verdict1 (MINOR-3 and BLOCKER-1 on a real mesh): a
+// Resolution.BarsFile whose Verdict moves the Order-2 bar moves the PREFLIGHT word and the
+// table's first-iteration word together (both from the one verdict data), and the flag of
+// cells beyond twice the bar follows LargestM against the limit; where it is not raised,
+// no table row reads UNDER-RESOLVED after the solve.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "PreflightOnly's word and flag follow a BarsFile's Verdict; without the flag "
+    "the table reads no UNDER-RESOLVED",
+    "[surfaceresponseoperator][preflightonly][surfaceparticipation][3d][Serial]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "preflight-bars.mesh";
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+  }
+  json config = ConvexIslandConfig(test::CrackPolicy::Default);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Solver"]["Order"] = 2;
+  auto &request = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  request["CorrectionMode"] = "PostprocessOnly";
+  request["PatchEnergy"] = true;
+  struct Words
+  {
+    json preflight;          // the SA all-planes Preflight entry (PreflightOnly)
+    std::string flags;       // its PreflightOnly SA row's flags
+    std::string table;       // the solved SA Type row's resolution
+    double table_m90 = 0.0;  // and its h/R m90
+    double radius = 0.0;     // the run's R (m)
+  };
+  auto Run = [&](const std::string &label, const fs::path &bars)
+  {
+    Words words;
+    for (const bool preflight : {true, false})
+    {
+      json run = config;
+      const fs::path output = temp.temp_dir / ("preflight-bars-" + label +
+                                               (preflight ? "-preflight" : "-solve"));
+      run["Problem"]["Output"] = output.string();
+      run["Solver"]["Electrostatic"]["ResponseCorrection"]["PreflightOnly"] = preflight;
+      if (!bars.empty())
+      {
+        run["Solver"]["Electrostatic"]["ResponseCorrection"]["Resolution"] = {
+            {"BarsFile", bars.string()}};
+      }
+      IoData iodata(run, false);
+      MakeOutputFolder(iodata, comm);
+      BlockTimer::Reset();
+      if (preflight)
+      {
+        REQUIRE(RunSurfaceResponsePreflight(iodata, comm, utils::ConfigureOmp()) == 0);
+      }
+      else
+      {
+        palace::Run(iodata, comm, utils::ConfigureOmp());
+      }
+      Mpi::Barrier(comm);
+      if (!Mpi::Root(comm))
+      {
+        continue;
+      }
+      const auto rows = CsvCells(output / kSurfaceParticipationFile);
+      REQUIRE(rows.size() > 1);
+      auto Index = [&](const std::string &name)
+      {
+        for (std::size_t i = 0; i < rows[0].size(); i++)
+        {
+          if (rows[0][i] == name || rows[0][i].rfind(name + " (", 0) == 0)
+          {
+            return i;
+          }
+        }
+        FAIL("no column " << name);
+        return std::size_t(0);
+      };
+      for (std::size_t r = 1; r < rows.size(); r++)
+      {
+        if (rows[r][Index("Type")] == "SA" && rows[r][Index("scope")] == "Type")
+        {
+          (preflight ? words.flags : words.table) =
+              rows[r][Index(preflight ? "flags" : "resolution")];
+          words.table_m90 =
+              preflight ? words.table_m90 : std::stod(rows[r][Index("h/R m90")]);
+        }
+      }
+      const json census = json::parse(ReadBytes(output / "palace.json"))
+                              .at("SurfaceResponse")
+                              .at("Resolution");
+      words.radius = census.at("Radius").get<double>();
+      for (const auto &row : census.at("Preflight"))
+      {
+        if (preflight && row.at("Type") == "SA" && row.at("Plane").is_null())
+        {
+          words.preflight = row;
+        }
+      }
+    }
+    return words;
+  };
+  const Words built_in = Run("built-in", {});
+  REQUIRE(built_in.preflight.at("LengthM90").is_number());
+  const double length_m90 = built_in.preflight.at("LengthM90").get<double>();
+  const double largest = built_in.preflight.at("LargestM").get<double>();
+  REQUIRE(largest >= length_m90);
+  // A bars file: the run's radius, census bars (their shares only), the built-in verdict
+  // with the Order-2 bar B.
+  auto Bars = [&](const std::string &label, double bar)
+  {
+    const fs::path path = temp.temp_dir / ("preflight-bars-" + label + ".json");
+    json census_bars = json::object();
+    for (const char *order : {"1", "2", "3", "4"})
+    {
+      census_bars[order] = {{"b5", nullptr}, {"b10", 1.0}};
+    }
+    // The built-in verdict's values (palace/models/surfaceparticipationverdict.json) with
+    // the Order-2 bar B.
+    const json verdict = {
+        {"MinUnknownsRatio", 1.2},
+        {"MaxCensusRatio", 0.95},
+        {"MaxChangePerDoublingPercent", 1.0},
+        {"CensusBarOverR", {{"1", nullptr}, {"2", bar}, {"3", 2.0}, {"4", 4.0}}},
+        {"UnderResolvedFactor", 2.0},
+        {"TestedProblems", {"Electrostatic"}},
+        {"TestedScopes", {"Type"}},
+        {"Interim", false},
+        {"Provenance", "test-preflightonly: a moved Order-2 bar"}};
+    std::ofstream(path) << json{{"RadiusMicrons", built_in.radius * 1.0e6},
+                                {"Bars", census_bars},
+                                {"Verdict", verdict}}
+                               .dump(2)
+                        << "\n";
+    return path;
+  };
+  const std::string flag = kParticipationPreflightUnderResolvedCellsFlag;
+  // (1) A bar so low that twice it lies below an eighth of the length m90: the PREFLIGHT
+  // word and the table's first-iteration word read UNDER-RESOLVED together, flagged.
+  const Words low = Run("low", Bars("low", length_m90 / 16.0));
+  CHECK(low.preflight.at("Status") == "UNDER-RESOLVED");
+  CHECK(low.table == "UNDER-RESOLVED");
+  CHECK(low.preflight.at("UnderResolvedLengthShare").get<double>() > 0.0);
+  CHECK(low.flags.find(flag) != std::string::npos);
+  // (2) A bar at LargestM (twice it above every cell): both MARGINAL, NO flag (share 0),
+  // and the table reads no UNDER-RESOLVED (its m90 within twice the bar).
+  const Words high = Run("high", Bars("high", largest));
+  CHECK(high.preflight.at("Status") == "MARGINAL");
+  CHECK(high.table == "MARGINAL");
+  CHECK(high.preflight.at("UnderResolvedLengthShare").get<double>() == 0.0);
+  CHECK(high.flags.find(flag) == std::string::npos);
+  CHECK(high.table_m90 <= 2.0 * largest);
+  // (3) Twice the bar just below LargestM: flagged, LargestM above the limit; the table's
+  // h/R m90 is at most LargestM (the PREFLIGHT reads every cell the table weighs).
+  const Words edge = Run("edge", Bars("edge", 0.49 * largest));
+  CHECK(edge.preflight.at("UnderResolvedLengthShare").get<double>() > 0.0);
+  CHECK(edge.preflight.at("LargestM").get<double>() > 2.0 * 0.49 * largest);
+  CHECK(edge.flags.find(flag) != std::string::npos);
+  for (const auto *words : {&built_in, &low, &high, &edge})
+  {
+    CHECK(words->table_m90 <= largest * (1.0 + 1.0e-5));  // the printed m90's rounding
+    CHECK(words->preflight.at("LargestM") == built_in.preflight.at("LargestM"));
   }
 #endif
 }
