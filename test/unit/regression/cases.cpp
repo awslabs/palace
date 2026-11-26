@@ -4675,6 +4675,180 @@ TEST_CASE_METHOD(
   }
 }
 
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "coaxial_lumped_interface_synth: interface capacitance matrices",
+                 "[Serial][Parallel][Regression]")
+{
+  // The shorted coaxial line of coaxial_lumped_pec_synth, with interface dielectric
+  // postprocessing on its conductors: an MS interface, between the conductors and the
+  // dielectric, and a generic one, which also covers the short. At every swept frequency,
+  // the synthesized circuit driven through its exported source map, Y(ω) y = G(ω) e_1, must
+  // give the participations yᴴ C_Γ y / yᴴ Re{C} y in the interfaces, from the exported
+  // interface capacitance matrices, which surface-Q.csv reports for the field of the
+  // reduced model (to 1e-13 here on 2 processes). The matrices must also be symmetric and
+  // positive semidefinite, with the node labels of rom-C-re.csv.
+  namespace fs = std::filesystem;
+  const std::string mesh =
+      std::string(PALACE_TEST_DATA_DIR) + "/regression/input/coaxial/mesh/coaxial.msh";
+  nlohmann::json config = {
+      {"Problem", {{"Type", "Driven"}, {"Verbose", 0}, {"Output", temp_dir.string()}}},
+      {"Model", {{"Mesh", mesh}, {"L0", 1.0e-3}}},
+      {"Domains",
+       {{"Materials",
+         {{{"Attributes", {1}}, {"Permeability", 1.0}, {"Permittivity", 2.08}}}}}},
+      {"Boundaries",
+       {{"PEC", {{"Attributes", {2, 4}}}},
+        {"LumpedPort",
+         {{{"Index", 1},
+           {"Attributes", {3}},
+           {"R", 50.0},
+           {"Direction", "+R"},
+           {"Excitation", 1}}}},
+        {"Postprocessing",
+         {{"Dielectric",
+           {{{"Index", 1},
+             {"Type", "MS"},
+             {"Attributes", {2}},
+             {"Thickness", 2.0e-3},
+             {"Permittivity", 10.0}},
+            {{"Index", 2},
+             {"Type", "Default"},
+             {"Attributes", {2, 4}},
+             {"Thickness", 2.0e-3},
+             {"Permittivity", 10.0}}}}}}}},
+      {"Solver",
+       {{"Order", 2},
+        {"Device", "CPU"},
+        {"Driven",
+         {{"MinFreq", 0.5},
+          {"MaxFreq", 20.0},
+          {"FreqStep", 0.5},
+          {"AdaptiveTol", 1.0e-4},
+          {"AdaptiveCircuitSynthesis", true},
+          {"SaveStep", 0}}},
+        {"Linear",
+         {{"Type", "Default"}, {"KSPType", "GMRES"}, {"Tol", 1.0e-10}, {"MaxIts", 400}}}}}};
+  MPI_Comm comm = palace::Mpi::World();
+  palace::IoData iodata(config, false);
+  palace::MakeOutputFolder(iodata, comm);
+  palace::BlockTimer::Reset();
+  palace::Run(iodata, comm, palace::utils::ConfigureOmp());
+  palace::Mpi::Barrier(comm);
+  if (!palace::Mpi::Root(comm))
+  {
+    return;
+  }
+
+  auto find = [](palace::Table &t, const std::string &header) -> int
+  {
+    for (std::size_t c = 0; c < t.n_cols(); c++)
+    {
+      if (t[c].header_text == header)
+      {
+        return static_cast<int>(c);
+      }
+    }
+    return -1;
+  };
+  // A synthesized matrix (column c header = node label, data[r] = M(r, c)), zero when its
+  // file is not written.
+  std::vector<std::string> labels;
+  auto read = [&labels](const fs::path &p, std::vector<std::string> *lab) -> Eigen::MatrixXd
+  {
+    const long n = static_cast<long>(labels.size());
+    if (!fs::is_regular_file(p))
+    {
+      return Eigen::MatrixXd::Zero(n, n);
+    }
+    palace::TableWithCSVFile w(p.string(), true);
+    palace::Table &t = w.table;
+    Eigen::MatrixXd M(t.n_rows(), t.n_cols());
+    for (std::size_t c = 0; c < t.n_cols(); c++)
+    {
+      if (lab)
+      {
+        lab->push_back(t[c].header_text);
+      }
+      for (std::size_t r = 0; r < t.n_rows(); r++)
+      {
+        M(r, c) = t[c].data[r];
+      }
+    }
+    return M;
+  };
+  const Eigen::MatrixXd C_re = read(temp_dir / "rom-C-re.csv", &labels);
+  const long n = C_re.rows();
+  REQUIRE(n > 0);
+  REQUIRE(C_re.cols() == n);
+  auto term = [&](const std::string &stem) -> Eigen::MatrixXcd
+  {
+    Eigen::MatrixXcd M(n, n);
+    M.real() = read(temp_dir / (stem + "-re.csv"), nullptr);
+    M.imag() = read(temp_dir / (stem + "-im.csv"), nullptr);
+    return M;
+  };
+  const Eigen::MatrixXcd linv = term("rom-Linv"), rinv = term("rom-Rinv"),
+                         cap = term("rom-C");
+
+  std::map<int, Eigen::MatrixXd> C_interface;
+  for (int idx : {1, 2})
+  {
+    INFO("rom-interface-" << idx << "-C.csv");
+    std::vector<std::string> lab;
+    const fs::path p = temp_dir / ("rom-interface-" + std::to_string(idx) + "-C.csv");
+    REQUIRE(fs::is_regular_file(p));
+    const Eigen::MatrixXd C_i = read(p, &lab);
+    CHECK(lab == labels);
+    REQUIRE(C_i.rows() == n);
+    REQUIRE(C_i.cols() == n);
+    CHECK((C_i - C_i.transpose()).norm() == 0.0);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> eig(C_i);
+    CHECK(eig.eigenvalues().maxCoeff() > 0.0);
+    CHECK(eig.eigenvalues().minCoeff() >= -1.0e-12 * eig.eigenvalues().maxCoeff());
+    C_interface.emplace(idx, C_i);
+  }
+
+  // The source map of port 1 and the participations of surface-Q.csv, at every frequency.
+  palace::TableWithCSVFile g_file((temp_dir / "rom-coupled-G.csv").string(), true);
+  palace::TableWithCSVFile q_file((temp_dir / "surface-Q.csv").string(), true);
+  palace::Table &G = g_file.table, &Q = q_file.table;
+  REQUIRE(Q.n_rows() == 40);
+  REQUIRE(G.n_rows() == Q.n_rows());
+  const int g_f = find(G, "f (GHz)"), q_f = find(Q, "f (GHz)");
+  REQUIRE(g_f >= 0);
+  REQUIRE(q_f >= 0);
+  std::vector<std::array<int, 2>> g_cols(n);
+  for (long i = 0; i < n; i++)
+  {
+    const std::string key = "{G[" + labels[i] + "][1]}";
+    g_cols[i] = {find(G, "Re" + key), find(G, "Im" + key)};
+  }
+  for (std::size_t r = 0; r < Q.n_rows(); r++)
+  {
+    const double f = Q[q_f].data[r];
+    REQUIRE_THAT(G[g_f].data[r], Catch::Matchers::WithinAbs(f, 1.0e-9));
+    const std::complex<double> s(0.0, 2.0 * std::numbers::pi * f * 1.0e9);
+    Eigen::VectorXcd g(n);
+    for (long i = 0; i < n; i++)
+    {
+      g(i) = {(g_cols[i][0] >= 0) ? G[g_cols[i][0]].data[r] : 0.0,
+              (g_cols[i][1] >= 0) ? G[g_cols[i][1]].data[r] : 0.0};
+    }
+    const Eigen::VectorXcd y = (linv / s + rinv + s * cap).fullPivLu().solve(g);
+    const double energy = (y.adjoint() * C_re * y)(0).real();
+    REQUIRE(energy > 0.0);
+    for (const auto &[idx, C_i] : C_interface)
+    {
+      const int q_p = find(Q, "p_surf[" + std::to_string(idx) + "]");
+      REQUIRE(q_p >= 0);
+      const double p = (y.adjoint() * C_i * y)(0).real() / energy;
+      INFO("f = " << f << " GHz, interface " << idx << ": circuit " << p
+                  << ", surface-Q.csv " << Q[q_p].data[r]);
+      CHECK_THAT(p, Catch::Matchers::WithinRel(Q[q_p].data[r], 1.0e-9));
+    }
+  }
+}
+
 TEST_CASE("rational_impedance", "[Serial][Parallel][GPU][Regression]")
 {
   palace::test::RegressionOptions opts;

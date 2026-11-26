@@ -4,6 +4,8 @@
 #include "surfacepostoperator.hpp"
 
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <complex>
 #include <optional>
 #include <set>
@@ -80,6 +82,23 @@ mfem::Array<int> SetUpBoundaryProperties(const T &data,
     Mpi::Print("\n");
   }
   return attr_list;
+}
+
+// Amplitudes of the interface energy per quadrature point and evaluated side (see
+// SurfacePostOperator::GetInterfaceAmplitudeMaps).
+int InterfaceAmplitudesPerPoint(InterfaceDielectric type, int sdim)
+{
+  switch (type)
+  {
+    case InterfaceDielectric::DEFAULT:
+      return sdim;
+    case InterfaceDielectric::SA:
+      return sdim + 1;
+    case InterfaceDielectric::MA:
+    case InterfaceDielectric::MS:
+      break;
+  }
+  return 1;
 }
 
 }  // namespace
@@ -550,6 +569,368 @@ double SurfacePostOperator::GetInterfaceElectricFieldEnergy(int idx, const GridF
   double dot = GetLocalSurfaceIntegral(*f, attr_marker);
   Mpi::GlobalSum(1, &dot, E.GetComm());
   return weight * dot;
+}
+
+InterfaceDielectricSides SurfacePostOperator::GetInterfaceBdrElementSides(
+    const InterfaceDielectricData &data, int i, mfem::FaceElementTransformations &FET,
+    mfem::IsoparametricTransformation &T1, mfem::IsoparametricTransformation &T2) const
+{
+  const auto &mesh = *nd_fespace.GetParMesh();
+  BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2);
+  const int attr = mesh.GetBdrAttribute(i);
+  const bool has_elem2 = (FET.Elem2 != nullptr);
+  return GetInterfaceDielectricSides(
+      data.type, mat_op, FET.Elem1->Attribute, has_elem2 ? FET.Elem2->Attribute : 0,
+      has_elem2 && attr <= data.sum_sides_marker.Size() && data.sum_sides_marker[attr - 1]);
+}
+
+std::vector<SurfacePostOperator::InterfaceAmplitudeMap>
+SurfacePostOperator::GetInterfaceAmplitudeMaps(const InterfaceDielectricData &data,
+                                               const std::vector<int> &bdr_elems,
+                                               int &num_amplitudes) const
+{
+  // Linear amplitudes of the interface dielectric energy: at every quadrature point, the
+  // energy density of the field E is a sum of squares of linear functions of E, so with the
+  // quadrature weight folded in, U(E, E) = Σ_q |P_q E_q|² for small projections P_q. The
+  // quadrature rule, the evaluation sides, and the integrands follow the interface energy
+  // functional (see SurfaceFunctional and InterfaceDielectricCoefficient):
+  //   DEFAULT: 1/2 t ε |E|²,   MA: 1/2 t/ε |n⋅E|²,   MS: 1/2 t/ε |n⋅(ε_S E)|²,
+  //   SA:      1/2 t ε |E_t|² + 1/2 t/ε |n⋅E|²,
+  // with E from one side of an interior boundary, or the average of both sides when both
+  // qualify, or the energies of both sides summed on boundaries separating the fields on
+  // their two sides (except SA). The MS substrate permittivity ε_S is that of the constant
+  // material tables, with the high-frequency permittivity ε∞ of a frequency-dependent
+  // substrate (as the mass matrix of the reduced model), where the interface energy at a
+  // frequency ω uses |ε(iω)|. For each attached element, the map from its dofs to the
+  // amplitudes is P_q (vshape_q)ᵀ T⁻¹ with vshape_q the physical H(curl) shape functions
+  // and T the element dof transformation.
+  auto &mesh = *nd_fespace.GetParMesh();
+  const int sdim = mesh.SpaceDimension();
+  double s0 = 0.0, s1 = 0.0;
+  const int num_amp = InterfaceAmplitudesPerPoint(data.type, sdim);
+  switch (data.type)
+  {
+    case InterfaceDielectric::DEFAULT:
+      s0 = 0.5 * data.t * data.epsilon;
+      break;
+    case InterfaceDielectric::MA:
+    case InterfaceDielectric::MS:
+      s0 = 0.5 * data.t / data.epsilon;
+      break;
+    case InterfaceDielectric::SA:
+      s0 = 0.5 * data.t * data.epsilon;
+      s1 = 0.5 * data.t / data.epsilon;
+      break;
+  }
+  MFEM_VERIFY(s0 >= 0.0 && s1 >= 0.0,
+              "Interface dielectric energy matrices require a nonnegative thickness and "
+              "permittivity!");
+
+  // At most two maps per boundary element, reserved: the moves of mfem::Array and
+  // mfem::DenseMatrix are not noexcept, so that a reallocation would copy the maps.
+  std::vector<InterfaceAmplitudeMap> maps;
+  maps.reserve(2 * bdr_elems.size());
+  num_amplitudes = 0;
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2, Tb;
+  mfem::DenseMatrix vshape, P(num_amp, sdim), PV;
+  mfem::Vector normal(sdim);
+  for (int i : bdr_elems)
+  {
+    // Evaluation sides, selected once per boundary element from the attached element
+    // attributes (GetInterfaceDielectricSides): side 0 = FET.Elem1 or FET.Elem2, and
+    // optionally side 1 = FET.Elem2.
+    const auto sides = GetInterfaceBdrElementSides(data, i, FET, T1, T2);
+    if (!sides.first)
+    {
+      continue;  // Neither side qualifies: no contribution
+    }
+    const std::array<int, 2> side_elem = {sides.first, sides.second ? sides.second : -1};
+    const bool two_sided = (sides.second > 0);
+    const bool sum_sides = sides.sum;
+    const int num_sides = two_sided ? 2 : 1;
+    const int amp_per_point = sum_sides ? 2 * num_amp : num_amp;
+    const double side_scale = (two_sided && !sum_sides) ? 0.5 : 1.0;  // Averaged sides
+
+    const auto bdr_geom = mesh.GetBdrElementGeometry(i);
+    const auto &ir =
+        mfem::IntRules.Get(bdr_geom, fem::DefaultIntegrationOrder::Get(mesh, bdr_geom));
+    const int nq = ir.GetNPoints();
+    std::array<InterfaceAmplitudeMap *, 2> side_map = {nullptr, nullptr};
+    std::array<const mfem::FiniteElement *, 2> side_fe = {nullptr, nullptr};
+    std::array<mfem::DofTransformation, 2> side_doftrans;
+    std::array<int, 2> side_attr = {0, 0};
+    for (int s = 0; s < num_sides; s++)
+    {
+      // The maps of averaged sides add to the same amplitudes, and those of summed sides
+      // to their own: the amplitudes of side 0 at all quadrature points, then those of side
+      // 1.
+      auto &map = maps.emplace_back();
+      const int elem = (side_elem[s] == 1) ? FET.Elem1No : FET.Elem2No;
+      map.ghost = (elem >= mesh.GetNE());
+      map.offset = num_amplitudes + ((sum_sides && s == 1) ? nq * num_amp : 0);
+      if (map.ghost)
+      {
+        nd_fespace.GetFaceNbrElementVDofs(elem - mesh.GetNE(), map.vdofs, side_doftrans[s]);
+        side_fe[s] = nd_fespace.GetFaceNbrFE(elem - mesh.GetNE());
+      }
+      else
+      {
+        nd_fespace.GetElementVDofs(elem, map.vdofs, side_doftrans[s]);
+        side_fe[s] = nd_fespace.GetFE(elem);
+      }
+      side_attr[s] = (side_elem[s] == 1) ? FET.Elem1->Attribute : FET.Elem2->Attribute;
+      map.A.SetSize(nq * num_amp, side_fe[s]->GetDof());
+      map.A = 0.0;
+    }
+    for (int s = 0; s < num_sides; s++)
+    {
+      side_map[s] = &maps[maps.size() - num_sides + s];
+    }
+
+    for (int q = 0; q < nq; q++)
+    {
+      const auto &ip = ir.IntPoint(q);
+      mesh.GetBdrElementTransformation(i, &Tb);
+      Tb.SetIntPoint(&ip);
+      const double w = ip.weight * Tb.Weight();
+      mfem::CalcOrtho(Tb.Jacobian(), normal);
+      normal /= normal.Norml2();
+      BdrGridFunctionCoefficient::GetBdrElementNeighborTransformations(i, mesh, FET, T1, T2,
+                                                                       &ip);
+      for (int s = 0; s < num_sides; s++)
+      {
+        // Amplitude projection P (num_amp × sdim) for this side, including the square root
+        // of the weighted integrand scale and the averaging factor. MS uses the substrate
+        // permittivity of the evaluated side when the side energies are summed, and that of
+        // side 0 for the averaged field, as the energy functional.
+        const double r0 = side_scale * std::sqrt(w * s0);
+        P = 0.0;
+        switch (data.type)
+        {
+          case InterfaceDielectric::DEFAULT:
+            for (int d = 0; d < sdim; d++)
+            {
+              P(d, d) = r0;
+            }
+            break;
+          case InterfaceDielectric::MA:
+            for (int d = 0; d < sdim; d++)
+            {
+              P(0, d) = r0 * normal(d);
+            }
+            break;
+          case InterfaceDielectric::MS:
+            {
+              const auto eps = mat_op.GetPermittivityReal(side_attr[sum_sides ? s : 0]);
+              for (int d = 0; d < sdim; d++)
+              {
+                double c = 0.0;
+                for (int k = 0; k < sdim; k++)
+                {
+                  c += normal(k) * eps(k, d);
+                }
+                P(0, d) = r0 * c;
+              }
+            }
+            break;
+          case InterfaceDielectric::SA:
+            {
+              const double r1 = side_scale * std::sqrt(w * s1);
+              for (int d = 0; d < sdim; d++)
+              {
+                for (int k = 0; k < sdim; k++)
+                {
+                  P(d, k) = r0 * ((d == k ? 1.0 : 0.0) - normal(d) * normal(k));
+                }
+                P(sdim, d) = r1 * normal(d);
+              }
+            }
+            break;
+        }
+
+        // Rows of this point in the map of this side: P vshapeᵀ.
+        auto &T = (side_elem[s] == 1) ? *FET.Elem1 : *FET.Elem2;
+        vshape.SetSize(side_fe[s]->GetDof(), sdim);
+        side_fe[s]->CalcVShape(T, vshape);
+        PV.SetSize(num_amp, side_fe[s]->GetDof());
+        mfem::MultABt(P, vshape, PV);
+        const int row0 = q * num_amp;
+        for (int j = 0; j < PV.Width(); j++)
+        {
+          for (int r = 0; r < num_amp; r++)
+          {
+            side_map[s]->A(row0 + r, j) = PV(r, j);
+          }
+        }
+      }
+    }
+
+    // Fold the element dof transformations into the maps, A ← A T⁻¹, so that they apply to
+    // the element dofs gathered from the grid function (see GridFunction::GetVectorValue).
+    for (int s = 0; s < num_sides; s++)
+    {
+      if (side_doftrans[s].IsIdentity())
+      {
+        continue;
+      }
+      auto &A = side_map[s]->A;
+      const int ndof = A.Width();
+      mfem::DenseMatrix Tinv(ndof);
+      mfem::Vector col(ndof);
+      for (int j = 0; j < ndof; j++)
+      {
+        col = 0.0;
+        col(j) = 1.0;
+        side_doftrans[s].InvTransformPrimal(col);
+        Tinv.SetCol(j, col);
+      }
+      mfem::DenseMatrix ATinv(A.Height(), ndof);
+      mfem::Mult(A, Tinv, ATinv);
+      A = ATinv;
+    }
+    num_amplitudes += nq * amp_per_point;
+  }
+  return maps;
+}
+
+std::map<int, Eigen::MatrixXd> SurfacePostOperator::GetInterfaceElectricFieldEnergyMatrices(
+    int num_fields, const std::function<mfem::ParGridFunction &(int)> &field,
+    std::size_t memory_budget) const
+{
+  // Evaluate each field into its amplitudes at the quadrature points of the interfaces (one
+  // column of A per field) and accumulate B = Aᵀ A, reduced over the processes. The
+  // amplitudes of all fields, and the maps to them from the element dofs, are stored at
+  // once, so to bound their memory the interface boundary elements are split into passes,
+  // each of which evaluates all fields again (every process runs the same number of passes,
+  // as evaluating a field is collective).
+  std::map<int, Eigen::MatrixXd> energy;
+  if (eps_surfs.empty() || num_fields <= 0)
+  {
+    return energy;
+  }
+  BlockTimer bt(Timer::POSTPRO);
+  auto &mesh = *nd_fespace.GetParMesh();
+  mesh.ExchangeFaceNbrData();
+  nd_fespace.ExchangeFaceNbrData();
+  const int sdim = mesh.SpaceDimension();
+  const int bdr_attr_max = mesh.bdr_attributes.Size() ? mesh.bdr_attributes.Max() : 0;
+
+  // Split the boundary elements of the interfaces into passes of at most memory_budget
+  // bytes, but for a single boundary element: a boundary element with r rows of amplitudes
+  // per side (its quadrature points times the amplitudes per point), and d dofs of its
+  // evaluated sides, stores r n values of A for n fields, or 2 r n when the energies of its
+  // sides are summed, r d values of its maps, and d dof indices.
+  std::vector<std::map<int, std::vector<int>>> passes(1);
+  std::size_t pass_bytes = 0;
+  mfem::FaceElementTransformations FET;
+  mfem::IsoparametricTransformation T1, T2;
+  for (const auto &[idx, data] : eps_surfs)
+  {
+    energy.emplace(idx, Eigen::MatrixXd::Zero(num_fields, num_fields));
+    const mfem::Array<int> attr_marker = mesh::AttrToMarker(bdr_attr_max, data.attr_list);
+    const int num_amp = InterfaceAmplitudesPerPoint(data.type, sdim);
+    for (int i = 0; i < mesh.GetNBE(); i++)
+    {
+      if (!attr_marker[mesh.GetBdrAttribute(i) - 1])
+      {
+        continue;
+      }
+      const auto sides = GetInterfaceBdrElementSides(data, i, FET, T1, T2);
+      if (!sides.first)
+      {
+        continue;  // Neither side qualifies: no contribution
+      }
+      std::size_t num_dofs = 0;
+      for (int side : {sides.first, sides.second})
+      {
+        if (side > 0)
+        {
+          const int elem = (side == 1) ? FET.Elem1No : FET.Elem2No;
+          num_dofs += (elem >= mesh.GetNE())
+                          ? nd_fespace.GetFaceNbrFE(elem - mesh.GetNE())->GetDof()
+                          : nd_fespace.GetFE(elem)->GetDof();
+        }
+      }
+      const auto bdr_geom = mesh.GetBdrElementGeometry(i);
+      const std::size_t rows =
+          static_cast<std::size_t>(
+              mfem::IntRules
+                  .Get(bdr_geom, fem::DefaultIntegrationOrder::Get(mesh, bdr_geom))
+                  .GetNPoints()) *
+          num_amp;
+      const std::size_t bytes =
+          sizeof(double) * rows *
+              ((sides.sum ? 2 : 1) * static_cast<std::size_t>(num_fields) + num_dofs) +
+          sizeof(int) * num_dofs;
+      if (pass_bytes > 0 && pass_bytes + bytes > memory_budget)
+      {
+        passes.emplace_back();
+        pass_bytes = 0;
+      }
+      passes.back()[idx].push_back(i);
+      pass_bytes += bytes;
+    }
+  }
+  int num_passes = static_cast<int>(passes.size());
+  Mpi::GlobalMax(1, &num_passes, nd_fespace.GetComm());
+  passes.resize(num_passes);
+
+  mfem::Vector x_e;
+  for (const auto &pass : passes)
+  {
+    struct Interface
+    {
+      std::vector<InterfaceAmplitudeMap> maps;
+      Eigen::MatrixXd A;
+    };
+    std::map<int, Interface> interfaces;
+    for (const auto &[idx, bdr_elems] : pass)
+    {
+      auto &interface = interfaces[idx];
+      int num_amplitudes = 0;
+      interface.maps =
+          GetInterfaceAmplitudeMaps(eps_surfs.at(idx), bdr_elems, num_amplitudes);
+      interface.A = Eigen::MatrixXd::Zero(num_amplitudes, num_fields);
+    }
+    for (int k = 0; k < num_fields; k++)
+    {
+      auto &E = field(k);
+      MFEM_VERIFY(E.ParFESpace() == &nd_fespace,
+                  "Interface dielectric energy matrices require fields on the H(curl) "
+                  "space of the surface postprocessing operator!");
+      E.ExchangeFaceNbrData();
+      const auto &E_nbr = E.FaceNbrData();
+      for (auto &[idx, interface] : interfaces)
+      {
+        double *a = interface.A.col(k).data();
+        for (const auto &map : interface.maps)
+        {
+          if (map.ghost)
+          {
+            E_nbr.GetSubVector(map.vdofs, x_e);
+          }
+          else
+          {
+            E.GetSubVector(map.vdofs, x_e);
+          }
+          mfem::Vector a_e(a + map.offset, map.A.Height());
+          map.A.AddMult(x_e, a_e);
+        }
+      }
+    }
+    for (auto &[idx, interface] : interfaces)
+    {
+      energy.at(idx).selfadjointView<Eigen::Lower>().rankUpdate(interface.A.transpose());
+    }
+  }
+  for (auto &[idx, B_lower] : energy)
+  {
+    Eigen::MatrixXd B = B_lower.selfadjointView<Eigen::Lower>();
+    Mpi::GlobalSum(num_fields * num_fields, B.data(), nd_fespace.GetComm());
+    B_lower = 0.5 * (B + B.transpose());
+  }
+  return energy;
 }
 
 double
