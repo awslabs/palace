@@ -312,6 +312,8 @@ void SetParticipationResolution(SurfaceParticipationRow &row, const ResolutionCe
 {
   row.m90 = cell ? cell->quantiles[2] : kNaN;
   row.m50 = cell ? cell->quantiles[1] : kNaN;
+  row.spatial_share = cell ? cell->spatial_share : kNaN;
+  row.cluster_share = cell ? cell->cluster_share : kNaN;
 }
 
 void SetParticipationCoverage(SurfaceParticipationRow &row, const CoverageCell *cell)
@@ -341,7 +343,7 @@ void SetParticipationNotTarget(SurfaceParticipationRow &row)
   const std::string not_target(CoverageStatusName(CoverageStatus::NOT_TARGET));
   row.p_corrected = row.q_corrected = kNaN;
   row.resolution = row.coverage = not_target;
-  row.m90 = row.m50 = row.uncovered_share = kNaN;
+  row.m90 = row.m50 = row.uncovered_share = row.spatial_share = row.cluster_share = kNaN;
   row.regime = std::string(RegimeStatusName(RegimeStatus::NO_MODEL));
   row.reason = not_target + ": raw only";
 }
@@ -710,6 +712,14 @@ std::string ParticipationFlags(const SurfaceParticipationRow &row)
   {
     parts.push_back(kParticipationSheetNotServedFlag);
   }
+  if (row.spatial_share >= kParticipationSpatialShareFlagAt)
+  {
+    parts.push_back(kParticipationSpatialShareFlag);
+  }
+  if (row.cluster_share > kParticipationClusterShareFlagAbove)
+  {
+    parts.push_back(kParticipationClusterShareFlag);
+  }
   std::string flags;
   for (const auto &part : parts)
   {
@@ -902,6 +912,7 @@ SurfaceParticipationTable::SurfaceParticipationTable(std::string path, std::stri
       "convergence", label.empty()
                          ? "convergence"
                          : "convergence (" + label.substr(0, label.size() - 2) + ")"));
+  table.insert("spatial_share", "S corner+cluster share (fraction)");
   table.insert(Column::Text("flags", "flags"));
   table.insert(Column::Text("reason", "reason"));
 }
@@ -1007,6 +1018,7 @@ void SurfaceParticipationTable::AppendRows(const std::vector<SurfaceParticipatio
     table["change_raw"] << row.change_raw;
     table["per_doubling"] << row.per_doubling;
     table["convergence"] << row.convergence;
+    table["spatial_share"] << row.spatial_share;
     table["flags"] << row.flags;
     table["reason"] << row.reason;
   }

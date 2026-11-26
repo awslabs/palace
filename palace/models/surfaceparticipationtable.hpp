@@ -38,6 +38,18 @@ inline constexpr const char *kParticipationSheetServedFlag = "Ls sheet served as
 inline constexpr const char *kParticipationSheetNotServedFlag =
     "metal law not served: raw there";
 
+// The flag S (lane v1verdict1; ROBUSTNESS-REGISTER G19; bench-heldout round 4, DESIGNER
+// RULE): S = the share of a value's within-R corrected energy (its census cell's
+// fixed-trace fabricated energy) served by spatial-basis models, corner and spatial-cluster
+// models, whose trace map onto 16-knot rings is not within 1 %. At S >= 5 % SA can be off
+// by up to 5 S points and MS by up to 6 S: the first word; more than 10 % on
+// spatial-cluster models: the second. Information only: no value changes.
+inline constexpr double kParticipationSpatialShareFlagAt = 0.05;
+inline constexpr double kParticipationClusterShareFlagAbove = 0.10;
+inline constexpr const char *kParticipationSpatialShareFlag =
+    "S >= 5% on corner and cluster models";
+inline constexpr const char *kParticipationClusterShareFlag = "over 10% on cluster models";
+
 // The verdict data (lane meshrule VERDICT-INPUT.md and its check; DATA, not code: the
 // built-in values are the repository file palace/models/surfaceparticipationverdict.json,
 // embedded at build time, and the optional "Verdict" member of a Resolution.BarsFile file
@@ -180,6 +192,10 @@ struct SurfaceParticipationRow
   std::string convergence;
   std::string flags;
   std::string reason;
+  // The flag S (a column) and the share on spatial-cluster models (a flags word only) of
+  // the row's census cell.
+  double spatial_share = std::numeric_limits<double>::quiet_NaN();
+  double cluster_share = std::numeric_limits<double>::quiet_NaN();
   // A Type total: the sum over the Type's whole target interfaces of the point (interface
   // 0, scope Type): THE value of the verdicts, which its interface rows carry.
   bool type_total = false;

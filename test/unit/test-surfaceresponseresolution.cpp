@@ -268,6 +268,32 @@ TEST_CASE("Resolution census PREFLIGHT weighs patches by length and reads the ta
         std::string::npos);
 }
 
+// The flag S (lane v1verdict1): a cell's shares of its energy on spatial-basis (corner and
+// spatial-cluster) models and on spatial-cluster models, known by construction.
+TEST_CASE("Resolution census cell shares on corner and cluster models",
+          "[SurfaceResponseResolution][Serial]")
+{
+  ResolutionAccumulator accumulator;
+  accumulator.Reset(1, 2);
+  accumulator.Add(0, 1, ResolutionStatus::MARGINAL, 0.7, 6.0);               // an edge
+  accumulator.Add(0, 1, ResolutionStatus::MARGINAL, 0.7, 3.0, true, false);  // a corner
+  accumulator.Add(0, 1, ResolutionStatus::NOT_EVALUATED, kNaN, 1.0, true,
+                  true);  // a cluster
+  const auto cell =
+      ComputeResolutionCell(accumulator.Slot(0, 0), "SA", true, 0.0, true, 1.0, "");
+  CHECK(cell.spatial_share == Catch::Approx(0.4).epsilon(1e-15));
+  CHECK(cell.cluster_share == Catch::Approx(0.1).epsilon(1e-15));
+  CHECK(cell.patches == 3);  // the counts keep their meaning
+  CHECK(cell.not_evaluated == 1);
+  const auto plane =
+      ComputeResolutionCell(accumulator.Slot(0, 1), "SA", false, 1.0, true, 1.0, "");
+  CHECK(plane.spatial_share == cell.spatial_share);
+  ResolutionAccumulator empty;
+  empty.Reset(1, 1);
+  CHECK(std::isnan(ComputeResolutionCell(empty.Slot(0, 0), "SA", true, 0.0, true, 1.0, "")
+                       .spatial_share));
+}
+
 // The PREFLIGHT's quantile is the energy cell's (one function).
 TEST_CASE("Resolution census quantiles are one function",
           "[SurfaceResponseResolution][Serial]")

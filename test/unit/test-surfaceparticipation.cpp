@@ -865,6 +865,28 @@ TEST_CASE("Surface participation join, history, words and flags across levels",
         "developer: MarkNotApplied; Ls sheet served as PEC");
   third[2].sheet_not_served = true;
   CHECK(ParticipationFlags(third[2]) == "NOT-TARGET");
+  // The flag S (lane v1verdict1): S >= 5 % on corner and cluster models, more than 10 % on
+  // cluster models (known shares of the row's census cell); no value changes.
+  auto s_row = third[0];
+  s_row.sheet_not_served = false;
+  CHECK(ParticipationFlags(s_row).empty());
+  ResolutionCell s_cell;
+  s_cell.quantiles = {s_row.m50, s_row.m50, s_row.m90};
+  s_cell.spatial_share = 0.05;
+  s_cell.cluster_share = 0.10;
+  SetParticipationResolution(s_row, &s_cell);
+  CHECK(s_row.spatial_share == 0.05);
+  CHECK(ParticipationFlags(s_row) == kParticipationSpatialShareFlag);
+  CHECK(ParticipationFlags(s_row) == "S >= 5% on corner and cluster models");
+  s_row.spatial_share = 0.0499;
+  CHECK(ParticipationFlags(s_row).empty());
+  s_row.spatial_share = 0.2;
+  s_row.cluster_share = 0.1001;
+  CHECK(ParticipationFlags(s_row) ==
+        "S >= 5% on corner and cluster models; over 10% on cluster models");
+  CHECK(s_row.p_corrected == third[0].p_corrected);
+  SetParticipationNotTarget(s_row);
+  CHECK(std::isnan(s_row.spatial_share));
   // A Type total carries its interface rows' words.
   const auto totals = AddParticipationTypeTotals({third[0]});
   REQUIRE(totals.size() == 2);
@@ -1214,6 +1236,7 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOn
   CHECK(CountLines(text) == 1 + 3 + 4);  // the SA, MS, MA totals (not the box), the rows
   CHECK(text.find("UNDER-RESOLVED") != std::string::npos);
   CHECK(text.find("PREFLIGHT ") == std::string::npos);
+  CHECK(text.find("S corner+cluster share (fraction)") != std::string::npos);
   CHECK(text.find("12345") != std::string::npos);
   CHECK(text.find("MOVING") == std::string::npos);
   CHECK(text.find("FIRST-ITERATION") == std::string::npos);
