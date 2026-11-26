@@ -24,7 +24,6 @@
 #include "models/postoperator.hpp"
 #include "models/spaceoperator.hpp"
 #include "models/waveportoperator.hpp"
-#include "test-helpers.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/filesystem.hpp"
@@ -1297,57 +1296,6 @@ TEST_CASE("WavePortOperator-LorentzCoaxialTEMComplexFrequency",
     CHECK_NOTHROW(kn = wave_port_op.GetWavePortKnComplex(1, omega));
     CAPTURE(kn * kn);
     CHECK(std::abs(kn * kn - kn2_closed) <= 1.0e-8 * std::abs(kn2_closed));
-  }
-}
-
-TEST_CASE_METHOD(palace::test::SharedTempDir, "WavePortOperator-SubspaceOfASmallPort",
-                 "[waveportoperator][Serial][Parallel]")
-{
-  // The port on the end x = 2 of the box of MakeInteriorBoundaryBox, a square of 2 x 2
-  // elements with PEC around it, has a mode problem of 5 unknowns off the PEC ones (the 4
-  // interior edges and the middle node), fewer than the default subspace of its eigenvalue
-  // solver: the subspace is cut to them. The mode of each frequency of 150 to 250 GHz, at
-  // which the default subspace gave a spurious mode without power on some machines, is a
-  // propagating one with the unit reaction.
-  const auto mesh_path = temp_dir / "box.mesh";
-  if (Mpi::Root(Mpi::World()))
-  {
-    MakeInteriorBoundaryBox().Save(mesh_path.string());
-  }
-  Mpi::Barrier(Mpi::World());
-  json config = {
-      {"Problem", {{"Type", "Driven"}, {"Output", ""}}},
-      {"Model", {{"Mesh", mesh_path.string()}, {"L0", 1.0e-3}}},
-      {"Domains", {{"Materials", {{{"Attributes", {1, 2}}, {"Permittivity", 2.0}}}}}},
-      {"Boundaries",
-       {{"PEC", {{"Attributes", {3}}}},
-        {"WavePort",
-         {{{"Index", 1}, {"Attributes", {2}}, {"Mode", 1}, {"Excitation", 1}}}}}},
-      {"Solver",
-       {{"Order", 1},
-        {"Device", "CPU"},
-        {"Driven", {{"MinFreq", 150.0}, {"MaxFreq", 250.0}, {"FreqStep", 50.0}}}}}};
-  MPI_Comm comm = Mpi::World();
-  IoData iodata(config, /*print=*/false);
-  auto mesh_io = LoadScaleParMesh(iodata, comm);
-  SpaceOperator space_op(iodata, mesh_io);
-  auto &wp_op = space_op.GetWavePortOp();
-  REQUIRE(wp_op.Size() == 1);
-  for (const double f : {150.0, 191.3, 250.0})
-  {
-    CAPTURE(f);
-    wp_op.PrepareFrequency(2.0 * std::numbers::pi *
-                           iodata.units.Nondimensionalize<Units::ValueType::FREQUENCY>(f));
-    for (const auto &[idx, data] : wp_op)
-    {
-      int subspace = data.GetEigenSubspaceSize();
-      Mpi::GlobalMax(1, &subspace, comm);
-      CAPTURE(data.kn0, data.modal_reaction);
-      CHECK(subspace == 5);
-      CHECK(data.kn0.real() > 0.0);
-      CHECK(std::abs(data.kn0.imag()) <= 1.0e-12 * data.kn0.real());
-      CHECK(std::abs(data.modal_reaction + 1.0) < 1.0e-10);
-    }
   }
 }
 

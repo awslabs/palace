@@ -228,7 +228,6 @@ public:
   void EnableReducedModel(double adaptive_tol);
   ModeEigenSolver::ReducedModelStats GetReducedModelStats() const;
   std::size_t GetReducedBasisSize() const;
-  int GetEigenSubspaceSize() const { return mode_solver->GetSubspaceSize(); }
   double GetReducedTolerance() const;
 
   // Compute the sign of the modal E-field projected on the (high → low) direction
