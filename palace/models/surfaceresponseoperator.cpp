@@ -24695,6 +24695,30 @@ static std::optional<std::string> WriteImpedanceRuleCandidateRequirements(
   return candidate_path;
 }
 
+namespace
+{
+std::vector<double> DomainBoundaryContainmentSignature(
+    const std::vector<ResponsePatchData> &patches, const std::set<std::size_t> &skipped,
+    const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
+        &basis_points,
+    double coordinate_scale, double matching_radius, double mirror_band);
+}  // namespace
+
+// Lane v1prefast C5: the preflight dry run's domain-boundary containment test, for the
+// census operator built on the same geometry: the tested input (the signature and the rest
+// of what the test reads, DomainBoundaryContainmentInputBytes; both on the root only), the
+// mesh it ran on, its result and the geometry-fallback records it made. The operator takes
+// the result only when its own tested input is identical.
+struct DryRunContainment
+{
+  std::vector<double> signature;
+  std::string input;
+  const mfem::ParMesh *mesh = nullptr;
+  long mesh_sequence = 0;
+  DomainBoundaryExclusions exclusions;
+  std::vector<GeometryFallbackData> records;
+};
+
 // CUT-PLAN step 4b (lane v1step4b; ruling R4): the preflight's identification as the
 // SurfaceResponseGeometry a census operator reads (defined after its Impl).
 struct SurfaceResponsePreflightGeometry
@@ -24705,7 +24729,11 @@ struct SurfaceResponsePreflightGeometry
   // copied, then back).
   static std::shared_ptr<const SurfaceResponseGeometry>
   Make(ResponseCorrectionData &result, const AutomaticResponseDiagnostics *diagnostics,
-       const nlohmann::json &statistics, bool impedance_rule_apply, MPI_Comm comm);
+       const nlohmann::json &statistics, bool impedance_rule_apply,
+       MPI_Comm comm);  // The dry run's containment test on `geometry` for its census
+                        // operator (lane v1prefast C5).
+  static void SetDryRunContainment(const SurfaceResponseGeometry &geometry,
+                                   DryRunContainment containment);
 };
 
 SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &iodata,
@@ -25079,6 +25107,7 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
     // Domain-boundary exclusions (decision 258) on the placed dry run: the excluded
     // patches are written with weight 0; their uncorrected CELL length enters the
     // inventory next to Missing (not a library gap), the portion sum alongside.
+    const std::size_t dry_run_records = preflight_ledger.Entries().size();
     const auto exclusions = FindDomainBoundaryExclusions(
         const_cast<mfem::ParMesh &>(parallel_mesh), patches.patches, BasisPoints,
         [&](int model_idx) { return spatial_basis.at(model_idx); },
@@ -25086,6 +25115,30 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
         patches.matching_radius, {}, patches.mirror_planes,
         patches.mirror_band_over_radius * patches.matching_radius,
         patches.mirror_unmerged_portions, &preflight_ledger);
+    if (shared_geometry)
+    {
+      // Lane v1prefast C5: this test for the census operator on the shared geometry, with
+      // its tested input (on the root) and its records; taken only on an identical input.
+      DryRunContainment containment;
+      if (Mpi::Root(parallel_mesh.GetComm()))
+      {
+        containment.signature = DomainBoundaryContainmentSignature(
+            patches.patches, {}, BasisPoints, coordinate_scale, patches.matching_radius,
+            patches.mirror_band_over_radius * patches.matching_radius);
+        containment.input = DomainBoundaryContainmentInputBytes(
+            patches.patches, {}, BasisPoints,
+            [&](int model_idx) { return spatial_basis.at(model_idx); },
+            [&](int model_idx) { return model_names.at(model_idx); }, patches.mirror_planes,
+            patches.mirror_unmerged_portions);
+      }
+      containment.mesh = &parallel_mesh;
+      containment.mesh_sequence = parallel_mesh.GetSequence();
+      containment.exclusions = exclusions;
+      containment.records.assign(preflight_ledger.Entries().begin() + dry_run_records,
+                                 preflight_ledger.Entries().end());
+      SurfaceResponsePreflightGeometry::SetDryRunContainment(*shared_geometry,
+                                                             std::move(containment));
+    }
     diagnostics["DomainBoundaryExclusions"] =
         DescribeDomainBoundaryExclusions(exclusions, patches, coordinate_scale);
     // F-DB-a (decisions 442 / 454): the excluded patches' raw claims, never dropped; the
@@ -25512,6 +25565,9 @@ struct SurfaceResponseGeometry::Impl
   // Written by the electrostatic constructor through the shared const geometry: the cache
   // is a derived record of this configuration, not a change to it.
   mutable std::optional<DomainBoundaryContainmentCache> containment;
+  // Written by the preflight's requirements pass (lane v1prefast C5), read once by the
+  // census operator's placement.
+  mutable std::optional<DryRunContainment> dry_run_containment;
 };
 
 std::shared_ptr<const SurfaceResponseGeometry> SurfaceResponsePreflightGeometry::Make(
@@ -25544,6 +25600,12 @@ std::shared_ptr<const SurfaceResponseGeometry> SurfaceResponsePreflightGeometry:
   impl->impedance_rule_apply = impedance_rule_apply;
   return std::shared_ptr<const SurfaceResponseGeometry>(
       new SurfaceResponseGeometry(std::move(impl)));
+}
+
+void SurfaceResponsePreflightGeometry::SetDryRunContainment(
+    const SurfaceResponseGeometry &geometry, DryRunContainment containment)
+{
+  geometry.impl->dry_run_containment = std::move(containment);
 }
 
 // Lane fix-response-memory round 2 (decision 1469 (1) (i)): THE MEMORY CENSUS. Under
@@ -26434,6 +26496,91 @@ void SurfaceResponseGeometry::AdoptLocalPatches(std::vector<ResponsePatchData> &
   impl.config.patches = std::move(local);
   impl.config.patches.shrink_to_fit();
   impl.patches_local = true;
+}
+
+std::string DomainBoundaryContainmentInputBytes(
+    const std::vector<ResponsePatchData> &patches, const std::set<std::size_t> &skipped,
+    const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
+        &basis_points,
+    const std::function<bool(int model_idx)> &spatial_basis,
+    const std::function<std::string(int model_idx)> &model_name,
+    const std::vector<ResponseCorrectionData::MirrorPlaneData> &mirror_planes,
+    const std::vector<ResponseCorrectionData::UnmergedPortionData> &unmerged_portions)
+{
+  std::string bytes;
+  auto Put = [&](const auto &value)
+  { bytes.append(reinterpret_cast<const char *>(&value), sizeof(value)); };
+  auto PutClaims = [&](const auto &claims)
+  {
+    Put(claims.size());
+    for (const auto &claim : claims)
+    {
+      Put(claim.segment);
+      Put(claim.p0);
+      Put(claim.p1);
+    }
+  };
+  std::set<int> models;
+  for (std::size_t patch_idx = 0; patch_idx < patches.size(); patch_idx++)
+  {
+    const auto &patch = patches[patch_idx];
+    if (skipped.count(patch_idx) || patch.weight <= 0.0 || !basis_points(patch.model))
+    {
+      continue;  // not a candidate (DomainBoundaryContainmentSignature's rule)
+    }
+    models.insert(patch.model);
+    Put(patch.conductor_references.size());
+    for (const auto &reference : patch.conductor_references)
+    {
+      Put(reference);
+    }
+    const auto &provenance = patch.provenance;
+    Put(provenance.segment);
+    Put(provenance.feature);
+    Put(provenance.coupon_depth);
+    Put(provenance.mirror_formed_topology);
+    Put(provenance.edge_offset);
+    PutClaims(provenance.claims);
+    PutClaims(provenance.raw_claims);
+  }
+  for (const int model : models)
+  {
+    const auto &points = *basis_points(model);
+    const std::string name = model_name(model);
+    Put(model);
+    Put(spatial_basis(model));
+    Put(name.size());
+    bytes.append(name);
+    Put(points.size());
+    for (const auto &point : points)
+    {
+      Put(point);
+    }
+  }
+  Put(mirror_planes.size());
+  for (const auto &plane : mirror_planes)
+  {
+    Put(plane.attribute);
+    Put(plane.normal);
+    Put(plane.offset);
+    Put(plane.status.size());
+    bytes.append(plane.status);
+    Put(plane.box_min);
+    Put(plane.box_max);
+  }
+  Put(unmerged_portions.size());
+  for (const auto &portion : unmerged_portions)
+  {
+    Put(portion.topology);
+    Put(portion.p0);
+    Put(portion.p1);
+    Put(portion.image);
+    Put(portion.identical);
+    Put(portion.segment);
+    Put(portion.s0);
+    Put(portion.s1);
+  }
+  return bytes;
 }
 
 namespace
@@ -34177,6 +34324,35 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                    response_mesh.GetNodes()->FESpace()->GetMaxElementOrder());
       }
       DomainBoundaryExclusions exclusions;
+      // Lane v1prefast C5: a preflight's census operator takes its dry run's test (the
+      // shared geometry's) when the mesh and the tested input are identical (the root
+      // compares the signature and DomainBoundaryContainmentInputBytes), as if run here:
+      // its result, its geometry-fallback records in their order, no reuse line.
+      const DryRunContainment *dry_run =
+          cached_geometry && cached_geometry->impl->dry_run_containment
+              ? &*cached_geometry->impl->dry_run_containment
+              : nullptr;
+      int dry_run_hit = 0;
+      if (dry_run && first_order_mesh && !containment_recheck && !containment_hit)
+      {
+        int same_mesh = dry_run->mesh == &response_mesh &&
+                        dry_run->mesh_sequence == response_mesh.GetSequence();
+        Mpi::GlobalMin(1, &same_mesh, fespace.GetComm());
+        if (same_mesh && containment_root)
+        {
+          dry_run_hit =
+              dry_run->signature == containment_signature &&
+              dry_run->input ==
+                  DomainBoundaryContainmentInputBytes(
+                      placed_patches, spatially_owned_patches, BasisPointsOf,
+                      [&](int model_idx)
+                      { return models[model_indices.at(model_idx)].spatial_basis; },
+                      [&](int model_idx)
+                      { return models[model_indices.at(model_idx)].name; },
+                      config.mirror_planes, config.mirror_unmerged_portions);
+        }
+        Mpi::Broadcast(1, &dry_run_hit, 0, fespace.GetComm());
+      }
       if (containment_hit && first_order_mesh && !containment_recheck)
       {
         const auto reuse_start = std::chrono::steady_clock::now();
@@ -34191,6 +34367,29 @@ SurfaceResponseOperator::ApplyPlacementOwnership(
                 .count();
         Mpi::GlobalMax(1, &exclusions.wall_time, fespace.GetComm());
         domain_boundary_containment_reused = true;
+      }
+      else if (dry_run_hit)
+      {
+        const auto take_start = std::chrono::steady_clock::now();
+        exclusions = dry_run->exclusions;
+        for (const auto &exclusion : exclusions.patches)
+        {
+          placed_patches[exclusion.patch].weight = 0.0;
+        }
+        for (const auto &record : dry_run->records)
+        {
+          geometry_ledger.Record(record);
+        }
+        exclusions.wall_time =
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - take_start)
+                .count();
+        Mpi::GlobalMax(1, &exclusions.wall_time, fespace.GetComm());
+        dry_run_containment_taken = true;
+        if (containment_cache)
+        {
+          *containment_cache =
+              DomainBoundaryContainmentCache{containment_signature, exclusions};
+        }
       }
       else
       {

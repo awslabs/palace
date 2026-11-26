@@ -1163,6 +1163,8 @@ private:
   // The domain-boundary containment result was reused from the first construction on the
   // cached automatic geometry rather than recomputed on this mesh (decision 734 F2).
   bool domain_boundary_containment_reused = false;
+  // This construction took its preflight dry run's containment test (lane v1prefast C5).
+  bool dry_run_containment_taken = false;
   // The Natural mirror planes and band (mesh units) of the mirror-point evaluation
   // (F-DB-c; DESIGN 2.2.3); empty / 0 without the mirror.
   std::vector<config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
@@ -2397,6 +2399,11 @@ public:
   {
     return domain_boundary_containment_reused;
   }
+  // Whether this construction took the preflight dry run's containment result through the
+  // shared geometry (lane v1prefast C5: an identical mesh and tested input; false
+  // otherwise, under PALACE_RESPONSE_CONTAINMENT_RECHECK, on a curved mesh or with a mirror
+  // band).
+  bool DryRunContainmentTaken() const { return dry_run_containment_taken; }
 
   int GetBasisSize() const { return global_basis_size; }
   int GetPatchCount() const { return global_patch_count; }
@@ -3487,6 +3494,28 @@ LocateResolutionPatchKnots(mfem::ParMesh &mesh, int dimension,
 // (C10, decision 1471 (2)): the ROOT's value on every rank, so that every rank walks the
 // same blocks.
 std::size_t DomainBoundaryContainmentBlockPoints(MPI_Comm comm);
+// Everything the containment test reads of its candidates (not `skipped`, positive weight,
+// a model with basis points) beyond its signature's fields
+// (DomainBoundaryContainmentCache): each candidate's conductor references, provenance
+// segment / feature / coupon depth / mirror-formed topology / edge offset / claims / raw
+// claims, then each candidate model's spatial flag, name and basis points, and the mirror
+// planes and unmerged portions, as bytes. The preflight's census operator takes the dry
+// run's containment result only when this and the signature are identical (lane v1prefast
+// C5).
+std::string DomainBoundaryContainmentInputBytes(
+    const std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData>
+        &patches,
+    const std::set<std::size_t> &skipped,
+    const std::function<const std::vector<std::array<double, 3>> *(int model_idx)>
+        &basis_points,
+    const std::function<bool(int model_idx)> &spatial_basis,
+    const std::function<std::string(int model_idx)> &model_name,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::MirrorPlaneData>
+        &mirror_planes,
+    const std::vector<
+        config::ElectrostaticSolverData::ResponseCorrectionData::UnmergedPortionData>
+        &unmerged_portions);
 DomainBoundaryExclusions FindDomainBoundaryExclusions(
     mfem::ParMesh &mesh,
     std::vector<config::ElectrostaticSolverData::ResponseCorrectionPatchData> &patches,

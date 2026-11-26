@@ -23,10 +23,12 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include "driver.hpp"
 #include "fem/mesh.hpp"
+#include "models/laplaceoperator.hpp"
 #include "models/surfaceparticipationtable.hpp"
 #include "models/surfaceresponseoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/configfile.hpp"
+#include "utils/geodata.hpp"
 #include "utils/iodata.hpp"
 #include "utils/omp.hpp"
 #include "utils/outputdir.hpp"
@@ -170,6 +172,59 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     return manifest;
   };
   CHECK(Manifest(without) == Manifest(with));
+#endif
+}
+
+// Lane v1prefast C5: the census operator on the preflight's shared geometry takes the dry
+// run's domain-boundary containment test only on the same mesh object with an identical
+// tested input; on another mesh (here the same geometry in a new object) it recomputes.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "PreflightOnly's census operator takes the dry run's containment test only "
+    "on an identical input",
+    "[surfaceresponseoperator][preflightonly][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  // The 3D CPW with the parallel-cluster library on the Features path (the shared
+  // identification; the knife-edge census flag case of test-surfaceresponseoperator.cpp).
+  json config = Cpw3dLegacyConfig(test::CrackPolicy::Legacy);
+  config["Problem"]["Output"] = (temp.temp_dir / "preflight-dry-run-containment").string();
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction.erase("PatchConstruction");
+  correction["UnmatchedPolicy"] = "Warn";
+  correction["Library"] = parallel_cluster_library_3d_path.string();
+  correction["PreflightOnly"] = true;
+  correction["DomainBoundary"] = {{"Mirror", "Off"}};  // no mirror band: C5's case
+  for (auto &interface : config["Boundaries"]["Postprocessing"]["Dielectric"])
+  {
+    interface["EdgeDistances"] = {0.2, 2.0, 11.0};
+  }
+  IoData iodata(config, false);
+  MakeOutputFolder(iodata, comm);
+  auto Census = [&](std::vector<std::unique_ptr<Mesh>> &dry_run,
+                    std::vector<std::unique_ptr<Mesh>> &census)
+  {
+    auto outcome =
+        WriteSurfaceResponseRequirements(iodata, *dry_run.back(),
+                                         (temp.temp_dir / "preflight-dry-run-containment" /
+                                          "surface-response-requirements.json")
+                                             .string());
+    REQUIRE(outcome.response_geometry);
+    LaplaceOperator laplace_op(iodata, census);
+    auto response = SurfaceResponseOperator::ConstructElectrostatic(
+        iodata, laplace_op, &outcome.response_geometry);
+    REQUIRE(response);
+    CHECK_FALSE(response->DomainBoundaryContainmentReused());
+    return response->DryRunContainmentTaken();
+  };
+  std::vector<std::unique_ptr<Mesh>> a, b;
+  a.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, comm)));
+  b.push_back(std::make_unique<Mesh>(mesh::ReadMesh(iodata, comm)));
+  CHECK(Census(a, a));
+  CHECK_FALSE(Census(a, b));
 #endif
 }
 
