@@ -8208,6 +8208,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(band["ClustersAbove"].get<int>() == 0);
   CHECK(band["Below"].get<double>() == 0.0);
   CHECK(band["Above"].get<double>() == 0.0);
+  // Its review MINOR-3 (done by lane v1verdict1): a helper's failure stops the root with
+  // the helper's own text verbatim, the text a one-rank run stops with.
+  const std::string text = "Verification failed: (x) is false:\n --> a helper's own text\n";
+  CHECK_THROWS_WITH(RaiseKnifeEdgeCensusFailure(text), Catch::Matchers::Equals(text));
 #endif
 }
 

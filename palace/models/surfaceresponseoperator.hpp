@@ -2538,6 +2538,12 @@ std::string
 SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outcome,
                                      const IoData &iodata, MPI_Comm comm);
 
+// The knife-edge census of the preflight (lane v1prefast C2; its review MINOR-3): the
+// root's stop on a helper rank's failing silent identification carries the helper's own
+// error text verbatim, the text a one-rank run stops with, so that it does not depend on
+// the rank count.
+[[noreturn]] void RaiseKnifeEdgeCensusFailure(const std::string &text);
+
 // Classify the configured automatic surface-response neighborhoods without assembling a
 // finite-element operator or solving a field problem. The deterministic JSON manifest
 // reports exact, interpolated, and missing process-library requirements.

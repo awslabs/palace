@@ -10669,6 +10669,16 @@ void BroadcastIdentificationFaces(std::vector<IdentificationFace> &faces, MPI_Co
   }
 }
 
+}  // namespace
+
+void RaiseKnifeEdgeCensusFailure(const std::string &text)
+{
+  mfem::mfem_error(text.c_str());
+}
+
+namespace
+{
+
 // One helper's share: the census records of pass `index` (ClusterCompositionRecords) to the
 // root of `comm` with tag `index`: a status (0, or 1 with the error text instead of the
 // records), the byte count, the bytes in chunks.
@@ -10709,8 +10719,10 @@ std::string ReceiveCensusRecords(int source, int index, MPI_Comm comm, bool rais
     MPI_Recv(bytes.data() + at, static_cast<int>(std::min(chunk, header[1] - at)), MPI_CHAR,
              source, index, comm, MPI_STATUS_IGNORE);
   }
-  MFEM_VERIFY(header[0] == 0 || !raise,
-              "Knife-edge census pass " << index << " on rank " << source << ": " << bytes);
+  if (header[0] != 0 && raise)
+  {
+    RaiseKnifeEdgeCensusFailure(bytes);
+  }
   return bytes;
 }
 
