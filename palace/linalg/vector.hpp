@@ -345,12 +345,18 @@ inline auto Mean(MPI_Comm comm, const VecType &x)
   return sum[0] / sum[1];
 }
 
-// Normalize a complex vector so its mean is on the positive real axis.
-// Returns the original mean phase.
+// Normalize a complex vector so its mean is on the positive real axis, leaving one of zero
+// mean (as the antisymmetric combination of a degenerate pair of modes of a symmetric
+// guide) as is. Returns the original mean phase.
 inline double NormalizePhase(MPI_Comm comm, ComplexVector &x)
 {
   std::complex<double> mean = Mean(comm, x);
-  x *= std::conj(mean) / std::abs(mean);
+  const double r = std::abs(mean);
+  if (!(r > 0.0) || !std::isfinite(r))
+  {
+    return 0.0;
+  }
+  x *= std::conj(mean) / r;
   return std::atan2(mean.imag(), mean.real());
 }
 

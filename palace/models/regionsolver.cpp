@@ -3,11 +3,18 @@
 
 #include "regionsolver.hpp"
 
+#include <algorithm>
 #include <complex>
 #include <type_traits>
 #include <utility>
+#include "linalg/lowertriangle.hpp"
 #include "linalg/mumpsschur.hpp"
+#include "linalg/rap.hpp"
 #include "linalg/schurfactory.hpp"
+#include "models/environmentoperator.hpp"
+#include "models/spaceoperator.hpp"
+#include "utils/communication.hpp"
+#include "utils/iodata.hpp"
 
 namespace palace
 {
@@ -17,7 +24,8 @@ RegionSolver<T>::RegionSolver(const BlockCyclicGrid &grid, LinearSolver type,
                               SymbolicFactorization ordering, HYPRE_BigInt n_glob,
                               int n_loc, typename SchurFactorization<T>::Coo &&A,
                               const std::vector<HYPRE_BigInt> &gamma, std::vector<int> rows,
-                              const std::function<void(std::vector<T> &)> &add_interface)
+                              const std::function<void(std::vector<T> &)> &add_interface,
+                              bool refactor)
   : grid(grid)
 {
   MFEM_VERIFY(static_cast<int>(gamma.size()) == grid.Size(),
@@ -25,11 +33,27 @@ RegionSolver<T>::RegionSolver(const BlockCyclicGrid &grid, LinearSolver type,
   const bool has_gamma = (grid.Size() > 0);
   factorization = MakeSchurFactorization<T>(
       type, ordering, grid.GetComm(), n_glob, n_loc, std::move(A), gamma, std::move(rows),
-      std::is_same_v<T, double>, false, has_gamma ? &grid : nullptr);
-  if (!has_gamma)
+      std::is_same_v<T, double>, refactor, has_gamma ? &grid : nullptr);
+  if (has_gamma)
   {
-    return;
+    FactorInterface(add_interface);
   }
+}
+
+template <typename T>
+void RegionSolver<T>::Refactor(const std::function<void(std::vector<T> &)> &add_interface)
+{
+  factorization->Refactor();
+  if (grid.Size() > 0)
+  {
+    FactorInterface(add_interface);
+  }
+}
+
+template <typename T>
+void RegionSolver<T>::FactorInterface(
+    const std::function<void(std::vector<T> &)> &add_interface)
+{
   std::vector<T> *C = &dense;
 #if defined(MFEM_USE_MUMPS)
   if (auto *mumps = dynamic_cast<MumpsSchurSolverT<T> *>(factorization.get()))
@@ -42,7 +66,10 @@ RegionSolver<T>::RegionSolver(const BlockCyclicGrid &grid, LinearSolver type,
     dense = factorization->ReleaseSchurBlocks(grid);
   }
   add_interface(*C);
-  factors = std::make_unique<BlockCyclicFactorization<T>>(grid);
+  if (!factors)
+  {
+    factors = std::make_unique<BlockCyclicFactorization<T>>(grid);
+  }
   factors->Factor(*C);
 }
 
@@ -67,5 +94,117 @@ void RegionSolver<T>::Mult(const std::vector<const VecType *> &X,
 
 template class RegionSolver<double>;
 template class RegionSolver<std::complex<double>>;
+
+DrivenRegionSolver::DrivenRegionSolver(const IoData &iodata, SpaceOperator &space_op,
+                                       EnvironmentOperator &env)
+  : space_op(space_op), env(env),
+    type(SchurSolverFor(iodata.solver.substructuring->direct_solver, SchurKind::REGION,
+                        env.Grid().Size(), Mpi::Size(space_op.GetComm()))),
+    ordering(iodata.solver.linear.sym_factorization)
+{
+}
+
+DrivenRegionSolver::~DrivenRegionSolver() = default;
+
+void DrivenRegionSolver::SetOperator(const ComplexOperator &op)
+{
+  height = op.Height();
+  width = op.Width();
+  const auto *P = dynamic_cast<const RegionPreconditionerMatrix *>(&op);
+  MFEM_VERIFY(P, "The region solver factors the preconditioner matrix of the region (see "
+                 "SpaceOperator::GetPreconditionerMatrix)!");
+  auto assembled = [](const Operator *part) -> const mfem::HypreParMatrix *
+  { return part ? &dynamic_cast<const ParOperator &>(*part).ParallelAssemble() : nullptr; };
+  const auto *Ar = assembled(P->Real()), *Ai = assembled(P->Imag());
+  // S_E(ω) on the grid, at the frequency of the matrix.
+  auto add = [this, omega = P->Frequency()](std::vector<std::complex<double>> &C)
+  { env.AddSchurBlocks(omega, C); };
+  if (region)
+  {
+    // The new values in the same pattern.
+    auto &val = region->Values();
+    std::fill(val.begin(), val.end(), 0.0);
+    if (Ar)
+    {
+      side->AddPart(*Ar, std::complex<double>(1.0, 0.0), val);
+    }
+    if (Ai)
+    {
+      side->AddPart(*Ai, std::complex<double>(0.0, 1.0), val);
+    }
+    region->Refactor(add);
+    return;
+  }
+
+  // The system: the true DOFs which are not eliminated (Dirichlet or pinned), with Γ in
+  // interface order as the Schur variables.
+  const auto &fes = space_op.GetNDSpace().Get();
+  MPI_Comm comm = fes.GetComm();
+  const int nt = fes.GetTrueVSize();
+  const auto &dbc = space_op.GetEliminatedTrueDofs();
+  eliminated.assign(dbc.HostRead(), dbc.HostRead() + dbc.Size());
+  std::vector<char> keep(nt, 1);
+  for (int i : eliminated)
+  {
+    keep[i] = 0;
+  }
+  side =
+      std::make_unique<SideSystem>(std::vector<const mfem::HypreParMatrix *>{Ar, Ai}, keep);
+  auto val = side->Values(std::vector<std::complex<double>>{
+      std::complex<double>(1.0, 0.0), std::complex<double>(0.0, 1.0)});
+  const int n_loc = static_cast<int>(side->rows.size());
+  region = std::make_unique<RegionSolver<std::complex<double>>>(
+      env.Grid(), type, ordering, side->n_glob, n_loc,
+      SchurFactorization<std::complex<double>>::Coo{std::move(side->irn),
+                                                    std::move(side->jcn), std::move(val)},
+      side->Indices(env.Interface().tdofs), side->rows, add, true);
+  Mpi::Print(comm, " Region solver: {}, dense LU on a {:d} x {:d} process grid\n",
+             SchurFactorizationName(type), env.Grid().NumProcessRows(),
+             env.Grid().NumProcessCols());
+}
+
+void DrivenRegionSolver::Mult(const ComplexVector &x, ComplexVector &y) const
+{
+  region->Mult({&x}, {&y});
+  // The eliminated DOFs have identity rows.
+  const double *xr = x.Real().HostRead(), *xi = x.Imag().HostRead();
+  double *yr = y.Real().HostReadWrite(), *yi = y.Imag().HostReadWrite();
+  for (int i : eliminated)
+  {
+    yr[i] = xr[i];
+    yi[i] = xi[i];
+  }
+}
+
+namespace
+{
+
+// The iteration limit of the FGMRES of a substructured region (see MakeDrivenKspSolver).
+constexpr int kRegionMaxIts = 500;
+
+}  // namespace
+
+std::unique_ptr<ComplexKspSolver> MakeDrivenKspSolver(const IoData &iodata,
+                                                      SpaceOperator &space_op)
+{
+  if (auto *env = space_op.GetEnvironment())
+  {
+    // FGMRES, whose solution combines the preconditioned vectors of its residual: near a
+    // resonance of the region, where the region solver is nearly singular, GMRES applies it
+    // to a combination of its basis, which loses digits. It then takes a few iterations
+    // with MUMPS's Schur complement, about ten with STRUMPACK's and tens with
+    // SuperLU_DIST's, so it has an iteration limit of its own, kRegionMaxIts or "MaxIts" if
+    // larger (its restart is "MaxSize").
+    config::LinearSolverData linear = iodata.solver.linear;
+    linear.krylov_solver = KrylovSolver::FGMRES;
+    linear.pc_side = PreconditionerSide::DEFAULT;
+    linear.max_it = std::max(linear.max_it, kRegionMaxIts);
+    return std::make_unique<ComplexKspSolver>(
+        linear, iodata.problem.verbose, space_op.GetComm(),
+        std::make_unique<DrivenRegionSolver>(iodata, space_op, *env));
+  }
+  return std::make_unique<ComplexKspSolver>(iodata, space_op.GetNDSpaces(),
+                                            &space_op.GetH1Spaces());
+}
 
 }  // namespace palace

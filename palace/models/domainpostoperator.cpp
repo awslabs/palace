@@ -23,6 +23,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const FiniteElementSpace &rt_fespace,
                                        const std::vector<const Operator *> &unit_mass)
 {
+  partial = postpro.partial;
   // Mass operators are always partially assembled. The total energies exclude the PML
   // regions (see MaterialOperator::GetBulkAttributeToMaterial), and the energies of the
   // domains and of the PML regions use the material properties of all attributes, with the
@@ -151,6 +152,7 @@ DomainPostOperator::DomainPostOperator(const config::DomainPostData &postpro,
                                        const MaterialOperator &mat_op,
                                        const FiniteElementSpace &fespace)
 {
+  partial = postpro.partial;
   const auto map_type = fespace.GetFEColl().GetMapType(fespace.Dimension());
   if (map_type == mfem::FiniteElement::VALUE)
   {

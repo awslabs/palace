@@ -288,9 +288,8 @@ struct EnvironmentRecord
   bool CheckMesh(mfem::ParMesh &mesh, const nlohmann::json &config, double tol) const;
 
   // Online, check that the environment attributes of the run are those of the record (on
-  // the mesh of the region, some of them), and that the configuration on it is unchanged
-  // (its excitations too, on the mesh of the region). Returns whether the excitations of
-  // the environment are those of the record.
+  // the mesh of the region, some of them), and that the configuration on it is unchanged.
+  // Returns whether the excitations of the environment are those of the record.
   bool CheckConfig(const nlohmann::json &config,
                    const std::vector<int> &environment_attributes, bool region_mesh) const;
 };

@@ -35,7 +35,9 @@ enum class SolverOverridePolicy
   // Empty global means "no override; honour the case JSON".
   UseGlobalOverride,
   // Ignore the global and inject "Default" for this case.
-  ForceDefault
+  ForceDefault,
+  // Ignore the global and honour the case JSON.
+  KeepCase
 };
 
 // Options controlling a single regression case.
@@ -86,6 +88,9 @@ struct RegressionOptions
   // A configuration of the same case run first in the same staging directory, without
   // comparison (e.g. an offline run writing the model an online run reads).
   std::string setup_config;
+  // Called on every process with the staging directory after the setup run, and after the
+  // run (e.g. to interrupt the setup run's outputs for a restart, and check the run's).
+  std::function<void(const std::filesystem::path &)> after_setup, after_run;
   // The name of the staging directory, postpro_subdir by default: two cases compared with
   // the same reference outputs need their own, as ctest runs them at once.
   std::string stage;

@@ -7,10 +7,13 @@
 #include <array>
 #include <complex>
 #include <functional>
+#include <initializer_list>
 #include <memory>
+#include <optional>
 #include <utility>
 #include <vector>
 #include <mfem.hpp>
+#include "fem/bilinearform.hpp"
 #include "fem/fespace.hpp"
 #include "linalg/operator.hpp"
 #include "linalg/rap.hpp"
@@ -27,6 +30,7 @@
 namespace palace
 {
 
+class EnvironmentOperator;
 class IoData;
 class Mesh;
 
@@ -41,6 +45,55 @@ struct SolverData;
 }  // namespace config
 
 enum class ProblemType : char;
+
+//
+// The preconditioner matrix of the region of a driven substructuring at a frequency ω,
+// which leaves the environment's S_E(ω) out (see SpaceOperator::GetPreconditionerMatrix):
+// the region solver adds S_E at the frequency the matrix carries (see DrivenRegionSolver).
+//
+class RegionPreconditionerMatrix : public ComplexOperator
+{
+private:
+  std::unique_ptr<ComplexOperator> B;
+  const double omega;
+
+public:
+  RegionPreconditionerMatrix(std::unique_ptr<ComplexOperator> &&matrix, double frequency)
+    : ComplexOperator(matrix->Height(), matrix->Width()), B(std::move(matrix)),
+      omega(frequency)
+  {
+  }
+
+  double Frequency() const { return omega; }
+
+  const Operator *Real() const override { return B->Real(); }
+  const Operator *Imag() const override { return B->Imag(); }
+  void AssembleDiagonal(ComplexVector &diag) const override { B->AssembleDiagonal(diag); }
+  void Mult(const ComplexVector &x, ComplexVector &y) const override { B->Mult(x, y); }
+  void MultTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    B->MultTranspose(x, y);
+  }
+  void MultHermitianTranspose(const ComplexVector &x, ComplexVector &y) const override
+  {
+    B->MultHermitianTranspose(x, y);
+  }
+  void AddMult(const ComplexVector &x, ComplexVector &y,
+               const std::complex<double> a = 1.0) const override
+  {
+    B->AddMult(x, y, a);
+  }
+  void AddMultTranspose(const ComplexVector &x, ComplexVector &y,
+                        const std::complex<double> a = 1.0) const override
+  {
+    B->AddMultTranspose(x, y, a);
+  }
+  void AddMultHermitianTranspose(const ComplexVector &x, ComplexVector &y,
+                                 const std::complex<double> a = 1.0) const override
+  {
+    B->AddMultHermitianTranspose(x, y, a);
+  }
+};
 
 //
 // A class handling spatial discretization of the governing equations.
@@ -100,6 +153,20 @@ private:
   SurfaceCurrentOperator surf_j_op;
 
   PortExcitations port_excitation_helper;
+
+  // Optional restriction of the assembled operators to a set of domains: only their
+  // elements are assembled, and the coefficients restricted to them tell which terms
+  // vanish.
+  AssemblyDomains assembly_domains;
+  void RestrictToAssemblyDomains(std::initializer_list<MaterialPropertyCoefficient *> f,
+                                 std::initializer_list<MaterialPropertyCoefficient *> fb);
+
+  // The environment of the region of a driven substructuring, the restriction of the
+  // assembly to the region, and the true DOFs its operators eliminate (see the
+  // constructor).
+  EnvironmentOperator *environment = nullptr;
+  std::optional<AssemblyDomains::Restriction> region_restriction;
+  mfem::Array<int> region_eliminated;
 
   mfem::Array<int> SetUpBoundaryProperties(const config::PecBoundaryData &pec,
                                            const mfem::ParMesh &mesh);
@@ -247,7 +314,21 @@ public:
   SpaceOperator(const config::SolverData &solver, const config::DomainData &domains,
                 const config::BoundaryData &boundaries, ProblemType problem_type,
                 const Units &units, const std::vector<std::unique_ptr<Mesh>> &mesh);
-  SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh);
+  // With an environment, the operators are those of the region of a driven substructuring
+  // against it: assembled on the region's elements, with the DOFs of the environment that
+  // the region pins (EnvironmentOperator::PinnedTrueDofs) eliminated alongside the PEC ones
+  // (see GetEliminatedTrueDofs), and with its terms on Γ in the extra system operator, the
+  // preconditioner matrix (its single level, for a sparse direct solver) and the
+  // excitations. The environment must outlive the operators.
+  SpaceOperator(const IoData &iodata, const std::vector<std::unique_ptr<Mesh>> &mesh,
+                EnvironmentOperator *env = nullptr);
+
+  // The domains to which the stiffness, damping, mass, extra system and preconditioner
+  // matrices are restricted while an AssemblyDomains::Restriction is in scope. The
+  // matrix-free wave-port and Floquet terms of GetExtraSystemOperator are not restricted.
+  AssemblyDomains &GetAssemblyDomains() { return assembly_domains; }
+
+  EnvironmentOperator *GetEnvironment() const { return environment; }
 
   // Return list of all PEC boundary true dofs for all finite element space levels.
   const std::vector<mfem::Array<int>> &GetNDDbcTDofLists() const
@@ -257,6 +338,14 @@ public:
   const std::vector<mfem::Array<int>> &GetH1DbcTDofLists() const
   {
     return h1_dbc_tdof_lists;
+  }
+
+  // The true DOFs the operators eliminate as essential: the PEC ones (on the finest level)
+  // and, for the region of a driven substructuring, the DOFs of its environment that it
+  // pins.
+  const mfem::Array<int> &GetEliminatedTrueDofs() const
+  {
+    return environment ? region_eliminated : nd_dbc_tdof_lists.back();
   }
 
   // Returns lists of all boundary condition true dofs, PEC included, for the auxiliary
@@ -553,7 +642,8 @@ public:
   // included, cached wave-port EVP), std::complex<double> the complex-ω analytic
   // continuation (eigenmode nonlinear solve: no Floquet term, uncached wave-port EVP). The
   // choice cannot be inferred from Im(a3) == 0 because the HYBRID eigenmode seed needs the
-  // complex stamping at real frequencies.
+  // complex stamping at real frequencies. For the region of a driven substructuring, at a
+  // real ω = a3, its single level is a RegionPreconditionerMatrix.
   template <typename OperType, typename ScalarType, typename A3Type>
   std::unique_ptr<OperType> GetPreconditionerMatrix(ScalarType a0, ScalarType a1,
                                                     ScalarType a2, A3Type a3);

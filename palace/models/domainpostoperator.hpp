@@ -61,6 +61,10 @@ public:
   // energy of the supercurrent (null without London domains).
   std::unique_ptr<Operator> M_london;
 
+  // The field is known on part of the domain only: no total energies (see
+  // config::DomainPostData::partial).
+  bool partial = false;
+
   // Unit mass forms of each frequency-dependent material (by material index), over the
   // entire domain and over each postprocessing domain (only the materials in it). With
   // M_elec weighted by ε∞, the electric field energy adds that of the polarization of each

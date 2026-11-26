@@ -26,6 +26,7 @@
 #include "linalg/orthog.hpp"
 #include "linalg/rap.hpp"
 #include "models/curlcurloperator.hpp"
+#include "models/environmentoperator.hpp"
 #include "models/floquetportoperator.hpp"
 #include "models/laplaceoperator.hpp"
 #include "models/materialoperator.hpp"
@@ -106,6 +107,29 @@ double ParticipationRatio(double energy, double total)
   return (total != 0.0) ? energy / total : 0.0;
 }
 
+// The domains in which the probes are found: those of the region where its field is known
+// there only (a substructured static solve, or a driven sweep against the environment of a
+// model which does not expand the environment's field), else all, as for a regular
+// simulation (a driven sweep of the whole device, or one whose environment's field is
+// expanded).
+template <ProblemType solver_t>
+std::vector<int> ProbeDomains(const config::SolverData &solver,
+                              const fem_op_t<solver_t> &fem_op)
+{
+  if (!solver.substructuring)
+  {
+    return {};
+  }
+  if constexpr (solver_t == ProblemType::DRIVEN)
+  {
+    if (const auto *env = fem_op.GetEnvironment(); !env || env->Expands())
+    {
+      return {};
+    }
+  }
+  return solver.substructuring->region_attributes;
+}
+
 }  // namespace
 
 template <ProblemType solver_t>
@@ -155,8 +179,7 @@ PostOperator<solver_t>::PostOperator(const config::ProblemData &problem,
                  fem_op->GetH1Space(), fem_op->GetNDSpace(),
                  boundaries.GetSheetAttributes()),
     interp_op(domains.postpro.probe, units_, fem_op->GetNDSpace(),
-              solver.substructuring ? solver.substructuring->region_attributes
-                                    : std::vector<int>{})
+              ProbeDomains<solver_t>(solver, fem_op_))
 {
   // Define primary grid-functions.
   if constexpr (HasVGridFunction<solver_t>())
@@ -854,9 +877,22 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
   {
     return;
   }
-  // Close any files held by the previous collection before switching output paths.
-  paraview.reset();
-  paraview_bdr.reset();
+  // The collections kept write the mesh again at their next save, so that only the current
+  // ones hold it.
+  if (paraview)
+  {
+    paraview->ReleaseMeshCache();
+    paraview_bdr->ReleaseMeshCache();
+  }
+  auto [it, added] = paraview_collections.try_emplace(sub_folder_name);
+  auto &collections = it->second;
+  paraview_max_cycle = &collections.max_cycle;
+  if (!added)
+  {
+    paraview = collections.domain.get();
+    paraview_bdr = collections.boundary.get();
+    return;
+  }
 
   auto paraview_root = post_dir / "paraview";
   fs::path paraview_dir_v = paraview_root / OutputFolderName(solver_t);
@@ -868,8 +904,12 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
     paraview_dir_b /= sub_folder_name;
   }
   // Set up postprocessing for output to disk.
-  paraview = {paraview_dir_v, &fem_op->GetNDSpace().GetParMesh()};
-  paraview_bdr = {paraview_dir_b, &fem_op->GetNDSpace().GetParMesh()};
+  collections.domain = std::make_unique<CeedParaViewDataCollection>(
+      paraview_dir_v, &fem_op->GetNDSpace().GetParMesh());
+  collections.boundary = std::make_unique<CeedParaViewDataCollection>(
+      paraview_dir_b, &fem_op->GetNDSpace().GetParMesh());
+  paraview = collections.domain.get();
+  paraview_bdr = collections.boundary.get();
 
   const mfem::VTKFormat format = mfem::VTKFormat::BINARY32;
   const bool use_ho = true;
@@ -883,7 +923,6 @@ void PostOperator<solver_t>::InitializeParaviewDataCollection(
 
   // Output mesh coordinate units same as input.
   paraview->SetCycle(-1);
-  paraview_max_cycle = -1;
   paraview->SetDataFormat(format);
   MFEM_VERIFY(use_ceed_domain_paraview,
               "ParaView domain output requires the libCEED point-field path!");
@@ -1359,7 +1398,7 @@ void PostOperator<solver_t>::WriteParaviewFields(double time, int step)
         units.Dimensionalize<Units::ValueType::FREQUENCY>(time) / (2.0 * std::numbers::pi);
   }
   paraview->SetCycle(step);
-  paraview_max_cycle = std::max(paraview_max_cycle, step);
+  *paraview_max_cycle = std::max(*paraview_max_cycle, step);
   paraview->SetTime(paraview_time);
   paraview_bdr->SetCycle(step);
   paraview_bdr->SetTime(paraview_time);
@@ -1394,7 +1433,7 @@ void PostOperator<solver_t>::WriteParaviewFieldsFinal(const ErrorIndicator *indi
   // non-used value to make the step identifiable within the data collection.
   mfem::ParMesh &mesh = E ? *E->ParFESpace()->GetParMesh() : *B->ParFESpace()->GetParMesh();
   mesh::DimensionalizeMesh(mesh, mesh_Lc0);
-  paraview->SetCycle(paraview_max_cycle + 1);
+  paraview->SetCycle(*paraview_max_cycle + 1);
   if (paraview->GetTime() < 1.0)
   {
     paraview->SetTime(99.0);
@@ -1734,12 +1773,17 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
     // the frequency (of an eigenmode).
     // Without a stored electric energy of a frequency-dependent material (the same on
     // every process), the energies with it, and the participations in the total, are
-    // left empty. A given total (substructuring, whose materials are constant) is both.
+    // left empty. A given total (substructuring, whose materials are constant) is both,
+    // and the field of a substructured region alone (partial) gives none.
     const double omega = measurement_cache.freq.real();
-    const auto [energy, material] =
+    auto [energy, material] =
         total_field_energy ? DomainPostOperator::ElectricFieldEnergies{*total_field_energy,
                                                                        *total_field_energy}
                            : dom_post_op.GetElectricFieldEnergies(field, omega);
+    if (!total_field_energy && dom_post_op.partial)
+    {
+      energy.reset();
+    }
     measurement_cache.domain_E_field_energy_all = energy;
     measurement_cache.domain_E_field_energy_material = material;
 
@@ -1799,6 +1843,10 @@ void PostOperator<solver_t>::MeasureDomainFieldEnergy() const
   }
 
   // Log Domain Energy.
+  if (dom_post_op.partial)
+  {
+    return;
+  }
   const auto &E_all = measurement_cache.domain_E_field_energy_all;
   const auto domain_H = units.Dimensionalize<Units::ValueType::ENERGY>(
       measurement_cache.domain_H_field_energy_all);
@@ -1836,7 +1884,13 @@ void PostOperator<solver_t>::MeasureLumpedPorts() const
   if constexpr (solver_t == ProblemType::EIGENMODE || solver_t == ProblemType::DRIVEN ||
                 solver_t == ProblemType::TRANSIENT)
   {
-    MeasureLumpedPorts(fem_op->GetLumpedPortOp().GetVoltages(*E));
+    // The voltages given by SetLumpedPortVoltages replace those of the field.
+    auto voltages = fem_op->GetLumpedPortOp().GetVoltages(*E);
+    for (const auto &[idx, given] : lumped_port_voltages)
+    {
+      voltages[idx] = given;
+    }
+    MeasureLumpedPorts(voltages);
   }
   else
   {
@@ -2000,11 +2054,17 @@ void PostOperator<solver_t>::MeasureWavePorts() const
       MFEM_VERIFY(freq_re > 0.0,
                   "Frequency domain wave port postprocessing requires nonzero frequency!");
       auto &vi = measurement_cache.wave_port_vi[idx];
-      vi.S = data.GetSParameter(*E);
+      const auto given = wave_port_overlaps.find(idx);
+      vi.S = (given != wave_port_overlaps.end()) ? given->second : data.GetSParameter(*E);
       if (data.HasVoltageCoords())
       {
-        vi.P = data.GetPower(*E, *B);
-        vi.V = data.GetVoltage(*E);
+        // The power and the voltage need the field at the port, which a port with a given
+        // overlap (of the environment of a substructuring model) has not: NaN, not 0.
+        constexpr double nan = std::numeric_limits<double>::quiet_NaN();
+        vi.P = (given != wave_port_overlaps.end()) ? std::complex<double>(nan, nan)
+                                                   : data.GetPower(*E, *B);
+        vi.V = (given != wave_port_overlaps.end()) ? std::complex<double>(nan, nan)
+                                                   : data.GetVoltage(*E);
         vi.Z_PV = data.GetCharacteristicImpedance();
       }
     }
@@ -2236,9 +2296,10 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
     // solver does not support lumped ports.
     //
     // TODO: Should this not include other types of energy too (surface impedance case)?
-    // Without U, the participations are not measured.
+    // Without U, the participations are not measured, nor the interfaces, except for a
+    // substructured region (partial), whose field gives their energies.
     const auto energy_electric_all = measurement_cache.ElectricEnergyNormalization();
-    if (!energy_electric_all)
+    if (!energy_electric_all && !dom_post_op.partial)
     {
       return;
     }
@@ -2248,6 +2309,13 @@ void PostOperator<solver_t>::MeasureInterfaceEFieldEnergy() const
     {
       auto energy = surf_post_op.GetInterfaceElectricFieldEnergy(
           idx, *E, measurement_cache.freq.real());
+      if (!energy_electric_all)
+      {
+        const double nan = std::numeric_limits<double>::quiet_NaN();
+        measurement_cache.interface_eps_i.emplace_back(Measurement::InterfaceData{
+            idx, energy, surf_post_op.GetInterfaceLossTangent(idx), nan, nan});
+        continue;
+      }
 
       auto energy_participation_p = energy / *energy_electric_all;
       auto loss_tangent_delta = surf_post_op.GetInterfaceLossTangent(idx);
@@ -2559,7 +2627,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   measurement_cache = {};
   measurement_cache.freq = omega;
   measurement_cache.ex_idx = ex_idx;
-  if (stored_E)
+  if (stored_E && !dom_post_op.partial)
   {
     measurement_cache.domain_E_field_energy_all = quadratic_E(
         reduced_energy_E, reduced_energy_E_fd, DomainPostOperator::ElectricEnergy::STORED);
@@ -2576,7 +2644,7 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     {
       d.energy = quadratic_E(forms.first, reduced_domain_energy_E_fd.at(idx),
                              DomainPostOperator::ElectricEnergy::STORED);
-      if (stored_E)
+      if (measurement_cache.domain_E_field_energy_all)
       {
         d.participation_ratio =
             ParticipationRatio(*d.energy, *measurement_cache.domain_E_field_energy_all);
@@ -2593,6 +2661,9 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
   // to the incident wave of sqrt(2) times the mode (WavePortData::GetSParameter), and every
   // PROM solve caches the pairings sᵀv of the basis vectors with the modes of all wave
   // ports for its wave-port terms.
+  // The voltages and overlaps given by SetLumpedPortVoltages and SetWavePortOverlaps (of
+  // the environment of a substructured region) replace those of the solution, as in the
+  // full measurement.
   const Eigen::MatrixX2d port_V = reduced_port_V * Y;
   std::map<int, std::complex<double>> port_voltages;
   for (Eigen::Index i = 0; const auto &[idx, data] : fem_op->GetLumpedPortOp())
@@ -2600,9 +2671,18 @@ void PostOperator<solver_t>::MeasureAndPrintReduced(int ex_idx, int step,
     port_voltages[idx] = {port_V(i, 0), port_V(i, 1)};
     i++;
   }
+  for (const auto &[idx, given] : lumped_port_voltages)
+  {
+    port_voltages[idx] = given;
+  }
   MeasureLumpedPorts(port_voltages);
   for (const auto &[idx, data] : fem_op->GetWavePortOp())
   {
+    if (const auto given = wave_port_overlaps.find(idx); given != wave_port_overlaps.end())
+    {
+      measurement_cache.wave_port_vi[idx].S = given->second;
+      continue;
+    }
     const auto *sV = rom_op.GetWavePortModePairing(idx);
     MFEM_VERIFY(sV && sV->size() == y.size(),
                 "Missing or stale PROM mode pairing for wave port " << idx << "!");

@@ -6,7 +6,6 @@
 #include <cmath>
 #include <complex>
 #include <cstdio>
-#include <functional>
 #include <iterator>
 #include <limits>
 #include <numbers>
@@ -14,7 +13,6 @@
 #include <string>
 #include <variant>
 #include <vector>
-#include <unistd.h>
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
@@ -24,6 +22,7 @@
 #include "embedded_schema.hpp"
 #include "fem/substructuremodel.hpp"
 #include "linalg/ksp.hpp"
+#include "test-helpers.hpp"
 #include "utils/configfile.hpp"
 #include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
@@ -32,45 +31,6 @@
 
 using json = nlohmann::json;
 using namespace palace;
-
-namespace
-{
-
-// What the process prints to stdout while f runs.
-std::string CaptureStdout(const std::function<void()> &f)
-{
-  std::fflush(stdout);
-  std::FILE *file = std::tmpfile();
-  const int saved = dup(fileno(stdout));
-  dup2(fileno(file), fileno(stdout));
-  auto restore = [&]()
-  {
-    std::fflush(stdout);
-    dup2(saved, fileno(stdout));
-    close(saved);
-  };
-  try
-  {
-    f();
-  }
-  catch (...)
-  {
-    restore();
-    std::fclose(file);
-    throw;
-  }
-  restore();
-  std::rewind(file);
-  std::string out;
-  for (int c = std::fgetc(file); c != EOF; c = std::fgetc(file))
-  {
-    out.push_back(static_cast<char>(c));
-  }
-  std::fclose(file);
-  return out;
-}
-
-}  // namespace
 
 namespace
 {
@@ -242,7 +202,8 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     };
     using Catch::Matchers::ContainsSubstring;
     CHECK_THAT(output({{"Type", "AMS"}}),
-               ContainsSubstring("\"Solver.Linear.Type\" \"AMS\" is not used!"));
+               ContainsSubstring(
+                   "\"Solver.Linear.Type\" \"AMS\" is not used for its factorizations!"));
     CHECK_THAT(
         output({{"STRUMPACKCompressionType", "HSS"}}),
         ContainsSubstring("\"Solver.Linear.STRUMPACKCompressionType\" is not used!"));
@@ -340,6 +301,117 @@ TEST_CASE("Config Substructuring", "[config][Serial]")
     config["Solver"]["Substructuring"]["SaveModel"] = true;
     config["Solver"]["Substructuring"]["ModelFile"] = "postpro/offline/environment.model";
     CHECK(substructuring::SaveModelPath(IoData(config, false)).empty());
+  }
+
+  SECTION("Driven substructuring")
+  {
+    auto make_config = [](const json &driven, const json &extra_boundaries)
+    {
+      json boundaries = {{"LumpedPort",
+                          {{{"Index", 1},
+                            {"R", 50.0},
+                            {"Attributes", {4}},
+                            {"Direction", "+X"},
+                            {"Excitation", true}}}}};
+      boundaries.update(extra_boundaries);
+      return json{{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                  {"Model", {{"Mesh", "test.msh"}}},
+                  {"Domains", {{"Materials", {{{"Attributes", {1, 2}}}}}}},
+                  {"Boundaries", boundaries},
+                  {"Solver",
+                   {{"Driven", driven},
+                    {"Substructuring",
+                     {{"Region", {{"Attributes", {1}}}},
+                      {"Environment", {{"Attributes", {2}}}}}}}}};
+    };
+    const json uniform = {{"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 1.0}};
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
+    CHECK_NOTHROW(IoData(make_config(uniform, json::object()), false));
+    // The region is solved by FGMRES with a direct solve of it, whatever the options of the
+    // multigrid preconditioner and of the Krylov solver, which are not used (a warning).
+    for (const auto &[key, value] :
+         std::vector<std::pair<std::string, json>>{{"MGMaxLevels", 2},
+                                                   {"PCMatReal", true},
+                                                   {"PCMatShifted", true},
+                                                   {"KSPType", "GMRES"},
+                                                   {"PCSide", "Right"}})
+    {
+      CAPTURE(key);
+      json config = make_config(uniform, json::object());
+      config["Solver"]["Linear"] = {{key, value}};
+      CHECK_THAT(
+          CaptureStdout([&config]() { IoData iodata(config, false); }),
+          Catch::Matchers::ContainsSubstring("\"Solver.Linear." + key + "\" is not used!"));
+    }
+#endif
+    json adaptive = uniform;
+    adaptive["AdaptiveTol"] = 1.0e-3;
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
+    CHECK_NOTHROW(IoData(make_config(adaptive, json::object()), false));
+#endif
+#if defined(MFEM_USE_SUPERLU)
+    // SuperLU_DIST condenses no driven environment, but factors the region online.
+    json superlu = make_config(uniform, json::object());
+    superlu["Solver"]["Linear"] = {{"Type", "SuperLU"}};
+    CHECK_THROWS_WITH(IoData(superlu, false),
+                      Catch::Matchers::ContainsSubstring("not SuperLU_DIST"));
+    superlu["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
+    CHECK_NOTHROW(IoData(superlu, false));
+#endif
+    adaptive["AdaptiveCircuitSynthesis"] = true;
+    CHECK_THROWS_WITH(IoData(make_config(adaptive, json::object()), false),
+                      Catch::Matchers::ContainsSubstring("AdaptiveCircuitSynthesis"));
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
+    json gpu = make_config(uniform, json::object());
+    gpu["Solver"]["Device"] = "GPU";
+    CHECK_NOTHROW(IoData(gpu, false));
+#endif
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
+    const json wave = {{"WavePort", {{{"Index", 2}, {"Attributes", {5}}}}}};
+    CHECK_NOTHROW(IoData(make_config(uniform, wave), false));
+#endif
+    // Adaptive mesh refinement refines no driven run, offline or online (before the checks
+    // of the static substructuring, which ask for an online run and "MaxNCLevels": 0).
+    json amr = make_config(uniform, json::object());
+    amr["Model"]["Refinement"] = {{"MaxIts", 1}};
+    CHECK_THROWS_WITH(IoData(amr, false),
+                      Catch::Matchers::ContainsSubstring("driven substructuring refines"));
+    amr["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
+    CHECK_THROWS_WITH(IoData(amr, false),
+                      Catch::Matchers::ContainsSubstring("driven substructuring refines"));
+    const json periodic = {
+        {"Periodic",
+         {{"BoundaryPairs", {{{"DonorAttributes", {5}}, {"ReceiverAttributes", {6}}}}}}}};
+    CHECK_THROWS_WITH(IoData(make_config(uniform, periodic), false),
+                      Catch::Matchers::ContainsSubstring("\"Periodic\" boundaries"));
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
+    json saved = make_config(uniform, json::object());
+    saved["Solver"]["Substructuring"]["ModelFile"] = "environment.model";
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Boundaries"]["Postprocessing"] = {
+        {"SurfaceFlux", {{{"Index", 1}, {"Attributes", {4}}, {"Type", "Electric"}}}}};
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Solver"]["Substructuring"].erase("ModelFile");
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Solver"]["Driven"]["AdaptiveTol"] = 1.0e-6;
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Boundaries"]["Postprocessing"] = {{"Dielectric",
+                                              {{{"Index", 1},
+                                                {"Attributes", {4}},
+                                                {"Thickness", 1.0e-3},
+                                                {"Permittivity", 10.0}}}}};
+    CHECK_NOTHROW(IoData(saved, false));
+    saved["Boundaries"]["Postprocessing"] = {
+        {"FarField", {{"Attributes", {4}}, {"NSample", 8}}}};
+    CHECK_THROWS_WITH(IoData(saved, false),
+                      Catch::Matchers::ContainsSubstring(
+                          "does not compute \"Boundaries.Postprocessing.FarField\""));
+#endif
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
+    json fields = uniform;
+    fields["Save"] = {1.0};
+    CHECK_NOTHROW(IoData(make_config(fields, json::object()), false));
+#endif
   }
 
   SECTION("Substructuring takes the postprocessing of the region")

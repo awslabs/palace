@@ -149,6 +149,10 @@ public:
 
   void Save() override;
 
+  // Release the mesh of the VTU files cached for the next saves, which write it again (for
+  // a collection kept while another one of the same mesh is written, see PostOperator).
+  void ReleaseMeshCache();
+
 private:
   static std::atomic<long long> individual_evaluator_calls;
   static std::atomic<long long> provider_calls;

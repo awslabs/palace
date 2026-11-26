@@ -9,6 +9,7 @@ target_sources(${LIB_TARGET_NAME}
   PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/basesolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/drivensolver.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/drivensubstructuredsweep.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/eigensolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/electrostaticsolver.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/magnetostaticsolver.cpp

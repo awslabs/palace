@@ -8,6 +8,7 @@ examples/transmon/transmon_redesign.json
 examples/transmon/transmon_substructuring_online.json
 examples/transmon/transmon_substructuring_redesign.json
 examples/substructuring/mesh/
+examples/substructuring/cpw_resonator_grid_*.json
 examples/substructuring/qubit_lattice_online*.json
 examples/substructuring/qubit_lattice_redesign*.json
 examples/substructuring/flux_lattice_online.json

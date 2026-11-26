@@ -764,6 +764,12 @@ long long CeedParaViewDataCollection::AvoidedSliceCopyBytes()
   return avoided_slice_copy_bytes.load();
 }
 
+void CeedParaViewDataCollection::ReleaseMeshCache()
+{
+  std::string().swap(cached_mesh_vtu);
+  std::string().swap(cached_point_headers_vtu);
+}
+
 void CeedParaViewDataCollection::Save()
 {
   const std::string col_path = GenerateCollectionPath();

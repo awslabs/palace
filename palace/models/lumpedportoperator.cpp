@@ -425,6 +425,14 @@ std::complex<double> LumpedPortData::GetVoltage(GridFunction &E) const
   return dot;
 }
 
+Vector LumpedPortData::GetVoltageFunctional(mfem::ParFiniteElementSpace &nd_fespace) const
+{
+  InitializeLinearForms(nd_fespace);
+  Vector l(nd_fespace.GetTrueVSize());
+  nd_fespace.GetProlongationMatrix()->MultTranspose(*v, l);
+  return l;
+}
+
 void LumpedPortData::AddDampingBdrCoefficients(double coeff,
                                                MaterialPropertyCoefficient &fb) const
 {

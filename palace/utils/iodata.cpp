@@ -724,7 +724,7 @@ void IoData::CheckConfiguration()
         solver.linear.type != LinearSolver::SUPERLU)
     {
       Mpi::Warning("Substructuring factors with STRUMPACK, MUMPS or SuperLU_DIST only: "
-                   "\"Solver.Linear.Type\" \"{}\" is not used!\n",
+                   "\"Solver.Linear.Type\" \"{}\" is not used for its factorizations!\n",
                    ToString(solver.linear.type));
     }
     // The factorizations are exact: of the options of the sparse direct solvers, they take
@@ -740,6 +740,47 @@ void IoData::CheckConfiguration()
                    "\"Solver.Linear.SuperLU3DCommunicator\" is not used!\n");
     }
     solver.substructuring->direct_solver = solver.linear.type;
+
+    // A driven sweep solves the region as a driven problem with the dense S_E of the
+    // environment on Γ (see the SpaceOperator of an environment), by FGMRES preconditioned
+    // by the region solver: from the region's exact complex matrix on one level, factored
+    // for its Schur complement onto Γ by a sparse direct solver (see MakeDrivenKspSolver),
+    // whatever the options of the multigrid preconditioner and the Krylov solver.
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      auto &linear = solver.linear;
+      auto unused = [](const char *key)
+      {
+        Mpi::Warning(
+            "Driven substructuring solves the region by FGMRES with a direct solve "
+            "of it: \"Solver.Linear.{}\" is not used!\n",
+            key);
+      };
+      if (linear.mg_max_levels > 1)
+      {
+        unused("MGMaxLevels");
+      }
+      if (linear.pc_mat_real)
+      {
+        unused("PCMatReal");
+      }
+      if (linear.pc_mat_shifted > 0)
+      {
+        unused("PCMatShifted");
+      }
+      if (linear.krylov_solver != KrylovSolver::DEFAULT &&
+          linear.krylov_solver != KrylovSolver::FGMRES)
+      {
+        unused("KSPType");
+      }
+      if (linear.pc_side != PreconditionerSide::DEFAULT)
+      {
+        unused("PCSide");
+      }
+      linear.mg_max_levels = 1;
+      linear.pc_mat_real = false;
+      linear.pc_mat_shifted = 0;
+    }
   }
 
   // A PML region only absorbs in frequency domain simulations. In a transient simulation
@@ -1168,9 +1209,10 @@ void IoData::CheckConfiguration()
   {
     const auto &sub = *solver.substructuring;
     MFEM_VERIFY(problem.type == ProblemType::ELECTROSTATIC ||
-                    problem.type == ProblemType::MAGNETOSTATIC,
-                "Substructuring is only supported for electrostatic and magnetostatic "
-                "problem types!");
+                    problem.type == ProblemType::MAGNETOSTATIC ||
+                    problem.type == ProblemType::DRIVEN,
+                "Substructuring is only supported for electrostatic, magnetostatic and "
+                "driven problem types!");
 #if !defined(MFEM_USE_STRUMPACK) && !defined(MFEM_USE_MUMPS) && !defined(MFEM_USE_SUPERLU)
     MFEM_ABORT("Substructuring factors the environment and the region with a sparse direct "
                "solver: build Palace with STRUMPACK, MUMPS or SuperLU_DIST!");
@@ -1181,6 +1223,10 @@ void IoData::CheckConfiguration()
     // seam depend on the partition.
     MFEM_VERIFY(boundaries.periodic.boundary_pairs.empty(),
                 "Substructuring does not support \"Periodic\" boundaries!");
+    MFEM_VERIFY(problem.type != ProblemType::DRIVEN || model.refinement.max_it == 0,
+                "Adaptive mesh refinement with driven substructuring refines the full "
+                "model: run the adaptation without \"Solver.Substructuring\" (with "
+                "\"SaveAdaptMesh\") and condense the saved mesh offline!");
     // Adaptive refinement refines the region of an online run only: the environment was
     // condensed on its final mesh, and nonconforming refinement without a level constraint
     // does not spread into it.
@@ -1196,8 +1242,41 @@ void IoData::CheckConfiguration()
                   "refinement (\"Nonconformal\": true) without a level constraint "
                   "(\"MaxNCLevels\": 0), so it does not spread into the environment!");
     }
+    if (problem.type == ProblemType::DRIVEN)
+    {
+      MFEM_VERIFY(!solver.driven.adaptive_circuit_synthesis,
+                  "Driven substructuring does not support \"AdaptiveCircuitSynthesis\"!");
+      // SuperLU_DIST would condense by solves in the real equivalent form, which go wrong
+      // through a resonance without a message: the condensation is by MUMPS or STRUMPACK
+      // (preferred in this order), SuperLU_DIST factors the region online only.
+#if defined(MFEM_USE_MUMPS) || defined(MFEM_USE_STRUMPACK)
+      constexpr bool condenser = true;
+#else
+      constexpr bool condenser = false;
+#endif
+      MFEM_VERIFY(
+          sub.Online() || (condenser && sub.direct_solver != LinearSolver::SUPERLU),
+          "Driven substructuring condenses the environment with MUMPS or STRUMPACK, "
+          "not SuperLU_DIST, whose condensation goes wrong through a resonance: "
+          "build Palace with one of them, and do not name SuperLU in "
+          "\"Solver\"/\"Linear\"/\"Type\" offline!");
+      // Floquet ports make the system non-symmetric.
+      MFEM_VERIFY(boundaries.floquetport.empty(),
+                  "Driven substructuring does not support Floquet ports!");
+      // The unit masses of frequency-dependent permittivity are assembled on the whole mesh
+      // (SpaceOperator), not on each side of Γ.
+      MFEM_VERIFY(std::none_of(domains.materials.begin(), domains.materials.end(),
+                               [](const auto &material)
+                               { return material.HasFrequencyDependentPermittivity(); }),
+                  "Driven substructuring does not support frequency-dependent material "
+                  "Permittivity yet!");
+      // The PML integrators are assembled on the elements of their attributes, not on each
+      // side of Γ (see BilinearForm::PartialAssemble).
+      MFEM_VERIFY(domains.pml.empty(),
+                  "Driven substructuring does not support PML regions yet!");
+    }
     // The substructured solves postprocess the field of the region (see
-    // SubstructuringSolver::RegionPostprocessing), which gives no far field.
+    // RegionPostprocessing), which gives no far field.
     MFEM_VERIFY(boundaries.postpro.farfield.empty(),
                 "Substructuring does not compute \"Boundaries.Postprocessing.FarField\": "
                 "remove it, or run without \"Solver.Substructuring\"!");

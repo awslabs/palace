@@ -37,6 +37,11 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     their interface once and saved, and later runs solve only the region, also after a
     redesign or re-meshing of it, for the capacitance and inductance matrices. SchemaVer
     6-2-0. [PR 995](https://github.com/awslabs/palace/pull/995).
+  - Added substructuring for driven simulations: the environment is condensed onto the
+    interface at each frequency, exactly or as a rational model sampled by an adaptive
+    sweep, and saved, and later sweeps solve only the region, also after a redesign or
+    re-meshing of it. An exact offline sweep gives the outputs of the whole device.
+    SchemaVer 6-2-1. [PR 1044](https://github.com/awslabs/palace/pull/1044).
 
 #### Interface Changes
 
@@ -65,6 +70,12 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Bug Fixes
 
+  - Fixed the abort "Wave port mode with zero power cannot be normalized!" of a wave port
+    whose computed mode has entries summing to zero, as the antisymmetric combination of a
+    degenerate pair of modes of a symmetric port, which the eigenvalue solver can return
+    depending on rounding: the phase normalization divided by their mean, which made the
+    mode NaN. Such a mode is now left as is, its phase set by its normalization.
+    [PR 1044](https://github.com/awslabs/palace/pull/1044).
   - Fixed the S-parameters of Floquet ports in `port-floquet-S.csv` for the excitation of a
     wave port with a nonzero `"Offset"`, which lacked the de-embedding factor
     exp(i kₙ d) of the excited wave port: their phase was off by kₙ d, and for a lossy wave

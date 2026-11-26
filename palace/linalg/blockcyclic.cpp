@@ -17,6 +17,10 @@ extern "C"
   void zgetrf_(const int *, const int *, std::complex<double> *, const int *, int *, int *);
   void zgetrs_(const char *, const int *, const int *, const std::complex<double> *,
                const int *, const int *, std::complex<double> *, const int *, int *);
+  void dsyevr_(const char *, const char *, const char *, const int *, double *, const int *,
+               const double *, const double *, const int *, const int *, const double *,
+               int *, double *, double *, const int *, int *, double *, const int *, int *,
+               const int *, int *);
 #if defined(PALACE_WITH_SCALAPACK)
   int Csys2blacs_handle(MPI_Comm);
   void Cfree_blacs_system_handle(int);
@@ -34,6 +38,11 @@ extern "C"
   void pzgetrs_(const char *, const int *, const int *, const std::complex<double> *,
                 const int *, const int *, const int *, const int *, std::complex<double> *,
                 const int *, const int *, const int *, int *);
+  void pdsyevx_(const char *, const char *, const char *, const int *, double *,
+                const int *, const int *, const int *, const double *, const double *,
+                const int *, const int *, const double *, int *, int *, double *,
+                const double *, double *, const int *, const int *, const int *, double *,
+                const int *, int *, const int *, int *, int *, double *, int *);
 #endif
 }
 
@@ -277,9 +286,7 @@ void BlockCyclicGrid::AddFromRows(const std::vector<double> &rows, int row0, int
   }
 }
 
-template <typename T>
-BlockCyclicFactorization<T>::BlockCyclicFactorization(const BlockCyclicGrid &grid)
-  : grid(grid)
+BlacsContext::BlacsContext(const BlockCyclicGrid &grid) : grid(grid)
 {
 #if defined(PALACE_WITH_SCALAPACK)
   system = Csys2blacs_handle(grid.GetComm());
@@ -288,8 +295,7 @@ BlockCyclicFactorization<T>::BlockCyclicFactorization(const BlockCyclicGrid &gri
 #endif
 }
 
-template <typename T>
-BlockCyclicFactorization<T>::~BlockCyclicFactorization()
+BlacsContext::~BlacsContext()
 {
 #if defined(PALACE_WITH_SCALAPACK)
   if (grid.InGrid())
@@ -298,6 +304,12 @@ BlockCyclicFactorization<T>::~BlockCyclicFactorization()
   }
   Cfree_blacs_system_handle(system);
 #endif
+}
+
+template <typename T>
+BlockCyclicFactorization<T>::BlockCyclicFactorization(const BlockCyclicGrid &grid)
+  : grid(grid), blacs(grid)
+{
 }
 
 template <typename T>
@@ -311,7 +323,8 @@ void BlockCyclicFactorization<T>::Factor(std::vector<T> &A)
   if (grid.InGrid() && n > 0)
   {
 #if defined(PALACE_WITH_SCALAPACK)
-    const int mb = grid.BlockSize(), lld = grid.LeadingDim(), izero = 0, ione = 1;
+    const int mb = grid.BlockSize(), lld = grid.LeadingDim(), izero = 0, ione = 1,
+              ctxt = blacs.Context();
     descinit_(desc.data(), &n, &n, &mb, &mb, &izero, &izero, &ctxt, &lld, &info);
     if (info == 0)
     {
@@ -381,7 +394,7 @@ void BlockCyclicFactorization<T>::Solve(std::vector<T> &b, int nb) const
   int info = 0;
   if (grid.InGrid())
   {
-    const int mb = grid.BlockSize(), izero = 0, ione = 1;
+    const int mb = grid.BlockSize(), izero = 0, ione = 1, ctxt = blacs.Context();
     std::array<int, 9> descb{};
     descinit_(descb.data(), &n, &nb, &mb, &nb, &izero, &izero, &ctxt, &lld, &info);
     if (info == 0)
@@ -433,6 +446,105 @@ void BlockCyclicFactorization<T>::Solve(std::vector<T> &b, int nb) const
     MFEM_VERIFY(info == 0, "Dense solve failed (info = " << info << ")!");
   }
 #endif
+}
+
+bool PositiveDefinite(const BlockCyclicGrid &grid, std::vector<double> &A)
+{
+  const int n = grid.Size();
+  MFEM_VERIFY(A.size() == grid.LocalSize(), "Wrong size of a block cyclic matrix!");
+  int info = 0;
+#if defined(PALACE_WITH_SCALAPACK)
+  const BlacsContext blacs(grid);
+  if (grid.InGrid() && n > 0)
+  {
+    const int mb = grid.BlockSize(), lld = grid.LeadingDim(), izero = 0, ione = 1,
+              ctxt = blacs.Context();
+    std::array<int, 9> desc{};
+    descinit_(desc.data(), &n, &n, &mb, &mb, &izero, &izero, &ctxt, &lld, &info);
+    if (info == 0)
+    {
+      pdpotrf_("L", &n, A.data(), &ione, &ione, desc.data(), &info);
+    }
+  }
+#else
+  if (grid.InGrid() && n > 0)
+  {
+    dpotrf_("L", &n, A.data(), &n, &info);
+  }
+#endif
+  // info > 0: a leading minor is not positive definite.
+  info = Failure(info, grid.GetComm());
+  MFEM_VERIFY(info >= 0, "Dense Cholesky factorization failed (info = " << info << ")!");
+  return info == 0;
+}
+
+double LeastEigenvalue(const BlockCyclicGrid &grid, std::vector<double> &A)
+{
+  const int n = grid.Size();
+  MFEM_VERIFY(A.size() == grid.LocalSize(), "Wrong size of a block cyclic matrix!");
+  const int one = 1;
+  const double zero = 0.0;
+  int found = 1, info = 0, lwork = -1, liwork = -1;
+  double z = 0.0;
+  // W needs n entries even for one eigenvalue (the bisection stores the whole bracket).
+  std::vector<double> w(std::max(n, 1), 0.0), work(3);
+  std::vector<int> iwork(1);
+#if defined(PALACE_WITH_SCALAPACK)
+  const BlacsContext blacs(grid);
+  if (grid.InGrid() && n > 0)
+  {
+    // The least eigenvalue only, without eigenvectors (Z is not referenced). The workspace
+    // query also writes WORK(1:3), the tolerance and bounds that rank 0 broadcasts.
+    const int mb = grid.BlockSize(), lld = grid.LeadingDim(), izero = 0,
+              ctxt = blacs.Context(),
+              nprocs = grid.NumProcessRows() * grid.NumProcessCols();
+    std::array<int, 9> desc{};
+    descinit_(desc.data(), &n, &n, &mb, &mb, &izero, &izero, &ctxt, &lld, &info);
+    const double orfac = 1.0e-3;
+    int nz = 0;
+    std::vector<int> ifail(n), iclustr(2 * nprocs);
+    std::vector<double> gap(nprocs);
+    for (int pass = 0; pass < 2 && info == 0; pass++)
+    {
+      pdsyevx_("N", "I", "L", &n, A.data(), &one, &one, desc.data(), &zero, &zero, &one,
+               &one, &zero, &found, &nz, w.data(), &orfac, &z, &one, &one, desc.data(),
+               work.data(), &lwork, iwork.data(), &liwork, ifail.data(), iclustr.data(),
+               gap.data(), &info);
+      if (pass == 0)
+      {
+        lwork = static_cast<int>(work[0]);
+        liwork = iwork[0];
+        work.resize(lwork);
+        iwork.resize(liwork);
+      }
+    }
+  }
+#else
+  if (grid.InGrid() && n > 0)
+  {
+    std::vector<int> isuppz(2);
+    for (int pass = 0; pass < 2 && info == 0; pass++)
+    {
+      dsyevr_("N", "I", "L", &n, A.data(), &n, &zero, &zero, &one, &one, &zero, &found,
+              w.data(), &z, &one, isuppz.data(), work.data(), &lwork, iwork.data(), &liwork,
+              &info);
+      if (pass == 0)
+      {
+        lwork = static_cast<int>(work[0]);
+        liwork = iwork[0];
+        work.resize(lwork);
+        iwork.resize(liwork);
+      }
+    }
+  }
+#endif
+  int failed = (info != 0 || (n > 0 && grid.InGrid() && found != 1));
+  Mpi::GlobalMax(1, &failed, grid.GetComm());
+  MFEM_VERIFY(!failed,
+              "Dense symmetric eigenvalue computation failed (info = " << info << ")!");
+  // The grid includes rank 0, which holds the eigenvalue.
+  Mpi::Broadcast(1, w.data(), 0, grid.GetComm());
+  return (n > 0) ? w[0] : 0.0;
 }
 
 template std::vector<double> BlockCyclicGrid::ScatterFromRoot(const std::vector<double> &,

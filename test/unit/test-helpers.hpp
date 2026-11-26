@@ -5,6 +5,7 @@
 #define PALACE_TEST_HELPERS_HPP
 
 #include <array>
+#include <complex>
 #include <cstdlib>
 #include <functional>
 #include <optional>
@@ -18,6 +19,14 @@
 #include "utils/configfile.hpp"
 
 mfem::Mesh SingleTetMesh();
+
+// A box [0, 2] x [0, 1]^2 of 4 x 2 x 2 hexahedra: the domains x < 1 (attribute 1) and x > 1
+// (2), the faces x = 0 (1), x = 2 (2) and the others (3), and the interior boundaries x = 1
+// between the domains (4) and x = 3/2 inside the second (5).
+mfem::Mesh MakeInteriorBoundaryBox();
+
+// What the calling process prints to stdout while f runs (rethrowing what f throws).
+std::string CaptureStdout(const std::function<void()> &f);
 
 // Path to the unit test mesh with the given file name. Most test meshes are stored in
 // PALACE_TEST_DATA_DIR/mesh. "star-tri.mesh" and "fichera-tet.mesh" are not stored: they
@@ -59,6 +68,11 @@ public:
   ~ScopedEnvironmentVariable() { Set(previous ? previous->c_str() : nullptr); }
 };
 
+namespace palace
+{
+class DrivenSubstructureModel;
+}  // namespace palace
+
 namespace palace::test
 {
 
@@ -71,6 +85,12 @@ std::string CaptureStdout(const std::function<void()> &f);
 // online run ("Online") which loads it.
 void SetModelRun(nlohmann::json &config, std::string_view mode,
                  const std::string &model_path);
+
+// The record j of the frequencies in the file of a driven substructuring model, as written:
+// the lower triangle of S by columns, then g, h and c (see
+// DrivenSubstructureModel::PartSizes), read by the calling process.
+std::vector<std::complex<double>> ReadDrivenRecord(const DrivenSubstructureModel &model,
+                                                   const std::string &path, int j);
 
 // Deterministic pseudo-random orthonormal frames (e1, e2, normal) of planes oblique to
 // every coordinate axis.

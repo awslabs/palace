@@ -115,6 +115,39 @@ TEST_CASE("Vector Sum - Complex", "[vector][Serial][Parallel][GPU]")
   CHECK_THAT(sum.imag(), WithinRel(expected_imag));
 }
 
+TEST_CASE("Vector NormalizePhase", "[vector][Serial][Parallel]")
+{
+  // A complex vector is rotated so that its mean is on the positive real axis, which gives
+  // its phase. One of zero mean, as the antisymmetric combination of a degenerate pair of
+  // modes of a symmetric guide, is left as is, not made NaN.
+  const int rank = Mpi::Rank(Mpi::World());
+  auto set = [](ComplexVector &v, std::complex<double> a, std::complex<double> b)
+  {
+    double *vr = v.Real().HostWrite(), *vi = v.Imag().HostWrite();
+    vr[0] = a.real();
+    vi[0] = a.imag();
+    vr[1] = b.real();
+    vi[1] = b.imag();
+  };
+  const double phi = 0.7;
+  const auto c = std::polar(1.0, phi);
+  ComplexVector x(2);
+  set(x, c * (1.0 + rank), c * 2.0);
+  CHECK_THAT(linalg::NormalizePhase(Mpi::World(), x), WithinAbs(phi, 1.0e-14));
+  const auto mean = linalg::Mean(Mpi::World(), x);
+  CHECK(mean.real() > 0.0);
+  CHECK_THAT(mean.imag(), WithinAbs(0.0, 1.0e-14));
+
+  ComplexVector z(2);
+  set(z, {1.0 + rank, 0.5}, {-1.0 - rank, -0.5});
+  CHECK(linalg::NormalizePhase(Mpi::World(), z) == 0.0);
+  const double *zr = z.Real().HostRead(), *zi = z.Imag().HostRead();
+  CHECK(zr[0] == 1.0 + rank);
+  CHECK(zi[0] == 0.5);
+  CHECK(zr[1] == -1.0 - rank);
+  CHECK(zi[1] == -0.5);
+}
+
 // On the host, inner products are computed with several partial sums (by blocks with
 // several OpenMP threads), and the complex ones in a single pass; compare with plain sums.
 TEST_CASE("Vector Dot", "[vector][Serial][Parallel]")

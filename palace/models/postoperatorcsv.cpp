@@ -426,6 +426,19 @@ std::vector<std::size_t> _impl::table_expected_filling(std::size_t m_idx_row,
   return filling_pattern;
 }
 
+std::vector<std::size_t> _impl::table_expected_filling_by_row(std::size_t m_idx_row,
+                                                              std::size_t ex_idx_i,
+                                                              std::size_t nr_col_blocks)
+{
+  std::vector<std::size_t> filling_pattern(nr_col_blocks + 1, m_idx_row);
+  filling_pattern.at(0) = m_idx_row + ((ex_idx_i > 0) ? 1 : 0);  // index column
+  for (std::size_t i = 1; i < ex_idx_i + 1; i++)
+  {
+    filling_pattern.at(i) = m_idx_row + 1;
+  }
+  return filling_pattern;
+}
+
 template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::MoveTableValidateReload(
     TableWithCSVFile &t_csv_base, Table &&t_ref,
@@ -510,15 +523,18 @@ void PostOperatorCSV<solver_t>::MoveTableValidateReload(
     // The group structure scanned above was restored from the reference table, so
     // base_ex_idx_nrows holds one entry per reference table column group; only its
     // values, the row counts read back from disk, are validated here.
-    expected_ex_idx_nrows.assign(base_ex_idx_nrows.size(),
-                                 *rows_per_measurement *
-                                     (ex_idx_i * nr_expected_measurement_rows + row_i));
+    const std::size_t done = row_major ? row_i * ex_idx_v_all.size() + ex_idx_i
+                                       : ex_idx_i * nr_expected_measurement_rows + row_i;
+    expected_ex_idx_nrows.assign(base_ex_idx_nrows.size(), *rows_per_measurement * done);
     filling_desc = "per measurement";
   }
   else
   {
-    expected_ex_idx_nrows = _impl::table_expected_filling(
-        row_i, ex_idx_i, nr_expected_measurement_rows, ex_idx_v_all.size());
+    expected_ex_idx_nrows =
+        row_major
+            ? _impl::table_expected_filling_by_row(row_i, ex_idx_i, ex_idx_v_all.size())
+            : _impl::table_expected_filling(row_i, ex_idx_i, nr_expected_measurement_rows,
+                                            ex_idx_v_all.size());
   }
 
   // Copy over other options from reference table, since we don't recover them on load.
@@ -610,6 +626,7 @@ template <ProblemType solver_t>
 void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_post_op)
 {
   domain_E = TableWithCSVFile(post_dir / "domain-E.csv", reload_table);
+  domain_partial = dom_post_op.partial;
 
   Table t;  // Define table locally first due to potential reload.
   auto nr_expected_measurement_cols =
@@ -622,13 +639,17 @@ void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_
 
     // The stored electric energy of a region, and its participation in the total, are
     // omitted where they are not available (a frequency-dependent material without a
-    // stored electric energy), which is fixed for the run.
-    const bool total_E = dom_post_op.HasStoredElectricFieldEnergy();
+    // stored electric energy), which is fixed for the run, and the totals and
+    // participations where the field is known on part of the domain only.
+    const bool total_E = !domain_partial && dom_post_op.HasStoredElectricFieldEnergy();
     if (total_E)
     {
       t.insert(fmt::format("Ee_{}", ex_idx), fmt::format("E_elec{} (J)", ex_label), ex_idx);
     }
-    t.insert(fmt::format("Em_{}", ex_idx), fmt::format("E_mag{} (J)", ex_label), ex_idx);
+    if (!domain_partial)
+    {
+      t.insert(fmt::format("Em_{}", ex_idx), fmt::format("E_mag{} (J)", ex_label), ex_idx);
+    }
     t.insert(fmt::format("Ec_{}", ex_idx), fmt::format("E_cap{} (J)", ex_label), ex_idx);
     t.insert(fmt::format("Ei_{}", ex_idx), fmt::format("E_ind{} (J)", ex_label), ex_idx);
 
@@ -646,8 +667,11 @@ void PostOperatorCSV<solver_t>::InitializeDomainE(const DomainPostOperator &dom_
       }
       t.insert(fmt::format("Em_{}_{}", idx, ex_idx),
                fmt::format("E_mag[{}]{} (J)", idx, ex_label), ex_idx);
-      t.insert(fmt::format("pm_{}_{}", idx, ex_idx),
-               fmt::format("p_mag[{}]{}", idx, ex_label), ex_idx);
+      if (!domain_partial)
+      {
+        t.insert(fmt::format("pm_{}_{}", idx, ex_idx),
+                 fmt::format("p_mag[{}]{}", idx, ex_label), ex_idx);
+      }
     }
   }
   MoveTableValidateReload(*domain_E, std::move(t));
@@ -665,13 +689,16 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
   }
 
   CheckAppendIndex(domain_E->table["idx"], row_idx_v, row_i);
-  if (measurement_cache.domain_E_field_energy_all)
+  if (!domain_partial)
   {
-    domain_E->table[fmt::format("Ee_{}", m_ex_idx)]
-        << *measurement_cache.domain_E_field_energy_all;
+    if (measurement_cache.domain_E_field_energy_all)
+    {
+      domain_E->table[fmt::format("Ee_{}", m_ex_idx)]
+          << *measurement_cache.domain_E_field_energy_all;
+    }
+    domain_E->table[fmt::format("Em_{}", m_ex_idx)]
+        << measurement_cache.domain_H_field_energy_all;
   }
-  domain_E->table[fmt::format("Em_{}", m_ex_idx)]
-      << measurement_cache.domain_H_field_energy_all;
   domain_E->table[fmt::format("Ec_{}", m_ex_idx)]
       << measurement_cache.lumped_port_capacitor_energy;
   domain_E->table[fmt::format("Ei_{}", m_ex_idx)]
@@ -682,7 +709,7 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
     {
       domain_E->table[fmt::format("Ee_{}_{}", data.idx, m_ex_idx)] << *data.energy;
     }
-    if (data.participation_ratio)
+    if (!domain_partial && data.participation_ratio)
     {
       domain_E->table[fmt::format("pe_{}_{}", data.idx, m_ex_idx)]
           << *data.participation_ratio;
@@ -691,8 +718,11 @@ void PostOperatorCSV<solver_t>::PrintDomainE()
   for (const auto &data : measurement_cache.domain_H_field_energy_i)
   {
     domain_E->table[fmt::format("Em_{}_{}", data.idx, m_ex_idx)] << data.energy.value();
-    domain_E->table[fmt::format("pm_{}_{}", data.idx, m_ex_idx)]
-        << data.participation_ratio.value();
+    if (!domain_partial)
+    {
+      domain_E->table[fmt::format("pm_{}_{}", data.idx, m_ex_idx)]
+          << data.participation_ratio.value();
+    }
   }
   WriteTable(*domain_E);
 }
@@ -786,8 +816,9 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &su
   {
     return;
   }
-  // The participations are normalized by U, so omitted without it.
-  if (!total_energy)
+  // The participations are normalized by U, so omitted without it: a substructured region
+  // (whose field gives no U) writes the energies of the interfaces instead.
+  if (!total_energy && !domain_partial)
   {
     RemoveOmittedTable("surface-Q.csv");
     return;
@@ -796,7 +827,7 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &su
 
   Table t;  // Define table locally first due to potential reload.
   auto nr_expected_measurement_cols =
-      1 + ex_idx_v_all.size() * (2 * surf_post_op.eps_surfs.size());
+      1 + ex_idx_v_all.size() * ((total_energy ? 2 : 1) * surf_post_op.eps_surfs.size());
   t.reserve(nr_expected_measurement_rows, nr_expected_measurement_cols);
   t.insert("idx", LabelIndexCol(solver_t), -1, 0, PrecIndexCol(solver_t), "");
   for (const auto ex_idx : ex_idx_v_all)
@@ -804,6 +835,12 @@ void PostOperatorCSV<solver_t>::InitializeSurfaceQ(const SurfacePostOperator &su
     std::string ex_label = HasSingleExIdx() ? "" : fmt::format("[{}]", ex_idx);
     for (const auto &[idx, data] : surf_post_op.eps_surfs)
     {
+      if (!total_energy)
+      {
+        t.insert(fmt::format("E_{}_{}", idx, ex_idx),
+                 fmt::format("E_surf[{}]{} (J)", idx, ex_label), ex_idx);
+        continue;
+      }
       t.insert(fmt::format("p_{}_{}", idx, ex_idx),
                fmt::format("p_surf[{}]{}", idx, ex_label), ex_idx);
       t.insert(fmt::format("Q_{}_{}", idx, ex_idx),
@@ -824,6 +861,11 @@ void PostOperatorCSV<solver_t>::PrintSurfaceQ()
 
   for (const auto &data : measurement_cache.interface_eps_i)
   {
+    if (domain_partial)
+    {
+      surface_Q->table[fmt::format("E_{}_{}", data.idx, m_ex_idx)] << data.energy;
+      continue;
+    }
     surface_Q->table[fmt::format("p_{}_{}", data.idx, m_ex_idx)]
         << data.energy_participation;
     surface_Q->table[fmt::format("Q_{}_{}", data.idx, m_ex_idx)] << data.quality_factor;
@@ -1532,8 +1574,9 @@ void PostOperatorCSV<solver_t>::PrintPortZ()
     // complex time-averaged power P = 1/2 ∫(E × H*)·n dS = 1/2 V I* for peak
     // phasors, so Z = |V|² / (2 conj(P)). This is direction-specific: Re{Z[i][i]}
     // is positive at the driven port, while Re{Z[i][j]} for i != j can be negative
-    // at a passive port where power leaves the domain.
-    if (std::abs(data.P) > 0.0)
+    // at a passive port where power leaves the domain. A power not known (NaN) gives
+    // NaN.
+    if (std::abs(data.P) != 0.0)
     {
       auto Z = std::norm(data.V) / (2.0 * std::conj(data.P));
       port_Z->table[format("re_z_{}_{}", idx, m_ex_idx)] << Z.real();
@@ -1888,8 +1931,10 @@ void PostOperatorCSV<solver_t>::InitializeCSVDataCollection(
     return;
   }
   // Whether U, which normalizes the participations and coupling rates, is available
-  // (Measurement::ElectricEnergyNormalization), fixed for the run.
-  const bool total_energy = post_op.dom_post_op.HasStoredElectricFieldEnergy();
+  // (Measurement::ElectricEnergyNormalization), fixed for the run: not for a substructured
+  // region (see config::DomainPostData::partial).
+  const bool total_energy =
+      post_op.dom_post_op.HasStoredElectricFieldEnergy() && !post_op.dom_post_op.partial;
   InitializeDomainE(post_op.dom_post_op);
   InitializeSurfaceF(post_op.surf_post_op);
   InitializeSurfaceQ(post_op.surf_post_op, total_energy);
@@ -2068,8 +2113,12 @@ PostOperatorCSV<solver_t>::PostOperatorCSV(const config::ProblemData &problem,
     defer_table_writes = (solver.driven.adaptive_tol > 0.0);
     last_deferred_flush = std::chrono::steady_clock::now();
 
-    row_i = std::size_t(solver.driven.restart - 1) % nr_expected_measurement_rows;
-    ex_idx_i = std::size_t(solver.driven.restart - 1) / nr_expected_measurement_rows;
+    // A restart follows the order of the measurements, the excitations at each frequency
+    // for substructuring (whose frequency loop is the outer one).
+    row_major = solver.substructuring.has_value();
+    const std::size_t done = solver.driven.restart - 1, nr_ex = ex_idx_v_all.size();
+    row_i = row_major ? done / nr_ex : done % nr_expected_measurement_rows;
+    ex_idx_i = row_major ? done % nr_ex : done / nr_expected_measurement_rows;
     m_ex_idx = ex_idx_v_all.at(ex_idx_i);
   }
 

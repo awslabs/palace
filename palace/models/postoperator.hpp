@@ -194,14 +194,19 @@ protected:
     return enable_gridfunction_output && ShouldWriteFields(step);
   }
 
-  // ParaView data collection: writing fields to disk for visualization.
-  // This is an optional, since ParaViewDataCollection has no default (empty) ctor,
-  // and we only want initialize it if ShouldWriteParaviewFields() returns true.
-  std::optional<CeedParaViewDataCollection> paraview;
-  std::optional<CeedParaViewDataCollection> paraview_bdr;
-
-  // Largest cycle written, so the final save never overwrites a step written out of order.
-  int paraview_max_cycle = -1;
+  // ParaView data collections, writing fields to disk for visualization, set up only if
+  // ShouldWriteParaviewFields() returns true: the domain and boundary ones of each output
+  // folder, kept while the run writes others (a sweep by frequency writes those of each
+  // excitation in turn), with the largest cycle written, so the final save never overwrites
+  // a step written out of order; and the current ones.
+  struct ParaviewCollections
+  {
+    std::unique_ptr<CeedParaViewDataCollection> domain, boundary;
+    int max_cycle = -1;
+  };
+  std::map<fs::path, ParaviewCollections> paraview_collections;
+  CeedParaViewDataCollection *paraview = nullptr, *paraview_bdr = nullptr;
+  int *paraview_max_cycle = nullptr;
 
   // MFEM grid function output details.
   std::string gridfunction_output_dir;
@@ -259,7 +264,8 @@ protected:
   void SetupFieldCoefficients();
   void EnsureFieldCoefficientsSetup();
 
-  // Initialize Paraview, register all fields to write.
+  // Make the ParaView collections of a folder the current ones: those kept from an earlier
+  // switch to it, or new ones with all the fields to write registered.
   void InitializeParaviewDataCollection(const fs::path &sub_folder_name = "");
   void EnsureParaviewDataCollection();
 
@@ -313,7 +319,9 @@ protected:
   mutable InterpolationOperator interp_op;  // E & B fields: mutates during measure
 
   mutable Measurement measurement_cache;
-  std::optional<double> total_field_energy;  // see SetTotalFieldEnergy
+  std::map<int, std::complex<double>> lumped_port_voltages;  // see SetLumpedPortVoltages
+  std::map<int, std::complex<double>> wave_port_overlaps;    // see SetWavePortOverlaps
+  std::optional<double> total_field_energy;                  // see SetTotalFieldEnergy
 
   // Reduced-coordinate outputs for adaptive online postprocessing: the electric energy
   // form, the factor R of the curls of the basis vectors (the time-averaged magnetic energy
@@ -490,6 +498,24 @@ public:
                                            const ComplexVector &b,
                                            std::complex<double> omega)
     requires(solver_t == ProblemType::DRIVEN);
+
+  // Lumped port voltages given instead of measured from the field (where the field is not
+  // known: substructuring from a model), used by the next measurements; their power is not
+  // available (zero).
+  void SetLumpedPortVoltages(std::map<int, std::complex<double>> voltages)
+    requires(solver_t == ProblemType::DRIVEN)
+  {
+    lumped_port_voltages = std::move(voltages);
+  }
+
+  // Wave port overlaps of the field with the port mode (the S-parameter before its
+  // incident part is removed) given in the same way; their power and voltage are not
+  // available (NaN).
+  void SetWavePortOverlaps(std::map<int, std::complex<double>> overlaps)
+    requires(solver_t == ProblemType::DRIVEN)
+  {
+    wave_port_overlaps = std::move(overlaps);
+  }
 
   // Configure and evaluate the exact reduced-coordinate default output path (domain
   // energies plus port S-parameters). Unsupported configured measurements leave the path

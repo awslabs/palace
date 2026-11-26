@@ -182,6 +182,11 @@ public:
   std::complex<double> GetSParameter(GridFunction &E) const;
   std::complex<double> GetVoltage(GridFunction &E) const;
 
+  // The voltage as a linear form of the field: V = l^T E for the local true DOFs E of a
+  // field on nd_fespace, summed over the processes (the linear form of GetVoltage without
+  // libCEED, assembled once).
+  Vector GetVoltageFunctional(mfem::ParFiniteElementSpace &nd_fespace) const;
+
   // Add the sheet admittance 1 / R_s of each port element, scaled by coeff, to the boundary
   // coefficient. This term is zero for a port without resistance. It does not depend on
   // whether the port is active.

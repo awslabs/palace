@@ -11,8 +11,10 @@
 #include <random>
 #include <stdexcept>
 #include <system_error>
+#include <utility>
 #include <unistd.h>
 #include "fixtures.hpp"
+#include "models/drivensubstructure.hpp"
 
 mfem::Mesh SingleTetMesh()
 {
@@ -28,6 +30,104 @@ mfem::Mesh SingleTetMesh()
   mesh.AddBdrTriangle(0, 2, 1, 4);
   mesh.FinalizeTopology();
   mesh.Finalize(true, false);
+  return mesh;
+}
+
+std::string CaptureStdout(const std::function<void()> &f)
+{
+  std::fflush(stdout);
+  std::FILE *file = std::tmpfile();
+  const int saved = dup(fileno(stdout));
+  dup2(fileno(file), fileno(stdout));
+  auto restore = [&]()
+  {
+    std::fflush(stdout);
+    dup2(saved, fileno(stdout));
+    close(saved);
+  };
+  try
+  {
+    f();
+  }
+  catch (...)
+  {
+    restore();
+    std::fclose(file);
+    throw;
+  }
+  restore();
+  std::rewind(file);
+  std::string out;
+  for (int c = std::fgetc(file); c != EOF; c = std::fgetc(file))
+  {
+    out.push_back(static_cast<char>(c));
+  }
+  std::fclose(file);
+  return out;
+}
+
+mfem::Mesh MakeInteriorBoundaryBox()
+{
+  constexpr int nx = 4, n = 2;
+  auto vid = [](int i, int j, int k) { return (i * (n + 1) + j) * (n + 1) + k; };
+  mfem::Mesh mesh(3, (nx + 1) * (n + 1) * (n + 1), nx * n * n, 2 * n * n * 2 + 4 * nx * n,
+                  3);
+  for (int i = 0; i <= nx; i++)
+  {
+    for (int j = 0; j <= n; j++)
+    {
+      for (int k = 0; k <= n; k++)
+      {
+        mesh.AddVertex(0.5 * i, 0.5 * j, 0.5 * k);
+      }
+    }
+  }
+  for (int i = 0; i < nx; i++)
+  {
+    for (int j = 0; j < n; j++)
+    {
+      for (int k = 0; k < n; k++)
+      {
+        const int v[8] = {vid(i, j, k),
+                          vid(i + 1, j, k),
+                          vid(i + 1, j + 1, k),
+                          vid(i, j + 1, k),
+                          vid(i, j, k + 1),
+                          vid(i + 1, j, k + 1),
+                          vid(i + 1, j + 1, k + 1),
+                          vid(i, j + 1, k + 1)};
+        mesh.AddHex(v, (i < 2) ? 1 : 2);
+      }
+    }
+  }
+  for (int a = 0; a < n; a++)
+  {
+    for (int b = 0; b < n; b++)
+    {
+      for (const auto [i, attr] : {std::pair{0, 1}, {2, 4}, {3, 5}, {nx, 2}})
+      {
+        const int q[4] = {vid(i, a, b), vid(i, a + 1, b), vid(i, a + 1, b + 1),
+                          vid(i, a, b + 1)};
+        mesh.AddBdrQuad(q, attr);
+      }
+    }
+  }
+  for (int i = 0; i < nx; i++)
+  {
+    for (int a = 0; a < n; a++)
+    {
+      for (int side = 0; side <= n; side += n)
+      {
+        const int qy[4] = {vid(i, side, a), vid(i + 1, side, a), vid(i + 1, side, a + 1),
+                           vid(i, side, a + 1)};
+        const int qz[4] = {vid(i, a, side), vid(i + 1, a, side), vid(i + 1, a + 1, side),
+                           vid(i, a + 1, side)};
+        mesh.AddBdrQuad(qy, 3);
+        mesh.AddBdrQuad(qz, 3);
+      }
+    }
+  }
+  mesh.FinalizeHexMesh(1, 0, true);
   return mesh;
 }
 
@@ -146,6 +246,22 @@ std::vector<std::array<mfem::Vector, 3>> ObliqueFrames(int num_frames)
     frames.push_back({e1, e2, n});
   }
   return frames;
+}
+
+std::vector<std::complex<double>> ReadDrivenRecord(const DrivenSubstructureModel &model,
+                                                   const std::string &path, int j)
+{
+  const auto pos = model.RecordPositions(path, MPI_COMM_SELF);
+  MFEM_VERIFY(j >= 0 && static_cast<std::size_t>(j) < pos.size(),
+              "No record " << j << " in the substructuring model \"" << path << "\"!");
+  const auto sz = model.PartSizes();
+  std::vector<std::complex<double>> x(sz[0] + sz[1] + sz[2] + sz[3]);
+  std::ifstream f(path, std::ios::binary);
+  f.seekg(pos[j]);
+  f.read(reinterpret_cast<char *>(x.data()),
+         static_cast<std::streamsize>(x.size() * sizeof(std::complex<double>)));
+  MFEM_VERIFY(f, "Truncated substructuring model \"" << path << "\"!");
+  return x;
 }
 
 }  // namespace palace::test
