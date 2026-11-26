@@ -13,6 +13,7 @@
 #include <vector>
 #include <nlohmann/json_fwd.hpp>
 #include "utils/communication.hpp"
+#include "utils/labels.hpp"
 #include "utils/tablecsv.hpp"
 
 namespace palace
@@ -81,6 +82,12 @@ ParticipationVerdictBars ParseParticipationVerdictBars(const std::string &text,
 ParticipationVerdictBars BuiltInParticipationVerdictBars();
 // The "Verdict" member of a bars file; the built-in data when the file has no such member.
 ParticipationVerdictBars ReadParticipationVerdictBars(const std::string &path);
+// The verdict data of a run (its Resolution.BarsFile `bars_file`; built-in when empty): the
+// one selection of the table and of the census operator's PREFLIGHT word.
+ParticipationVerdictBars ParticipationVerdictBarsFor(const std::string &bars_file);
+// The problem name of the table's rows and words (Electrostatic, Eigenmode, Driven; empty
+// for a problem type without the table).
+std::string ParticipationProblemName(ProblemType type);
 
 // Why a value's indicator is not evaluated (printed after MOVING), the first that applies
 // in the order of VERDICT-INPUT.md s2: no earlier level (FIRST-ITERATION: the first level,
@@ -136,6 +143,13 @@ std::string ParticipationConvergenceName(const ParticipationIndicator &indicator
 std::string ParticipationResolutionWord(double m90, int order, bool settled, bool region,
                                         const ParticipationVerdictBars &bars,
                                         const std::string &problem);
+// ONE verdict (decision 2403 (3), lane v1verdict1): the resolution word of a Type BEFORE a
+// solve, from its census weighted by length (ResolutionPreflightRow::length_quantiles): the
+// word above with no convergence evaluated (settled false, a Type's census), as the table
+// prints it at a first iteration. Never RESOLVED.
+std::string ParticipationPreflightWord(double length_m90, int order,
+                                       const ParticipationVerdictBars &bars,
+                                       const std::string &problem);
 
 // One row of surface-participation.csv (the DESIGN-NOTE's 27 columns).
 struct SurfaceParticipationRow
@@ -186,17 +200,17 @@ struct SurfaceParticipationRow
 // of a PreflightOnly run, which solves nothing. Per target interface (`targets`: interface
 // -> Type; `regions`: the targets with a Region) one row of point 0 and excitation 0 whose
 // values (p, Q, h/R m90 and m50, the share, the changes) are NaN, whose resolution reads
-// "PREFLIGHT <the Type's all-planes PREFLIGHT status>" (a region row "PREFLIGHT
-// NOT-EVALUATED": a box has no geometric census of its own), whose coverage, regime,
-// confidence and convergence read kParticipationNotComputed, whose flags read
-// kParticipationPreflightFlags and whose reason is kParticipationPreflightReason. Never a
-// verdict of the table's rule (energy-weighted, the rule's bars): that needs a solve.
+// the Type's all-planes PREFLIGHT word (ONE verdict, decision 2403 (3), lane v1verdict1:
+// the table's word with no convergence evaluated, on the census weighted by length; a
+// region row NOT-EVALUATED: a box has no census of its own before a solve), whose
+// coverage, regime, confidence and convergence read kParticipationNotComputed, whose flags
+// read kParticipationPreflightFlags and whose reason is kParticipationPreflightReason.
 inline constexpr const char *kParticipationNotComputed = "NOT-COMPUTED";
 inline constexpr const char *kParticipationPreflightFlags = "PREFLIGHT-ONLY";
 inline constexpr const char *kParticipationPreflightReason =
-    "PREFLIGHT-ONLY: geometric census by cell length against the census bars; no solve; "
-    "values not computed; the table's resolution verdict (energy-weighted; bars of the "
-    "rule) needs a solve";
+    "PREFLIGHT-ONLY: no solve; values not computed; resolution = the table's rule on the "
+    "census weighted by length (no field before a solve); no convergence evaluated: "
+    "never RESOLVED";
 std::vector<SurfaceParticipationRow>
 PreflightParticipationRows(const std::map<int, std::string> &targets,
                            const std::set<int> &regions,

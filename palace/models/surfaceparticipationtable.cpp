@@ -171,6 +171,27 @@ ParticipationVerdictBars ReadParticipationVerdictBars(const std::string &path)
   return ParseParticipationVerdictBars(text, path, false);
 }
 
+ParticipationVerdictBars ParticipationVerdictBarsFor(const std::string &bars_file)
+{
+  return bars_file.empty() ? BuiltInParticipationVerdictBars()
+                           : ReadParticipationVerdictBars(bars_file);
+}
+
+std::string ParticipationProblemName(ProblemType type)
+{
+  switch (type)
+  {
+    case ProblemType::ELECTROSTATIC:
+      return "Electrostatic";
+    case ProblemType::EIGENMODE:
+      return "Eigenmode";
+    case ProblemType::DRIVEN:
+      return "Driven";
+    default:
+      return {};
+  }
+}
+
 ParticipationIndicator
 ComputeParticipationIndicator(double p, double m90, double unknowns,
                               const std::vector<ParticipationHistoryEntry> &history,
@@ -280,6 +301,13 @@ std::string ParticipationResolutionWord(double m90, int order, bool settled, boo
   return Scoped(std::string(ResolutionStatusName(ResolutionStatus::MARGINAL)));
 }
 
+std::string ParticipationPreflightWord(double length_m90, int order,
+                                       const ParticipationVerdictBars &bars,
+                                       const std::string &problem)
+{
+  return ParticipationResolutionWord(length_m90, order, false, false, bars, problem);
+}
+
 void SetParticipationResolution(SurfaceParticipationRow &row, const ResolutionCell *cell)
 {
   row.m90 = cell ? cell->quantiles[2] : kNaN;
@@ -332,7 +360,7 @@ PreflightParticipationRows(const std::map<int, std::string> &targets,
     row.interface = interface;
     row.type = type;
     row.region = regions.count(interface) > 0;
-    auto status = ResolutionStatus::NOT_EVALUATED;
+    std::string word(ResolutionStatusName(ResolutionStatus::NOT_EVALUATED));
     if (!row.region)
     {
       const auto census = std::find_if(preflight.begin(), preflight.end(),
@@ -340,10 +368,10 @@ PreflightParticipationRows(const std::map<int, std::string> &targets,
                                        { return r.all_planes && r.type == type; });
       if (census != preflight.end())
       {
-        status = census->status;
+        word = census->resolution;
       }
     }
-    row.resolution = "PREFLIGHT " + std::string(ResolutionStatusName(status));
+    row.resolution = word;
     row.coverage = row.regime = row.confidence = row.convergence =
         kParticipationNotComputed;
     row.flags = kParticipationPreflightFlags;

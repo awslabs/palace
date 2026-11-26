@@ -22,6 +22,7 @@
 #include <nlohmann/json.hpp>
 #include "linalg/operator.hpp"
 #include "linalg/vector.hpp"
+#include "models/surfaceparticipationtable.hpp"
 #include "models/surfaceresponsecoverage.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponseorientedbox.hpp"
@@ -1073,6 +1074,10 @@ private:
   double resolution_radius = 0.0;        // mesh units (the library matching radius)
   double resolution_length_scale = 1.0;  // m per mesh unit
   ResolutionBars resolution_bars;
+  // ONE verdict (decision 2403 (3), lane v1verdict1): the per-iteration table's verdict
+  // data (ParticipationVerdictBarsFor) and problem name, for the PREFLIGHT word.
+  ParticipationVerdictBars resolution_verdict_bars;
+  std::string resolution_problem;
   std::vector<ResolutionPatchReading> resolution_readings;
   std::vector<int> resolution_plane_slots;
   std::vector<double> resolution_planes;
