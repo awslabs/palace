@@ -38,8 +38,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Unchanged in action, now at load and all listed: `MatchingRadius` against the largest
     `EdgeDistances`, a missing `InterfaceLayers` entry, the library file and `Version`, a
     parked metal law without the developer switch, `TargetInterfaces` / `AutomaticEdges`.
-    A tolerated mismatch is named in the outputs: the flags word `library mismatch
-    tolerated` on every affected row of `surface-participation.csv` and
+    A tolerated mismatch is named in the outputs: the flags word `library mismatch tolerated` on every affected row of `surface-participation.csv` and
     `SurfaceResponse.LibraryMismatch` in `palace.json`; without a mismatch nothing is added.
   - The length-weighted census (the PREFLIGHT line, `SurfaceResponse.Resolution.Preflight`:
     `EdgeLength`, `LengthM90`, the shares, the coarse-cells flag and the word) weighs each
@@ -47,7 +46,6 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     edge two or three times (a designers' flip chip: 3.927 m of census length against 2.776
     m once per edge). Patch counts are unchanged; the energy-weighted census already
     weighed them.
-
   - ONE resolution verdict: the PREFLIGHT word (the log's PREFLIGHT line before each
     level's solve, `Status` of `SurfaceResponse.Resolution.Preflight` in `palace.json`, the
     `resolution` of a `"PreflightOnly"` run's `surface-participation.csv`) is the

@@ -1853,24 +1853,23 @@ value (the largest over the window's values, rounded up): a layer's permittivity
 on its own type only; the substrate's permittivity `MA` 0.16, `MS` 1.86, `SA` 0.11. Alone,
 a layer may thus differ by about 1 % and the substrate by about 0.5 %.
 
-| In the device configuration | In the library | On a mismatch |
-|:--- |:--- |:--- |
-| `Thickness` of every target `Boundaries.Postprocessing.Dielectric` entry (mesh units) | `Fabrication.InterfaceLayers.<Type>.Thickness` | THE RULE (was: the run stops at any difference) |
-| `Permittivity` of every target `Dielectric` entry | `Fabrication.InterfaceLayers.<Type>.Permittivity` | THE RULE (was: the run stops at any difference) |
-| `Domains.Materials` `Permittivity` of the domains next to the corrected metal (after the mesh) | `Fabrication.SubstratePermittivity` (and 1 for vacuum) | THE RULE (was: a warning at any size); at load the run stops already when no configured material other than vacuum could pass it, else one line names the materials that could be the substrate |
-| the largest `EdgeDistances` value of every target entry (mesh units) | `MatchingRadius` | the run stops (any difference) |
-| a target entry's `Type` | an `InterfaceLayers` entry of that type | the run stops |
-| `Model.L0` | `Fabrication.LengthUnit`, when the library states it (`m`, `cm`, `mm`, `um`, `nm`) | the run stops |
-| the metal laws of the device | a model of a parked law (conductivity, rational impedance) | the run stops without `"Developer": true`, every such model named |
-| `TargetInterfaces`, `AutomaticEdges` | - | the run stops (unchanged, now at load) |
-| the boundary law of the metal (`PEC`, `Impedance` with its `Rs` / `Ls` / `Cs`, ...) | each model's `BoundaryCondition` | no error: the features have no model (Missing, uncorrected); the warning names the law when the library holds the same geometry under another law |
+| In the device configuration                                                                    | In the library                                                                     | On a mismatch                                                                                                                                                                                   |
+|:---------------------------------------------------------------------------------------------- |:---------------------------------------------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Thickness` of every target `Boundaries.Postprocessing.Dielectric` entry (mesh units)          | `Fabrication.InterfaceLayers.<Type>.Thickness`                                     | THE RULE (was: the run stops at any difference)                                                                                                                                                 |
+| `Permittivity` of every target `Dielectric` entry                                              | `Fabrication.InterfaceLayers.<Type>.Permittivity`                                  | THE RULE (was: the run stops at any difference)                                                                                                                                                 |
+| `Domains.Materials` `Permittivity` of the domains next to the corrected metal (after the mesh) | `Fabrication.SubstratePermittivity` (and 1 for vacuum)                             | THE RULE (was: a warning at any size); at load the run stops already when no configured material other than vacuum could pass it, else one line names the materials that could be the substrate |
+| the largest `EdgeDistances` value of every target entry (mesh units)                           | `MatchingRadius`                                                                   | the run stops (any difference)                                                                                                                                                                  |
+| a target entry's `Type`                                                                        | an `InterfaceLayers` entry of that type                                            | the run stops                                                                                                                                                                                   |
+| `Model.L0`                                                                                     | `Fabrication.LengthUnit`, when the library states it (`m`, `cm`, `mm`, `um`, `nm`) | the run stops                                                                                                                                                                                   |
+| the metal laws of the device                                                                   | a model of a parked law (conductivity, rational impedance)                         | the run stops without `"Developer": true`, every such model named                                                                                                                               |
+| `TargetInterfaces`, `AutomaticEdges`                                                           | -                                                                                  | the run stops (unchanged, now at load)                                                                                                                                                          |
+| the boundary law of the metal (`PEC`, `Impedance` with its `Rs` / `Ls` / `Cs`, ...)            | each model's `BoundaryCondition`                                                   | no error: the features have no model (Missing, uncorrected); the warning names the law when the library holds the same geometry under another law                                               |
 
 The library file itself (opened, read, its `Version`, its entries) is read at load by the
 reader of the run, so its refusals also come before the mesh. The load message prints the
 library's fabricated profile (`MetalThickness`, `OveretchDepth`, `SidewallAngle`,
 `TopRoundingRadius`, `BottomRoundingRadius`); the configuration has no profile to compare
-with. A tolerated mismatch is named in the outputs: the flags word `library mismatch
-tolerated` on every affected row of `surface-participation.csv`, and
+with. A tolerated mismatch is named in the outputs: the flags word `library mismatch tolerated` on every affected row of `surface-participation.csv`, and
 `SurfaceResponse.LibraryMismatch` in `palace.json` (`Mismatches` with `Quantity`, `Entry`,
 `Config`, `Library`, `Mismatch` and `EstimatedEffect` per type; `EstimatedEffectPerType`;
 `Interfaces`; `BeyondRule`); without a mismatch neither is written.
