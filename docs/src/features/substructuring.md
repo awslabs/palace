@@ -215,11 +215,14 @@ The [transmon example](../examples/transmon.md) mesh contains a transmon island,
 a ground plane with a readout resonator, all as a single metal boundary. The script
 [`examples/transmon/transmon_substructuring.py`](https://github.com/awslabs/palace/blob/main/examples/transmon/transmon_substructuring.py)
 splits the metal into its three conductors, the ground plane (a `"PEC"` boundary), the feedline and
-the island (the terminals), and assigns the elements in a box around the qubit to the region:
+the island (the terminals), and assigns the elements in a box around the qubit to the region. It
+also writes the configurations of the later runs from that of the offline run,
+`transmon_substructuring_offline.json`: they reuse its model (`"ModelFile"`), each with an output
+folder of its own, and the redesign below takes the mesh of the redesigned region:
 
 ```bash
 cd examples/transmon
-python3 transmon_substructuring.py
+python3 transmon_substructuring.py            # the mesh, and transmon_substructuring_<run>.json
 palace transmon_substructuring_offline.json   # condense the environment, save the model
 palace transmon_substructuring_online.json    # reuse the model: only the region is solved
 ```
@@ -266,12 +269,15 @@ generates the mesh of a ``5 \times 5`` lattice of simplified qubits with DeviceL
 qubit is a pair of rectangular pads in a cutout of the ground plane. The script
 [`examples/substructuring/qubit_lattice_substructuring.py`](https://github.com/awslabs/palace/blob/main/examples/substructuring/qubit_lattice_substructuring.py)
 splits the metal into the ground plane (a `"PEC"` boundary) and the 50 pads (the terminals),
-and assigns the elements in a box around the middle qubit, about 4% of the mesh, to the region:
+and assigns the elements in a box around the middle qubit, about 4% of the mesh, to the region.
+As for the transmon, it writes the configurations of the later runs from that of the offline
+run, `qubit_lattice_offline.json`: they reuse its model, and the redesign and the runs on the
+mesh of the region below take their meshes:
 
 ```bash
 cd examples/substructuring
 julia --project -e 'include("qubit_lattice.jl"); generate_qubit_lattice()'
-python3 qubit_lattice_substructuring.py
+python3 qubit_lattice_substructuring.py  # the mesh, and qubit_lattice_<run>.json
 palace qubit_lattice_offline.json   # condense the environment, save the model
 palace qubit_lattice_online.json    # reuse the model: only the region is solved
 ```
@@ -325,7 +331,9 @@ palace flux_lattice_offline.json   # condense the environment, save the model
 palace flux_lattice_online.json    # reuse the model: only the region is solved
 ```
 
-Both runs write the ``25 \times 25`` inductance matrix to `terminal-M.csv`. The saved model
+The script also writes the configuration of the online run, `flux_lattice_online.json`, from that
+of the offline run, which it differs from by the model it reuses and its output folder. Both runs
+write the ``25 \times 25`` inductance matrix to `terminal-M.csv`. The saved model
 includes the condensed flux-loop excitations of the environment, so the online run needs no
 environment solve.
 
@@ -336,7 +344,7 @@ each hole a `"FluxLoop"` of the shared film. The film crosses the interface betw
 and the environment, and its screening currents couple the holes:
 
 ```bash
-julia --project -e 'include("flux_sheet.jl"); generate_flux_sheet()'
+julia --project -e 'include("flux_sheet.jl"); generate_flux_sheet()'  # and flux_sheet_online.json
 palace flux_sheet_offline.json
 palace flux_sheet_online.json
 ```
