@@ -51,6 +51,11 @@ public:
   // DrivenSubstructureModel::Flatten). Called on every process, in turn. Collective.
   using RecordFunction = std::function<std::vector<std::complex<double>>(std::size_t)>;
 
+  // The environment's part of the solution E of the region and Γ of an excitation at the
+  // frequency of the last record, set on the environment's interior (see
+  // DrivenSubstructure::ExpandEnvironment). Collective.
+  using ExpandFunction = std::function<void(int, double, ComplexVector &)>;
+
   // Read the model and check it against the run: the environment (its record and, on the
   // full mesh, the fingerprint of its operator), the interface, the environment's ports,
   // the sources of the excitations and the frequencies of the sweep. Call before the
@@ -61,13 +66,24 @@ public:
 
   // A model of this run's environment, condensed offline on the full mesh: rational, with
   // its samples as records, taken here, or exact, at the frequencies of the sweep, whose
-  // records are taken when the sweep reaches them. Collective.
+  // records are taken when the sweep reaches them, and which can expand the environment's
+  // part of a solution there. Collective.
   EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
-                      const DrivenSubstructureModel &sampled, const RecordFunction &record);
+                      const DrivenSubstructureModel &sampled, const RecordFunction &record,
+                      const ExpandFunction &expand = {});
   ~EnvironmentOperator();
 
   // Whether the mesh is the mesh of the region written with the model.
   bool RegionMesh() const { return region_mesh; }
+
+  // Whether the environment's part of a solution is known (an offline exact sweep, at the
+  // frequency of its last record), and that part set in the solution E of the region and Γ
+  // of an excitation at ω (see ExpandFunction). Collective.
+  bool Expands() const { return static_cast<bool>(expand); }
+  void Expand(int excitation_idx, double omega, ComplexVector &E) const
+  {
+    expand(excitation_idx, omega, E);
+  }
 
   // The domain attributes of the region.
   const std::vector<int> &RegionAttributes() const { return region_attrs; }
@@ -142,8 +158,9 @@ private:
   const std::string model_path;
   std::vector<int> region_attrs;
   DrivenSubstructureModel model;
-  // The records of an exact model of this run (see the constructor).
+  // The records of an exact model of this run, and its expansion (see the constructor).
   RecordFunction exact_records;
+  ExpandFunction expand;
   bool region_mesh = false;
   int nG = 0, np = 0, ne = 0;
   std::vector<int> env_ports;

@@ -235,8 +235,13 @@ An offline sweep saves these per frequency (unless `"SaveModel": false`). An onl
 frequencies (any subset of them, matched by value) then solves only the region, which may be
 redesigned (materials, re-meshing) and run on a different number of processes, as long as the
 environment and the interface are unchanged and the excitations with sources in the environment
-are among the model's. Offline and online, the field is known in the region and on the interface
-only (a regular simulation gives the rest):
+are among the model's. An offline sweep at the frequencies of `"Driven"` (without
+`"AdaptiveTol"`) also recovers the environment's part of the field from its factorization, one
+expansion ``\bm{u}_E = \bm{A}_{EE}^{-1}(\bm{b}_E - \bm{A}_{E\Gamma}\bm{u}_\Gamma)`` per
+excitation and frequency, and postprocesses the whole device as a regular sweep does, its error
+indicators too: it can take the place of a regular sweep. Online, and offline with a rational
+model, the field is known in the region and on the interface only (a regular simulation gives the
+rest):
 
   - S-parameters of all ports, voltages and currents of the lumped ports, and the energies of
     lumped elements, are those of a regular simulation;
@@ -250,7 +255,8 @@ only (a regular simulation gives the rest):
   - interface dielectrics (`"Boundaries"/"Postprocessing"/"Dielectric"`) on such boundaries give
     their energies in `surface-Q.csv` (`E_surf`), without the participation ratios and quality
     factors, which need the total energy;
-  - fields (`"Save"`) are written in the region and on the interface, zero elsewhere;
+  - fields (`"Save"`) are written in the region and on the interface, and zero elsewhere, which
+    ParaView shows as a field (the log warns of it);
   - `"FarField"` is rejected.
 
 The mesh of the region written by the offline sweep (see [Configuration](#Configuration)) also

@@ -490,6 +490,38 @@ DrivenSubstructure::CondenseEnvironment(const std::vector<const ComplexVector *>
   return red;
 }
 
+void DrivenSubstructure::ExpandEnvironment(const ComplexVector &b, ComplexVector &E)
+{
+  MFEM_VERIFY(!online && env.schur, "ExpandEnvironment needs the environment factor!");
+  // The reduction of b paired with the expansion of the values of E on Γ, gathered on root
+  // in interface order.
+  ComplexVector x = Masked(b, iface.env_int, &iface.gamma);
+  std::vector<std::complex<double>> red;
+  env.schur->Reduce({&x}, red);
+  const int nt = static_cast<int>(iface.gamma.size());
+  const double *er = E.Real().HostRead(), *ei = E.Imag().HostRead();
+  std::vector<std::complex<double>> u_gamma;
+  u_gamma.reserve(iface.count);
+  for (int i = 0; i < nt; i++)
+  {
+    if (iface.gamma[i])
+    {
+      u_gamma.emplace_back(er[i], ei[i]);
+    }
+  }
+  env.schur->Expand(iface.GatherRows(space_op.GetComm(), u_gamma, 1), {&x});
+  const double *xr = x.Real().HostRead(), *xi = x.Imag().HostRead();
+  double *Er = E.Real().HostReadWrite(), *Ei = E.Imag().HostReadWrite();
+  for (int i = 0; i < nt; i++)
+  {
+    if (iface.env_int[i])
+    {
+      Er[i] = xr[i];
+      Ei[i] = xi[i];
+    }
+  }
+}
+
 std::vector<char>
 DrivenSubstructure::BoundaryTrueDofs(const std::vector<int> &bdr_attributes) const
 {

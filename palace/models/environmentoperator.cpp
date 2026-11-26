@@ -26,9 +26,13 @@ EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &sp
 
 EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,
                                          const DrivenSubstructureModel &sampled,
-                                         const RecordFunction &record)
+                                         const RecordFunction &record,
+                                         const ExpandFunction &expand)
   : EnvironmentOperator(iodata, space_op, &sampled, record, 0)
 {
+  MFEM_VERIFY(!expand || model.weights.empty(),
+              "A rational substructuring model does not expand its environment!");
+  this->expand = expand;
 }
 
 EnvironmentOperator::EnvironmentOperator(const IoData &iodata, SpaceOperator &space_op,

@@ -230,6 +230,11 @@ public:
   CondenseEnvironment(const std::vector<const ComplexVector *> &b,
                       std::vector<ComplexVector> *x = nullptr);
 
+  // The environment's part u_E = A_EE^-1 (b_E - A_EΓ u_Γ) of the solution E of the region
+  // and Γ (zero on the environment's interior, where it is set) of the right-hand side b,
+  // with the environment factorization of the last condensation. Offline only. Collective.
+  void ExpandEnvironment(const ComplexVector &b, ComplexVector &E);
+
   // S_E(ω) of the last condensation (complex symmetric, in interface order), by the share
   // of this process of its lower triangle (see TriangleShare), handed over.
   std::vector<std::complex<double>> TakeSchur() { return std::move(S); }

@@ -566,6 +566,13 @@ DrivenSubstructuredSweep::ExactModel(const std::shared_ptr<DrivenSubstructuredSw
           self->model.AppendRecord(self->model_path, rec, self->comm);
         }
         return DrivenSubstructureModel::Flatten(std::move(rec));
+      },
+      [self](int excitation_idx, double omega, ComplexVector &E)
+      {
+        // The excitation of the full problem, with its sources in the environment.
+        ComplexVector b;
+        self->space_op.GetExcitationVector(excitation_idx, omega, b);
+        self->ds->ExpandEnvironment(b, E);
       });
 }
 

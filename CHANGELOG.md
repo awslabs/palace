@@ -34,8 +34,8 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
   - Added substructuring for driven simulations: the environment is condensed onto the
     interface at each frequency, exactly or as a rational model sampled by an adaptive
     sweep, and saved, and later sweeps solve only the region, also after a redesign or
-    re-meshing of it. SchemaVer 6-2-1.
-    [PR 1044](https://github.com/awslabs/palace/pull/1044).
+    re-meshing of it. An exact offline sweep gives the outputs of the whole device.
+    SchemaVer 6-2-1. [PR 1044](https://github.com/awslabs/palace/pull/1044).
 
 #### Interface Changes
 

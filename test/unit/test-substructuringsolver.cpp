@@ -10,6 +10,7 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <map>
 #include <memory>
 #include <numbers>
 #include <numeric>
@@ -4555,6 +4556,88 @@ ComplexVector RandomField(SpaceOperator &space_op, int seed)
 }  // namespace
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "Driven substructuring offline writes the outputs of a regular sweep",
+                 "[substructure][Serial][Parallel]")
+{
+  // An offline exact sweep expands the environment's field from its factorization at each
+  // frequency, and postprocesses the whole device as a regular sweep does: the energies of
+  // the domains on both sides, a probe in the environment (with GSLIB), the ports (one in
+  // the environment, with an excitation of its own) and the error indicators are those of
+  // the regular sweep.
+  auto edit = [](json &config)
+  {
+    EnvironmentPort(config);
+    config["Solver"]["Driven"] = {{"MinFreq", 10.0}, {"MaxFreq", 30.0}, {"FreqStep", 10.0}};
+    config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 500}};
+    config["Domains"]["Postprocessing"] = {
+        {"Energy",
+         {{{"Index", 1}, {"Attributes", {1}}}, {{"Index", 2}, {"Attributes", {2}}}}}};
+#if defined(MFEM_USE_GSLIB)
+    config["Domains"]["Postprocessing"]["Probe"] = {
+        {{"Index", 1}, {"Center", {1.6, 0.4, 0.6}}}};
+#endif
+  };
+  RunDrivenBox(temp_dir, "Offline", edit);
+  RunDrivenBox(temp_dir, "Regular",
+               [&](json &config)
+               {
+                 edit(config);
+                 config["Solver"].erase("Substructuring");
+               });
+  const auto offline = temp_dir / "postpro_Offline", regular = temp_dir / "postpro_Regular";
+  int files = 0;
+  for (const auto &entry : std::filesystem::directory_iterator(regular))
+  {
+    if (entry.path().extension() != ".csv")
+    {
+      continue;
+    }
+    files++;
+    const auto name = entry.path().filename();
+    CAPTURE(name.string());
+    REQUIRE(std::filesystem::exists(offline / name));
+    const auto [header, rows] = ReadCsv(offline / name);
+    const auto [header_ref, rows_ref] = ReadCsv(regular / name);
+    REQUIRE(header == header_ref);
+    REQUIRE(rows.size() == rows_ref.size());
+    // Each column to its largest entry, at least 1e-4 of the largest of the columns of its
+    // unit (a component zero by symmetry, to rounding).
+    auto unit = [](const std::string &name)
+    {
+      const auto open = name.rfind('(');
+      return (open == std::string::npos) ? std::string() : name.substr(open);
+    };
+    std::map<std::string, double> unit_scale;
+    for (std::size_t c = 0; c < header_ref.size(); c++)
+    {
+      auto &u = unit_scale[unit(header_ref[c])];
+      for (const auto &row : rows_ref)
+      {
+        u = std::isnan(row[c]) ? u : std::max(u, std::abs(row[c]));
+      }
+    }
+    for (std::size_t c = 0; c < header_ref.size(); c++)
+    {
+      CAPTURE(header_ref[c]);
+      double scale = 1.0e-4 * unit_scale[unit(header_ref[c])], diff = 0.0;
+      for (std::size_t r = 0; r < rows_ref.size(); r++)
+      {
+        REQUIRE(rows[r].size() == rows_ref[r].size());
+        if (std::isnan(rows_ref[r][c]))
+        {
+          CHECK(std::isnan(rows[r][c]));
+          continue;
+        }
+        scale = std::max(scale, std::abs(rows_ref[r][c]));
+        diff = std::max(diff, std::abs(rows[r][c] - rows_ref[r][c]));
+      }
+      CHECK(diff <= 1.0e-8 * scale);
+    }
+  }
+  CHECK(files >= 5);
+}
+
+TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring records of a rational model apply as their sum",
                  "[substructure][Serial][Parallel]")
 {
@@ -4969,10 +5052,11 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
                  "Driven substructuring writes the probes it interpolates in the region",
                  "[substructure][Serial][Parallel][Long]")
 {
-  // Two probes on Γ, one in the region and one in the environment. Offline and online on
-  // the full mesh, the first three are written, those on Γ with the field of the region, on
-  // its side of Γ, where the normal E jumps (the permittivities of the sides differ): the
-  // values of a regular sweep with the probes on Γ moved into the region by 1e-9.
+  // Two probes on Γ, one in the region and one in the environment. Online on the full mesh,
+  // the first three are written, those on Γ with the field of the region, on its side of Γ,
+  // where the normal E jumps (the permittivities of the sides differ): the values of a
+  // regular sweep with the probes on Γ moved into the region by 1e-9. Offline, the sweep
+  // expands the environment's field and writes the four of a regular sweep.
   auto probes = [](double shift)
   {
     return [shift](json &config)
@@ -4986,28 +5070,34 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   };
   RunDrivenSheetSquare(temp_dir, "Offline", probes(0.0));
   RunDrivenSheetSquare(temp_dir, "Online", probes(0.0));
-  RunDrivenSheetSquare(temp_dir, "Regular",
-                       [&](json &config)
-                       {
-                         probes(1.0e-9)(config);
-                         config["Solver"].erase("Substructuring");
-                         config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 1000}};
-                       });
+  auto regular_sweep = [&](const std::string &mode, double shift)
+  {
+    RunDrivenSheetSquare(temp_dir, mode,
+                         [&](json &config)
+                         {
+                           probes(shift)(config);
+                           config["Solver"].erase("Substructuring");
+                           config["Solver"]["Linear"] = {{"Tol", 1.0e-12},
+                                                         {"MaxIts", 1000}};
+                         });
+  };
+  regular_sweep("Regular", 1.0e-9);
+  regular_sweep("Regular_on_gamma", 0.0);
   for (const std::string csv : {"probe-E.csv", "probe-B.csv"})
   {
     CAPTURE(csv);
-    const auto regular = ReadCsv(temp_dir / "postpro_Regular" / csv);
-    double scale = 0.0;
-    for (const auto &row : regular.second)
+    // The probes a sweep writes, against those of a regular sweep (off Γ, or all).
+    auto check = [&](const std::string &dir, const std::string &regular_dir, bool on_gamma)
     {
-      for (std::size_t c = 1; c < row.size(); c++)
+      const auto regular = ReadCsv(temp_dir / regular_dir / csv);
+      double scale = 0.0;
+      for (const auto &row : regular.second)
       {
-        scale = std::max(scale, std::abs(row[c]));
+        for (std::size_t c = 1; c < row.size(); c++)
+        {
+          scale = std::max(scale, std::abs(row[c]));
+        }
       }
-    }
-    // The probes a sweep writes, against the regular ones off Γ, or all.
-    auto check = [&](const std::string &dir, bool on_gamma)
-    {
       const auto run = ReadCsv(temp_dir / dir / csv);
       REQUIRE(run.second.size() == regular.second.size());
       std::set<std::string> written;
@@ -5031,10 +5121,10 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
       }
       return written;
     };
-    for (const std::string dir : {"postpro_Offline", "postpro_Online"})
-    {
-      CHECK(check(dir, true) == std::set<std::string>{"1", "2", "3"});
-    }
+    CHECK(check("postpro_Online", "postpro_Regular", true) ==
+          std::set<std::string>{"1", "2", "3"});
+    CHECK(check("postpro_Offline", "postpro_Regular_on_gamma", true) ==
+          std::set<std::string>{"1", "2", "3", "4"});
   }
 }
 #endif
@@ -5124,22 +5214,28 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
 }
 
 TEST_CASE_METHOD(palace::test::SharedTempDir,
-                 "Driven substructuring gives no voltage of the environment's wave port",
+                 "Driven substructuring gives the voltage of the environment's wave port "
+                 "offline only",
                  "[substructure][Serial][Parallel][Long]")
 {
-  // The voltage and the impedance of a wave port need its field, which a substructured
-  // sweep knows in the region and on Γ only: those of the environment's port are NaN
-  // offline and online, not 0 (its S-parameter comes from the condensed environment).
+  // The voltage and the impedance of a wave port need its field: an offline exact sweep
+  // expands the environment's, so that those of the environment's port are those of a
+  // regular sweep, while online, where the field is known in the region and on Γ only, they
+  // are NaN, not 0 (its S-parameter comes from the condensed environment).
   const auto dir = std::filesystem::path(PALACE_TEST_DATA_DIR) / "regression" / "input" /
                    "substructuring_driven_wave";
-  auto run = [&](const std::string &file)
+  auto run = [&](const std::string &file, bool regular = false)
   {
     std::ifstream fi(dir / file);
     json config = json::parse(fi);
     config["Model"]["Mesh"] = (dir / config["Model"]["Mesh"].get<std::string>()).string();
-    config["Problem"]["Output"] = (temp_dir / file).string();
+    config["Problem"]["Output"] = (temp_dir / (regular ? "regular" : file)).string();
+    if (regular)
+    {
+      config["Solver"].erase("Substructuring");
+    }
     config["Solver"]["Linear"]["Type"] = "Default";
-    if (config["Solver"]["Substructuring"].contains("ModelFile"))
+    if (!regular && config["Solver"]["Substructuring"].contains("ModelFile"))
     {
       config["Solver"]["Substructuring"]["ModelFile"] =
           (temp_dir / "driven_wave_inactive_offline.json" / "environment.model").string();
@@ -5173,16 +5269,24 @@ TEST_CASE_METHOD(palace::test::SharedTempDir,
   };
   run("driven_wave_inactive_offline.json");
   run("driven_wave_inactive_online.json");
-  for (const std::string file :
-       {"driven_wave_inactive_offline.json", "driven_wave_inactive_online.json"})
+  run("driven_wave_inactive_offline.json", true);
+  for (const std::string name : {"V_wp[2]", "Z[2]"})
   {
-    for (const std::string name : {"V_wp[2]", "Z[2]"})
+    CAPTURE(name);
+    const std::string csv = (name == "Z[2]") ? "port-Z.csv" : "port-V.csv";
+    const auto offline = values("driven_wave_inactive_offline.json", csv, name),
+               regular = values("regular", csv, name),
+               online = values("driven_wave_inactive_online.json", csv, name);
+    REQUIRE(!offline.empty());
+    REQUIRE(offline.size() == regular.size());
+    for (std::size_t i = 0; i < offline.size(); i++)
     {
-      CAPTURE(file, name);
-      const auto v = values(file, (name == "Z[2]") ? "port-Z.csv" : "port-V.csv", name);
-      REQUIRE(!v.empty());
-      CHECK(std::ranges::all_of(v, [](double x) { return std::isnan(x); }));
+      CAPTURE(i, offline[i], regular[i]);
+      CHECK(std::isfinite(offline[i]));
+      CHECK(std::abs(offline[i] - regular[i]) <= 1.0e-6 * std::abs(regular[i]));
     }
+    REQUIRE(!online.empty());
+    CHECK(std::ranges::all_of(online, [](double x) { return std::isnan(x); }));
   }
 }
 
