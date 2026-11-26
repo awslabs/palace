@@ -168,12 +168,14 @@ private:
                                     std::vector<Vector> *region_fields);
 
   // A magnetostatic source: a London flux state drives M_sheet a (a the fluxoid generator),
-  // a surface current the assembled excitation J. Either may be null.
+  // a surface current the assembled excitation J. Either may be null, for none (an empty
+  // vector is the part of a source on a process without true DOFs, which takes part in its
+  // collective products).
   struct Source
   {
     const Vector *a, *J;
-    bool HasA() const { return a && a->Size() > 0; }
-    bool HasJ() const { return J && J->Size() > 0; }
+    bool HasA() const { return a != nullptr; }
+    bool HasJ() const { return J != nullptr; }
   };
 
   // Linear functionals l_k (with mode ids) of the solutions: values(k, j) = l_k^T u_j.
