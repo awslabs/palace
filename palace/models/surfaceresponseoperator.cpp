@@ -21522,13 +21522,28 @@ TraceMeshData ReadTraceMesh(const std::string &vertex_path,
   return mesh;
 }
 
-std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path)
+// STEP 4c (lane v1verdict1): the Try forms of the model-file readers return the reader's
+// own message (empty when the file reads) instead of stopping; each reader calls its Try
+// form and stops with that message. ReaderMessage streams it as MFEM_VERIFY streams one.
+template <typename... Parts>
+std::string ReaderMessage(const Parts &...parts)
 {
-  std::ifstream input(path);
-  MFEM_VERIFY(input,
-              "Unable to open response-correction basis point file \"" << path << "\"!");
+  std::ostringstream message;
+  (message << ... << parts);
+  return message.str();
+}
 
-  std::vector<std::array<double, 3>> points;
+std::string TryReadBasisPoints(const std::string &path,
+                               std::vector<std::array<double, 3>> &points)
+{
+  points.clear();
+  std::ifstream input(path);
+  if (!input)
+  {
+    return ReaderMessage("Unable to open response-correction basis point file \"", path,
+                         "\"!");
+  }
+
   std::string line;
   while (std::getline(input, line))
   {
@@ -21542,18 +21557,32 @@ std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path)
     std::array<double, 3> point;
     if (!(row >> point[0] >> point[1] >> point[2]))
     {
-      MFEM_VERIFY(points.empty(), "Could not parse response-correction basis point file \""
-                                      << path << "\"!");
+      if (!points.empty())
+      {
+        return ReaderMessage("Could not parse response-correction basis point file \"",
+                             path, "\"!");
+      }
       continue;  // Optional header before the first data row.
     }
-    MFEM_VERIFY(
-        std::all_of(point.begin(), point.end(), [](double x) { return std::isfinite(x); }),
-        "Non-finite coordinate in response-correction basis point file \"" << path
-                                                                           << "\"!");
+    if (!std::all_of(point.begin(), point.end(), [](double x) { return std::isfinite(x); }))
+    {
+      return ReaderMessage(
+          "Non-finite coordinate in response-correction basis point file \"", path, "\"!");
+    }
     points.push_back(point);
   }
-  MFEM_VERIFY(!points.empty(),
-              "Response-correction basis point file \"" << path << "\" is empty!");
+  if (points.empty())
+  {
+    return ReaderMessage("Response-correction basis point file \"", path, "\" is empty!");
+  }
+  return {};
+}
+
+std::vector<std::array<double, 3>> ReadBasisPoints(const std::string &path)
+{
+  std::vector<std::array<double, 3>> points;
+  const std::string message = TryReadBasisPoints(path, points);
+  MFEM_VERIFY(message.empty(), message);
   return points;
 }
 
@@ -21765,77 +21794,138 @@ TraceMeshData ModelTraceMesh(
   return ReadTraceMesh(model_config.trace_vertices, model_config.trace_triangles);
 }
 
-// The message of a response matrix file ReadTable cannot read (shared with PreflightOnly's
-// prediction, DomainResponseMatrixRefusal).
+// The message of a response matrix file ReadTable cannot read (TryReadTable's, which
+// PreflightOnly's prediction reads through every Try form of the matrix readers).
 std::string UnreadableResponseMatrixMessage(const std::string &path)
 {
   return "Unable to read response matrix file \"" + path + "\"!";
 }
 
-Table ReadTable(const std::string &path)
+std::string TryReadTable(const std::string &path, Table &table)
 {
   TableWithCSVFile input(path, true);
-  MFEM_VERIFY(!input.table.empty(), UnreadableResponseMatrixMessage(path));
-  return std::move(input.table);
+  if (input.table.empty())
+  {
+    return UnreadableResponseMatrixMessage(path);
+  }
+  table = std::move(input.table);
+  return {};
 }
 
-const Column &FindColumn(const Table &table, const std::string &header,
-                         const std::string &path)
+Table ReadTable(const std::string &path)
+{
+  Table table;
+  const std::string message = TryReadTable(path, table);
+  MFEM_VERIFY(message.empty(), message);
+  return table;
+}
+
+std::string TryFindColumn(const Table &table, const std::string &header,
+                          const std::string &path, const Column *&column)
 {
   for (auto it = table.cbegin(); it != table.cend(); ++it)
   {
     if (it->header_text == header)
     {
-      return *it;
+      column = &*it;
+      return {};
     }
   }
-  MFEM_ABORT("Response matrix file \"" << path << "\" is missing column \"" << header
-                                       << "\"!");
+  return ReaderMessage("Response matrix file \"", path, "\" is missing column \"", header,
+                       "\"!");
+}
+
+const Column &FindColumn(const Table &table, const std::string &header,
+                         const std::string &path)
+{
+  const Column *column = nullptr;
+  const std::string message = TryFindColumn(table, header, path, column);
+  if (!message.empty())
+  {
+    MFEM_ABORT(message);
+  }
+  return *column;
+}
+
+std::string TryParseIndex(double value, const std::string &name, const std::string &path,
+                          int &index)
+{
+  index = static_cast<int>(value);
+  if (!(index > 0 && value == index))
+  {
+    return ReaderMessage("Invalid ", name, " index in response matrix file \"", path,
+                         "\"!");
+  }
+  return {};
 }
 
 int ParseIndex(double value, const std::string &name, const std::string &path)
 {
-  const int idx = static_cast<int>(value);
-  MFEM_VERIFY(idx > 0 && value == idx,
-              "Invalid " << name << " index in response matrix file \"" << path << "\"!");
+  int idx = 0;
+  const std::string message = TryParseIndex(value, name, path, idx);
+  MFEM_VERIFY(message.empty(), message);
   return idx;
 }
 
-std::pair<int, std::vector<MatrixEntry>> ReadDomainResponseMatrix(const std::string &path)
+std::string TryReadDomainResponseMatrix(const std::string &path, int &size,
+                                        std::vector<MatrixEntry> &entries)
 {
-  const Table table = ReadTable(path);
-  const auto &basis_i = FindColumn(table, "basis_i", path);
-  const auto &basis_j = FindColumn(table, "basis_j", path);
-  const auto &q = FindColumn(table, "Q_ij (J)", path);
-  MFEM_VERIFY(basis_i.n_rows() == basis_j.n_rows() && basis_i.n_rows() == q.n_rows(),
-              "Response matrix columns have inconsistent lengths in \"" << path << "\"!");
-
-  int size = 0;
-  std::vector<MatrixEntry> entries;
-  entries.reserve(q.n_rows());
-  for (std::size_t row = 0; row < q.n_rows(); row++)
+  Table table;
+  const Column *basis_i = nullptr, *basis_j = nullptr, *q = nullptr;
+  std::string message = TryReadTable(path, table);
+  message = message.empty() ? TryFindColumn(table, "basis_i", path, basis_i) : message;
+  message = message.empty() ? TryFindColumn(table, "basis_j", path, basis_j) : message;
+  message = message.empty() ? TryFindColumn(table, "Q_ij (J)", path, q) : message;
+  if (!message.empty())
   {
-    const int i = ParseIndex(basis_i.data[row], "basis_i", path);
-    const int j = ParseIndex(basis_j.data[row], "basis_j", path);
-    MFEM_VERIFY(j >= i && std::isfinite(q.data[row]),
-                "Invalid response matrix entry in \"" << path << "\"!");
-    entries.emplace_back(i - 1, j - 1, q.data[row]);
+    return message;
+  }
+  if (!(basis_i->n_rows() == basis_j->n_rows() && basis_i->n_rows() == q->n_rows()))
+  {
+    return ReaderMessage("Response matrix columns have inconsistent lengths in \"", path,
+                         "\"!");
+  }
+
+  size = 0;
+  entries.clear();
+  entries.reserve(q->n_rows());
+  for (std::size_t row = 0; row < q->n_rows(); row++)
+  {
+    int i = 0, j = 0;
+    message = TryParseIndex(basis_i->data[row], "basis_i", path, i);
+    message =
+        message.empty() ? TryParseIndex(basis_j->data[row], "basis_j", path, j) : message;
+    if (!message.empty())
+    {
+      return message;
+    }
+    if (!(j >= i && std::isfinite(q->data[row])))
+    {
+      return ReaderMessage("Invalid response matrix entry in \"", path, "\"!");
+    }
+    entries.emplace_back(i - 1, j - 1, q->data[row]);
     size = std::max(size, j);
   }
-  MFEM_VERIFY(size > 0, "Response matrix file \"" << path << "\" contains no entries!");
-  return {size, std::move(entries)};
+  if (!(size > 0))
+  {
+    return ReaderMessage("Response matrix file \"", path, "\" contains no entries!");
+  }
+  return {};
 }
 
-mfem::DenseMatrix BuildDenseMatrix(const std::vector<MatrixEntry> &entries, int size,
-                                   const std::string &path)
+std::string TryBuildDenseMatrix(const std::vector<MatrixEntry> &entries, int size,
+                                const std::string &path, mfem::DenseMatrix &matrix)
 {
-  mfem::DenseMatrix matrix(size);
+  matrix.SetSize(size);
   matrix = 0.0;
   std::vector<bool> have(size * size, false);
   for (const auto &[i, j, value] : entries)
   {
-    MFEM_VERIFY(i >= 0 && i < size && j >= i && j < size && !have[i * size + j],
-                "Duplicate or out-of-range response matrix entry in \"" << path << "\"!");
+    if (!(i >= 0 && i < size && j >= i && j < size && !have[i * size + j]))
+    {
+      return ReaderMessage("Duplicate or out-of-range response matrix entry in \"", path,
+                           "\"!");
+    }
     matrix(i, j) = matrix(j, i) = value;
     have[i * size + j] = have[j * size + i] = true;
   }
@@ -21843,12 +21933,14 @@ mfem::DenseMatrix BuildDenseMatrix(const std::vector<MatrixEntry> &entries, int 
   {
     for (int j = 0; j < size; j++)
     {
-      MFEM_VERIFY(have[i * size + j], "Response matrix file \""
-                                          << path
-                                          << "\" is missing an upper-triangular entry!");
+      if (!have[i * size + j])
+      {
+        return ReaderMessage("Response matrix file \"", path,
+                             "\" is missing an upper-triangular entry!");
+      }
     }
   }
-  return matrix;
+  return {};
 }
 
 // The test of PositiveSemidefiniteInverseProduct on the fabricated domain matrix it
@@ -21986,19 +22078,39 @@ std::map<ResponseMatrixFileKey, mfem::DenseMatrix> &DomainResponseMatrixFileCach
   return cache;
 }
 
-mfem::DenseMatrix ReadDenseDomainResponseMatrix(const std::string &path, int expected_size)
+std::string TryReadDenseDomainResponseMatrix(const std::string &path, int expected_size,
+                                             mfem::DenseMatrix &matrix)
 {
   auto &cache = DomainResponseMatrixFileCache();
   const auto key = MakeResponseMatrixFileKey(path, expected_size, std::nullopt);
   if (const auto it = cache.find(key); it != cache.end())
   {
-    return it->second;
+    matrix = it->second;
+    return {};
   }
-  auto [size, entries] = ReadDomainResponseMatrix(path);
-  MFEM_VERIFY(size == expected_size,
-              "Response matrix \"" << path
-                                   << "\" and basis point file have inconsistent sizes!");
-  return cache.emplace(key, BuildDenseMatrix(entries, expected_size, path)).first->second;
+  int size = 0;
+  std::vector<MatrixEntry> entries;
+  std::string message = TryReadDomainResponseMatrix(path, size, entries);
+  if (message.empty() && size != expected_size)
+  {
+    message = ReaderMessage("Response matrix \"", path,
+                            "\" and basis point file have inconsistent sizes!");
+  }
+  message =
+      message.empty() ? TryBuildDenseMatrix(entries, expected_size, path, matrix) : message;
+  if (message.empty())
+  {
+    cache.emplace(key, matrix);
+  }
+  return message;
+}
+
+mfem::DenseMatrix ReadDenseDomainResponseMatrix(const std::string &path, int expected_size)
+{
+  mfem::DenseMatrix matrix;
+  const std::string message = TryReadDenseDomainResponseMatrix(path, expected_size, matrix);
+  MFEM_VERIFY(message.empty(), message);
+  return matrix;
 }
 
 // A model's domain response matrix: the file itself, or for an interpolated model (config
@@ -22125,33 +22237,36 @@ DomainResponseMatrices ComputeDomainResponseMatrices(
 
 // CUT-PLAN step 4b (the supervisor's ruling (B), lane v1step4b): PreflightOnly's prediction
 // of the operator's matrix step on one model (ComputeDomainResponseMatrices, which the root
-// runs for every model of its model loop): the refusal, empty when the step accepts the
-// model. A domain matrix file that does not open (the step reads the fabricated and thin
-// ones first) is named before any read, with ReadTable's message; then the step's own
-// fabricated matrix on the free knots, its eigensystem and its test.
+// runs for every model of its model loop) of `expected_size` basis functions: the refusal,
+// empty when the step accepts the model. STEP 4c (lane v1verdict1): its domain matrix files
+// in the step's order (the fabricated ones, then the thin ones) by the reader's Try form,
+// then the step's own fabricated matrix on the free knots, its eigensystem and its test.
 std::string DomainResponseMatrixRefusal(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
-    const Units &units)
+    int expected_size, const Units &units)
 {
-  std::vector<std::string> files;
-  if (config.blend.empty())
+  for (const bool fabricated : {true, false})
   {
-    files = {config.fabricated_matrix, config.thin_matrix};
-  }
-  for (const auto &source : config.blend)
-  {
-    files.push_back(source.fabricated_matrix);
-    files.push_back(source.thin_matrix);
-  }
-  for (const auto &file : files)
-  {
-    if (!std::ifstream(file))
+    std::vector<std::string> files;
+    for (const auto &source : config.blend)
     {
-      return UnreadableResponseMatrixMessage(file);
+      files.push_back(fabricated ? source.fabricated_matrix : source.thin_matrix);
+    }
+    if (config.blend.empty())
+    {
+      files = {fabricated ? config.fabricated_matrix : config.thin_matrix};
+    }
+    for (const auto &file : files)
+    {
+      mfem::DenseMatrix matrix;
+      const std::string message =
+          TryReadDenseDomainResponseMatrix(file, expected_size, matrix);
+      if (!message.empty())
+      {
+        return message;
+      }
     }
   }
-  const int expected_size =
-      static_cast<int>(ModelBasisPoints(config).size()) + config.conductor_state_count;
   auto fabricated = BlendedDomainResponseMatrix(config, true, expected_size);
   fabricated *= DomainResponseMatrixScale(units);
   const auto tested =
@@ -22468,21 +22583,36 @@ MagneticLeafEvaluation EvaluateMagneticLeaf(
 // localized `Q_ij (J)` column at the matching radius (`within_radius`, in the file's SI
 // units) instead: adding Q_total counted the box energy outside R twice (lane J, decision
 // 112(a)).
-std::map<int, mfem::DenseMatrix>
-ReadSurfaceResponseMatricesFromFile(const std::string &path, int expected_size,
-                                    std::optional<double> within_radius)
+std::string
+TryReadSurfaceResponseMatricesFromFile(const std::string &path, int expected_size,
+                                       std::optional<double> within_radius,
+                                       std::map<int, mfem::DenseMatrix> &matrices)
 {
-  const Table table = ReadTable(path);
-  const auto &interface_col = FindColumn(table, "interface", path);
-  const auto &edge_col = FindColumn(table, "edge", path);
-  const auto &basis_i = FindColumn(table, "basis_i", path);
-  const auto &basis_j = FindColumn(table, "basis_j", path);
+  matrices.clear();
+  Table table;
+  std::array<const Column *, 4> columns{};
+  const std::array<const char *, 4> headers = {"interface", "edge", "basis_i", "basis_j"};
+  std::string message = TryReadTable(path, table);
+  for (std::size_t k = 0; k < headers.size() && message.empty(); k++)
+  {
+    message = TryFindColumn(table, headers[k], path, columns[k]);
+  }
+  if (!message.empty())
+  {
+    return message;
+  }
+  const auto &interface_col = *columns[0];
+  const auto &edge_col = *columns[1];
+  const auto &basis_i = *columns[2];
+  const auto &basis_j = *columns[3];
   const Column *distance_col = nullptr;
   if (within_radius)
   {
-    MFEM_VERIFY(std::isfinite(*within_radius) && *within_radius > 0.0,
-                "Spatial response models require a positive matching radius to select "
-                "their within-R surface response!");
+    if (!(std::isfinite(*within_radius) && *within_radius > 0.0))
+    {
+      return "Spatial response models require a positive matching radius to select "
+             "their within-R surface response!";
+    }
     for (auto it = table.cbegin(); it != table.cend(); ++it)
     {
       if (it->header_text == "R (m)")
@@ -22490,22 +22620,32 @@ ReadSurfaceResponseMatricesFromFile(const std::string &path, int expected_size,
         distance_col = &*it;
       }
     }
-    MFEM_VERIFY(distance_col,
-                "Surface response matrix file \""
-                    << path
-                    << "\" of a spatial (3D box) response model has no \"R (m)\" "
-                       "column: such a model adds its within-R energy Q_ij, not the "
-                       "whole-box Q_total; regenerate the compact matrix with the "
-                       "localized column (finalize_corner_response.py) or publish the "
-                       "coupon's surface-response-matrix.csv!");
+    if (!distance_col)
+    {
+      return ReaderMessage("Surface response matrix file \"", path,
+                           "\" of a spatial (3D box) response model has no \"R (m)\" "
+                           "column: such a model adds its within-R energy Q_ij, not the "
+                           "whole-box Q_total; regenerate the compact matrix with the "
+                           "localized column (finalize_corner_response.py) or publish the "
+                           "coupon's surface-response-matrix.csv!");
+    }
   }
-  const auto &q = FindColumn(table, within_radius ? "Q_ij (J)" : "Q_total_ij (J)", path);
+  const Column *q_col = nullptr;
+  message =
+      TryFindColumn(table, within_radius ? "Q_ij (J)" : "Q_total_ij (J)", path, q_col);
+  if (!message.empty())
+  {
+    return message;
+  }
+  const auto &q = *q_col;
   const std::size_t rows = q.n_rows();
-  MFEM_VERIFY(interface_col.n_rows() == rows && edge_col.n_rows() == rows &&
-                  basis_i.n_rows() == rows && basis_j.n_rows() == rows &&
-                  (!distance_col || distance_col->n_rows() == rows),
-              "Surface response matrix columns have inconsistent lengths in \"" << path
-                                                                                << "\"!");
+  if (!(interface_col.n_rows() == rows && edge_col.n_rows() == rows &&
+        basis_i.n_rows() == rows && basis_j.n_rows() == rows &&
+        (!distance_col || distance_col->n_rows() == rows)))
+  {
+    return ReaderMessage("Surface response matrix columns have inconsistent lengths in \"",
+                         path, "\"!");
+  }
 
   // Q_total is repeated for every matching radius. Deduplicate those rows for each
   // interface/edge/basis pair, then sum all physical coupon edges belonging to an
@@ -22519,36 +22659,51 @@ ReadSurfaceResponseMatricesFromFile(const std::string &path, int expected_size,
     if (distance_col)
     {
       const double distance = distance_col->data[row];
-      MFEM_VERIFY(std::isfinite(distance) && distance > 0.0,
-                  "Invalid matching radius in surface response matrix file \"" << path
-                                                                               << "\"!");
+      if (!(std::isfinite(distance) && distance > 0.0))
+      {
+        return ReaderMessage("Invalid matching radius in surface response matrix file \"",
+                             path, "\"!");
+      }
       if (std::abs(distance - *within_radius) > 1.0e-6 * *within_radius)
       {
         continue;
       }
       radius_rows++;
     }
-    const int interface = ParseIndex(interface_col.data[row], "interface", path);
-    const int edge = ParseIndex(edge_col.data[row], "edge", path);
-    const int i = ParseIndex(basis_i.data[row], "basis_i", path);
-    const int j = ParseIndex(basis_j.data[row], "basis_j", path);
-    MFEM_VERIFY(i <= expected_size && j >= i && j <= expected_size &&
-                    std::isfinite(q.data[row]),
-                "Invalid surface response matrix entry in \"" << path << "\"!");
+    int interface = 0, edge = 0, i = 0, j = 0;
+    message = TryParseIndex(interface_col.data[row], "interface", path, interface);
+    message =
+        message.empty() ? TryParseIndex(edge_col.data[row], "edge", path, edge) : message;
+    message =
+        message.empty() ? TryParseIndex(basis_i.data[row], "basis_i", path, i) : message;
+    message =
+        message.empty() ? TryParseIndex(basis_j.data[row], "basis_j", path, j) : message;
+    if (!message.empty())
+    {
+      return message;
+    }
+    if (!(i <= expected_size && j >= i && j <= expected_size && std::isfinite(q.data[row])))
+    {
+      return ReaderMessage("Invalid surface response matrix entry in \"", path, "\"!");
+    }
     auto [it, inserted] = unique.emplace(Key{interface, edge, i - 1, j - 1}, q.data[row]);
     if (!inserted)
     {
       const double scale =
           std::max({std::abs(it->second), std::abs(q.data[row]), 1.0e-300});
-      MFEM_VERIFY(std::abs(it->second - q.data[row]) <= 1.0e-10 * scale,
-                  "Inconsistent repeated Q_total entry in \"" << path << "\"!");
+      if (!(std::abs(it->second - q.data[row]) <= 1.0e-10 * scale))
+      {
+        return ReaderMessage("Inconsistent repeated Q_total entry in \"", path, "\"!");
+      }
     }
   }
-  MFEM_VERIFY(!distance_col || radius_rows > 0,
-              "Surface response matrix file \""
-                  << path << "\" has no within-R rows at the matching radius "
-                  << *within_radius << " m: a spatial (3D box) response model adds its "
-                  << "energy within R of its edges (Q_ij), not the whole-box Q_total!");
+  if (!(!distance_col || radius_rows > 0))
+  {
+    return ReaderMessage("Surface response matrix file \"", path,
+                         "\" has no within-R rows at the matching radius ", *within_radius,
+                         " m: a spatial (3D box) response model adds its ",
+                         "energy within R of its edges (Q_ij), not the whole-box Q_total!");
+  }
 
   // The per-interface sum over the coupon edges, accumulated per (i, j) in the order of
   // the unique keys (interface, edge, i, j): the first edge's value, then each further
@@ -22608,17 +22763,24 @@ ReadSurfaceResponseMatricesFromFile(const std::string &path, int expected_size,
   }
   for (const auto &[key, edge_have] : have)
   {
-    MFEM_VERIFY(
-        std::all_of(edge_have.begin(), edge_have.end(), [](bool value) { return value; }),
-        "Surface response matrix file \"" << path << "\" has an incomplete edge matrix!");
+    if (!std::all_of(edge_have.begin(), edge_have.end(), [](bool value) { return value; }))
+    {
+      return ReaderMessage("Surface response matrix file \"", path,
+                           "\" has an incomplete edge matrix!");
+    }
   }
 
-  std::map<int, mfem::DenseMatrix> matrices;
   for (const auto &[interface, interface_entries] : entries)
   {
-    matrices.emplace(interface, BuildDenseMatrix(interface_entries, expected_size, path));
+    message =
+        TryBuildDenseMatrix(interface_entries, expected_size, path,
+                            matrices.emplace(interface, mfem::DenseMatrix()).first->second);
+    if (!message.empty())
+    {
+      return message;
+    }
   }
-  return matrices;
+  return {};
 }
 
 // The cached reading (ResponseMatrixFileKey: the same file, size, time and parameters).
@@ -22629,19 +22791,37 @@ SurfaceResponseMatrixFileCache()
   return cache;
 }
 
-const std::map<int, mfem::DenseMatrix> &
-ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
-                            std::optional<double> within_radius = std::nullopt)
+std::string
+TryReadSurfaceResponseMatrices(const std::string &path, int expected_size,
+                               std::optional<double> within_radius,
+                               const std::map<int, mfem::DenseMatrix> *&matrices)
 {
   auto &cache = SurfaceResponseMatrixFileCache();
   const auto key = MakeResponseMatrixFileKey(path, expected_size, within_radius);
   if (const auto it = cache.find(key); it != cache.end())
   {
-    return it->second;
+    matrices = &it->second;
+    return {};
   }
-  return cache
-      .emplace(key, ReadSurfaceResponseMatricesFromFile(path, expected_size, within_radius))
-      .first->second;
+  std::map<int, mfem::DenseMatrix> read;
+  const std::string message =
+      TryReadSurfaceResponseMatricesFromFile(path, expected_size, within_radius, read);
+  if (message.empty())
+  {
+    matrices = &cache.emplace(key, std::move(read)).first->second;
+  }
+  return message;
+}
+
+const std::map<int, mfem::DenseMatrix> &
+ReadSurfaceResponseMatrices(const std::string &path, int expected_size,
+                            std::optional<double> within_radius = std::nullopt)
+{
+  const std::map<int, mfem::DenseMatrix> *matrices = nullptr;
+  const std::string message =
+      TryReadSurfaceResponseMatrices(path, expected_size, within_radius, matrices);
+  MFEM_VERIFY(message.empty(), message);
+  return *matrices;
 }
 
 // A model's per-coupon-interface surface response matrices: the file itself, or for an
@@ -22906,21 +23086,38 @@ std::set<int> ConfiguredTargetInterfaces(const IoData &iodata, bool automatic,
   return configured;
 }
 
+// STEP 4c (lane v1verdict1): the interface-mapping checks of ComputeSurfaceResponseMatrices
+// without stopping: the message (empty when the model's surface matrices and interface
+// mappings go together, or when it has neither).
+std::string SurfaceResponseInterfaceMappingRefusal(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config)
+{
+  if (config.fabricated_surface_matrix.empty() && config.thin_surface_matrix.empty())
+  {
+    return config.interfaces.empty()
+               ? std::string()
+               : std::string("Response-correction interface mappings require surface "
+                             "response matrices!");
+  }
+  if (!(!config.fabricated_surface_matrix.empty() && !config.thin_surface_matrix.empty() &&
+        !config.interfaces.empty()))
+  {
+    return "FabricatedSurfaceMatrix, ThinSurfaceMatrix, and Interfaces must be "
+           "specified together for response-corrected surface participation!";
+  }
+  return {};
+}
+
 SurfaceResponseMatrices ComputeSurfaceResponseMatrices(
     const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
     int expected_size, const Units &units, double matching_radius)
 {
+  const std::string mapping_refusal = SurfaceResponseInterfaceMappingRefusal(config);
+  MFEM_VERIFY(mapping_refusal.empty(), mapping_refusal);
   if (config.fabricated_surface_matrix.empty() && config.thin_surface_matrix.empty())
   {
-    MFEM_VERIFY(
-        config.interfaces.empty(),
-        "Response-correction interface mappings require surface response matrices!");
     return {};
   }
-  MFEM_VERIFY(!config.fabricated_surface_matrix.empty() &&
-                  !config.thin_surface_matrix.empty() && !config.interfaces.empty(),
-              "FabricatedSurfaceMatrix, ThinSurfaceMatrix, and Interfaces must be "
-              "specified together for response-corrected surface participation!");
 
   std::optional<double> within_radius;
   if (config.spatial_basis)
@@ -25373,6 +25570,8 @@ SurfaceResponsePreflightOutcome WriteSurfaceResponseRequirements(const IoData &i
   {
     outcome.census_models =
         parallel_mesh.Dimension() == 2 ? identification_2d.models : patches.models;
+    outcome.census_matching_radius =
+        TargetInterfaceMatchingRadius(iodata, request.target_interfaces);
   }
   {
     // CUT-PLAN step 4b (lane v1step4b; ruling R1): the solve-form refusals this pass saw,
@@ -25448,24 +25647,88 @@ SurfaceResponsePreflightCensusRefusal(const SurfaceResponsePreflightOutcome &out
   return {};
 }
 
+namespace
+{
+
+// STEP 4c (lane v1verdict1): PreflightOnly's prediction of the operator's model loop on one
+// model, its FIRST refusal in the loop's order (empty when the loop accepts the model): its
+// basis points, its domain matrices and the matrix step's test
+// (DomainResponseMatrixRefusal), its interface mappings and its surface matrices (a spatial
+// model's at `matching_radius`, as the operator reads them), each by the reader's Try form.
+std::string ResponseModelRefusal(
+    const config::ElectrostaticSolverData::ResponseCorrectionModelData &config,
+    const Units &units, double matching_radius)
+{
+  std::vector<std::array<double, 3>> points = config.constructed_basis_points;
+  std::string message =
+      points.empty() ? TryReadBasisPoints(config.basis_points, points) : std::string();
+  const int expected_size = static_cast<int>(points.size()) + config.conductor_state_count;
+  message =
+      message.empty() ? DomainResponseMatrixRefusal(config, expected_size, units) : message;
+  message = message.empty() ? SurfaceResponseInterfaceMappingRefusal(config) : message;
+  if (!message.empty() || config.fabricated_surface_matrix.empty() ||
+      (config.spatial_basis && !(std::isfinite(matching_radius) && matching_radius > 0.0)))
+  {
+    return message;  // no surface matrices, or the operator's own radius check stops it
+  }
+  std::optional<double> within_radius;
+  if (config.spatial_basis)
+  {
+    within_radius = units.Dimensionalize<Units::ValueType::LENGTH>(matching_radius);
+  }
+  for (const bool fabricated : {true, false})
+  {
+    std::vector<std::string> files;
+    for (const auto &source : config.blend)
+    {
+      files.push_back(fabricated ? source.fabricated_surface_matrix
+                                 : source.thin_surface_matrix);
+    }
+    if (config.blend.empty())
+    {
+      files = {fabricated ? config.fabricated_surface_matrix : config.thin_surface_matrix};
+    }
+    for (const auto &file : files)
+    {
+      const std::map<int, mfem::DenseMatrix> *matrices = nullptr;
+      message =
+          TryReadSurfaceResponseMatrices(file, expected_size, within_radius, matrices);
+      if (!message.empty())
+      {
+        return message;
+      }
+    }
+  }
+  return {};
+}
+
+}  // namespace
+
 std::string
 SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outcome,
                                      const Units &units, MPI_Comm comm)
 {
+  // STEP 4c (lane v1verdict1): EVERY census model the loop refuses, each with its first
+  // refusal (one model: the line of step 4b).
   std::string line;
   if (Mpi::Root(comm))
   {
+    std::string refusals;
     for (const auto &model : outcome.census_models)
     {
-      const auto refusal = DomainResponseMatrixRefusal(model, units);
+      const auto refusal =
+          ResponseModelRefusal(model, units, outcome.census_matching_radius);
       if (!refusal.empty())
       {
-        line = fmt::format(
-            "Resolution census: not evaluated: response model \"{}\": {} (a solve-form run "
-            "stops there)",
+        refusals += fmt::format(
+            "{}response model \"{}\": {}", refusals.empty() ? "" : "; ",
             model.name.empty() ? fmt::format("model-{}", model.idx) : model.name, refusal);
-        break;
       }
+    }
+    if (!refusals.empty())
+    {
+      line = "Resolution census: not evaluated: " + refusals +
+             " (a solve-form run stops there)";
     }
   }
   int size = static_cast<int>(line.size());

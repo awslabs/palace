@@ -3810,23 +3810,24 @@ is built and the log names `"RecordRaw"` as the value that gives it, also when o
 response operator's construction records a fallback. Wherever a solve-form run stops before
 its census (`"UnmatchedPolicy": "Error"` with missing requirements, a library its reader
 refuses, a placed discovery placeholder, a response model whose fabricated domain matrix its
-matrix step refuses (a negative-energy mode beyond roundoff, by the operator's own test) or
-whose domain matrix file cannot be opened), `PreflightOnly` builds no census, prints one
-line
+matrix step refuses (a negative-energy mode beyond roundoff, by the operator's own test), or
+a library file the operator's model loop refuses: a basis-point, domain-matrix or
+surface-matrix file that cannot be read or does not fit its basis points (a missing column
+or entry, a non-finite entry, another size), or interface mappings without surface
+matrices), `PreflightOnly` builds no census, prints one line
 `Resolution census: not evaluated: <why> (a solve-form run stops there)`
 and ends with the exit status it had before the census existed (0, or 3 after a
-`FailClosed` summary). Every census that is not evaluated (these reasons, an explicit
-`"GeometryFailurePolicy": "FailClosed"`, a whole-run raw fallback, a problem type without a
-census) is named by its one line, and the same line is
+`FailClosed` summary). For the library files the line names EVERY model the loop refuses,
+each with the solve form's message of its first refused file in the loop's order (basis
+points, domain matrices, the matrix step, the interface mappings, surface matrices):
+`response model "<name>": <message>`, separated by `; `. Every census that is not
+evaluated (these reasons, an explicit `"GeometryFailurePolicy": "FailClosed"`, a whole-run
+raw fallback, a problem type without a census) is named by its one line, and the same line is
 `SurfaceResponse.ResolutionCensusNotEvaluated` of `palace.json` (absent when the census is
 built). On `"PatchConstruction": "Legacy"` (a developer option) the requirements
 manifest's `Complete` is the features comparison's: the `"UnmatchedPolicy": "Error"` line
 can be printed where `Complete` is true (the legacy builder cannot serve a feature, and a
-solve-form run stops there). A library file the operator's model loop refuses (a
-surface-matrix or basis-point file that cannot be read, interface mappings without surface
-matrices, a domain matrix that does not fit its basis points) stops `PreflightOnly` after
-the manifest is written, with the solve form's message and a non-zero exit status, where a
-preflight without the census ended with 0; every solve-form run refuses such a library.
+solve-form run stops there).
 
 ### The per-iteration table of the response correction
 
