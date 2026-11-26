@@ -37,7 +37,7 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     pass. NEW: `Fabrication.LengthUnit`, when the library states it, must name `Model.L0`.
     Unchanged in action, now at load and all listed: `MatchingRadius` against the largest
     `EdgeDistances`, a missing `InterfaceLayers` entry, the library file and `Version`, a
-    parked metal law without the developer switch, `TargetInterfaces` / `AutomaticEdges`.
+    parked metal law without the developer switch, `TargetInterfaces`.
     A tolerated mismatch is named in the outputs: the flags word `library mismatch tolerated` on every affected row of `surface-participation.csv` and
     `SurfaceResponse.LibraryMismatch` in `palace.json`; without a mismatch nothing is added.
   - The length-weighted census (the PREFLIGHT line, `SurfaceResponse.Resolution.Preflight`:

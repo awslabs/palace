@@ -112,8 +112,7 @@ LibraryCheckTargets(const IoData &iodata,
       continue;
     }
     targets.push_back({index, dielectric.type, dielectric.attributes, dielectric.t * scale,
-                       dielectric.epsilon_r, dielectric.edge_distances.back() * scale,
-                       dielectric.automatic_edges});
+                       dielectric.epsilon_r, dielectric.edge_distances.back() * scale});
   }
   return targets;
 }
@@ -190,14 +189,10 @@ FindLibraryLoadRows(const IoData &iodata,
                            "at least one target interface", "-"));
   }
   std::set<int> missing(request.target_interfaces.begin(), request.target_interfaces.end());
+  // (AutomaticEdges / EdgeAttributes depend on the mesh's dimension: checked with it.)
   for (const auto &target : targets)
   {
     missing.erase(target.index);
-    if (!target.automatic_edges)
-    {
-      rows.push_back(StopRow("AutomaticEdges", TargetEntry(target), "false", "-",
-                             "required on every target interface"));
-    }
   }
   for (const int index : missing)
   {

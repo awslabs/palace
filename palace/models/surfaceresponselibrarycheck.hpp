@@ -85,7 +85,6 @@ struct LibraryCheckTarget
   InterfaceDielectric type = InterfaceDielectric::DEFAULT;
   std::vector<int> attributes;
   double thickness = 0.0, permittivity = 0.0, radius = 0.0;  // mesh length units
-  bool automatic_edges = false;
 };
 std::vector<LibraryCheckTarget>
 LibraryCheckTargets(const IoData &iodata,
