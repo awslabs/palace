@@ -1198,6 +1198,25 @@ TEST_CASE("Config Driven Solver", "[config][Serial]")
     CHECK_NOTHROW(config::DrivenSolverData(synthesis_single));
   }
 
+  SECTION("Adaptive basis output")
+  {
+    json adaptive = {
+        {"MinFreq", 1.0}, {"MaxFreq", 2.0}, {"FreqStep", 0.5}, {"AdaptiveTol", 1e-3}};
+    config::DrivenSolverData off(adaptive);
+    CHECK_FALSE(off.adaptive_save_basis);
+
+    json on = adaptive;
+    on["AdaptiveSaveBasis"] = true;
+    config::DrivenSolverData data(on);
+    CHECK(data.adaptive_save_basis);
+
+    // The output needs an adaptive sweep.
+    json uniform = on;
+    uniform.erase("AdaptiveTol");
+    CHECK_THROWS_WITH(config::DrivenSolverData(uniform),
+                      ContainsSubstring("requires an adaptive frequency sweep"));
+  }
+
   SECTION("Circuit synthesis requires two distinct samples")
   {
     auto Check = [](ProblemType type, const json &driven)
@@ -1370,6 +1389,36 @@ TEST_CASE("Config preconditioner matrix symmetry", "[config][Serial]")
   CHECK(Symmetry(json{{"PCMatShifted", true}}, false) == MatrixSymmetry::SPD);
   CHECK(Symmetry(json::object(), true) == MatrixSymmetry::UNSYMMETRIC);
   CHECK(Symmetry(json{{"PCMatShifted", true}}, true) == MatrixSymmetry::UNSYMMETRIC);
+}
+
+TEST_CASE("Config adaptive basis output with a Floquet wave vector", "[config][Serial]")
+{
+  // The written curl of the basis gives B without the k × E term of a Floquet wave vector.
+  auto Load = [](bool floquet)
+  {
+    json boundaries = json::object();
+    if (floquet)
+    {
+      boundaries["Periodic"] = {
+          {"FloquetWaveVector", {0.0, 1.0, 0.0}},
+          {"BoundaryPairs", {{{"DonorAttributes", {1}}, {"ReceiverAttributes", {2}}}}}};
+    }
+    json config = {{"Problem", {{"Type", "Driven"}, {"Output", "test_output"}}},
+                   {"Model", {{"Mesh", "test.msh"}}},
+                   {"Domains", {{"Materials", {{{"Attributes", {1}}}}}}},
+                   {"Boundaries", boundaries},
+                   {"Solver",
+                    {{"Driven",
+                      {{"MinFreq", 1.0},
+                       {"MaxFreq", 3.0},
+                       {"FreqStep", 0.5},
+                       {"AdaptiveTol", 1e-3},
+                       {"AdaptiveSaveBasis", true}}}}}};
+    IoData iodata(config, false);
+  };
+  CHECK_NOTHROW(Load(false));
+  CHECK_THROWS_WITH(Load(true),
+                    Catch::Matchers::ContainsSubstring("nonzero Floquet wave vector"));
 }
 
 TEST_CASE("Config PML complex frequency shift", "[config][Serial]")

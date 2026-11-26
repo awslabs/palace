@@ -11,6 +11,7 @@
 #include <numbers>
 #include <random>
 #include <set>
+#include <sstream>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -5582,5 +5583,200 @@ TEST_CASE("RomOperator-SolveReducedSystem-Parallel", "[romoperator][Serial][Para
   if (Mpi::Rank(comm) != 0)
   {
     CHECK(x.isZero());
+  }
+}
+
+// AdaptiveSaveBasis writes the PROM basis and its curl with the mesh files, and the reduced
+// solution coefficients of the online sweep. Check that these files, read back as a user
+// reads them, rebuild the expanded PROM solution E and B = -∇×E / (iω) in the units of the
+// regular grid function output.
+TEST_CASE_METHOD(palace::test::SharedTempDir,
+                 "RomOperator adaptive basis output rebuilds the expanded fields",
+                 "[postoperator][romoperator][Serial][Parallel]")
+{
+  MPI_Comm comm = Mpi::World();
+  json setup_json = ReducedPostprocessingSetup(temp_dir);
+  IoData iodata(setup_json, false);
+  auto mesh = LoadScaleParMesh2(iodata, comm);
+  SpaceOperator space_op(iodata, mesh);
+  RomOperator rom_op(iodata, space_op, 4);
+  DrivenPostOperatorTest post_op(iodata, space_op);
+  const auto &units = iodata.units;
+  const double mesh_Lc0 = units.GetMeshLengthRelativeScale();
+
+  // The PROM from HDM solutions of both excitations at the ends of the band.
+  const auto &sample_f = iodata.solver.driven.sample_f;
+  REQUIRE(sample_f.size() == 2);
+  ComplexVector E(space_op.GetNDSpace().GetTrueVSize());
+  E.UseDevice(true);
+  for (int excitation_idx : {1, 2})
+  {
+    for (double omega : {sample_f.front(), sample_f.back()})
+    {
+      rom_op.SolveHDM(excitation_idx, omega, E);
+      rom_op.UpdatePROM(E, fmt::format("sample_e{:d}_{:.3e}", excitation_idx, omega));
+    }
+  }
+  const auto &basis = rom_op.GetBasis();
+  const std::size_t n = basis.size();
+  REQUIRE(n > 1);
+  post_op.WriteBasisGridFunctions(basis);
+
+  // The online sweep at frequencies away from the samples, where the PROM solution is a
+  // combination of all basis vectors, with the coefficients recorded as in the driver.
+  // The expanded fields are the references, in the units of the regular grid
+  // function output.
+  const std::vector<double> omega = {0.6 * sample_f.front() + 0.4 * sample_f.back(),
+                                     0.3 * sample_f.front() + 0.7 * sample_f.back()};
+  const auto &curl = space_op.GetCurlMatrix();
+  ComplexVector B(curl.Height());
+  B.UseDevice(true);
+  std::map<std::pair<int, std::size_t>, std::unique_ptr<GridFunction>> E_ref, B_ref;
+  for (std::size_t i = 0; i < omega.size(); i++)
+  {
+    rom_op.SolvePROM(omega[i]);
+    for (int excitation_idx : {1, 2})
+    {
+      post_op.RecordBasisCoefficients(excitation_idx, i, omega.size(),
+                                      rom_op.GetReducedSolution(excitation_idx));
+      rom_op.ExpandPROMSolution(excitation_idx, E);
+      curl.Mult(E.Real(), B.Real());
+      curl.Mult(E.Imag(), B.Imag());
+      B *= -1.0 / (1i * omega[i]);
+      auto &e = E_ref[{excitation_idx, i}];
+      e = std::make_unique<GridFunction>(space_op.GetNDSpace(), true);
+      e->Real().SetFromTrueDofs(E.Real());
+      e->Imag().SetFromTrueDofs(E.Imag());
+      ScaleGridFunction(mesh_Lc0, *e);
+      units.DimensionalizeInPlace<Units::ValueType::FIELD_E>(*e);
+      auto &b = B_ref[{excitation_idx, i}];
+      b = std::make_unique<GridFunction>(space_op.GetCurlSpace(), true);
+      b->Real().SetFromTrueDofs(B.Real());
+      b->Imag().SetFromTrueDofs(B.Imag());
+      ScaleGridFunction(mesh_Lc0, *b);
+      units.DimensionalizeInPlace<Units::ValueType::FIELD_B>(*b);
+    }
+  }
+  post_op.WriteBasisCoefficients(omega);
+  Mpi::Barrier(comm);
+
+  // The coefficient table: one row per frequency, with the coefficients of both
+  // excitations.
+  std::ifstream csv_file(temp_dir / "rom-basis-coefficients.csv");
+  REQUIRE(csv_file.good());
+  std::stringstream csv;
+  csv << csv_file.rdbuf();
+  Table table(csv.str());
+  REQUIRE(table.n_cols() == 1 + 2 * 2 * n);
+  auto column = [&](std::string_view header)
+  {
+    auto it = std::ranges::find(table.begin(), table.end(), header, &Column::header_text);
+    REQUIRE(it != table.end());
+    REQUIRE(it->n_rows() == omega.size());
+    return it->data;
+  };
+  const auto f = column("f (GHz)");
+  const double unit_GHz =
+      units.Dimensionalize<Units::ValueType::FREQUENCY>(1.0) / (2.0 * std::numbers::pi);
+  for (std::size_t i = 0; i < omega.size(); i++)
+  {
+    CHECK_THAT(f[i], WithinRel(omega[i] * unit_GHz, 1.0e-15));
+  }
+  auto y_csv = [&](int excitation_idx, std::size_t i)
+  {
+    Eigen::VectorXcd yi(n);
+    for (std::size_t k = 0; k < n; k++)
+    {
+      const auto key = fmt::format("y[{:d}][{:d}]", k + 1, excitation_idx);
+      yi(k) = {column(fmt::format("Re{{{}}}", key))[i],
+               column(fmt::format("Im{{{}}}", key))[i]};
+    }
+    return yi;
+  };
+
+  // The basis files of this process go with its mesh file, in the input length unit.
+  const fs::path basis_dir = temp_dir / "gridfunction" / "driven" / "basis";
+  const int rank = Mpi::Rank(comm);
+  mfem::Mesh file_mesh((basis_dir / fmt::format("mesh.{:06d}", rank)).string(), 1, 0);
+  const mfem::ParMesh &pmesh = space_op.GetNDSpace().GetParMesh();
+  REQUIRE(file_mesh.GetNE() == pmesh.GetNE());
+  REQUIRE(file_mesh.GetNV() == pmesh.GetNV());
+  for (int v = 0; v < pmesh.GetNV(); v++)
+  {
+    for (int d = 0; d < pmesh.SpaceDimension(); d++)
+    {
+      CHECK_THAT(file_mesh.GetVertex(v)[d],
+                 WithinAbs(mesh_Lc0 * pmesh.GetVertex(v)[d], 1.0e-12 * mesh_Lc0));
+    }
+  }
+  auto basis_file = [&](const std::string &name, std::size_t k)
+  { return basis_dir / fmt::format("{}_{:06d}.gf.{:06d}", name, k + 1, rank); };
+  CHECK_FALSE(fs::exists(basis_file("E", n)));
+  CHECK_FALSE(fs::exists(basis_file("curlE", n)));
+
+  // Σₖ yₖ Fₖ from the written files F = E or curlE, as real and imaginary parts.
+  auto rebuild = [&](const std::string &name, const Eigen::VectorXcd &yi, int size)
+  {
+    mfem::Vector re(size), im(size);
+    re = 0.0;
+    im = 0.0;
+    for (std::size_t k = 0; k < n; k++)
+    {
+      std::ifstream in(basis_file(name, k));
+      REQUIRE(in.good());
+      mfem::GridFunction Fk(&file_mesh, in);
+      REQUIRE(Fk.Size() == size);
+      re.Add(yi(k).real(), Fk);
+      im.Add(yi(k).imag(), Fk);
+    }
+    return std::make_pair(re, im);
+  };
+  // A field of this process as the grid function output writes it, in the degrees of
+  // freedom of the written mesh (ParGridFunction::Save changes the sign of the degrees of
+  // freedom on shared entities whose orientation differs from the local one).
+  auto as_written = [&](const mfem::ParGridFunction &gf)
+  {
+    std::stringstream ss;
+    ss.precision(std::numeric_limits<double>::max_digits10);
+    gf.Save(ss);
+    mfem::GridFunction written(&file_mesh, ss);
+    return mfem::Vector(written);
+  };
+  auto relative_error = [&](const mfem::Vector &x, const mfem::Vector &ref)
+  {
+    mfem::Vector d(x);
+    d -= ref;
+    double nums[2] = {d * d, ref * ref};
+    Mpi::GlobalSum(2, nums, comm);
+    REQUIRE(nums[1] > 0.0);
+    return std::sqrt(nums[0] / nums[1]);
+  };
+  for (std::size_t i = 0; i < omega.size(); i++)
+  {
+    for (int excitation_idx : {1, 2})
+    {
+      CAPTURE(i, excitation_idx);
+      const Eigen::VectorXcd yi = y_csv(excitation_idx, i);
+      const auto &e = *E_ref.at({excitation_idx, i});
+      const auto &b = *B_ref.at({excitation_idx, i});
+
+      // E = Σₖ yₖ Eₖ, at full precision.
+      auto [E_re, E_im] = rebuild("E", yi, e.Real().Size());
+      CHECK(relative_error(E_re, as_written(e.Real())) < 1.0e-10);
+      CHECK(relative_error(E_im, as_written(e.Imag())) < 1.0e-10);
+
+      // B = (i / ω) Σₖ yₖ ∇×Eₖ, with ω in rad/s from the frequency of the table. On this
+      // small mesh at GHz frequencies the field is nearly curl free, so the discrete curl
+      // is a small difference of large edge values, and the curl of the sum and the sum of
+      // the curls differ by round-off amplified by about (c₀ / ωL)², here up to 2e-8. Wrong
+      // units, signs, or ordering give O(1) errors.
+      auto [C_re, C_im] = rebuild("curlE", yi, b.Real().Size());
+      const double omega_SI = 2.0 * std::numbers::pi * 1.0e9 * f[i];
+      mfem::Vector B_re(C_im), B_im(C_re);
+      B_re *= -1.0 / omega_SI;
+      B_im *= 1.0 / omega_SI;
+      CHECK(relative_error(B_re, as_written(b.Real())) < 1.0e-6);
+      CHECK(relative_error(B_im, as_written(b.Imag())) < 1.0e-6);
+    }
   }
 }

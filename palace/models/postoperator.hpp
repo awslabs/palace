@@ -281,6 +281,26 @@ public:
   bool WillWriteFields() const { return ShouldWriteFields(); }
   bool WillWriteFields(int step) const { return ShouldWriteFields(step); }
 
+  // Write the PROM basis vectors Eₖ of the adaptive frequency sweep and their curls ∇×Eₖ as
+  // MFEM grid functions in SI units (V/m and V/m²) at full precision, with the mesh in the
+  // input length unit. Together with the reduced coefficients yₖ(ω) of
+  // WriteBasisCoefficients these reconstruct the fields at any frequency of the sweep:
+  // E(ω) = Σₖ yₖ(ω) Eₖ and B(ω) = (i / ω) Σₖ yₖ(ω) ∇×Eₖ. Collective.
+  void WriteBasisGridFunctions(const std::vector<Vector> &basis)
+    requires(solver_t == ProblemType::DRIVEN);
+
+  // Keep the reduced solution coefficients yₖ(ω) of an excitation at the output frequency
+  // of index step out of num_steps, on the root only, for WriteBasisCoefficients.
+  void RecordBasisCoefficients(int excitation_idx, std::size_t step, std::size_t num_steps,
+                               const Eigen::VectorXcd &y)
+    requires(solver_t == ProblemType::DRIVEN);
+
+  // Write the recorded coefficients of all excitations at the given (nondimensional) output
+  // frequencies to rom-basis-coefficients.csv, one row per frequency, at full precision.
+  // Only the root writes.
+  void WriteBasisCoefficients(const std::vector<double> &omega) const
+    requires(solver_t == ProblemType::DRIVEN);
+
 protected:
   // Write to disk the E- and B-fields extracted from the solution vectors. Note that
   // fields are not redimensionalized, to do so one needs to compute: B <= B * (μ₀ H₀), E
@@ -329,6 +349,10 @@ protected:
       std::vector<std::pair<std::size_t, Eigen::MatrixXd>>;
   ReducedFrequencyDependentForms reduced_energy_E_fd;
   std::map<int, ReducedFrequencyDependentForms> reduced_domain_energy_E_fd;
+
+  // Reduced solution coefficients of the adaptive sweep by excitation and output frequency,
+  // kept on the root for WriteBasisCoefficients.
+  std::map<int, std::vector<Eigen::VectorXcd>> basis_coefficients;
 
   // Per-entry impedance postprocessing configuration (keyed by config index).
   struct ImpedancePostproConfig

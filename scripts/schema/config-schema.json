@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-1-1",
+  "$id": "urn:palace:schema:6-2-0",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3145,6 +3145,11 @@
           "description": "Weight matrix type for domain orthogonalization when building synthesized circuit matrices.",
           "default": "Energy",
           "x-palace-advanced": true
+        },
+        "AdaptiveSaveBasis": {
+          "type": "boolean",
+          "description": "Write the basis of the adaptive reduced-order model and its curl as MFEM grid functions (`gridfunction/driven/basis/`), and the reduced solution coefficients at every output frequency (`rom-basis-coefficients.csv`), so that the fields can be reconstructed offline at any output frequency as E(ω) = Σₖ yₖ(ω) Eₖ and B(ω) = (i/ω) Σₖ yₖ(ω) ∇×Eₖ. Requires an adaptive sweep ([AdaptiveTol](@ref config-solver-driven-adaptivetol) > 0), and no Floquet wave vector.",
+          "default": false
         }
       },
       "allOf": [
