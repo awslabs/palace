@@ -184,6 +184,16 @@ void SurfaceTerms::AddStaticExtraSystemBdrMassCoefficients(MaterialPropertyCoeff
                                                            double nu2) const
 {
   const int num_sigma = static_cast<int>(sigma_terms.size());
+  if (nu2 > 0.0)
+  {
+    // The finite conductivity terms at s = iω = ν, where they are real and positive.
+    const std::complex<double> omega(0.0, -std::sqrt(nu2));
+    for (int i = 0; i < num_sigma; i++)
+    {
+      AddExtraSystemBdrMassTermCoefficients(
+          i, fb, GetExtraSystemBdrMassTermScale(i, omega).real());
+    }
+  }
   for (int b = 0; b < surf_rz_op.GetNumBoundaries(); b++)
   {
     // The quotient q of the Robin coefficient is stored with its highest coefficient first.

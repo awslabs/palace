@@ -340,12 +340,12 @@ model of the device at the imaginary frequency $s = \nu$: the damping terms, whi
 are left out, and frequency-dependent boundaries and materials enter $\bm{K}$ at their static
 limit. An inductive `"RationalImpedance"` keeps its DC term, and the capacitive $s^2$ term of the
 polynomial part of the Robin coefficient of a `"RationalImpedance"`, which ``\widehat{\bm{C}}``
-has, enters with $\nu^2\bm{M}$, while `"Conductivity"` and
-frequency-dependent `"Permittivity"` terms vanish at DC (the anchor of a model with
-`"Conductivity"` boundaries is that of the model without them), and the wave-port terms and the
-second-order `"Absorbing"` term, a pole at $\omega = 0$ with no static limit, are left out.
-Leaving out a wave port is its DC limit for a TEM or quasi-TEM mode, but not for other modes, whose
-term tends to the real $k_c\bm{M}_p$ below cutoff. As in ``\widehat{\bm{C}}``, a
+has, enters with $\nu^2\bm{M}$. A `"Conductivity"` term, which vanishes at DC, where the skin
+depth exceeds the conductor, enters at $s = \nu$ instead, where it is real and positive and a good
+conductor nearly PEC. Frequency-dependent `"Permittivity"` terms vanish at DC, and the wave-port
+terms and the second-order `"Absorbing"` term, a pole at $\omega = 0$ with no static limit, are
+left out. Leaving out a wave port is its DC limit for a TEM or quasi-TEM mode, but not for other
+modes, whose term tends to the real $k_c\bm{M}_p$ below cutoff. As in ``\widehat{\bm{C}}``, a
 frequency-dependent material enters $\bm{M}$ with its high-frequency permittivity
 $\varepsilon_\infty$. When no port or boundary has a negative inductance, and the permittivities
 and capacitances are positive, the positive screening term makes the (real part of the) system
@@ -381,7 +381,7 @@ on the rows and columns of the basis, without the auxiliary states, for a scalar
 basis is orthonormal in the inner product of $\bm{W}$, so that the drive projects onto the port
 row only. This holds when the static limit of the model is in $\widehat{\bm{L}}^{-1}$ alone. It
 does not when a frequency-dependent boundary puts a static term in $\widehat{\bm{L}}^{-1}$ which
-the model does not have at DC: the constant term of the polynomial fit of a `"Conductivity"`
+the anchor system does not have: the constant term of the polynomial fit of a `"Conductivity"`
 boundary, which nothing compensates, or the polynomial part of the Robin coefficient of a series
 RL `"RationalImpedance"`, which its auxiliary states compensate at DC, while an inductive
 `"RationalImpedance"` contributes its exact static term. The anchor is then the field of a unit

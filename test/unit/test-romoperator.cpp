@@ -6159,8 +6159,10 @@ json ParallelLCRationalImpedance(int attr)
 
 // The anchor solve evaluates frequency-dependent boundaries at their quasistatic (DC)
 // limit. Second-order farfield and surface conductivity are singular at ω = 0 and a
-// resistive rational impedance has no DC term: none may enter the static operator, and the
-// anchor solve must stay finite (its preconditioner must not evaluate them at ω = 0).
+// resistive rational impedance has no DC term: none may enter the static operator at
+// ω = 0 (surface conductivity enters the anchor solves at the screening frequency
+// instead), and the anchor solve must stay finite (its preconditioner must not evaluate
+// them at ω = 0).
 TEST_CASE_METHOD(palace::test::PerRankTempDir,
                  "RomOperator-Synthesis-AnchorWithFrequencyDependentBoundaries",
                  "[romoperator][Serial]")
@@ -6186,6 +6188,33 @@ TEST_CASE_METHOD(palace::test::PerRankTempDir,
   const double norm = std::sqrt(linalg::Dot(Mpi::World(), v, v));
   CHECK(std::isfinite(norm));
   CHECK(norm > 0.0);
+}
+
+// Surface conductivity, which vanishes at DC, enters the anchor solves at the screening
+// frequency, where a good conductor is nearly PEC: with a copper lid on the cube, 1 cm
+// across, whose skin depth is about 5 µm there, the anchor is close to that with a PEC lid,
+// and not to that with an open one.
+TEST_CASE_METHOD(palace::test::PerRankTempDir,
+                 "RomOperator-Synthesis-AnchorWithConductivity", "[romoperator][Serial]")
+{
+  auto Config = [this](const json &boundaries)
+  {
+    auto setup_json = AnchorCubeConfig(temp_dir, boundaries);
+    setup_json["Model"]["L0"] = 1.0e-2;
+    return setup_json;
+  };
+  json conductivity, pec;
+  conductivity["Conductivity"] = json::array(
+      {json::object({{"Attributes", json::array({101})}, {"Conductivity", 5.8e7}})});
+  pec["PEC"] = {{"Attributes", json::array({101})}};
+  const auto v_conductivity = ComputeAnchorColumn(Config(conductivity));
+  const auto v_pec = ComputeAnchorColumn(Config(pec));
+  const auto v_open = ComputeAnchorColumn(Config(json::object()));
+  const double d_pec = RelativeDifference(v_conductivity, v_pec);
+  const double d_open = RelativeDifference(v_conductivity, v_open);
+  CAPTURE(d_pec, d_open);
+  CHECK(d_open > 0.1);
+  CHECK(d_pec < 1.0e-4);
 }
 
 // An inductive rational surface impedance carries DC current, so it must enter the anchor

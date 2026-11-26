@@ -1313,8 +1313,9 @@ void RomOperator::AddLumpedPortAnchorModesForSynthesis(const std::vector<double>
   // of the port node (see below), where K₀ = K + A2(0) is the static system stiffness: the
   // ω → 0 limit of the system matrix A(ω) = K + iωC − ω²M + A2(ω) without its mass term.
   // Damping (iωC) vanishes in this limit, and so do the frequency-dependent terms A2(ω) of
-  // surface conductivity and frequency-dependent permittivity (whose ε∞ is part of M); an
-  // inductive rational surface impedance (Zs ~ s·L as s → 0) keeps a finite DC Robin term,
+  // frequency-dependent permittivity (whose ε∞ is part of M), and of surface conductivity,
+  // which enters at s = ν instead, where a good conductor is nearly PEC; an inductive
+  // rational surface impedance (Zs ~ s·L as s → 0) keeps a finite DC Robin term,
   // the capacitive (s²) terms of the rational surface impedances, which synthesis puts in
   // the capacitance matrix, are evaluated at s = ν with the screening term ν²M, and the
   // wave ports (whose DC limit this is for TEM modes only) and the second-order

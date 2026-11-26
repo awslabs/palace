@@ -174,7 +174,9 @@ public:
   // capacitive term nu2 q₂ of the polynomial part q₀ + q₁ s + q₂ s² of the Robin
   // coefficient of each rational impedance boundary is added too, as circuit synthesis puts
   // q₂ in the capacitance matrix (a parallel LC sheet, g(s) = 1/L + C s², is then the
-  // Impedance sheet with the same L and C).
+  // Impedance sheet with the same L and C), and so are the finite conductivity terms at
+  // s = ν, where they are real and positive: a good conductor, whose term vanishes at DC,
+  // where the skin depth exceeds it, is nearly PEC at the screening frequency.
   void AddStaticExtraSystemBdrMassCoefficients(MaterialPropertyCoefficient &fb,
                                                double nu2 = 0.0) const;
 

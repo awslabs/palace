@@ -57,7 +57,7 @@ public:
   {
     // Square of the screening frequency s = ν of the anchor solves, at which the capacitive
     // (s²) terms of the rational surface impedances, which circuit synthesis puts in the
-    // capacitance matrix, are evaluated.
+    // capacitance matrix, and the finite conductivity terms are evaluated.
     double nu2 = 0.0;
   };
 

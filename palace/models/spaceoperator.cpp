@@ -2897,7 +2897,9 @@ void SpaceOperator::AddExtraSystemBdrCoefficients(
   // The ω → 0 limit of the frequency-dependent boundary terms, defining the static system
   // stiffness K + A2(0) of the quasistatic (inductive-limit) anchor solves. As for the
   // damping matrix (whose iω·C term also vanishes), a boundary term contributes only if it
-  // stays finite and nonzero at DC:
+  // stays finite and nonzero at DC, but for the finite conductivity terms, which vanish at
+  // DC, where the skin depth exceeds the conductor, and enter at the screening frequency
+  // s = ν, where they are real and positive and a good conductor is nearly PEC:
   //  - Surface boundary terms: only an inductive rational surface impedance (Zs ~ s·L),
   //    which carries DC current, keeps a Robin term, to which the capacitive (s²) term of
   //    the polynomial part of the Robin coefficient of a rational surface impedance is
