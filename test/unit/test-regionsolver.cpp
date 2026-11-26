@@ -69,7 +69,7 @@ void Set(ComplexVector &x, int i, cplx v)
 }  // namespace
 
 TEMPLATE_TEST_CASE("RegionSolver solves a system with a dense interface term",
-                   "[substructure][Serial][Parallel]", double, std::complex<double>)
+                   "[substructure][Serial][Parallel]", double, cplx)
 {
   // The system K + M (real, positive definite) or K + i M (complex symmetric) of H1 on a
   // square, with the DOFs g % 5 == 2 as Γ (in reverse order) and those g % 7 == 3 off it
