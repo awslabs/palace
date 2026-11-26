@@ -2527,12 +2527,13 @@ std::string SurfaceResponsePreflightCensusRefusal(
 
 // CUT-PLAN step 4b (the supervisor's ruling (B)): the line of a PreflightOnly run that
 // builds no resolution census because the operator's model loop refuses one or more of
-// outcome.census_models (STEP 4c, lane v1verdict1: every such model with its first refusal
-// in the loop's order, by the Try forms of its readers: basis points, domain matrices, the
-// matrix step's test, the interface mappings, surface matrices at the census operator's
-// target matching radius, read from `iodata` on every rank as that operator reads it),
-// predicted on the root; empty when it accepts every model. Called where the census would
-// be built. Collective.
+// outcome.census_models (STEP 4c, lane v1verdict1: every such model once, with every
+// refusal of its files in the loop's order, by the Try forms of its readers and the
+// operator's own checks: basis points, domain matrices, the matrix step's test, the
+// interface mappings, surface matrices at the census operator's target matching radius
+// (read from `iodata` on every rank as that operator reads it), the blend's shared
+// interfaces, the coupon check), predicted on the root; empty when it accepts every model.
+// Called where the census would be built. Collective.
 std::string
 SurfaceResponsePreflightModelRefusal(const SurfaceResponsePreflightOutcome &outcome,
                                      const IoData &iodata, MPI_Comm comm);
