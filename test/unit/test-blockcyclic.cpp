@@ -149,7 +149,7 @@ TEST_CASE("Block cyclic grids add a matrix given by rows",
 }
 
 TEMPLATE_TEST_CASE("Block cyclic factorizations solve dense systems",
-                   "[blockcyclic][Serial][Parallel]", double, std::complex<double>)
+                   "[blockcyclic][Serial][Parallel]", double, cplx)
 {
   // Cholesky's factorization of a real symmetric positive definite matrix, and LU's of a
   // complex one: diagonally dominant, or a cyclic shift with a small diagonal (which needs

@@ -42,12 +42,19 @@ void Release(V &v)
   V().swap(v);
 }
 
-// The assembled real (imag = false) or imaginary part of an operator, if any, owned.
-std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool imag)
+// The assembled real (imag = false) or imaginary part of an operator, if any, owned. The
+// assembly reads the eliminated true DOFs on the host through the operator's alias of the
+// list of the space operator, which on MFEM's debug device protects the list's device copy
+// without the list's record of it: a read of the list itself on the host restores it, for
+// its next read on the device (in GetExcitationVector, to expand the environment).
+std::unique_ptr<mfem::HypreParMatrix> StealPart(const ComplexOperator *A, bool imag,
+                                                const mfem::Array<int> &eliminated)
 {
   const auto *part =
       A ? dynamic_cast<const ParOperator *>(imag ? A->Imag() : A->Real()) : nullptr;
-  return part ? part->StealParallelAssemble() : nullptr;
+  auto X = part ? part->StealParallelAssemble() : nullptr;
+  eliminated.HostRead();
+  return X;
 }
 
 }  // namespace
@@ -199,7 +206,7 @@ DrivenSubstructure::ExtraParts(const Side &side, double omega)
   std::vector<std::unique_ptr<mfem::HypreParMatrix>> X(2);
   for (int p = 0; p < 2; p++)
   {
-    X[p] = StealPart(A2.get(), p == 1);
+    X[p] = StealPart(A2.get(), p == 1, space_op.GetEliminatedTrueDofs());
     if (X[p])
     {
       X[p]->EliminateBC(side.pinned, Operator::DIAG_ZERO);
@@ -335,7 +342,7 @@ DrivenSubstructure::SideParts(const Side &side, int op) const
   std::array<std::unique_ptr<mfem::HypreParMatrix>, 2> X;
   for (int p = 0; p < 2; p++)
   {
-    X[p] = StealPart(A.get(), p == 1);
+    X[p] = StealPart(A.get(), p == 1, space_op.GetEliminatedTrueDofs());
     if (X[p])
     {
       X[p]->EliminateBC(side.pinned, Operator::DIAG_ZERO);
