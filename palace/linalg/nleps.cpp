@@ -450,17 +450,18 @@ int QuasiNewtonSolver::Solve()
 
   // An eigenvector computed to the tolerance which lies in the span of the deflated
   // eigenvectors has a part orthogonal to them at the level of the tolerance (relative to
-  // its norm), and one of order one otherwise: the two are told apart at √tol. Eigenvalues
-  // within √tol of each other are taken as the same eigenvalue.
+  // its norm), and one of order one otherwise: the two are told apart at √tol. The two
+  // eigenvalues of a degenerate pair converged to the tolerance agree to about the
+  // tolerance (relative): eigenvalues within 10 times the tolerance are taken as the same.
   const double span_tol = std::sqrt(rtol);
+  const double eig_tol = 10.0 * rtol;
 
   // Whether initial guess i is nearer the target than λₙ, the num_requested-th nearest
-  // eigenvalue found above it: above the target and below λₙ, by more than the tolerance of
-  // equal eigenvalues (the guess of the partner of a degenerate λₙ is not nearer), and
-  // nearer the target than λₙ in the complex plane too. The initial guesses solve an
-  // approximation of T(λ) near the target frequencies, less accurate away from them: a
-  // guess farther from the target than λₙ in the complex plane, that of a more strongly
-  // damped mode, is the least likely to converge, and each iteration costs a linear solve.
+  // eigenvalue found above it: above the target and below λₙ, and nearer the target than
+  // λₙ in the complex plane too. The initial guesses solve an approximation of T(λ) near
+  // the target frequencies, less accurate away from them: a guess farther from the target
+  // than λₙ in the complex plane, that of a more strongly damped mode, is the least likely
+  // to converge, and each iteration costs a linear solve.
   const int num_requested = nev;
   auto NumFound = [&]() { return static_cast<int>(found.size()); };
   auto Nearer = [&](int i)
@@ -473,8 +474,7 @@ int QuasiNewtonSolver::Solve()
     std::ranges::nth_element(eig_found, eig_found.begin() + (num_requested - 1),
                              [](auto l, auto r) { return l.imag() < r.imag(); });
     const auto eig_n = eig_found[num_requested - 1];
-    return eigenvalues[i].imag() > sigma.imag() &&
-           eigenvalues[i].imag() < eig_n.imag() - span_tol * std::abs(eig_n) &&
+    return eigenvalues[i].imag() > sigma.imag() && eigenvalues[i].imag() < eig_n.imag() &&
            std::abs(eigenvalues[i] - sigma) < std::abs(eig_n - sigma);
   };
 
@@ -995,7 +995,7 @@ int QuasiNewtonSolver::Solve()
   std::size_t num_return = std::min(order.size(), static_cast<std::size_t>(num_requested));
   while (num_return < order.size() &&
          std::abs(found[order[num_return]].eig - found[order[num_return - 1]].eig) <=
-             span_tol * std::abs(found[order[num_return - 1]].eig))
+             eig_tol * std::abs(found[order[num_return - 1]].eig))
   {
     num_return++;
   }
