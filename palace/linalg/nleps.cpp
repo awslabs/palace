@@ -536,10 +536,7 @@ int QuasiNewtonSolver::Solve()
     eig_opInv = eig;  // eigenvalue estimate used in the (lagged) preconditioner
 
     // Set the "random" c vector and the deflation component of the eigenpair initial guess.
-    // The c vector has a seed on each process, from its rank, for deterministic behavior:
-    // with one seed on every process, each would hold the same entries (the first of them
-    // 8.8e-4 after srand(111) on macOS).
-    linalg::SetRandom(GetComm(), c);
+    linalg::SetRandom(GetComm(), c, seed);  // set seed for deterministic behavior
     c2.conservativeResize(k);
     v2.conservativeResize(k);
     for (int i = 0; i < k; i++)
