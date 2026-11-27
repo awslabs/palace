@@ -210,6 +210,7 @@ LibraryCheckRow EffectRow(LibraryMismatchQuantity quantity, InterfaceDielectric 
 }
 
 // The vacuum side at load (below): an MA or SA target with no material vacuum at all.
+constexpr const char *kVacuumSideQuantity = "vacuum side (MA and SA targets)";
 std::optional<LibraryCheckRow>
 VacuumSideRow(const IoData &iodata, const LibraryCheckLibrary &library,
               const std::vector<LibraryCheckTarget> &targets);
@@ -347,7 +348,8 @@ struct MaterialClass
 constexpr const char *kNotVacuumWords =
     "not the library's substrate and not vacuum (Palace takes the vacuum side of MA and SA "
     "interfaces only where the material is vacuum: permittivity and permeability exactly "
-    "1, no frequency dependence; set it to 1.0)";
+    "1, no frequency dependence; if it is the air, set its permittivity to exactly 1.0; if "
+    "it is a dielectric, use a library made for it)";
 
 MaterialClass ClassifyMaterial(const config::MaterialData &material, double substrate)
 {
@@ -410,7 +412,7 @@ std::optional<LibraryCheckRow> VacuumSideRow(const IoData &iodata,
     }
   }
   return StopRow(
-      "vacuum side (MA and SA targets)", "Domains.Materials: no material is vacuum",
+      kVacuumSideQuantity, "Domains.Materials: no material is vacuum",
       named.empty() ? std::string("none nearer to 1 than to the substrate")
                     : fmt::format("{}", fmt::join(named, "; ")),
       "a vacuum material",
@@ -525,9 +527,30 @@ FindSubstrateLoadRow(const IoData &iodata, const LibraryCheckLibrary &library,
   {
     line->text += fmt::format("; {}: {}{}", named, kNotVacuumWords, stops);
   }
+  if (!closest)
+  {
+    // No material of the substrate class (row (b) of the table at load): with an MS or SA
+    // target none can be the library's substrate. Not a substrate slip: no mismatch.
+    if (std::none_of(targets.begin(), targets.end(),
+                     [](const LibraryCheckTarget &target)
+                     {
+                       return target.type == InterfaceDielectric::MS ||
+                              target.type == InterfaceDielectric::SA;
+                     }))
+    {
+      return std::nullopt;
+    }
+    return StopRow("substrate (MS and SA targets)",
+                   "Domains.Materials: no configured material can be the library's "
+                   "substrate",
+                   neither.empty() ? std::string("none (vacuum only)")
+                                   : fmt::format("{}", fmt::join(neither, "; ")),
+                   Number(substrate) + " (Fabrication.SubstratePermittivity)",
+                   "a material nearer to the library's substrate than to 1");
+  }
   // A material equal to the library's substrate is no row (the layer rows alone are then
   // beyond the rule and stop the run).
-  if (!closest || !names.empty() || closest_mismatch == 0.0)
+  if (!names.empty() || closest_mismatch == 0.0)
   {
     return std::nullopt;
   }
@@ -732,10 +755,21 @@ std::string LibraryCheckMessage(const LibraryCheckReport &report,
   const bool parked_law =
       std::any_of(report.rows.begin(), report.rows.end(),
                   [](const LibraryCheckRow &row) { return row.quantity == "metal law"; });
+  // No library can serve air that is not vacuum (its raw MA and SA are 0): that remedy
+  // first, the library's for the other rows after it.
+  const bool vacuum_side =
+      std::any_of(report.rows.begin(), report.rows.end(), [](const LibraryCheckRow &row)
+                  { return row.quantity == kVacuumSideQuantity; });
   if (report.stop)
   {
-    message += "  -> STOP: set each entry above to the library's value, or use a library "
-               "made for the configuration's values";
+    message += vacuum_side ? "  -> STOP: set the air's permittivity to exactly 1.0" : "";
+    if (!vacuum_side || report.rows.size() > 1)
+    {
+      message +=
+          vacuum_side ? "; set each other entry above" : "  -> STOP: set each entry above";
+      message += " to the library's value, or use a library made for the configuration's "
+                 "values";
+    }
     if (parked_law)
     {
       message += ", or set \"Developer\": true for the parked coupons named above";

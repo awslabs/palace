@@ -1856,22 +1856,34 @@ value (the largest over the window's values, per unit mismatch): `MA` 0.157 and 
 `MS` 1.858 and 1.795, `SA` 0.102 and 0.019; the larger of the two, rounded up to one
 decimal, is used: `MA` 0.3, `MS` 1.9, `SA` 0.2. Alone, a layer may thus differ by 1 % and
 the substrate by about 0.5 %; an effect of exactly 1 % (a slip of exactly 1 % written in
-decimal) is within the rule. At load, before the mesh says which domains touch the
-corrected metal, every configured material other than vacuum is named in the message: one
-that passes the rule with the layer mismatches on every target interface could be the
-substrate; one that cannot is named with its value and mismatch, and so is a material that
-is neither vacuum nor the substrate (below); each of these stops the run after the mesh if
-it touches the corrected metal, and the message then reads "TOLERATED unless" that material
-touches the corrected metal. When no material can be the substrate, the run stops at load.
+decimal) is within the rule.
+
+THE DECISION TABLE AT LOAD. Before the mesh says which domains touch the corrected metal,
+every configured material is classed as vacuum (Palace's own test, below), of the substrate
+class (not vacuum, and no permittivity component nearer to 1 than to the library's
+substrate) or neither, and the message names every material of the last two classes with
+its value. With the configured target interfaces:
+
+| Row | When                                                                                                                | At load                                                                                                                      | After the mesh                                          |
+|:--- |:------------------------------------------------------------------------------------------------------------------- |:---------------------------------------------------------------------------------------------------------------------------- |:------------------------------------------------------- |
+| (a) | an `MA` or `SA` target and no vacuum material                                                                       | the run stops: "set the air's permittivity to exactly 1.0"                                                                   | -                                                       |
+| (b) | an `MS` or `SA` target and no material of the substrate class                                                       | the run stops: "no configured material can be the library's substrate", naming every material that is neither with its value | -                                                       |
+| (c) | materials of the substrate class, none of which passes the rule with the layer mismatches on every target interface | the run stops (the closest material's row)                                                                                   | -                                                       |
+| (d) | some of them pass (they could be the substrate) and some fail                                                       | the failing ones are named with their mismatch; the verdict reads "TOLERATED unless" one of them touches the corrected metal | a failing one next to the corrected metal stops the run |
+| (e) | materials that are neither, beside a vacuum and a passing substrate                                                 | named; the verdict reads "TOLERATED unless" one of them touches the corrected metal                                          | one next to the corrected metal stops the run           |
+
+Rows (a) and (b) can hold together. A material that is neither is never judged as a
+substrate slip: if it is the air, set its permittivity to exactly 1.0; if it is a
+dielectric, use a library made for it.
 
 THE AIR MUST BE EXACTLY VACUUM. Palace takes the vacuum side of an `MA` or `SA` interface
 only where the material is vacuum: permittivity and permeability 1 (Palace's own test: a
 light speed within 1e-6 of 1) and no frequency dependence. Air entered as, say, 1.0006 is
 not vacuum: no interface then has a vacuum side, the raw `MA` and `SA` values are zero and
-the corrected ones are wrong, with no message from the postprocessing. So, with an `MA` or
-`SA` target and no vacuum material the run stops at load; a material nearer to 1 than to
-the library's substrate that is not vacuum is named at load and stops the run after the
-mesh if it touches the corrected metal. Set the air's permittivity to exactly 1.0.
+the corrected ones are wrong, with no message from the postprocessing (row (a) stops such a
+run). The check inherits a property of Palace's test: it takes the largest light speed of
+the principal values, so a material with one principal permittivity of 1 (say
+`[1.0, 11.45, 11.45]`) counts as vacuum. Set the air's permittivity to exactly 1.0.
 
 | In the device configuration                                                                    | In the library                                                                     | On a mismatch                                                                                                                                                                                   |
 |:---------------------------------------------------------------------------------------------- |:---------------------------------------------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

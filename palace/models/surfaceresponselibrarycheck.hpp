@@ -44,7 +44,9 @@ class IoData;
 // material that is not, and has a permittivity component nearer to 1 than to the library's
 // substrate, is neither the substrate nor vacuum (never judged as a substrate slip): named
 // at load, it stops the run after the mesh if it touches the corrected metal; with an MA or
-// SA target and no vacuum material at all, the run stops at load.
+// SA target and no vacuum material at all, the run stops at load; with an MS or SA target
+// and no material of the substrate class at all, the run stops at load too (docs: the
+// decision table at load in reference.md).
 //
 inline constexpr double kLibraryMismatchEffectLimit = 0.01;
 inline constexpr double kLibraryMismatchEqualTolerance = 1.0e-10;
@@ -151,7 +153,8 @@ FindLibraryLoadRows(const IoData &iodata,
 // are neither the substrate nor vacuum; the last two stop the run after the mesh if they
 // touch the corrected metal (`conditional`: the load verdict is then conditional). When
 // none can pass (and the closest is not equal to the library's substrate): the closest
-// material's row, which the judge then stops.
+// material's row, which the judge then stops. With an MS or SA target and no material of
+// the substrate class at all: a STOP row naming the materials that are neither.
 struct LibrarySubstrateLine
 {
   std::string text;
