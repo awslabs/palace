@@ -1826,26 +1826,87 @@ matrices:
 ```
 
 Thickness uses the application mesh coordinate unit, like `MatchingRadius`. Palace
-requires an entry for every interface type represented by a version-3 model. Before
-automatic 2D or 3D matching, it also requires every selected runtime interface to have
-the same type, thickness, and relative permittivity. A mismatch is fatal because the
-surface-response matrices already include both layer properties. Version-1 and
-version-2 libraries remain usable, but Palace warns that their interface properties
-cannot be verified when they omit this metadata.
+requires an entry for every interface type represented by a version-3 model. The
+surface-response matrices already include both layer properties, so every selected
+runtime interface is compared with its type's entry. Version-1 and version-2 libraries
+remain usable, but Palace warns that their interface properties cannot be verified when
+they omit this metadata.
 
 The numbers above are one process's: copy the values from the `Fabrication` block of the
-library you use, never from this page (a device configuration written for silicon at 11.47
-does not match a library whose process uses 11.45 for its `MS` layer and its substrate).
-Before it corrects anything, Palace compares a device configuration with the library as
-follows:
+library you use, never from this page. Palace compares a device configuration with its
+library ONCE, at load, before the mesh is read (a designer learns every mismatch in the
+first seconds, all in one message); only the substrate, which needs the mesh, is compared
+after it.
 
-| In the device configuration | In the library | On a mismatch |
-|:--- |:--- |:--- |
-| `Thickness` of every target `Boundaries.Postprocessing.Dielectric` entry (mesh units) | `Fabrication.InterfaceLayers.<Type>.Thickness` | error: the run stops |
-| `Permittivity` of every target `Dielectric` entry | `Fabrication.InterfaceLayers.<Type>.Permittivity` | error: the run stops; the message names the library value and the entry to change |
-| the largest `EdgeDistances` value of every target entry (mesh units) | `MatchingRadius` | error: the run stops |
-| the boundary law of the metal (`PEC`, `Impedance` with its `Rs` / `Ls` / `Cs`, ...) | each model's `BoundaryCondition` | no error: the features have no model (Missing, uncorrected); the warning names the law when the library holds the same geometry under another law |
-| `Domains.Materials` `Permittivity` of the domains next to the corrected metal | `Fabrication.SubstratePermittivity` (and 1 for vacuum) | a warning only: the library's coupons were computed with the library's substrate |
+THE RULE. A mismatch is tolerated while its estimated effect on a corrected value stays
+within 1 %: inside, one warning lists every mismatching entry with its size and its
+estimated effect, and the run goes on; beyond, the run stops with the same list. The stop
+has no override: `"Developer": true` does not relax it. The effect of one mismatch is its
+factor times its relative size ``|c / l - 1|`` (``c`` the configuration's value, ``l`` the
+library's); on one target interface the effects of its own layer's permittivity and
+thickness add, and of the substrate the largest one is added (a value is a sum over patches,
+each on one substrate); the 1 % applies to that sum. A layer's permittivity and thickness
+have the factor 1 on their own type (the error is at most the mismatch: the library-served
+share of the value times it). The substrate's permittivity changes the field itself; its
+factor was measured on two electrostatic windows of two designs, the CTX-002 flat window
+(Order 3, three terminals, six target interfaces) and the CTX-003 window C2 (Order 4, one
+terminal, five target interfaces, one fixed mesh), the substrate moved by +0.175 % and +1 %
+with the library unchanged, as the move of the corrected value minus the move of the raw
+value (the largest over the window's values, per unit mismatch): `MA` 0.157 and 0.230,
+`MS` 1.858 and 1.795, `SA` 0.102 and 0.019; the larger of the two, rounded up to one
+decimal, is used: `MA` 0.3, `MS` 1.9, `SA` 0.2. Alone, a layer may thus differ by 1 % and
+the substrate by about 0.5 %; an effect of exactly 1 % (a slip of exactly 1 % written in
+decimal) is within the rule.
+
+THE DECISION TABLE AT LOAD. Before the mesh says which domains touch the corrected metal,
+every configured material is classed as vacuum (Palace's own test, below), of the substrate
+class (not vacuum, and no permittivity component nearer to 1 than to the library's
+substrate) or neither, and the message names every material of the last two classes with
+its value. With the configured target interfaces:
+
+| Row | When                                                                                                                | At load                                                                                                                      | After the mesh                                          |
+|:--- |:------------------------------------------------------------------------------------------------------------------- |:---------------------------------------------------------------------------------------------------------------------------- |:------------------------------------------------------- |
+| (a) | an `MA` or `SA` target and no vacuum material                                                                       | the run stops: "set the air's permittivity to exactly 1.0"                                                                   | -                                                       |
+| (b) | an `MS` or `SA` target and no material of the substrate class                                                       | the run stops: "no configured material can be the library's substrate", naming every material that is neither with its value | -                                                       |
+| (c) | materials of the substrate class, none of which passes the rule with the layer mismatches on every target interface | the run stops (the closest material's row)                                                                                   | -                                                       |
+| (d) | some of them pass (they could be the substrate) and some fail                                                       | the failing ones are named with their mismatch; the verdict reads "TOLERATED unless" one of them touches the corrected metal | a failing one next to the corrected metal stops the run |
+| (e) | materials that are neither, beside a vacuum and a passing substrate                                                 | named; the verdict reads "TOLERATED unless" one of them touches the corrected metal                                          | one next to the corrected metal stops the run           |
+
+Rows (a) and (b) can hold together. A material that is neither is never judged as a
+substrate slip: if it is the air, set its permittivity to exactly 1.0; if it is a
+dielectric, use a library made for it.
+
+THE AIR MUST BE EXACTLY VACUUM. Palace takes the vacuum side of an `MA` or `SA` interface
+only where the material is vacuum: permittivity and permeability 1 (Palace's own test: a
+light speed within 1e-6 of 1) and no frequency dependence. Air entered as, say, 1.0006 is
+not vacuum: no interface then has a vacuum side, the raw `MA` and `SA` values are zero and
+the corrected ones are wrong, with no message from the postprocessing (row (a) stops such a
+run). The check inherits a property of Palace's test: it takes the largest light speed of
+the principal values, so a material with one principal permittivity of 1 (say
+`[1.0, 11.45, 11.45]`) counts as vacuum. Set the air's permittivity to exactly 1.0.
+
+| In the device configuration                                                                    | In the library                                                                     | On a mismatch                                                                                                                                                                                   |
+|:---------------------------------------------------------------------------------------------- |:---------------------------------------------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Thickness` of every target `Boundaries.Postprocessing.Dielectric` entry (mesh units)          | `Fabrication.InterfaceLayers.<Type>.Thickness`                                     | THE RULE (was: the run stops at any difference)                                                                                                                                                 |
+| `Permittivity` of every target `Dielectric` entry                                              | `Fabrication.InterfaceLayers.<Type>.Permittivity`                                  | THE RULE (was: the run stops at any difference)                                                                                                                                                 |
+| `Domains.Materials` `Permittivity` of the domains next to the corrected metal (after the mesh) | `Fabrication.SubstratePermittivity` (and 1 for vacuum)                             | THE RULE (was: a warning at any size); at load the run stops already when no configured material other than vacuum could pass it, else one line names the materials that could be the substrate |
+| the largest `EdgeDistances` value of every target entry (mesh units)                           | `MatchingRadius`                                                                   | the run stops (any difference)                                                                                                                                                                  |
+| a target entry's `Type`                                                                        | an `InterfaceLayers` entry of that type                                            | the run stops                                                                                                                                                                                   |
+| `Model.L0`                                                                                     | `Fabrication.LengthUnit`, when the library states it (`m`, `cm`, `mm`, `um`, `nm`) | the run stops                                                                                                                                                                                   |
+| the metal laws of the device                                                                   | a model of a parked law (conductivity, rational impedance)                         | the run stops without `"Developer": true`, every such model named                                                                                                                               |
+| `TargetInterfaces`                                                                             | -                                                                                  | the run stops (unchanged, now at load)                                                                                                                                                          |
+| the boundary law of the metal (`PEC`, `Impedance` with its `Rs` / `Ls` / `Cs`, ...)            | each model's `BoundaryCondition`                                                   | no error: the features have no model (Missing, uncorrected); the warning names the law when the library holds the same geometry under another law                                               |
+
+The library file itself (opened, read, its `Version`, its entries) is read at load by the
+reader of the run, so its refusals also come before the mesh. `Fabrication.LengthUnit` may
+also be written `µm`, `μm` or `micron` (as `um`); another word stops the run as an unknown
+`LengthUnit` word. The load message prints the library's fabricated profile
+(`MetalThickness`, `OveretchDepth`, `SidewallAngle`, `TopRoundingRadius`,
+`BottomRoundingRadius`); the configuration has no profile to compare
+with. A tolerated mismatch is named in the outputs: the flags word `library mismatch tolerated` on every affected row of `surface-participation.csv`, and
+`SurfaceResponse.LibraryMismatch` in `palace.json` (`Mismatches` with `Quantity`, `Entry`,
+`Config`, `Library`, `Mismatch` and `EstimatedEffect` per type; `EstimatedEffectPerType`;
+`Interfaces`); without a mismatch neither is written.
 
 `OpenContourPaths` is required when conductor cuts interrupt the free matching contour.
 Each one-based `Indices` list orders a disjoint subset of `BasisPoints` from
@@ -3760,7 +3821,10 @@ above) or `NOT-EVALUATED` (no reading); never `RESOLVED`. It is the word the tab
 at a first iteration, there from the energy-weighted census. The weights: an edge patch its
 longitudinal cell length; a spatial patch (corner and cluster models; no cell) as much as
 edge patches with as many knots (its knot count times the edge patches' cell length per
-knot of the same `Type` and plane; by its knots alone where there is no edge patch).
+knot of the same `Type` and plane; by its knots alone where there is no edge patch); each
+times the patch's model weight, so that an interpolated feature (two or three models, each
+with its own patches, their weights summing to 1) counts its edge once, as the energy
+census does (`EdgeLength` is then the length the census reads, once per edge).
 `LengthM90` is that census's 90 % quantile of ``h/R`` (the bin-centre rule of the energy
 census); `Status` its word; `EdgePatches`, `EdgeLength`, `SpatialPatches` and the shares
 `EdgeShares` / `SpatialShares` by the census bars below stay as numbers (no word is made of

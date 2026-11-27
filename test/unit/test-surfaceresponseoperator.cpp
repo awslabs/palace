@@ -41,6 +41,7 @@
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
 #include "utils/edgedistance.hpp"
+#include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
 #include "utils/metaledge.hpp"
 
@@ -767,10 +768,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator automatic 
   IoData thickness_mismatch_iodata(thickness_mismatch_config, false);
   thickness_mismatch_iodata.boundaries.cracked_attributes.insert(9);
   thickness_mismatch_iodata.boundaries.cracked_attributes.insert(10);
+  // The layer rows are checked at load, before the mesh (CheckResponseLibraryAtLoad; lane
+  // v1loadcheck): +50 % in the thickness is beyond the rule, so the run stops there.
   CHECK_THROWS_WITH(
-      SurfaceResponseOperator(thickness_mismatch_iodata, automatic_laplace),
-      Catch::Matchers::ContainsSubstring("does not match fabrication-process response "
-                                         "library \"unit-test-process\" thickness"));
+      CheckResponseLibraryAtLoad(thickness_mismatch_iodata, Mpi::World(), false),
+      Catch::Matchers::ContainsSubstring("library check at load stops the run"));
 
   auto permittivity_mismatch_config = automatic_config;
   permittivity_mismatch_config["Boundaries"]["Postprocessing"]["Dielectric"][0]
@@ -779,13 +781,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles, "SurfaceResponseOperator automatic 
   permittivity_mismatch_iodata.boundaries.cracked_attributes.insert(9);
   permittivity_mismatch_iodata.boundaries.cracked_attributes.insert(10);
   CHECK_THROWS_WITH(
-      SurfaceResponseOperator(permittivity_mismatch_iodata, automatic_laplace),
-      Catch::Matchers::ContainsSubstring("does not match fabrication-process response "
-                                         "library \"unit-test-process\" permittivity") &&
-          Catch::Matchers::ContainsSubstring(
-              "(the process value Fabrication.InterfaceLayers.SA.Permittivity of the "
-              "library): set \"Permittivity\" of the Boundaries.Postprocessing.Dielectric "
-              "entry with \"Index\": 4 to 4!"));
+      CheckResponseLibraryAtLoad(permittivity_mismatch_iodata, Mpi::World(), false),
+      Catch::Matchers::ContainsSubstring("library check at load stops the run"));
+  // Built directly (no check at load), the operator no longer refuses a layer mismatch:
+  // the check runs once, before the mesh.
+  CHECK_NOTHROW(SurfaceResponseOperator(permittivity_mismatch_iodata, automatic_laplace));
 
   auto missing_layer_config = automatic_config;
   missing_layer_config["Solver"]["Electrostatic"]["ResponseCorrection"]["Library"] =
@@ -2333,6 +2333,30 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
         2 * coupled_response_3d.GetBasisSize());
   CHECK_THAT(interpolated_coupled_response_3d.GetPatchWeight(),
              WithinRel(coupled_response_3d.GetPatchWeight(), 1.0e-12));
+  {
+    // The length-weighted census (lane v1loadcheck): each of an interpolated feature's two
+    // members weighs its model weight, so the feature's edge counts once (the census of
+    // the same geometry served by one model per feature).
+    std::map<int, std::string> types;
+    for (const int interface : coupled_response_3d.GetCoverageInterfaces())
+    {
+      types[interface] =
+          ToString(coupled_iodata_3d.boundaries.postpro.dielectric.at(interface).type);
+    }
+    coupled_response_3d.ConfigureResolutionTypes(types);
+    interpolated_coupled_response_3d.ConfigureResolutionTypes(types);
+    const auto &single = coupled_response_3d.GetResolutionRunRecord().preflight;
+    const auto &blended =
+        interpolated_coupled_response_3d.GetResolutionRunRecord().preflight;
+    REQUIRE(!single.empty());
+    REQUIRE(single.size() == blended.size());
+    for (std::size_t k = 0; k < single.size(); k++)
+    {
+      CHECK(single[k].edge_length > 0.0);
+      CHECK(blended[k].edge_patches == 2 * single[k].edge_patches);
+      CHECK_THAT(blended[k].edge_length, WithinRel(single[k].edge_length, 1.0e-12));
+    }
+  }
 
   auto parallel_cluster_config_3d = coupled_config_3d;
   for (auto &interface :

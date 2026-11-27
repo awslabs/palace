@@ -1680,6 +1680,31 @@ public:
     // options they meet (DEVELOPER OPTIONS (mesh) / (library)).
     mutable std::vector<std::string> developer_options;
 
+    // The mismatches between this block's configuration and its library that the run
+    // TOLERATES (palace/models/surfaceresponselibrarycheck.hpp: inside the rule on the
+    // estimated effect; beyond it the run stops, with no override), written by the check at
+    // load and by the substrate check after the mesh, read by the per-iteration table (one
+    // flags word on every affected row) and palace.json (SurfaceResponse.LibraryMismatch).
+    // Empty without a tolerated mismatch: then no output names it. Mutable as
+    // developer_options.
+    struct LibraryMismatchRecord
+    {
+      struct Entry
+      {
+        std::string quantity, entry;
+        double config_value = 0.0, library_value = 0.0, mismatch = 0.0;
+        // The estimated effect on a corrected value, per affected Type (MA, MS, SA).
+        std::map<std::string, double> effect;
+      };
+      std::vector<Entry> entries;
+      // Per Type: the largest summed effect over that Type's target interfaces.
+      std::map<std::string, double> effect_per_type;
+      // The target interface indices with a nonzero summed effect.
+      std::vector<int> interfaces;
+      bool Empty() const { return entries.empty(); }
+    };
+    mutable LibraryMismatchRecord library_mismatch;
+
     // The keys of a parked option the block states without selecting the option (SolveTol
     // or TranslationalDomainCorrection without a self-consistent solve, MortarOversampling
     // without the surface-mortar coupling): not read; IoData names them in one warning.

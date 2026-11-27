@@ -37,6 +37,7 @@
 #include "models/spaceoperator.hpp"
 #include "models/surfacecurrentoperator.hpp"
 #include "models/surfaceparticipationtable.hpp"
+#include "models/surfaceresponselibrarycheck.hpp"
 #include "models/waveportoperator.hpp"
 #include "utils/communication.hpp"
 #include "utils/constants.hpp"
@@ -540,6 +541,7 @@ PostOperator<solver_t>::PostOperator(
     if (iodata.solver.surface_response_correction)
     {
       const auto &response = *iodata.solver.surface_response_correction;
+      library_mismatch = &response.library_mismatch;
       surface_response_postprocess_enabled = response.IncludesPostprocessing();
       surface_response_self_consistent_enabled =
           solver_t != ProblemType::BOUNDARYMODE && response.IncludesSelfConsistent();
@@ -4263,6 +4265,10 @@ void PostOperator<solver_t>::AddSurfaceParticipationRows(int point, double frequ
     sheet_served = counts.corrected > 0;
     sheet_not_served = counts.not_served > 0;
   }
+  const auto mismatch_interfaces =
+      library_mismatch ? LibraryMismatchInterfaces(*library_mismatch) : std::set<int>{};
+  const auto mismatch_types =
+      library_mismatch ? LibraryMismatchTypes(*library_mismatch) : std::set<std::string>{};
   auto NewRow = [&](int interface)
   {
     SurfaceParticipationRow row;
@@ -4276,6 +4282,9 @@ void PostOperator<solver_t>::AddSurfaceParticipationRows(int point, double frequ
     row.mode_ports = mode_ports;
     row.sheet_served = sheet_served;
     row.sheet_not_served = sheet_not_served;
+    row.library_mismatch =
+        library_mismatch && LibraryMismatchActsOn(mismatch_interfaces, mismatch_types,
+                                                  interface, row.type, row.region);
     return row;
   };
   const double nan = std::numeric_limits<double>::quiet_NaN();

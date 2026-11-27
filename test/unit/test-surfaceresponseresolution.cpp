@@ -291,7 +291,7 @@ TEST_CASE("Resolution census PREFLIGHT flags cells beyond twice the bar; without
     {
       AddResolutionPreflightPatch(slot.data(),
                                   ResolutionPatchStatus(p.m, order, census_bars, true), p.m,
-                                  p.length, p.knots);
+                                  1.0, p.length, p.knots);
     }
     auto row = ComputeResolutionPreflightRow(slot.data(), "SA", true, 0.0, true, 1.0,
                                              verdict.under_resolved_factor *
@@ -406,6 +406,58 @@ TEST_CASE("Resolution census PREFLIGHT flags cells beyond twice the bar; without
   CHECK(line.find("a row without them has no cell beyond twice the bar, so the table "
                   "cannot read UNDER-RESOLVED after the solve on this mesh") !=
         std::string::npos);
+}
+
+// The census weighs each patch by its model weight (lane v1loadcheck, MINORS 3 and 7): an
+// interpolated feature's members (each with its own full patch set) count its edge and
+// its knots once, so the census reads as if one model served each feature.
+TEST_CASE("Resolution census PREFLIGHT weighs each patch's length and knots by its model "
+          "weight",
+          "[SurfaceResponseResolution][Serial]")
+{
+  const auto census_bars = BuiltInResolutionBars();
+  struct Patch
+  {
+    double m, weight, length, knots;
+  };
+  auto Preflight = [&](const std::vector<Patch> &patches)
+  {
+    std::vector<double> slot(kResolutionPreflightStride, 0.0);
+    for (const auto &p : patches)
+    {
+      AddResolutionPreflightPatch(slot.data(),
+                                  ResolutionPatchStatus(p.m, 3, census_bars, true), p.m,
+                                  p.weight, p.length, p.knots);
+    }
+    return ComputeResolutionPreflightRow(slot.data(), "SA", true, 0.0, true, 1.0, 4.0);
+  };
+  // One model per feature: 9 fine edge patches (length 1, 10 knots) and one coarse spatial
+  // patch of 12 knots (1.2 of 10.2 beyond U = 4 R).
+  std::vector<Patch> single(9, {0.5, 1.0, 1.0, 10.0});
+  single.push_back({10.0, 1.0, 0.0, 12.0});
+  // The same features, one edge feature and the spatial feature interpolated (members of
+  // weights 0.3 / 0.7 and 0.5 / 0.5).
+  std::vector<Patch> blended(8, {0.5, 1.0, 1.0, 10.0});
+  blended.push_back({0.5, 0.3, 1.0, 10.0});
+  blended.push_back({0.5, 0.7, 1.0, 10.0});
+  blended.push_back({10.0, 0.5, 0.0, 12.0});
+  blended.push_back({10.0, 0.5, 0.0, 12.0});
+  const auto one = Preflight(single), two = Preflight(blended);
+  CHECK(two.edge_patches == 10);  // counts stay counts
+  CHECK(two.spatial_patches == 2);
+  CHECK(two.edge_length == Catch::Approx(one.edge_length).epsilon(1e-12));
+  CHECK(one.under_resolved_share == Catch::Approx(1.2 / 10.2).epsilon(1e-12));
+  // With the knots unweighted the share would read 2.16 / 11.16.
+  CHECK(two.under_resolved_share == Catch::Approx(one.under_resolved_share).epsilon(1e-12));
+  for (std::size_t q = 0; q < one.length_quantiles.size(); q++)
+  {
+    CHECK(two.length_quantiles[q] == Catch::Approx(one.length_quantiles[q]).epsilon(1e-12));
+  }
+  CHECK(two.largest_m == one.largest_m);
+  // A member of weight 0 would count as a spatial patch: refused.
+  std::vector<double> slot(kResolutionPreflightStride, 0.0);
+  CHECK_THROWS(AddResolutionPreflightPatch(
+      slot.data(), ResolutionPatchStatus(0.5, 3, census_bars, true), 0.5, 0.0, 1.0, 10.0));
 }
 
 // The flag S (lane v1verdict1): a cell's shares of its energy on spatial-basis (corner and

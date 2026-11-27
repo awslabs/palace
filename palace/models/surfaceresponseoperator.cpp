@@ -44,6 +44,7 @@
 #include "models/spaceoperator.hpp"
 #include "models/surfaceresponsefilmrule.hpp"
 #include "models/surfaceresponseidentification.hpp"
+#include "models/surfaceresponselibrarycheck.hpp"
 #include "models/surfaceresponsemirror.hpp"
 #include "models/surfaceresponsesegmentindex.hpp"
 #include "utils/collectiveenvironment.hpp"
@@ -2033,6 +2034,10 @@ struct ProcessLibrary
   // Fabrication.SubstratePermittivity: the relative permittivity of the substrate the
   // library's coupons were computed with (nullopt when the library does not record it).
   std::optional<double> substrate_permittivity;
+  // Fabrication.LengthUnit and the fabricated profile of record (decision 2388), as the
+  // library states them (the check at load compares the unit and prints the profile).
+  std::optional<std::string> length_unit;
+  std::vector<std::pair<std::string, std::optional<double>>> profile;
   std::map<InterfaceDielectric, LibraryInterfaceLayer> interface_layers;
   std::vector<LibraryModel> models;
   std::set<std::pair<std::size_t, std::size_t>> corner_radius_interpolation;
@@ -3204,6 +3209,18 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
        {"BottomRoundingRadius", FabricationValue("BottomRoundingRadius")},
        {"SubstratePermittivity", FabricationValue("SubstratePermittivity")}}};
   library.substrate_permittivity = FabricationValue("SubstratePermittivity");
+  for (std::size_t k = 0; k + 1 < process_of_record.size(); k++)
+  {
+    library.profile.push_back(process_of_record[k]);
+  }
+  if (fabrication != data.end())
+  {
+    if (const auto unit = fabrication->find("LengthUnit");
+        unit != fabrication->end() && unit->is_string())
+    {
+      library.length_unit = unit->get<std::string>();
+    }
+  }
   if (interface_layers)
   {
     MFEM_VERIFY(interface_layers->is_object(),
@@ -4612,9 +4629,11 @@ ProcessLibrary ReadProcessLibrary(const std::string &path, const Units &units,
 // (CompatibleBoundaryLaw), so such a coupon is in use only where the device carries its
 // law: there it is refused by name without the developer switch, and listed with it; a
 // library coupon of a law the device does not carry is never matched and not looked at.
-void VerifyLibraryMetalLaws(
-    const ProcessLibrary &library, const config::BoundaryData &boundaries,
-    const config::ElectrostaticSolverData::ResponseCorrectionData &request)
+// The library's models of a parked law that the device carries (conductivity or rational
+// impedance coupons): the names VerifyLibraryMetalLaws refuses without the developer
+// switch and the check at load lists.
+std::vector<std::string> ParkedLibraryModels(const ProcessLibrary &library,
+                                             const config::BoundaryData &boundaries)
 {
   const auto matchable = [&boundaries](const MetalBoundaryLaw &law)
   {
@@ -4623,26 +4642,35 @@ void VerifyLibraryMetalLaws(
            (law.type == MetalBoundaryConditionType::RATIONAL_IMPEDANCE &&
             !boundaries.rational_impedance.empty());
   };
-  std::vector<std::string> parked_models;
+  std::vector<std::string> names;
   for (const auto &model : library.models)
   {
-    const bool parked_model =
-        matchable(model.boundary_condition) ||
+    if (matchable(model.boundary_condition) ||
         std::any_of(model.spatial_edges.begin(), model.spatial_edges.end(),
-                    [&](const auto &edge) { return matchable(edge.boundary_condition); });
-    if (!parked_model)
+                    [&](const auto &edge) { return matchable(edge.boundary_condition); }))
     {
-      continue;
+      names.push_back(model.name);
     }
+  }
+  return names;
+}
+
+void VerifyLibraryMetalLaws(
+    const ProcessLibrary &library, const config::BoundaryData &boundaries,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request)
+{
+  std::vector<std::string> parked_models;
+  for (const auto &name : ParkedLibraryModels(library, boundaries))
+  {
     MFEM_VERIFY(request.developer,
                 "Fabrication-process response model \""
-                    << model.name << "\" of the library \"" << request.library
+                    << name << "\" of the library \"" << request.library
                     << "\" is a conductivity or rational-impedance coupon, a parked "
                        "developer option (the correction serves perfect conductors and "
                        "impedance (Ls) sheets; the device carries a boundary of the "
                        "coupon's law); set \"Developer\": true in the response-correction "
                        "block to use it!");
-    parked_models.push_back(fmt::format("\"{}\"", model.name));
+    parked_models.push_back(fmt::format("\"{}\"", name));
   }
   if (parked_models.empty())
   {
@@ -4659,59 +4687,27 @@ void VerifyLibraryMetalLaws(
   }
 }
 
-void ValidateLibraryInterfaceLayers(
-    const ProcessLibrary &library,
-    const std::map<int, config::InterfaceDielectricData> &dielectrics,
-    const std::set<int> &target_interfaces, double coordinate_scale)
+// What the check of a configuration against its library compares, from the run's own
+// reader's ProcessLibrary (surfaceresponselibrarycheck.hpp; lengths in mesh units).
+LibraryCheckLibrary LibraryCheckInputs(const ProcessLibrary &library,
+                                       const std::string &path,
+                                       const config::BoundaryData &boundaries,
+                                       double coordinate_scale)
 {
-  if (library.interface_layers.empty())
+  LibraryCheckLibrary inputs;
+  inputs.name = library.name;
+  inputs.path = path;
+  inputs.matching_radius = library.matching_radius * coordinate_scale;
+  for (const auto &[type, layer] : library.interface_layers)
   {
-    Mpi::Warning("Fabrication-process response library \"{}\" is version {} and has no "
-                 "InterfaceLayers metadata; target dielectric thicknesses and "
-                 "permittivities cannot be verified!\n",
-                 library.name, library.version);
-    return;
+    inputs.interface_layers[type] = {layer.thickness * coordinate_scale,
+                                     layer.permittivity};
   }
-
-  constexpr double relative_tolerance = 1.0e-10;
-  const auto compatible = [](double actual, double expected)
-  {
-    return std::abs(actual - expected) <=
-           relative_tolerance * std::max(std::abs(actual), std::abs(expected));
-  };
-  for (const int index : target_interfaces)
-  {
-    const auto dielectric = dielectrics.find(index);
-    MFEM_VERIFY(dielectric != dielectrics.end(),
-                "Response-correction target interface "
-                    << index << " is not configured for dielectric postprocessing!");
-    const auto layer = library.interface_layers.find(dielectric->second.type);
-    MFEM_VERIFY(layer != library.interface_layers.end(),
-                "Fabrication-process response library \""
-                    << library.name << "\" has no InterfaceLayers metadata for target "
-                    << "interface " << index << " (" << ToString(dielectric->second.type)
-                    << ")!");
-    MFEM_VERIFY(compatible(dielectric->second.t, layer->second.thickness),
-                "Target dielectric interface "
-                    << index << " (" << ToString(dielectric->second.type) << ") thickness "
-                    << dielectric->second.t * coordinate_scale
-                    << " does not match fabrication-process response library \""
-                    << library.name << "\" thickness "
-                    << layer->second.thickness * coordinate_scale
-                    << " in mesh coordinate units!");
-    MFEM_VERIFY(compatible(dielectric->second.epsilon_r, layer->second.permittivity),
-                "Target dielectric interface "
-                    << index << " (" << ToString(dielectric->second.type)
-                    << ") permittivity " << dielectric->second.epsilon_r
-                    << " does not match fabrication-process response library \""
-                    << library.name << "\" permittivity " << layer->second.permittivity
-                    << " (the process value Fabrication.InterfaceLayers."
-                    << ToString(dielectric->second.type)
-                    << ".Permittivity of the library): set \"Permittivity\" of the "
-                       "Boundaries.Postprocessing.Dielectric entry with \"Index\": "
-                    << index << " to " << fmt::format("{:.10g}", layer->second.permittivity)
-                    << "!");
-  }
+  inputs.substrate_permittivity = library.substrate_permittivity;
+  inputs.length_unit = library.length_unit;
+  inputs.profile = library.profile;
+  inputs.parked_models = ParkedLibraryModels(library, boundaries);
+  return inputs;
 }
 
 }  // namespace
@@ -4762,8 +4758,8 @@ FindSubstratePermittivityMismatches(const IoData &iodata, const mfem::ParMesh &m
         continue;
       }
       const auto &s = materials[m].epsilon_r.s;
-      const bool vacuum =
-          std::all_of(s.begin(), s.end(), [&](double e) { return Equal(e, 1.0); });
+      // Vacuum by Palace's own test (the vacuum side of MA and SA interfaces).
+      const bool vacuum = IsVacuumMaterial(materials[m]);
       const bool substrate = std::all_of(s.begin(), s.end(), [&](double e)
                                          { return Equal(e, substrate_permittivity); });
       if (!vacuum && !substrate)
@@ -4778,12 +4774,106 @@ FindSubstratePermittivityMismatches(const IoData &iodata, const mfem::ParMesh &m
 namespace
 {
 
-// A warning only (no value, record or exit changes): the library's coupons were computed
-// with its Fabrication.SubstratePermittivity, and nothing else in a run compares it with
-// the configured domains next to the corrected metal.
-void WarnSubstratePermittivity(const ProcessLibrary &library, const IoData &iodata,
-                               const mfem::ParMesh &mesh,
-                               const std::set<int> &target_interfaces)
+// The problem type's response-correction block (SurfaceResponsePreflightKey's rule): the
+// request whose record of tolerated library mismatches the outputs read (a builder may
+// be handed a copy, e.g. the requirements' or a candidate's).
+const config::ElectrostaticSolverData::ResponseCorrectionData *
+ConfiguredResponseCorrection(const IoData &iodata)
+{
+  const auto &request = iodata.problem.type == ProblemType::ELECTROSTATIC
+                            ? iodata.solver.electrostatic.response_correction
+                            : iodata.solver.surface_response_correction;
+  return request ? &*request : nullptr;
+}
+
+}  // namespace
+
+void CheckResponseLibraryAtLoad(const IoData &iodata, MPI_Comm comm, bool preflight)
+{
+  const auto *request = ConfiguredResponseCorrection(iodata);
+  if (!request || request->library.empty())
+  {
+    return;
+  }
+  // On the root: the library by the run's own reader with the run's flags (PreflightOnly
+  // reads as WriteSurfaceResponseRequirements does), its refusal a row; one message.
+  std::string message, record;
+  int level = 0;  // 0: no row; 1: rows the run goes on with; 2: stop
+  if (Mpi::Root(comm))
+  {
+    LibraryCheckLibrary inputs;
+    try
+    {
+      inputs = LibraryCheckInputs(
+          ReadProcessLibrary(request->library, iodata.units,
+                             iodata.InputsNondimensionalized(), preflight, preflight,
+                             request->magnetic_leaves),
+          request->library, iodata.boundaries, iodata.units.GetMeshLengthRelativeScale());
+    }
+    catch (const std::exception &e)
+    {
+      inputs.name = std::filesystem::path(request->library).stem().string();
+      inputs.path = request->library;
+      inputs.refusal = e.what();
+    }
+    const auto targets = LibraryCheckTargets(iodata, *request);
+    auto rows = FindLibraryLoadRows(iodata, *request, targets, inputs);
+    LibrarySubstrateLine substrate_line;
+    if (inputs.refusal.empty())
+    {
+      // The substrate judged with the layer rows (the effects on one target add).
+      if (auto row = FindSubstrateLoadRow(iodata, inputs, targets, rows, &substrate_line))
+      {
+        rows.push_back(std::move(*row));
+      }
+    }
+    const auto report = JudgeLibraryRows(std::move(rows), targets);
+    message =
+        LibraryCheckMessage(report, inputs, "at load (before the mesh)", substrate_line);
+    // A conditional verdict (a material that stops the run after the mesh if it touches
+    // the corrected metal) is a warning too.
+    level = report.stop ? 2 : report.Empty() && substrate_line.conditional.empty() ? 0 : 1;
+    RecordLibraryMismatch(report, *request);
+    record = LibraryMismatchJson(request->library_mismatch).dump();
+  }
+  Mpi::Broadcast(1, &level, 0, comm);
+  for (std::string *text : {&message, &record})
+  {
+    int size = static_cast<int>(text->size());
+    Mpi::Broadcast(1, &size, 0, comm);
+    text->resize(static_cast<std::size_t>(size));
+    Mpi::Broadcast(size, text->data(), 0, comm);
+  }
+  request->library_mismatch = LibraryMismatchFromJson(nlohmann::json::parse(record));
+  if (level > 0)
+  {
+    Mpi::Warning(comm, "{}", message);
+  }
+  else
+  {
+    Mpi::Print(comm, "\n{}", message);
+  }
+  if (level == 2)
+  {
+    std::cout << std::flush;
+    Mpi::Barrier(comm);
+    MFEM_ABORT("The response-correction library check at load stops the run (the rows "
+               "above; nothing was meshed)!");
+  }
+}
+
+namespace
+{
+
+// The substrate check after the mesh (the rule of surfaceresponselibrarycheck.hpp): the
+// library's coupons were computed with its Fabrication.SubstratePermittivity; the domains
+// next to the corrected metal are judged with the layer rows of the check at load (the
+// effects on one target interface add). One message per run (a tolerated mismatch is in
+// the request's record after it); every rank decides alike (the mismatches are reduced).
+void CheckSubstratePermittivity(
+    const ProcessLibrary &library, const IoData &iodata,
+    const config::ElectrostaticSolverData::ResponseCorrectionData &request,
+    const mfem::ParMesh &mesh, const std::set<int> &target_interfaces)
 {
   if (!library.substrate_permittivity)
   {
@@ -4801,24 +4891,33 @@ void WarnSubstratePermittivity(const ProcessLibrary &library, const IoData &ioda
   }
   const auto mismatches = FindSubstratePermittivityMismatches(
       iodata, mesh, boundary_attributes, *library.substrate_permittivity);
-  for (const auto &[material, attributes] : mismatches)
+  const auto targets = LibraryCheckTargets(iodata, request);
+  auto substrate_rows =
+      SubstrateMeshRows(iodata, mismatches, *library.substrate_permittivity, targets);
+  if (substrate_rows.empty())
   {
-    const auto &s = iodata.domains.materials[material].epsilon_r.s;
-    Mpi::Warning(
-        mesh.GetComm(),
-        "Domain attribute(s) {} next to the corrected metal have relative "
-        "permittivity {} (Domains.Materials[{:d}].Permittivity), but "
-        "fabrication-process response library \"{}\" was computed for a substrate "
-        "of {:.10g} (Fabrication.SubstratePermittivity) and vacuum 1: the correction "
-        "there uses the library's substrate; set the permittivity to {:.10g} to "
-        "match the process, or use a library made for this substrate!\n",
-        fmt::join(attributes, ", "),
-        s[0] == s[1] && s[1] == s[2]
-            ? fmt::format("{:.10g}", s[0])
-            : fmt::format("{:.10g} / {:.10g} / {:.10g}", s[0], s[1], s[2]),
-        material, library.name, *library.substrate_permittivity,
-        *library.substrate_permittivity);
+    return;
   }
+  const auto inputs = LibraryCheckInputs(library, request.library, iodata.boundaries,
+                                         iodata.units.GetMeshLengthRelativeScale());
+  auto rows = FindLibraryLoadRows(iodata, request, targets, inputs);
+  rows.insert(rows.end(), std::make_move_iterator(substrate_rows.begin()),
+              std::make_move_iterator(substrate_rows.end()));
+  const auto report = JudgeLibraryRows(std::move(rows), targets);
+  // The record lives on the configured block (the outputs read it), not on a copy.
+  const auto *configured = ConfiguredResponseCorrection(iodata);
+  const auto &owner = configured ? *configured : request;
+  const auto &entries = owner.library_mismatch.entries;
+  const bool reported = std::any_of(entries.begin(), entries.end(), [](const auto &entry)
+                                    { return entry.quantity == "substrate permittivity"; });
+  if (!reported || report.stop)
+  {
+    Mpi::Warning(mesh.GetComm(), "{}",
+                 LibraryCheckMessage(report, inputs, "after the mesh", {}));
+  }
+  RecordLibraryMismatch(report, owner);
+  MFEM_VERIFY(!report.stop, "The response-correction library check after the mesh stops "
+                            "the run (the rows above)!");
 }
 
 void MapLibraryInterfaces(
@@ -8220,9 +8319,9 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
                 "One or more response-correction TargetInterfaces is missing, untyped, "
                 "or does not configure edge-distance postprocessing!");
   }
-  ValidateLibraryInterfaceLayers(library, iodata.boundaries.postpro.dielectric, found,
-                                 coordinate_scale);
-  WarnSubstratePermittivity(library, iodata, mesh, found);
+  // The layers, R and the target set were checked at load (CheckResponseLibraryAtLoad,
+  // before the mesh); the substrate needs the mesh.
+  CheckSubstratePermittivity(library, iodata, request, mesh, found);
 
   ResponseCorrectionData result;
   result.unmatched_policy = request.unmatched_policy;
@@ -8671,6 +8770,7 @@ ResponseCorrectionData BuildAutomaticResponseData2D(
         const auto &source = library.models[weighted_model.index];
         auto weighted_patch = patch;
         weighted_patch.weight = weighted_model.weight;
+        weighted_patch.provenance.model_weight = weighted_model.weight;
         if (source.coupon_depth > 0.0)
         {
           weighted_patch.weight /= source.coupon_depth;
@@ -16645,9 +16745,9 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
                 "One or more response-correction TargetInterfaces is missing, untyped, "
                 "or does not configure edge-distance postprocessing!");
   }
-  ValidateLibraryInterfaceLayers(library, iodata.boundaries.postpro.dielectric, found,
-                                 coordinate_scale);
-  WarnSubstratePermittivity(library, iodata, mesh, found);
+  // The layers, R and the target set were checked at load (CheckResponseLibraryAtLoad,
+  // before the mesh); the substrate needs the mesh.
+  CheckSubstratePermittivity(library, iodata, request, mesh, found);
 
   // Partition the selected perimeter by the interface types available on each physical
   // segment. Existing SA attributes can legitimately omit a port footprint while the
@@ -19988,6 +20088,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
         {
           auto weighted_patch = patch;
           weighted_patch.weight = weighted_model.weight;
+          weighted_patch.provenance.model_weight = weighted_model.weight;
           pending.push_back({weighted_model.index, std::move(weighted_patch)});
         }
 
@@ -20949,6 +21050,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             auto weighted_patch = patch;
             weighted_patch.weight =
                 weighted_model.weight * quadrature_weight / source.coupon_depth;
+            weighted_patch.provenance.model_weight = weighted_model.weight;
             pending.push_back({weighted_model.index, std::move(weighted_patch)});
           }
         }
@@ -21050,6 +21152,7 @@ BuildAutomaticResponseData3D(const IoData &iodata, const mfem::ParMesh &mesh,
             auto weighted_patch = patch;
             weighted_patch.weight =
                 weighted_model.weight * quadrature_weight / source.coupon_depth;
+            weighted_patch.provenance.model_weight = weighted_model.weight;
             pending.push_back({weighted_model.index, std::move(weighted_patch)});
           }
         }
@@ -35213,6 +35316,10 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
   {
     double m = 0.0;
     const auto status = ResolutionPatchStatusOf(i, &m);
+    // Each member of an interpolated feature (2-3 members, each with its own full patch
+    // set) weighs its model weight (AddResolutionPreflightPatch: its length and knots), so
+    // that the feature's edge counts once.
+    const double model_weight = patches[i].model_weight;
     const double length =
         patches[i].mortar_longitudinal_strip[1] - patches[i].mortar_longitudinal_strip[0];
     const int plane_slot =
@@ -35230,7 +35337,7 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
         {
           AddResolutionPreflightPatch(sums.data() +
                                           (t * slots + slot) * kResolutionPreflightStride,
-                                      status, m, length, knots);
+                                      status, m, model_weight, length, knots);
         }
       }
     }
@@ -36282,6 +36389,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
     // The provenance of the conductor-consistency record (decision 277): the feature, the
     // claimed portions of a spatial cluster and the longitudinal cell, mesh units.
     auto &placed = patches.back();
+    placed.model_weight = patch_config.provenance.model_weight;
     placed.feature = patch_config.provenance.feature;
     placed.conductor_probe_edges = patch_config.conductor_probe_edges;
     placed.conductor_probes = patch_config.conductor_probes;
@@ -36399,6 +36507,7 @@ SurfaceResponseOperator::SurfaceResponseOperator(
                             diagnostic_basis_size, 0, patch_config.longitudinal_cell, 1,
                             0.0, patch_config.provenance.model_weight,
                             patch_config.domain_weight});
+    patches.back().model_weight = patch_config.provenance.model_weight;
     patches.back().feature = patch_config.provenance.feature;
     diagnostic_basis_size += model.basis_size;
   }
@@ -37967,6 +38076,7 @@ void SurfaceResponseOperator::ConfigureMaxwellResponse(
     // The provenance of the conductor-consistency record (R0-a on the Maxwell path): the
     // feature, the claimed portions, the cell and the translational edge probes.
     auto &placed = patches.back();
+    placed.model_weight = patch_config.provenance.model_weight;
     placed.feature = patch_config.provenance.feature;
     placed.conductor_probe_edges = patch_config.conductor_probe_edges;
     placed.conductor_probes = patch_config.conductor_probes;

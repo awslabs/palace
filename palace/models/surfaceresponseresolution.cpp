@@ -450,23 +450,27 @@ void WriteResolutionRows(std::ostream &output, const std::string &keys,
 }
 
 void AddResolutionPreflightPatch(double *slot, ResolutionStatus status, double m,
-                                 double length, double knots)
+                                 double model_weight, double length, double knots)
 {
+  MFEM_VERIFY(model_weight > 0.0, "A resolution census patch needs a positive model weight "
+                                  "(the coarse-cells flag's guarantee)!");
   // A patch with a reading (the energy census's condition) enters the histograms.
   const bool reading = status != ResolutionStatus::NOT_EVALUATED;
   const int m_bin = reading ? ResolutionHistogramBin(m) : 0;
+  const double weighted_knots = model_weight * knots;
   if (length > 0.0)
   {
-    slot[ResolutionStatusBin(status)] += length;
+    const double weighted_length = model_weight * length;
+    slot[ResolutionStatusBin(status)] += weighted_length;
     slot[10] += 1.0;
-    slot[12] += knots;
-    slot[kResolutionPreflightEdgeHistogram + m_bin] += reading ? length : 0.0;
+    slot[12] += weighted_knots;
+    slot[kResolutionPreflightEdgeHistogram + m_bin] += reading ? weighted_length : 0.0;
   }
   else
   {
     slot[5 + ResolutionStatusBin(status)] += 1.0;
     slot[11] += 1.0;
-    slot[kResolutionPreflightSpatialHistogram + m_bin] += reading ? knots : 0.0;
+    slot[kResolutionPreflightSpatialHistogram + m_bin] += reading ? weighted_knots : 0.0;
   }
 }
 

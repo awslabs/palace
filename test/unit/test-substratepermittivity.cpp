@@ -53,4 +53,11 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(Mismatches(json::array({11.45, 11.45, 11.6}), {9}).size() == 1);
   // No target boundary element: nothing is read.
   CHECK(Mismatches(11.47, {}).empty());
+  // Vacuum is Palace's own test (IsVacuumMaterial, the vacuum side of MA and SA
+  // interfaces): a domain of permittivity 1 with a permeability 2 is reported.
+  json config = ConvexIslandConfig(crack_policy);
+  config["Domains"]["Materials"][0]["Permeability"] = 2.0;
+  IoData iodata(config, false);
+  Mesh mesh(MakeIslandMesh());
+  CHECK(FindSubstratePermittivityMismatches(iodata, mesh.Get(), {9}, 11.45).size() == 1);
 }
