@@ -2568,19 +2568,12 @@ ElectrostaticSolver::Solve(const std::vector<std::unique_ptr<Mesh>> &mesh) const
                               raw_domain_boundary, raw_spatial_cluster_priority,
                               raw_conductor_consistency)
               : Unavailable(raw_energies);
-      if (postprocess_response && !response.confident)
+      // R1 (lane v1wordscode): the trace-closure gates are information: ONE line per run.
+      if (postprocess_response && surface_participation &&
+          surface_participation->TakeClosureGapLine())
       {
-        Mpi::Warning(
-            "Electrostatic postprocessing-only surface-response confidence limits were "
-            "exceeded: max interface trace-closure spread = {:.3e}, response-weighted "
-            "local trace-closure spread = {:.3e}, trace-closure response fraction above "
-            "5% = {:.3e}. Corrected values are reported, but the raw thin-metal "
-            "field does not determine a closure-independent local response. A "
-            "self-consistent result is preferable only when its globally coupled "
-            "corrected solve remains well-conditioned and converges.\n",
-            response.maximum_trace_closure_spread,
-            response.response_weighted_trace_closure_spread,
-            response.trace_closure_response_failure_fraction);
+        Mpi::Print("{}",
+                   ParticipationClosureGapLine(response.maximum_trace_closure_spread));
       }
 
       EnergyData corrected_energies = Unavailable(raw_energies);

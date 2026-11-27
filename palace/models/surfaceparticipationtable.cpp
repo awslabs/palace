@@ -29,6 +29,17 @@ constexpr double kNaN = std::numeric_limits<double>::quiet_NaN();
 // the two frequencies agree to this relative tolerance.
 constexpr double kParticipationFrequencyTolerance = 1.0e-12;
 
+// The words of a flags or information cell, joined by '; '.
+std::string JoinParticipationWords(const std::vector<std::string> &parts)
+{
+  std::string words;
+  for (const auto &part : parts)
+  {
+    words += (words.empty() ? "" : "; ") + part;
+  }
+  return words;
+}
+
 }  // namespace
 
 double ParticipationVerdictBars::CensusBar(int order) const
@@ -384,6 +395,8 @@ std::vector<SurfaceParticipationRow> PreflightParticipationRows(
     {
       row.flags += std::string("; ") + kParticipationLibraryMismatchFlag;
     }
+    row.summary = kParticipationNotComputed;
+    row.information = ParticipationInformation(row);
     row.reason = kParticipationPreflightReason;
     rows.push_back(std::move(row));
   }
@@ -685,8 +698,44 @@ JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
       row.resolution = total->second->resolution;
     }
     row.flags = ParticipationFlags(row);
+    row.information = ParticipationInformation(row);
+    row.summary = ParticipationSummary(row);
   }
   return mode_joins;
+}
+
+std::vector<std::string> ParticipationGateFlags(const ParticipationMaxwellGates &gates)
+{
+  std::vector<std::string> words;
+  if (!gates.evaluated)
+  {
+    return words;
+  }
+  auto Gate = [&](const char *name, double value, double limit)
+  {
+    if (!(value <= limit))
+    {
+      words.push_back(fmt::format("{} {:.3g} above {:g}", name, value, limit));
+    }
+  };
+  Gate("kR", gates.kR, kMaxwellGateMaximumKR);
+  Gate("loop residual", gates.loop_residual, kMaxwellGateMaximumWeightedLoopResidual);
+  Gate("loop fraction", gates.loop_fraction,
+       kMaxwellGateMaximumLoopResponseFailureFraction);
+  Gate("library distance", gates.library_distance, kMaxwellGateMaximumLibraryDistance);
+  if (!gates.boundary_law_verified)
+  {
+    words.push_back(kParticipationBoundaryLawFlag);
+  }
+  return words;
+}
+
+std::string ParticipationCurvatureInformation(const ParticipationMaxwellGates &gates)
+{
+  return gates.evaluated && !(gates.curvature_ratio <= kMaxwellGateMaximumCurvatureRatio)
+             ? fmt::format("R/rho {:.3g} above {:g}", gates.curvature_ratio,
+                           kMaxwellGateMaximumCurvatureRatio)
+             : std::string();
 }
 
 std::string ParticipationFlags(const SurfaceParticipationRow &row)
@@ -705,13 +754,9 @@ std::string ParticipationFlags(const SurfaceParticipationRow &row)
   {
     parts.push_back(row.coverage);
   }
-  if (row.regime != RegimeStatusName(RegimeStatus::IN))
+  for (auto &gate : ParticipationGateFlags(row.gates))
   {
-    parts.push_back("regime " + row.regime);
-  }
-  if (row.confidence != "pass")
-  {
-    parts.push_back("confidence " + row.confidence);
+    parts.push_back(std::move(gate));
   }
   if (row.convergence != "SETTLED")
   {
@@ -721,10 +766,6 @@ std::string ParticipationFlags(const SurfaceParticipationRow &row)
   {
     parts.push_back("developer: MarkNotApplied");
   }
-  if (row.sheet_served)
-  {
-    parts.push_back(kParticipationSheetServedFlag);
-  }
   if (row.sheet_not_served)
   {
     parts.push_back(kParticipationSheetNotServedFlag);
@@ -732,6 +773,20 @@ std::string ParticipationFlags(const SurfaceParticipationRow &row)
   if (row.library_mismatch)
   {
     parts.push_back(kParticipationLibraryMismatchFlag);
+  }
+  return JoinParticipationWords(parts);
+}
+
+std::string ParticipationInformation(const SurfaceParticipationRow &row)
+{
+  if (row.coverage == CoverageStatusName(CoverageStatus::NOT_TARGET))
+  {
+    return std::string();
+  }
+  std::vector<std::string> parts;
+  if (row.sheet_served)
+  {
+    parts.push_back(kParticipationSheetServedFlag);
   }
   if (row.spatial_share >= kParticipationSpatialShareFlagAt)
   {
@@ -741,12 +796,51 @@ std::string ParticipationFlags(const SurfaceParticipationRow &row)
   {
     parts.push_back(kParticipationClusterShareFlag);
   }
-  std::string flags;
-  for (const auto &part : parts)
+  if (auto curvature = ParticipationCurvatureInformation(row.gates); !curvature.empty())
   {
-    flags += (flags.empty() ? "" : "; ") + part;
+    parts.push_back(std::move(curvature));
   }
-  return flags;
+  if (row.type == "MA")
+  {
+    parts.push_back(kParticipationMaNotCertified);
+  }
+  return JoinParticipationWords(parts);
+}
+
+std::string ParticipationSummary(const SurfaceParticipationRow &row)
+{
+  const std::string not_target(CoverageStatusName(CoverageStatus::NOT_TARGET));
+  if (row.coverage == not_target)
+  {
+    return not_target;
+  }
+  const bool under_resolved =
+      row.resolution.rfind(ResolutionStatusName(ResolutionStatus::UNDER_RESOLVED), 0) == 0;
+  if (row.sheet_not_served ||
+      row.coverage == CoverageStatusName(CoverageStatus::TARGET_NOT_SERVED) ||
+      under_resolved ||
+      row.resolution == ResolutionStatusName(ResolutionStatus::NOT_EVALUATED) ||
+      !std::isfinite(row.p_corrected) || row.marked)
+  {
+    return kParticipationSummaryDoNotUse;
+  }
+  const bool resolved =
+      row.resolution == "RESOLVED" || row.resolution == "RESOLVED-UNTESTED";
+  if ((row.type == "SA" || row.type == "MS") && resolved &&
+      row.coverage == CoverageStatusName(CoverageStatus::OK) &&
+      ParticipationGateFlags(row.gates).empty() && !row.library_mismatch)
+  {
+    return kParticipationSummaryOk;
+  }
+  return kParticipationSummaryCheck;
+}
+
+std::string ParticipationClosureGapLine(double maximum_spread)
+{
+  return fmt::format("Surface response: the fixed-trace / fixed-flux closure gap {:.3e} at "
+                     "the first solve (the largest over interfaces): the gap between two "
+                     "closures, information, not a verdict\n",
+                     maximum_spread);
 }
 
 std::string ParticipationLogBlock(const std::vector<SurfaceParticipationRow> &level,
@@ -910,6 +1004,7 @@ SurfaceParticipationTable::SurfaceParticipationTable(std::string path, std::stri
   table.insert(Column::Text("scope", "scope"));
   table.insert("p_raw", "p raw");
   table.insert("p_corrected", "p corrected (fixed-trace)");
+  table.insert(Column::Text("summary", "summary"));
   table.insert("ratio", "corrected / raw");
   table.insert("q_raw", "Q raw");
   table.insert("q_corrected", "Q corrected");
@@ -924,8 +1019,6 @@ SurfaceParticipationTable::SurfaceParticipationTable(std::string path, std::stri
   table.insert("m50", "h/R m50");
   table.insert(Column::Text("coverage", "coverage"));
   table.insert("uncovered_share", "uncovered+pending share of W");
-  table.insert(Column::Text("regime", "regime"));
-  table.insert(Column::Text("confidence", "confidence"));
   table.insert("change_corrected", "change corrected (fraction)");
   table.insert("change_raw", "change raw (fraction)");
   table.insert("per_doubling", "change per doubling (%; an interface row: its Type's)");
@@ -935,6 +1028,7 @@ SurfaceParticipationTable::SurfaceParticipationTable(std::string path, std::stri
                          : "convergence (" + label.substr(0, label.size() - 2) + ")"));
   table.insert("spatial_share", "S corner+cluster share (fraction)");
   table.insert(Column::Text("flags", "flags"));
+  table.insert(Column::Text("information", "information"));
   table.insert(Column::Text("reason", "reason"));
 }
 
@@ -1026,6 +1120,7 @@ void SurfaceParticipationTable::AppendRows(const std::vector<SurfaceParticipatio
                                                  : "interface");
     table["p_raw"] << row.p_raw;
     table["p_corrected"] << row.p_corrected;
+    table["summary"] << row.summary;
     table["ratio"] << row.p_corrected / row.p_raw;
     table["q_raw"] << row.q_raw;
     table["q_corrected"] << row.q_corrected;
@@ -1034,14 +1129,13 @@ void SurfaceParticipationTable::AppendRows(const std::vector<SurfaceParticipatio
     table["m50"] << row.m50;
     table["coverage"] << row.coverage;
     table["uncovered_share"] << row.uncovered_share;
-    table["regime"] << row.regime;
-    table["confidence"] << row.confidence;
     table["change_corrected"] << row.change_corrected;
     table["change_raw"] << row.change_raw;
     table["per_doubling"] << row.per_doubling;
     table["convergence"] << row.convergence;
     table["spatial_share"] << row.spatial_share;
     table["flags"] << row.flags;
+    table["information"] << row.information;
     table["reason"] << row.reason;
   }
   file.AppendRowsAndClear();

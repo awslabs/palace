@@ -30,10 +30,11 @@ struct ResolutionPreflightRow;
 // end of every converged level. Output only: no value, solve or marking reads it.
 inline constexpr const char *kSurfaceParticipationFile = "surface-participation.csv";
 
-// The flags words of the impedance-metal rule (CUT-PLAN step 3; SurfaceParticipationRow
+// The words of the impedance-metal rule (CUT-PLAN step 3; SurfaceParticipationRow
 // sheet_served / sheet_not_served): a value with Ls sheets served by the perfect-conductor
-// models, and a value raw at a metal the rule does not serve (an Ls sheet above the bound,
-// a sheet with Rs or Cs, another law).
+// models (an information word, lane v1wordscode), and a value raw at a metal the rule does
+// not serve (an Ls sheet above the bound, a sheet with Rs or Cs, another law; a flags
+// word).
 inline constexpr const char *kParticipationSheetServedFlag = "Ls sheet served as PEC";
 inline constexpr const char *kParticipationSheetNotServedFlag =
     "metal law not served: raw there";
@@ -58,13 +59,32 @@ inline bool LibraryMismatchActsOn(const std::set<int> &interfaces,
 // fixed-trace fabricated energy) served by spatial-basis models, corner and spatial-cluster
 // models, whose trace map onto 16-knot rings is not within 1 %. At S >= 5 % SA can be off
 // by up to 5 S points and MS by up to 6 S: the first word; more than 10 % on
-// spatial-cluster models: the second. Information only: no value changes.
+// spatial-cluster models: the second. Information words (the column `information`, lane
+// v1wordscode): no value changes and no summary word reads them.
 inline constexpr double kParticipationSpatialShareFlagAt = 0.05;
 inline constexpr double kParticipationClusterShareFlagAbove = 0.10;
 inline constexpr const char *kParticipationSpatialShareFlag =
     "S >= 5% on corner and cluster models";
 inline constexpr const char *kParticipationClusterShareFlag =
     "S over 10% on cluster models";
+
+// The Maxwell gates that concern the fixed-trace (v1) value (SUPERVISOR-RULINGS R2, lane
+// v1wordscode): the operator's closure-independent gate reads these limits
+// (surfaceresponseoperator.cpp) and the table names a failed one in `flags` with its number
+// (the loop residual is the response-weighted one); R/rho beyond its limit is an
+// information word (not validated as a verdict). An MA value is never certified in v1.
+inline constexpr double kMaxwellGateMaximumKR = 0.1;
+inline constexpr double kMaxwellGateMaximumWeightedLoopResidual = 0.05;
+inline constexpr double kMaxwellGateMaximumLoopResponseFailureFraction = 0.01;
+inline constexpr double kMaxwellGateMaximumLibraryDistance = 0.8;
+inline constexpr double kMaxwellGateMaximumCurvatureRatio = 0.25;
+inline constexpr const char *kParticipationBoundaryLawFlag = "boundary law not verified";
+inline constexpr const char *kParticipationMaNotCertified = "MA not certified";
+
+// The summary word of a row (column `summary`; SUPERVISOR-RULINGS R5, lane v1wordscode).
+inline constexpr const char *kParticipationSummaryOk = "OK";
+inline constexpr const char *kParticipationSummaryCheck = "CHECK";
+inline constexpr const char *kParticipationSummaryDoNotUse = "DO-NOT-USE";
 
 // The verdict data (lane meshrule VERDICT-INPUT.md and its check; DATA, not code: the
 // built-in values are the repository file palace/models/surfaceparticipationverdict.json,
@@ -179,7 +199,28 @@ std::string ParticipationPreflightWord(double length_m90, int order,
                                        const ParticipationVerdictBars &bars,
                                        const std::string &problem);
 
-// One row of surface-participation.csv (the DESIGN-NOTE's 27 columns).
+// The Maxwell gates of a row's fixed-trace estimate (R2 above; the numbers of
+// SurfaceResponseOperator::MaxwellResponse). `evaluated` false on an electrostatic row (its
+// path computes none of them) and on a row without the estimate: no word. A gate fails
+// iff NOT (value <= limit), as the operator's own gate (a NaN fails).
+struct ParticipationMaxwellGates
+{
+  bool evaluated = false;
+  double kR = std::numeric_limits<double>::quiet_NaN();
+  double loop_residual = std::numeric_limits<double>::quiet_NaN();  // response-weighted
+  double loop_fraction = std::numeric_limits<double>::quiet_NaN();
+  double library_distance = std::numeric_limits<double>::quiet_NaN();
+  double curvature_ratio = std::numeric_limits<double>::quiet_NaN();  // max R/rho
+  bool boundary_law_verified = true;
+};
+// The flags words of the failed gates, in the order kR, loop residual, loop fraction,
+// library distance, boundary law ('kR 0.153 above 0.1'; empty when none failed or not
+// evaluated), and the information word of R/rho beyond its limit (empty otherwise).
+std::vector<std::string> ParticipationGateFlags(const ParticipationMaxwellGates &gates);
+std::string ParticipationCurvatureInformation(const ParticipationMaxwellGates &gates);
+
+// One row of surface-participation.csv (the DESIGN-NOTE's 27 columns; lane v1wordscode:
+// regime and confidence are not written, summary and information are).
 struct SurfaceParticipationRow
 {
   int iteration = 0;
@@ -200,6 +241,9 @@ struct SurfaceParticipationRow
   double m50 = std::numeric_limits<double>::quiet_NaN();
   std::string coverage = "NOT-MEASURED";
   double uncovered_share = std::numeric_limits<double>::quiet_NaN();
+  // The coverage cell's regime word and the estimate's confidence word: not written to this
+  // table and read by none of its words (R1, R3; lane v1wordscode); the developer tables
+  // (surface-response-coverage.csv, surface-Q-corrected.csv) print their own.
   std::string regime = "NO-MODEL";
   std::string confidence = "none";
   double change_corrected = std::numeric_limits<double>::quiet_NaN();
@@ -207,6 +251,10 @@ struct SurfaceParticipationRow
   double per_doubling = std::numeric_limits<double>::quiet_NaN();
   std::string convergence;
   std::string flags;
+  // The summary word (ParticipationSummary) and the information words
+  // (ParticipationInformation) of the row.
+  std::string summary;
+  std::string information;
   std::string reason;
   // The flag S (a column) and the share on spatial-cluster models (a flags word only) of
   // the row's census cell.
@@ -227,6 +275,8 @@ struct SurfaceParticipationRow
   // Not a column: a tolerated library mismatch acts on this value (an interface row of a
   // listed target interface; a region row or a Type total of an affected Type).
   bool library_mismatch = false;
+  // Not columns: the Maxwell gates of the row's fixed-trace estimate (flags and summary).
+  ParticipationMaxwellGates gates;
   std::vector<ParticipationHistoryEntry> history;
   std::map<int, double> mode_ports;
 };
@@ -238,7 +288,8 @@ struct SurfaceParticipationRow
 // the Type's all-planes PREFLIGHT word (ONE verdict, decision 2403 (3), lane v1verdict1:
 // the table's word with no convergence evaluated, on the census weighted by length; a
 // region row NOT-EVALUATED: a box has no census of its own before a solve), whose
-// coverage, regime, confidence and convergence read kParticipationNotComputed, whose flags
+// coverage, regime, confidence, convergence and summary read kParticipationNotComputed,
+// whose information is ParticipationInformation's, whose flags
 // read kParticipationPreflightFlags and whose reason is kParticipationPreflightReason.
 // Where the Type's all-planes PREFLIGHT row has cells beyond twice the bar
 // (ResolutionPreflightRow::UnderResolvedCells, the larger set: a box's patches are among
@@ -324,10 +375,26 @@ std::map<int, ParticipationModeJoin>
 JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
                        const std::vector<SurfaceParticipationRow> *previous,
                        const ParticipationVerdictBars &bars, int order);
-// The flags column: the verdicts not met, in the order resolution, coverage, regime,
-// confidence, convergence, then the developer mark; empty only when every verdict is met
-// with final (not interim) data.
+// The flags column: the bad words only (lane v1wordscode), in the order resolution,
+// coverage, the failed Maxwell gates (R2: kR, loop residual, loop fraction, library
+// distance, boundary law), convergence, then the developer mark, the metal law not served
+// and a tolerated library mismatch; empty only when every verdict is met with final (not
+// interim) data. No regime or confidence word (R1, R3).
 std::string ParticipationFlags(const SurfaceParticipationRow &row);
+// The information column (R2, R4, R5): 'Ls sheet served as PEC', the two S words, R/rho
+// beyond its limit, 'MA not certified' on an MA row; empty on a NOT-TARGET row.
+std::string ParticipationInformation(const SurfaceParticipationRow &row);
+// The summary column (R5 with the supervisor's two additions), in this order: NOT-TARGET on
+// a NOT-TARGET row; DO-NOT-USE iff the metal law or the target is not served, the
+// resolution is UNDER-RESOLVED(-UNTESTED) or NOT-EVALUATED, p corrected is not a finite
+// number, or the coverage policy MarkNotApplied marked the row; OK iff the Type is SA or
+// MS, the resolution RESOLVED or RESOLVED-UNTESTED, the coverage OK, no Maxwell gate of R2
+// failed and no library mismatch is tolerated on the row; CHECK otherwise (NO-BARS, every
+// MA row). A PreflightOnly row reads NOT-COMPUTED (PreflightParticipationRows).
+std::string ParticipationSummary(const SurfaceParticipationRow &row);
+// The log's one information line per run on the trace-closure gates (R1): the largest
+// fixed-trace / fixed-flux spread over interfaces at the first solve, not a verdict.
+std::string ParticipationClosureGapLine(double maximum_spread);
 // The log block of a finished level (DESIGN-NOTE s5): a header line, the eigenmode joins
 // (one line per mode: joined or UNMATCHED, the two frequencies and the overlap), then the
 // values (the Type totals and the targeted region rows): one line per value up to
@@ -352,7 +419,9 @@ class SurfaceParticipationTable
   bool started = false;
   // CUT-PLAN step 4b (lane v1step4b): the file holds a PreflightOnly run's rows.
   bool preflight_only = false;
-  // The rows into the file (root): the 27 columns, one line per row.
+  // Lane v1wordscode (R1): the run's one closure-gap information line was printed.
+  bool closure_gap_line_printed = false;
+  // The rows into the file (root): the 28 columns, one line per row.
   void AppendRows(const std::vector<SurfaceParticipationRow> &rows);
 
 public:
@@ -379,6 +448,9 @@ public:
   const std::vector<SurfaceParticipationRow> &LastLevel() const { return previous; }
   // Whether the file exists: a run that never has a row writes no file (root).
   bool Started() const { return started; }
+  // True the first time it is asked in the run (every rank): the run prints its one
+  // ParticipationClosureGapLine then (R1).
+  bool TakeClosureGapLine() { return !std::exchange(closure_gap_line_printed, true); }
   // The palace.json block SurfaceResponse.ParticipationTable.
   nlohmann::json Metadata() const;
 };

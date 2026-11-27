@@ -222,11 +222,14 @@ file. These include:
     `terminal-C-corrected-coverage.csv` the status of each corrected capacitance
     entry. The same columns are appended to `surface-Q-corrected.csv` and
     `surface-response-confidence.csv`, and every cell that is not `OK`, or whose regime
-    status is not `IN` (computed, NOT VALIDATED in this regime), is named by the end-of-run
-    banner (at most 40 cell lines, then a line counting the rest) and in `palace.json`
+    status is `OUT` (computed, NOT VALIDATED in this regime), is named by the end-of-run
+    banner (at most 40 cell lines, then a line counting the rest; the count of `NO-RANGE`
+    cells only when a range file is loaded) and in `palace.json`
     (`SurfaceResponse.Coverage.Flagged`: every such cell). A coverage status is about coverage only; the
     regime status says whether the covered part's correction factor lies in the range
-    validated for this library and excitation class; NEITHER says that the mesh of the
+    validated for this library and excitation class (a parked developer option: no range
+    file is shipped, so every cell reads `NO-RANGE`, and the regime is no word of
+    `surface-participation.csv`); NEITHER says that the mesh of the
     solve resolves the field at the correction radius. See
     [Coverage of the response correction](../reference.md#Coverage-of-the-response-correction).
 
@@ -427,14 +430,26 @@ it at the end of every adaptive level, so you can start from a coarse mesh and f
 values over the rounds as you would follow raw values. Each row is one interface of one
 point (terminal, mode or output frequency) at one level: the raw and the corrected
 participation side by side, then in the same row the resolution verdict (with the element
-size near the metal edges over ``R``), the coverage and regime verdicts, the confidence
-flag, the change since the previous level and the convergence indicator. A box target (an
+size near the metal edges over ``R``), the coverage verdict, the change since the previous
+level, the convergence indicator and one summary word. A box target (an
 entry with a `Region`) gets verdicts of its own patches, so a box on coarse elements is
 flagged even when the rest of the device is resolved. A box's resolution words read
 `-UNTESTED` for now (`MARGINAL-UNTESTED`, for example): the bars were measured with the
 census of the box's whole cell, which reads coarser than a junction box's own patches, and
 are re-measured on the box's own census before its words lose the suffix. Nothing is
-withheld: a value whose verdicts are not met is printed with them listed in `flags`.
+withheld: a value whose verdicts are not met is printed with them listed in `flags` (bad
+words only; `information` holds the words that are not verdicts).
+
+The designer's rule, by the `summary` column:
+
+  - `OK`: use the value (an `SA` or `MS` value whose run's own checks pass).
+  - `CHECK`: a served value the run cannot certify (every `MA` value): read its `flags` and `information`.
+  - `DO-NOT-USE`: do not use the value (raw where a correction is due, `UNDER-RESOLVED` or not evaluated).
+
+`OK` is a 5 % word: on the benchmark 98 of 99 `OK` values were within 5 % of thick (44
+within 2 %), electrostatic and driven only (no eigenmode value has read `OK` yet), and none
+on a whole chip. The `S` column keeps its bound on any served value: at ``S \ge 5`` % an
+`SA` value can be off by up to ``5 S`` points and an `MS` value by up to ``6 S``.
 
 Read the rows whose `scope` is `Type` (the corrected participation of a `Type`, summed over
 its interfaces) or `region` (a box value): their verdicts are of that value; an `interface`

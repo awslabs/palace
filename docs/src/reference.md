@@ -2861,9 +2861,10 @@ naming the features; `"Warn"`, the default, runs on). A run without an `Impedanc
 is named by the law-caused warning, as under `"Off"`. An `Impedance` boundary with `Rs`, `Ls`
 and `Cs`
 all 0 is no sheet (not served, named; the solve refuses it). In `surface-participation.csv`
-every row with a value of a run that served a sheet carries the flags word
+every row with a value of a run that served a sheet carries the information word
 `Ls sheet served as PEC`, and of a run with an `Impedance` boundary and a feature on a metal
-the rule does not serve `metal law not served: raw there` (a Type's value sums every feature
+the rule does not serve the flags word `metal law not served: raw there` (its summary reads
+`DO-NOT-USE`; a Type's value sums every feature
 of the run; a box row is flagged likewise). The other
 tables of record keep their columns and status words; `palace.json`
 `SurfaceResponse.ImpedanceMetalRule` records the mode, the printed lines, the bound, the `Ls`
@@ -3321,9 +3322,14 @@ corrected field,
 `self-consistent confidence pass` applies the same limits except for trace closure.
 The global corrected solve supplies the exterior coupling which fixed-trace and
 fixed-flux postprocessing leave undetermined. Its corrected-field contour diagnostics
-are reported separately. A failed trace-closure gate therefore invalidates the two
-postprocessing-only estimates, but does not by itself invalidate a self-consistent
-result. Electrostatic correction has the same distinction: the fixed-trace/fixed-flux
+are reported separately. For the value of record of v1 (the fixed-trace postprocessed
+estimate, `surface-participation.csv`) the three trace-closure rows are the gap between two
+closures: information, not a verdict (that table prints no confidence word and the log
+prints one line per run); their limits act on `confidence pass` of the developer tables
+(`surface-response-confidence.csv`, `surface-Q-corrected.csv`), whose columns are
+unchanged. The last column of the table below says what each gate does for that value.
+A failed trace-closure gate does not invalidate a self-consistent result either.
+Electrostatic correction has the same distinction: the fixed-trace/fixed-flux
 spread is diagnostic of the postprocessed thin field, while the separately reported
 corrected solution is globally self-consistent. On the Maxwell path, a passing
 `self-consistent confidence pass` certifies the coupling and the contour diagnostics only;
@@ -3331,23 +3337,23 @@ it does not lift the electric-only caveat above (OI-MAXWELL-SC-ELECTRIC-ONLY) on
 corrected frequencies, the self-consistent columns of `surface-Q-corrected.csv` and the
 corrected fields.
 
-| Column                                         | Meaning                                                                                                                       | Current limit                 |
-|:---------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------- |:----------------------------- |
-| `kR`                                           | Electrical size of the coupon, ``|\omega|R/v_{min}``                                                                          | ``\leq 0.1``                  |
-| `loop residual`                                | Maximum ``|\oint \bm{E}\cdot d\bm{l}|`` divided by the sum of absolute contour-segment integrals over all contour paths       | diagnostic only               |
-| `response-weighted loop residual`              | RMS loop residual weighted by the fabricated surface response carried by each contour path                                    | ``\leq 0.05``                 |
-| `loop-response fraction above limit`           | Fraction of fabricated surface response assigned to paths whose loop residual exceeds 0.05                                    | ``\leq 0.01``                 |
-| `hat residual`                                 | Maximum, over cap-interior hats, of the hat's value by its cap-rim line minus its value by the direct anchor line, divided by the sum of the absolute terms | information only |
-| `response-weighted hat residual`               | RMS hat residual weighted by the fabricated surface response of the hat's patch                                               | information only              |
-| `matched edge length fraction`                 | Minimum, over target interfaces, of the selected physical edge LENGTH assigned a library model (a length figure, not an energy coverage) | effectively 1                 |
-| `unmodeled corner neighborhood fraction`       | Maximum, over target interfaces, of the matched edge length within ``R`` of an unmatched corner, endpoint, or junction        | ``\leq 0.1``                  |
-| `max R/rho`                                    | Largest matching-radius to local-curvature-radius ratio                                                                       | ``\leq 0.25``                 |
-| `max library distance`                         | Largest normalized paired-edge mismatch, separation-interpolation span, corner mismatch, or rounded-radius interpolation span | ``\leq 0.8``                  |
-| `boundary-law parameters verified`             | One when every selected coupon declares PEC or object-form numerical boundary parameters matching the simulation              | 1                             |
-| `max trace closure spread`                     | Largest relative difference between interface-aggregated fixed-trace and fixed-flux surface response                          | ``\leq 0.05``                 |
-| `response-weighted local trace closure spread` | RMS patch/interface closure spread weighted by the larger-magnitude fixed-trace or fixed-flux response                        | ``\leq 0.05``                 |
-| `trace-closure response fraction above limit`  | Fraction of patch/interface response weight whose local closure spread exceeds 0.05                                           | ``\leq 0.01``                 |
-| `self-consistent M-overlap`                    | Raw-``M`` normalized overlap between paired raw and corrected eigenmodes                                                      | ``\geq 0.8`` (eigenmode only) |
+| Column                                         | Meaning                                                                                                                                                     | Current limit                 | The v1 value (`surface-participation.csv`)              |
+|:---------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------- |:----------------------------- |:------------------------------------------------------- |
+| `kR`                                           | Electrical size of the coupon, ``|\omega|R/v_{min}``                                                                                                        | ``\leq 0.1``                  | flags word `kR <v> above 0.1`; the row cannot read `OK` |
+| `loop residual`                                | Maximum ``|\oint \bm{E}\cdot d\bm{l}|`` divided by the sum of absolute contour-segment integrals over all contour paths                                     | diagnostic only               | none                                                    |
+| `response-weighted loop residual`              | RMS loop residual weighted by the fabricated surface response carried by each contour path                                                                  | ``\leq 0.05``                 | flags word `loop residual <v> above 0.05`; not `OK`     |
+| `loop-response fraction above limit`           | Fraction of fabricated surface response assigned to paths whose loop residual exceeds 0.05                                                                  | ``\leq 0.01``                 | flags word `loop fraction <v> above 0.01`; not `OK`     |
+| `hat residual`                                 | Maximum, over cap-interior hats, of the hat's value by its cap-rim line minus its value by the direct anchor line, divided by the sum of the absolute terms | information only              | none                                                    |
+| `response-weighted hat residual`               | RMS hat residual weighted by the fabricated surface response of the hat's patch                                                                             | information only              | none                                                    |
+| `matched edge length fraction`                 | Minimum, over target interfaces, of the selected physical edge LENGTH assigned a library model (a length figure, not an energy coverage)                    | effectively 1                 | no word (the coverage word says it)                     |
+| `unmodeled corner neighborhood fraction`       | Maximum, over target interfaces, of the matched edge length within ``R`` of an unmatched corner, endpoint, or junction                                      | ``\leq 0.1``                  | no word (the coverage word says it)                     |
+| `max R/rho`                                    | Largest matching-radius to local-curvature-radius ratio                                                                                                     | ``\leq 0.25``                 | information word `R/rho <v> above 0.25` (not a verdict) |
+| `max library distance`                         | Largest normalized paired-edge mismatch, separation-interpolation span, corner mismatch, or rounded-radius interpolation span                               | ``\leq 0.8``                  | flags word `library distance <v> above 0.8`; not `OK`   |
+| `boundary-law parameters verified`             | One when every selected coupon declares PEC or object-form numerical boundary parameters matching the simulation                                            | 1                             | flags word `boundary law not verified`; not `OK`        |
+| `max trace closure spread`                     | Largest relative difference between interface-aggregated fixed-trace and fixed-flux surface response                                                        | ``\leq 0.05``                 | information: one log line per run; no word              |
+| `response-weighted local trace closure spread` | RMS patch/interface closure spread weighted by the larger-magnitude fixed-trace or fixed-flux response                                                      | ``\leq 0.05``                 | information; no word                                    |
+| `trace-closure response fraction above limit`  | Fraction of patch/interface response weight whose local closure spread exceeds 0.05                                                                         | ``\leq 0.01``                 | information; no word                                    |
+| `self-consistent M-overlap`                    | Raw-``M`` normalized overlap between paired raw and corrected eigenmodes                                                                                    | ``\geq 0.8`` (eigenmode only) | none (developer path)                                   |
 
 The maximum loop residual identifies the worst local violation of the quasi-electrostatic
 approximation or contour resolution. It does not gate confidence because an arbitrarily
@@ -3604,9 +3610,10 @@ report (never `OK`; ``U`` is printed as computed; the worst status of all);
 all, its corrected values are its raw values): its within-``R`` raw energy is in its
 `Type`'s ``W`` and counts as uncovered, and the cell reads `TARGET-NOT-SERVED` whatever its
 band (worse than every band, never `OK`); a startup warning names the interface. Every
-cell whose status is not `OK` (`NOT-TARGET` aside) or whose regime status is not `IN` (an
-`OK` cell that reads `NO-RANGE` or `OUT`: its correction factor is computed, NOT VALIDATED
-in this regime) is listed by the end-of-run banner, one line per cell and at most 40 such
+cell whose status is not `OK` (`NOT-TARGET` aside) or whose regime status is `OUT` or
+`NO-MODEL` (an `OK` cell that reads `OUT`: its correction factor is computed, NOT VALIDATED
+in this regime; an `OK` cell whose only flag is `NO-RANGE` is not listed: a factor range is
+no validity statement for a new design) is listed by the end-of-run banner, one line per cell and at most 40 such
 lines (then one line counting the others), which names the bars as interim thresholds and
 the untargeted interfaces once, and in `SurfaceResponse.Coverage` of `palace.json`: the
 status counts, the regime counts, every flagged cell (`Flagged`: all of them, also those
@@ -3646,13 +3653,18 @@ that the value is wrong, nor by how much), `NO-RANGE` (the factor is computed bu
 VALIDATED in this regime: no validated range for the `Type` and class; every eigenmode and
 driven cell reads `NO-RANGE` today, since the ranges of record are electrostatic only) or
 `NO-MODEL` (nothing served: the factor prints `nan`). A regime status is a status,
-never a correction: no value depends on it. The ranges are data, not code: an optional
-sidecar file named by `"Coverage": {"ValidatedRegime": <path>}` (`Version` 1; `Library`
+never a correction: no value depends on it. It is no word of the designer table
+(`surface-participation.csv`): a factor range is no validity statement for a new design
+(candidate ranges from the benchmark's development windows marked `OUT` none of its 18
+wrong cells and `IN` all of them). The ranges are data, not code: an optional
+sidecar file named by `"Coverage": {"ValidatedRegime": <path>}`, a PARKED developer option
+(refused by name without `"Developer": true`; no range file is shipped) (`Version` 1; `Library`
 with the `Sha256` of the loaded library file, refused when it does not match; `Tolerance`
 ``\tau`` in ``[0, 0.1]``; `Ranges` of `Type`, `ExcitationClass`, `FactorMin`, `FactorMax`,
 `N` (the number of validation windows, an integer of at least 1: printed in the banner) and
 `Provenance` (a non-empty object or text), each required); `IN` when ``F_{min}/(1+\tau) \leq F \leq F_{max}(1+\tau)``. Without the file
-every cell reads `NO-RANGE`. The product does not check on which basis a file's ranges were
+every cell reads `NO-RANGE` (in `surface-response-coverage.csv` and `palace.json`; the
+end-of-run line counting the `NO-RANGE` cells is printed only when a file is loaded). The product does not check on which basis a file's ranges were
 derived: they must be on the basis of the covered correction factor above (the
 fabricated energy over the served raw energy on the closed partition, the
 conductor-consistency-excluded claims not served), and the range's `Provenance` should name
@@ -3663,7 +3675,7 @@ The configuration block, on both paths (`Solver.SurfaceResponseCorrection.Covera
 `"MarkNotApplied"`; any other value is an error; `"Abort"` is not in this version: the schema's
 enum refuses it in a run with its generic message, like any other value), `"MaxUncoveredShare"` 0.05
 and `"BuildTarget"` 0.02 (interim bars, FIXED: any other value is an error until the status
-validation rules otherwise), and `"ValidatedRegime"`.
+validation rules otherwise), and `"ValidatedRegime"` (a parked developer option, above).
 
 `"Policy": "MarkNotApplied"` (not the default) prints no corrected value that a cell with a
 marked coverage status was built from. The marked statuses are `PARTIAL`, `NOT-ACHIEVABLE`,
@@ -3932,15 +3944,15 @@ mode index; the 1-based index of the output frequency in its excitation's sweep)
 excitation; 0 otherwise), `interface`, `Type`, `scope`, `p raw`, `p corrected (fixed-trace)`
 (the fixed-trace postprocessed participation, the `p_surf postprocessed fixed-trace` column
 of an electrostatic `surface-Q-corrected.csv` and the `p_surf corrected` column of a Maxwell
-one: the same values; never another corrected column), `corrected / raw`, `Q raw`,
+one: the same values; never another corrected column), `summary` (`OK`, `CHECK`,
+`DO-NOT-USE`, `NOT-TARGET` or `NOT-COMPUTED`: below), `corrected / raw`, `Q raw`,
 `Q corrected`, `resolution`, `h/R m90`, `h/R m50` (the row's census cell), `coverage`,
-`uncovered+pending share of W`, `regime` (the coverage cell), `confidence` (`pass` /
-`fail`), `change corrected (fraction)`, `change raw (fraction)` (``p_k / p_{k-1} - 1``
+`uncovered+pending share of W`, `change corrected (fraction)`, `change raw (fraction)` (``p_k / p_{k-1} - 1``
 against the joined row of the previous level, a fraction, information only; the log prints
 it in %), `change per doubling (%; an interface row: its Type's)` (the indicator below; an
 `interface` row prints its `Type`'s, the value its words are of, beside its own plain
-change), `convergence`, `S corner+cluster share (fraction)` (below), `flags` and
-`reason`. `scope` names THE VALUE a row's verdicts are
+change), `convergence`, `S corner+cluster share (fraction)` (below), `flags`,
+`information` and `reason`. `scope` names THE VALUE a row's verdicts are
 of: `Type` (interface 0: the sum over the `Type`'s whole target interfaces of the point,
 ``Q = 1 / \sum 1/Q_i``; the value the rule was measured on), `region` (an entry with a
 `Region`: its box value) or `interface` (one whole interface: its own p and change, and its
@@ -3950,20 +3962,47 @@ energy counted with its region share, and a coverage cell of the box interface a
 box on coarse elements reads UNDER-RESOLVED where its `Type` does not. No value is withheld:
 `p corrected` is printed whatever the verdicts (`nan` only for an interface that is not a
 response target, reason `NOT-TARGET: raw only`, and on a raw fallback run, reason
-`RawFallback: <classes>`); `flags` lists the verdicts not met (resolution, coverage,
-`regime`, `confidence`, convergence, and `developer: MarkNotApplied` where that policy
-marked the cell). `S corner+cluster share (fraction)` is the share of the row's
+`RawFallback: <classes>`); `flags` lists the bad words only: the verdicts not met
+(resolution, coverage, convergence), a failed Maxwell gate of the value (below),
+`developer: MarkNotApplied` where that policy marked the cell,
+`metal law not served: raw there` and `library mismatch tolerated`; `information` lists words that are not verdicts
+(`Ls sheet served as PEC`, the two `S` words, `R/rho <v> above 0.25`, `MA not certified`).
+Neither prints a regime or confidence word (the developer tables keep both). `S corner+cluster share (fraction)` is the share of the row's
 within-R corrected energy (its census cell's fixed-trace fabricated energy: the `Type`'s, or
 the box's) served by spatial-basis models, corner and spatial-cluster models, whose map of
 the device trace onto their 16-knot rings is not within 1 % on the library's own corner
 test: at ``S \ge 5`` % a held-out reading found SA off by up to ``5 S`` points and MS by up
-to ``6 S`` (``S`` below 5 %: no effect seen), and `flags` adds
+to ``6 S`` (``S`` below 5 %: no effect seen), and `information` adds
 `S >= 5% on corner and cluster models`; with more than 10 % of that energy on
 spatial-cluster models it adds `S over 10% on cluster models`. Information only: no value
 changes (`nan` without a census reading, on a `NOT-TARGET` row and on a `PreflightOnly`
 row). Rows join the previous level's row of the same point, excitation and
 interface; a driven row only at the same frequency (10⁻¹² relative). Each row keeps the
 history of its value through these joins.
+
+The summary word of a row, decided in this order: `NOT-TARGET` on a `NOT-TARGET` row and
+`NOT-COMPUTED` on a `PreflightOnly` row; `DO-NOT-USE` when the value is raw where a
+correction is due (`metal law not served: raw there`, coverage `TARGET-NOT-SERVED`), when
+its resolution reads `UNDER-RESOLVED` (or `UNDER-RESOLVED-UNTESTED`) or `NOT-EVALUATED`,
+when `p corrected` is not a number, or when `"Policy": "MarkNotApplied"` marked its cell;
+else `OK` when the row is an `SA` or `MS` value whose resolution reads `RESOLVED` or
+`RESOLVED-UNTESTED`, whose coverage reads `OK`, with no failed Maxwell gate and no
+tolerated library mismatch; else `CHECK` (a served value the run cannot certify:
+`MARGINAL`, `NO-BARS`, coverage `LOW` / `PARTIAL` / `NOT-ACHIEVABLE`, a failed gate, a
+tolerated mismatch, and every `MA` row, whose `information` reads `MA not certified`). `OK`
+says that the run's own checks pass; it cannot say that a value is right on a geometry no
+thick reference covers. The Maxwell gates of the value (eigenmode and driven rows with a
+fixed-trace estimate; the electrostatic path computes none of them) add a flags word with
+the number and its limit when they fail: `kR <v> above 0.1`, `loop residual <v> above 0.05`
+(the response-weighted loop residual), `loop fraction <v> above 0.01` (the loop-response
+fraction above its limit), `library distance <v> above 0.8` and
+`boundary law not verified`; the log names them in a Warning. THE RECORD of the word on the benchmark's 188
+graded `SA` and `MS` cells against thick references: `OK` 98 within 5 % and 1 beyond (an
+electrostatic window's `SA` at -5.14 %, 0.14 points past the bar), `CHECK` 27 and 12,
+`DO-NOT-USE` 6 and 44; every `OK` cell of the 16 held-out windows of 13 designs is within
+5 %. BY PROBLEM TYPE: electrostatic and driven cells read `OK` on the benchmark (98 of 99
+within 5 %, the one exception above); NO eigenmode cell reads `OK` there yet. `OK` is a
+5 % word only (44 of the 99 are within 2 %), and it has no record on a whole chip.
 
 An eigenmode's index can change between levels, so its rows join the previous level's mode
 that is the same physical mode, by its fingerprint: the raw participations of its whole
@@ -4051,9 +4090,9 @@ which every number is `nan` (also `h/R m90` and `h/R m50`, the energy-weighted c
 of a solve), `resolution` reads the table's own word before a solve (the `Type`'s
 all-planes word of the PREFLIGHT line above: `MARGINAL`, `UNDER-RESOLVED`, `NO-BARS` or
 `NOT-EVALUATED`, never `RESOLVED`; a `region` row `NOT-EVALUATED`: a box has no census of
-its own before a solve), `coverage`, `regime`, `confidence` and `convergence` read
-`NOT-COMPUTED`, `flags` reads `PREFLIGHT-ONLY` (no `Ls` sheet word: those words qualify a
-value), followed by `; cells beyond twice the bar: may read UNDER-RESOLVED after the solve`
+its own before a solve), `coverage`, `convergence` and `summary` read
+`NOT-COMPUTED`, `information` reads `MA not certified` on an `MA` row and nothing else (no
+`Ls` sheet or `S` word: those words qualify a value), `flags` reads `PREFLIGHT-ONLY` followed by `; cells beyond twice the bar: may read UNDER-RESOLVED after the solve`
 on every row of a `Type` whose census has a cell beyond twice the bar (the flag above; its
 region rows too), and `reason` says why
 (`PREFLIGHT-ONLY: no solve; values not computed; resolution = the table's rule on the census weighted by length (no field before a solve); no convergence evaluated: never RESOLVED`);

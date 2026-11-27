@@ -1611,16 +1611,35 @@ TEST_CASE("Config electrostatic response correction", "[config][Serial]")
   CHECK(
       maxwell_patch_energy.surface_response_correction->coverage.validated_regime.empty());
   auto coverage = automatic_correction;
-  coverage["Coverage"] = {{"Policy", "Warn"},
-                          {"MaxUncoveredShare", 0.05},
-                          {"BuildTarget", 0.02},
-                          {"ValidatedRegime", "validated-regime.json"}};
+  coverage["Coverage"] = {
+      {"Policy", "Warn"}, {"MaxUncoveredShare", 0.05}, {"BuildTarget", 0.02}};
+  // Lane v1wordscode (SUPERVISOR-RULINGS R3): ValidatedRegime is a parked developer option,
+  // refused by name on both paths without "Developer": true and read as before with it.
+  {
+    auto regime = coverage;
+    regime["Coverage"]["ValidatedRegime"] = "validated-regime.json";
+    const std::string parked =
+        "\"Coverage\": {\"ValidatedRegime\"} is a parked developer option";
+    CHECK_THROWS_WITH(config::SolverData(json{{"SurfaceResponseCorrection", regime}}),
+                      Catch::Matchers::ContainsSubstring(parked));
+    CHECK_THROWS_WITH(config::ElectrostaticSolverData(json{{"ResponseCorrection", regime}}),
+                      Catch::Matchers::ContainsSubstring(parked));
+    regime["Developer"] = true;
+    const config::SolverData maxwell_regime(json{{"SurfaceResponseCorrection", regime}});
+    REQUIRE(maxwell_regime.surface_response_correction);
+    CHECK(maxwell_regime.surface_response_correction->coverage.validated_regime ==
+          "validated-regime.json");
+    const config::ElectrostaticSolverData electrostatic_regime(
+        json{{"ResponseCorrection", regime}});
+    REQUIRE(electrostatic_regime.response_correction);
+    CHECK(electrostatic_regime.response_correction->coverage.validated_regime ==
+          "validated-regime.json");
+  }
   const config::SolverData maxwell_coverage(json{{"SurfaceResponseCorrection", coverage}});
   REQUIRE(maxwell_coverage.surface_response_correction);
   CHECK(maxwell_coverage.surface_response_correction->coverage.max_uncovered_share == 0.05);
   CHECK(maxwell_coverage.surface_response_correction->coverage.build_target == 0.02);
-  CHECK(maxwell_coverage.surface_response_correction->coverage.validated_regime ==
-        "validated-regime.json");
+  CHECK(maxwell_coverage.surface_response_correction->coverage.validated_regime.empty());
   const config::ElectrostaticSolverData electrostatic_coverage(
       json{{"ResponseCorrection", coverage}});
   REQUIRE(electrostatic_coverage.response_correction);

@@ -639,7 +639,11 @@ protected:
   mutable std::vector<MagneticEnergyRow> surface_response_magnetic_energy_rows;
   void PrintSurfaceResponseMagnetic() const;
   void PrintSurfaceResponsePatchEnergies(double output_index, int excitation) const;
+  // Once per solve (lane v1wordscode): the Warning of a failed gate of the fixed-trace
+  // value, the R/rho information line, the developer self-consistent Warning.
   mutable bool surface_response_warning_printed = false;
+  mutable bool surface_response_curvature_line_printed = false;
+  mutable bool surface_response_self_consistent_warning_printed = false;
   mutable bool surface_response_portion_tables_started = false;
   // OI-MAXWELL-CC-CSV-HEADERLESS-AFTER-FIRST-PRINT (lane L1, decision 1634 (6)): the paths
   // of the plain appended tables (the per-type portion tables, the loop-fit tables) whose

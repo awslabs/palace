@@ -2392,6 +2392,12 @@ ElectrostaticSolverData::ElectrostaticSolverData(const json &electrostatic,
                   "(\"MaxUncoveredShare\" 0.05, \"BuildTarget\" 0.02) until the status "
                   "validation rules otherwise!");
       data.coverage.validated_regime = coverage->value("ValidatedRegime", std::string{});
+      if (coverage->contains("ValidatedRegime"))
+      {
+        // Lane v1wordscode (SUPERVISOR-RULINGS R3): a factor range is no validity statement
+        // for a new design; no range file is shipped: a parked developer option.
+        RequireDeveloperOption(data, "\"Coverage\": {\"ValidatedRegime\"}");
+      }
       for (const auto &[key, value] : coverage->items())
       {
         (void)value;

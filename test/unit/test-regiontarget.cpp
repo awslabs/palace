@@ -1483,7 +1483,7 @@ TEST_CASE_METHOD(
     CHECK(((std::isnan(a) && std::isnan(b)) || a == Catch::Approx(b).epsilon(1.0e-10)));
   }
   for (const char *header : {"scope", "resolution (RESOLVED needs SETTLED)", "coverage",
-                             "regime", "convergence"})
+                             "summary", "convergence"})
   {
     INFO("column " << header);
     CHECK(test::ColumnByHeader(levels, header).text[0] ==

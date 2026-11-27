@@ -501,9 +501,11 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
                                    double energy_scale, int level, int levels,
                                    bool mark_not_applied = false);
 // The end-of-run banner of palace.json's block (a line per flagged cell: coverage not OK or
-// regime not IN, a NO-RANGE cell's line saying "computed, NOT VALIDATED in this regime";
-// at most 40 such lines, then one line counting the rest, which palace.json's Flagged
-// lists; one NO-RANGE summary line; one line naming the status-less served models). Lane
+// regime OUT or NO-MODEL (lane v1wordscode: an OK + NO-RANGE cell is not flagged), a
+// NO-RANGE cell's line saying "computed, NOT VALIDATED in this regime"; at most 40 such
+// lines, then one line counting the rest, which palace.json's Flagged lists; one NO-RANGE
+// summary line only when a ValidatedRegime file is loaded; one line naming the status-less
+// served models). Lane
 // L4: a block with "Policy" "MarkNotApplied" adds the MARK-NOT-APPLIED header and label
 // lines after the first line, ends each flagged line of a marked cell with " [NOT
 // APPLIED]" and adds the share-denominator line; a "Warn" block prints the banner exactly

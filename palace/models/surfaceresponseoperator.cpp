@@ -43617,9 +43617,12 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
               { return first.patch < second.patch; });
   }
 
-  constexpr double maximum_kR = 0.1;
-  constexpr double maximum_weighted_loop_residual = 0.05;
-  constexpr double maximum_loop_response_failure_fraction = 0.01;
+  // The gate limits of the fixed-trace value: one set, named in the table's flags
+  // (surfaceparticipationtable.hpp; lane v1wordscode).
+  constexpr double maximum_kR = kMaxwellGateMaximumKR;
+  constexpr double maximum_weighted_loop_residual = kMaxwellGateMaximumWeightedLoopResidual;
+  constexpr double maximum_loop_response_failure_fraction =
+      kMaxwellGateMaximumLoopResponseFailureFraction;
   if (has_magnetic_models)
   {
     // The magnetic (inductive) term (DESIGN-v2 section 2; USER 1221 D6): the flux trace
@@ -43833,9 +43836,9 @@ SurfaceResponseOperator::MaxwellResponse SurfaceResponseOperator::GetMaxwellResp
             maximum_loop_response_failure_fraction;
   }
   constexpr double maximum_corner_fraction = 0.1;
-  constexpr double maximum_curvature = 0.25;
+  constexpr double maximum_curvature = kMaxwellGateMaximumCurvatureRatio;
   constexpr double minimum_coverage = 1.0 - 1.0e-10;
-  constexpr double maximum_library_match_distance = 0.8;
+  constexpr double maximum_library_match_distance = kMaxwellGateMaximumLibraryDistance;
   // Fixed-trace and fixed-flux closures are both admissible in postprocessing-only
   // correction. A material difference between them means that the unresolved
   // fabricated field is not determined accurately enough by the thin-model trace.

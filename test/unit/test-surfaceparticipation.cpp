@@ -310,6 +310,15 @@ SurfaceParticipationRow Row(int point, int interface, const std::string &type, d
   return row;
 }
 
+// Lane v1wordscode: a Type row whose own checks pass (RESOLVED, coverage OK, SETTLED).
+SurfaceParticipationRow GoodRow(const std::string &type = "SA")
+{
+  auto row = Row(1, 1, type, 1.0e-4, 1.2e-4);
+  row.resolution = "RESOLVED";
+  row.convergence = "SETTLED";
+  return row;
+}
+
 ParticipationVerdictBars FinalBars()
 {
   auto bars = BuiltInParticipationVerdictBars();
@@ -837,12 +846,16 @@ TEST_CASE("Surface participation join, history, words and flags across levels",
   CHECK(third[0].convergence == "SETTLED-INTERIM");
   CHECK(third[0].resolution == "RESOLVED-INTERIM");
   CHECK(third[0].flags == "RESOLVED-INTERIM; SETTLED-INTERIM");
+  CHECK(third[0].summary == kParticipationSummaryCheck);  // interim words are not R5's
   CHECK(third[1].convergence == "MOVING");
   CHECK(third[1].resolution == "UNDER-RESOLVED");
-  CHECK(third[1].flags ==
-        "UNDER-RESOLVED; regime NO-RANGE; MOVING; developer: MarkNotApplied");
+  // Lane v1wordscode (R3): a regime word (NO-RANGE here) is no flags word.
+  CHECK(third[1].flags == "UNDER-RESOLVED; MOVING; developer: MarkNotApplied");
+  CHECK(third[1].summary == kParticipationSummaryDoNotUse);
   CHECK(third[2].convergence == "MOVING: NO-VALUE");
   CHECK(third[2].flags == "NOT-TARGET");
+  CHECK(third[2].summary == "NOT-TARGET");
+  CHECK(third[2].information.empty());
   // Final (not interim) data: a row whose verdicts are all met has no flag.
   auto final_bars = bars;
   final_bars.interim = false;
@@ -850,24 +863,29 @@ TEST_CASE("Surface participation join, history, words and flags across levels",
   CHECK(third[0].convergence == "SETTLED");
   CHECK(third[0].resolution == "RESOLVED");
   CHECK(third[0].flags.empty());
-  // CUT-PLAN step 3 (lane v1lsdefault): the impedance-metal rule's two flags words follow
-  // the verdict words; a NOT-TARGET row keeps its one word.
+  CHECK(third[0].information.empty());
+  CHECK(third[0].summary == kParticipationSummaryOk);
+  // CUT-PLAN step 3 (lane v1lsdefault): the impedance-metal rule's two words: the served
+  // word is information (lane v1wordscode), the not-served word a flag after the verdict
+  // words; a NOT-TARGET row keeps its one word.
   third[0].sheet_served = true;
-  CHECK(ParticipationFlags(third[0]) == kParticipationSheetServedFlag);
-  CHECK(ParticipationFlags(third[0]) == "Ls sheet served as PEC");
+  CHECK(ParticipationFlags(third[0]).empty());
+  CHECK(ParticipationInformation(third[0]) == "Ls sheet served as PEC");
+  CHECK(ParticipationSummary(third[0]) == kParticipationSummaryOk);
   third[0].sheet_not_served = true;
-  CHECK(ParticipationFlags(third[0]) ==
-        "Ls sheet served as PEC; metal law not served: raw there");
+  CHECK(ParticipationFlags(third[0]) == "metal law not served: raw there");
   third[0].sheet_served = false;
   CHECK(ParticipationFlags(third[0]) == kParticipationSheetNotServedFlag);
   third[1].sheet_served = true;
   CHECK(ParticipationFlags(third[1]) ==
-        "UNDER-RESOLVED; regime NO-RANGE; MOVING; "
-        "developer: MarkNotApplied; Ls sheet served as PEC");
+        "UNDER-RESOLVED; MOVING; developer: MarkNotApplied");
+  CHECK(ParticipationInformation(third[1]) == kParticipationSheetServedFlag);
   third[2].sheet_not_served = true;
   CHECK(ParticipationFlags(third[2]) == "NOT-TARGET");
   // The flag S (lane v1verdict1): S >= 5 % on corner and cluster models, more than 10 % on
-  // cluster models (known shares of the row's census cell); no value changes.
+  // cluster models (known shares of the row's census cell); no value changes. Lane
+  // v1wordscode (R4): information words, not flags, and no condition of OK (no cluster
+  // condition, R5).
   auto s_row = third[0];
   s_row.sheet_not_served = false;
   CHECK(ParticipationFlags(s_row).empty());
@@ -877,14 +895,18 @@ TEST_CASE("Surface participation join, history, words and flags across levels",
   s_cell.cluster_share = 0.10;
   SetParticipationResolution(s_row, &s_cell);
   CHECK(s_row.spatial_share == 0.05);
-  CHECK(ParticipationFlags(s_row) == kParticipationSpatialShareFlag);
-  CHECK(ParticipationFlags(s_row) == "S >= 5% on corner and cluster models");
-  s_row.spatial_share = 0.0499;
   CHECK(ParticipationFlags(s_row).empty());
+  CHECK(ParticipationInformation(s_row) == kParticipationSpatialShareFlag);
+  CHECK(ParticipationInformation(s_row) == "S >= 5% on corner and cluster models");
+  s_row.spatial_share = 0.0499;
+  CHECK(ParticipationInformation(s_row).empty());
   s_row.spatial_share = 0.2;
   s_row.cluster_share = 0.1001;
-  CHECK(ParticipationFlags(s_row) ==
+  CHECK(ParticipationFlags(s_row).empty());
+  CHECK(ParticipationInformation(s_row) ==
         "S >= 5% on corner and cluster models; S over 10% on cluster models");
+  s_row.cluster_share = 0.3;
+  CHECK(ParticipationSummary(s_row) == kParticipationSummaryOk);
   CHECK(s_row.p_corrected == third[0].p_corrected);
   SetParticipationNotTarget(s_row);
   CHECK(std::isnan(s_row.spatial_share));
@@ -971,6 +993,166 @@ TEST_CASE("Surface participation join, history, words and flags across levels",
             .find(" mode 2 UNMATCHED (gap not below half the spacing): nearest mode 2 of "
                   "iteration 2: 5.001 -> 3.9 GHz, overlap 1.000000\n") !=
         std::string::npos);
+}
+
+// Lane v1wordscode (SUPERVISOR-RULINGS R5 with the supervisor's two additions): one check
+// per branch of the summary word, in its order.
+TEST_CASE("Surface participation summary word, one case per branch",
+          "[surfaceparticipation][Serial]")
+{
+  const std::string ok = kParticipationSummaryOk, check = kParticipationSummaryCheck;
+  CHECK(ParticipationSummary(GoodRow("SA")) == ok);
+  auto ms = GoodRow("MS");
+  ms.resolution = "RESOLVED-UNTESTED";
+  CHECK(ParticipationSummary(ms) == ok);
+  auto ma = GoodRow("MA");  // MA is never certified in v1 (R5, review MAJOR 1)
+  CHECK(ParticipationSummary(ma) == check);
+  CHECK(ParticipationInformation(ma) == kParticipationMaNotCertified);
+  auto cluster = GoodRow();  // no cluster condition (R5, review MAJOR 2)
+  cluster.spatial_share = cluster.cluster_share = 0.3;
+  CHECK(ParticipationSummary(cluster) == ok);
+  // CHECK: a served value the run's own checks do not certify.
+  for (const char *word : {"MARGINAL", "MARGINAL-UNTESTED", "NO-BARS", "RESOLVED-INTERIM",
+                           "RESOLVED-INTERIM-UNTESTED"})
+  {
+    INFO(word);
+    auto row = GoodRow();
+    row.resolution = word;
+    CHECK(ParticipationSummary(row) == check);  // NO-BARS never reads OK (addition 2)
+  }
+  for (const char *word :
+       {"LOW", "PARTIAL", "NOT-ACHIEVABLE", "NO-ENERGY", "NOT-MEASURED", "INCONSISTENT"})
+  {
+    INFO(word);
+    auto row = GoodRow();
+    row.coverage = word;
+    CHECK(ParticipationSummary(row) == check);
+  }
+  auto mismatch = GoodRow();
+  mismatch.library_mismatch = true;
+  CHECK(ParticipationSummary(mismatch) == check);
+  CHECK(ParticipationFlags(mismatch) == kParticipationLibraryMismatchFlag);
+}
+
+// R5: DO-NOT-USE is decided before OK; the two additions (a corrected value that is not a
+// number, a row the coverage policy marked); NOT-TARGET; NOT-COMPUTED before a solve.
+TEST_CASE("Surface participation summary word, DO-NOT-USE first",
+          "[surfaceparticipation][Serial]")
+{
+  const std::string do_not_use = kParticipationSummaryDoNotUse;
+  auto not_served = GoodRow();  // RESOLVED + coverage OK, but raw where a correction is due
+  not_served.sheet_not_served = true;
+  CHECK(ParticipationSummary(not_served) == do_not_use);
+  auto target = GoodRow();
+  target.coverage = CoverageStatusName(CoverageStatus::TARGET_NOT_SERVED);
+  CHECK(ParticipationSummary(target) == do_not_use);
+  for (const char *word : {"UNDER-RESOLVED", "UNDER-RESOLVED-UNTESTED", "NOT-EVALUATED"})
+  {
+    INFO(word);
+    auto row = GoodRow("MA");
+    row.resolution = word;
+    CHECK(ParticipationSummary(row) == do_not_use);
+  }
+  auto nan = GoodRow();  // addition 1: a raw fallback run, a NaN sum
+  nan.p_corrected = std::numeric_limits<double>::quiet_NaN();
+  CHECK(ParticipationSummary(nan) == do_not_use);
+  nan.p_corrected = std::numeric_limits<double>::infinity();
+  CHECK(ParticipationSummary(nan) == do_not_use);
+  auto marked = GoodRow();  // addition 1: the coverage policy marked it not applied
+  marked.marked = true;
+  CHECK(ParticipationSummary(marked) == do_not_use);
+  auto raw = GoodRow();
+  SetParticipationNotTarget(raw);
+  CHECK(ParticipationSummary(raw) == "NOT-TARGET");
+  raw.sheet_not_served = true;  // a NOT-TARGET row keeps its word
+  CHECK(ParticipationSummary(raw) == "NOT-TARGET");
+  // PreflightOnly: every row and Type total reads NOT-COMPUTED.
+  ResolutionPreflightRow census;
+  census.all_planes = true;
+  census.type = "SA";
+  census.resolution = "MARGINAL";
+  const auto rows = AddParticipationTypeTotals(
+      PreflightParticipationRows({{4, "SA"}, {5, "MA"}}, {}, {census}));
+  REQUIRE(rows.size() == 4);
+  for (const auto &row : rows)
+  {
+    CHECK(row.summary == kParticipationNotComputed);
+  }
+}
+
+// R1-R4: no regime or confidence word; the R2 gates named with number and limit (each stops
+// OK); R/rho and the moved words in information; the closure gap is one line per run.
+TEST_CASE("Surface participation flags and information words",
+          "[surfaceparticipation][Serial]")
+{
+  auto row = GoodRow();
+  for (const char *regime : {"NO-RANGE", "OUT", "NO-MODEL"})
+  {
+    row.regime = regime;
+    row.confidence = "fail";
+    CHECK(ParticipationFlags(row).empty());
+    CHECK(ParticipationSummary(row) == kParticipationSummaryOk);
+  }
+  row.sheet_served = true;
+  row.spatial_share = row.cluster_share = 0.3;
+  CHECK(ParticipationFlags(row).empty());
+  CHECK(ParticipationInformation(row) ==
+        "Ls sheet served as PEC; S >= 5% on corner and cluster models; S over 10% on "
+        "cluster models");
+  // An electrostatic row: no gate is evaluated, so NaN numbers make no word.
+  CHECK(ParticipationGateFlags(row.gates).empty());
+  CHECK(ParticipationCurvatureInformation(row.gates).empty());
+  // A Maxwell row with every gate inside its limit, then each gate alone beyond it.
+  row.gates.evaluated = true;
+  row.gates.kR = 0.1;
+  row.gates.loop_residual = 0.05;
+  row.gates.loop_fraction = 0.01;
+  row.gates.library_distance = 0.8;
+  row.gates.curvature_ratio = 2.7;  // R/rho: information, not a verdict
+  CHECK(ParticipationFlags(row).empty());
+  CHECK(ParticipationSummary(row) == kParticipationSummaryOk);
+  CHECK(ParticipationInformation(row).find("; R/rho 2.7 above 0.25") != std::string::npos);
+  const std::vector<std::pair<double ParticipationMaxwellGates::*, std::string>> gates = {
+      {&ParticipationMaxwellGates::kR, "kR 0.153 above 0.1"},
+      {&ParticipationMaxwellGates::loop_residual, "loop residual 0.153 above 0.05"},
+      {&ParticipationMaxwellGates::loop_fraction, "loop fraction 0.153 above 0.01"},
+      {&ParticipationMaxwellGates::library_distance, "library distance 0.953 above 0.8"}};
+  for (const auto &[member, word] : gates)
+  {
+    INFO(word);
+    auto failed = row;
+    failed.gates.*member = word.rfind("library", 0) == 0 ? 0.953 : 0.15321;
+    CHECK(ParticipationFlags(failed) == word);
+    CHECK(ParticipationSummary(failed) == kParticipationSummaryCheck);
+    failed.gates.*member = std::numeric_limits<double>::quiet_NaN();  // fails, as the gate
+    CHECK(ParticipationSummary(failed) == kParticipationSummaryCheck);
+  }
+  auto law = row;
+  law.gates.boundary_law_verified = false;
+  law.resolution = "MARGINAL";
+  CHECK(ParticipationFlags(law) == "MARGINAL; boundary law not verified");
+  law.resolution = "RESOLVED";
+  CHECK(ParticipationSummary(law) == kParticipationSummaryCheck);
+}
+
+// R1: the trace-closure gates are information: ONE line per run (the table holds the state
+// for every rank), with no limit and no sentence about where the thick value lies.
+TEST_CASE("Surface participation closure-gap line once per run",
+          "[surfaceparticipation][Serial]")
+{
+  const std::string line = ParticipationClosureGapLine(0.0731);
+  CHECK(line ==
+        "Surface response: the fixed-trace / fixed-flux closure gap 7.310e-02 at the "
+        "first solve (the largest over interfaces): the gap between two closures, "
+        "information, not a verdict\n");
+  CHECK(line.find("5%") == std::string::npos);
+  CHECK(line.find("between the two closures") == std::string::npos);
+  CHECK(line.find("Warning") == std::string::npos);
+  SurfaceParticipationTable table("unused.csv", "Electrostatic", 2, InterimBars());
+  CHECK(table.TakeClosureGapLine());
+  CHECK_FALSE(table.TakeClosureGapLine());
+  CHECK_FALSE(table.TakeClosureGapLine());
+  CHECK_FALSE(table.Started());  // asking writes no file
 }
 
 TEST_CASE("Surface participation region rows read their own patches",
@@ -1222,10 +1404,14 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOn
     {
       CHECK(std::isnan(value));
     }
-    for (const auto *word : {&row.coverage, &row.regime, &row.confidence, &row.convergence})
+    for (const auto *word :
+         {&row.coverage, &row.regime, &row.confidence, &row.convergence, &row.summary})
     {
       CHECK(*word == kParticipationNotComputed);
     }
+    // Lane v1wordscode: the same information words as after a solve (an MA row's only).
+    CHECK(row.information ==
+          (row.type == "MA" ? std::string(kParticipationMaNotCertified) : std::string()));
     // The flag of cells beyond twice the bar on every SA row, its box's too (the larger
     // set: the Type's all-planes census).
     CHECK(row.flags == (row.type == "SA"
@@ -1270,7 +1456,12 @@ TEST_CASE_METHOD(palace::test::SharedTempDir, "Surface participation PreflightOn
   {
     not_computed++;
   }
-  CHECK(not_computed == 4 * 7);  // coverage, regime, confidence, convergence of each row
+  CHECK(not_computed == 3 * 7);  // coverage, convergence, summary of each row (lane
+                                 // v1wordscode: no regime or confidence column)
+  CHECK(text.find(" regime,") == std::string::npos);  // the header cells are padded
+  CHECK(text.find(" confidence,") == std::string::npos);
+  CHECK(text.find(" summary,") != std::string::npos);
+  CHECK(text.find(" information,") != std::string::npos);
   const auto meta = table.Metadata();
   CHECK(meta["PreflightOnly"] == true);
   CHECK(meta["Iterations"] == 1);
