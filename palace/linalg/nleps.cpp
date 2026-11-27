@@ -920,7 +920,8 @@ int QuasiNewtonSolver::Solve()
   // attempts, until one gives an eigenvalue above the target (for the random guess, each
   // such eigenvalue starts the count again, until num_requested are found). A new attempt
   // follows one which converges at or below the target, once its eigenpair is deflated,
-  // without a restart.
+  // without a restart, except for the random guess: the eigenvalues below the target of a
+  // random guess can be without number (as the gradient fields at λ = 0).
   auto Refine = [&](int g, double stall_tol)
   {
     int restart = 0;
@@ -942,7 +943,7 @@ int QuasiNewtonSolver::Solve()
           restart = 0;
           break;
         case Outcome::BELOW_DEFLATED:
-          restart = 0;
+          restart = (g < num_init_guess) ? 0 : restart + 1;
           break;
         case Outcome::FOUND_BEFORE:
         case Outcome::BELOW:
