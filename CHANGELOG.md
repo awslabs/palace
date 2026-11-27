@@ -77,8 +77,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and no vacuum material the run stops at load; a material nearer to 1 than to the
     library's substrate that is not vacuum (air entered as 1.0006) is never judged as a
     substrate slip: named at load, it stops the run after the mesh if it touches the metal.
-    With an `MS` or `SA` target and no material of the substrate class (not vacuum and
-    nearer to the library's substrate than to 1) the run stops at load, naming each material
+    With any corrected target (`MA` included: a metal edge with no substrate is not what the
+    library was built for) and no material of the substrate class (not vacuum and nearer to
+    the library's substrate than to 1) the run stops at load, naming each material
     that is neither with its value: a substrate of 3.9 against a library made for 11.45, or
     one entered as vacuum, stops in seconds (reference.md: the decision table at load).
     A tolerated mismatch is named in the outputs: the flags word `library mismatch tolerated` on every affected row of `surface-participation.csv` and

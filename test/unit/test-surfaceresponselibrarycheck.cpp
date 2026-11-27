@@ -598,9 +598,17 @@ TEST_CASE_METHOD(
   CHECK(check.report.rows[0].entry ==
         "Domains.Materials: no configured material can be the library's substrate");
   CHECK(check.report.rows[0].config_value == "Domains.Materials[1] (attributes 2) 3.9");
-  CHECK_THAT(check.message, ContainsSubstring("STOP: substrate (MS and SA targets)"));
+  CHECK_THAT(check.message, ContainsSubstring("STOP: substrate (any corrected target)"));
   CHECK(check.message.find("-65") == std::string::npos);
   CHECK(check.message.find("TOLERATED") == std::string::npos);
+  // v1loadcheckfix3-review MINOR-1: the SA target alone stops at load the same way.
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["TargetInterfaces"] = {4};
+  check = CheckAtLoad(config, library);
+  REQUIRE(check.report.rows.size() == 1);
+  CHECK(check.report.stop);
+  CHECK(check.report.rows[0].kind == LibraryCheckRow::Kind::STOP);
+  CHECK(check.report.rows[0].entry ==
+        "Domains.Materials: no configured material can be the library's substrate");
   // The SA target too; 6.0 (row (b)) and 7.0 (nearer to 11.45: row (c)) stop at load alike.
   config["Solver"]["Electrostatic"]["ResponseCorrection"]["TargetInterfaces"] = {4, 5};
   for (const double permittivity : {3.9, 6.0, 7.0})
@@ -617,21 +625,6 @@ TEST_CASE_METHOD(
   // With no vacuum either (3.9 the only material): rows (a) and (b) both.
   config["Domains"]["Materials"] = {{{"Attributes", {1, 2}}, {"Permittivity", 3.9}}};
   CHECK(CheckAtLoad(config, library).report.rows.size() == 2);
-  // The same 3.9 with MA targets only: no row (b); named, the verdict conditional.
-  config = IslandTwoTargetConfig(*this);
-  json ma = config["Boundaries"]["Postprocessing"]["Dielectric"][0];
-  ma["Index"] = 6;
-  ma["Type"] = "MA";
-  ma["Permittivity"] = 10.0;
-  config["Boundaries"]["Postprocessing"]["Dielectric"].push_back(ma);
-  config["Solver"]["Electrostatic"]["ResponseCorrection"]["TargetInterfaces"] = {6};
-  config["Domains"]["Materials"][1]["Permittivity"] = 3.9;
-  auto ma_library = library;
-  ma_library.interface_layers[InterfaceDielectric::MA] = {0.002, 10.0};
-  check = CheckAtLoad(config, ma_library);
-  CHECK_FALSE(check.report.stop);
-  CHECK(check.line.conditional == std::vector<std::string>{"Domains.Materials[1]"});
-  CHECK_THAT(check.message, ContainsSubstring("-> TOLERATED unless Domains.Materials[1]"));
   // The reviewer's sub1: the substrate set to 1.0 is vacuum; with an MS target no material
   // is of the substrate class: STOP at load (it ran to the end before).
   config = IslandTwoTargetConfig(*this);
@@ -641,6 +634,43 @@ TEST_CASE_METHOD(
   REQUIRE(check.report.rows.size() == 1);
   CHECK(check.report.stop);
   CHECK(check.report.rows[0].config_value == "none (vacuum only)");
+}
+
+// The supervisor's ruling on v1loadcheckfix3-review MINOR-2 (decision 2414): row (b) holds
+// for every target Type; a metal edge with no substrate is not what the library was built
+// for.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "The decision table at load row (b) for MA targets: no material of the substrate class "
+    "stops the run at load",
+    "[surfaceresponselibrarycheck][Serial]")
+{
+  json config = IslandTwoTargetConfig(*this);
+  json ma = config["Boundaries"]["Postprocessing"]["Dielectric"][0];
+  ma["Index"] = 6;
+  ma["Type"] = "MA";
+  ma["Permittivity"] = 10.0;
+  config["Boundaries"]["Postprocessing"]["Dielectric"].push_back(ma);
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["TargetInterfaces"] = {6};
+  auto library = IslandLibrary();
+  library.interface_layers[InterfaceDielectric::MA] = {0.002, 10.0};
+  // Vacuum and a material of the substrate class: no row (b).
+  CHECK(CheckAtLoad(config, library).report.Empty());
+  // Every material vacuum (the substrate entered as 1.0), then vacuum beside 3.9 (neither):
+  // no material can be the library's substrate: STOP at load (both ran before).
+  for (const double permittivity : {1.0, 3.9})
+  {
+    CAPTURE(permittivity);
+    config["Domains"]["Materials"][1]["Permittivity"] = permittivity;
+    const auto check = CheckAtLoad(config, library);
+    REQUIRE(check.report.rows.size() == 1);
+    CHECK(check.report.stop);
+    CHECK(check.report.rows[0].entry ==
+          "Domains.Materials: no configured material can be the library's substrate");
+    CHECK(check.report.rows[0].config_value ==
+          (permittivity == 1.0 ? "none (vacuum only)"
+                               : "Domains.Materials[1] (attributes 2) 3.9"));
+  }
 }
 
 TEST_CASE_METHOD(
@@ -727,6 +757,15 @@ TEST_CASE_METHOD(
   REQUIRE(touching.size() == 1);
   CHECK(touching[0].kind == LibraryCheckRow::Kind::STOP);
   CHECK(touching[0].quantity == "material next to the corrected metal");
+  // v1loadcheckfix3-review MINOR-4: its remedy names the air and a dielectric; the
+  // library's value (11.45) is not offered for it.
+  const auto printed = LibraryCheckMessage(JudgeLibraryRows(touching, targets), library,
+                                           "after the mesh", {});
+  CHECK_THAT(printed,
+             ContainsSubstring("  -> STOP: if it is the air, set its permittivity to "
+                               "exactly 1.0; if it is a dielectric, use a library "
+                               "made for it\n"));
+  CHECK(printed.find("set each") == std::string::npos);
   CHECK(JudgeLibraryRows(SubstrateMeshRows(iodata, {}, 11.45, targets), targets).Empty());
 }
 
