@@ -9,6 +9,8 @@
 #include <set>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
+#include <mfem.hpp>
+#include "linalg/densematrix.hpp"
 #include "models/surfaceparticipationtable.hpp"
 #include "utils/enum_string.hpp"
 #include "utils/iodata.hpp"
@@ -35,7 +37,41 @@ bool Equal(double config, double library)
          kLibraryMismatchEqualTolerance * std::max(std::abs(config), std::abs(library));
 }
 
+// The one test of the rule's limit (at load and after the mesh alike): an effect of
+// exactly the limit (a slip of exactly 1 % written in decimal) is within it.
+bool BeyondLimit(double effect)
+{
+  return effect > kLibraryMismatchEffectLimit * (1.0 + kLibraryMismatchLimitTolerance);
+}
+
+mfem::DenseMatrix Dense(const config::SymmetricMatrixData<3> &data)
+{
+  mfem::DenseMatrix M(3, 3);
+  M = 0.0;
+  mfem::Vector V(3);
+  for (std::size_t i = 0; i < 3; i++)
+  {
+    for (std::size_t j = 0; j < 3; j++)
+    {
+      V(j) = data.v[i][j];
+    }
+    AddMult_a_VVt(data.s[i], V, M);
+  }
+  return M;
+}
+
 }  // namespace
+
+bool IsVacuumMaterial(const config::MaterialData &material)
+{
+  // MaterialOperator::IsVacuum: the largest light speed, a singular value of (mu
+  // eps)^(-1/2), at least 1 - 1e-6, and no frequency-dependent permittivity.
+  constexpr double threshold = 1.0 - 1.0e-6;
+  mfem::DenseMatrix T(3, 3);
+  Mult(Dense(material.mu_r), Dense(material.epsilon_r), T);
+  return linalg::SingularValueMax(linalg::MatrixPow(T, -0.5)) >= threshold &&
+         !material.HasFrequencyDependentPermittivity();
+}
 
 // THE FACTORS. A layer's permittivity or thickness: 1.0 on its own Type (the error of a
 // corrected value is the library-served share of it times the mismatch, at most the
@@ -173,6 +209,11 @@ LibraryCheckRow EffectRow(LibraryMismatchQuantity quantity, InterfaceDielectric 
   return row;
 }
 
+// The vacuum side at load (below): an MA or SA target with no material vacuum at all.
+std::optional<LibraryCheckRow>
+VacuumSideRow(const IoData &iodata, const LibraryCheckLibrary &library,
+              const std::vector<LibraryCheckTarget> &targets);
+
 }  // namespace
 
 std::vector<LibraryCheckRow>
@@ -276,19 +317,49 @@ FindLibraryLoadRows(const IoData &iodata,
                                {target}));
     }
   }
+  if (auto row = VacuumSideRow(iodata, library, targets))
+  {
+    rows.push_back(std::move(*row));
+  }
   return rows;
 }
 
 namespace
 {
 
-// A material's permittivity against the library's substrate: vacuum (every component 1),
-// else the component farthest from the substrate, as config / library - 1.
-std::optional<double> SubstrateMismatch(const std::array<double, 3> &s, double substrate)
+// A material against the library's substrate (THE VACUUM SIDE, the .hpp): the vacuum side
+// (IsVacuumMaterial); NEITHER the substrate nor vacuum (a permittivity component nearer to
+// 1 than to the substrate); else the substrate class, its mismatch the component farthest
+// from the substrate, as config / library - 1.
+struct MaterialClass
 {
-  if (std::all_of(s.begin(), s.end(), [](double e) { return Equal(e, 1.0); }))
+  enum class Kind : char
   {
-    return std::nullopt;
+    VACUUM,
+    SUBSTRATE,
+    NEITHER
+  };
+  Kind kind = Kind::VACUUM;
+  double mismatch = 0.0;
+};
+
+// The words of a material that is neither (the load line, the rows).
+constexpr const char *kNotVacuumWords =
+    "not the library's substrate and not vacuum (Palace takes the vacuum side of MA and SA "
+    "interfaces only where the material is vacuum: permittivity and permeability exactly "
+    "1, no frequency dependence; set it to 1.0)";
+
+MaterialClass ClassifyMaterial(const config::MaterialData &material, double substrate)
+{
+  const auto &s = material.epsilon_r.s;
+  if (IsVacuumMaterial(material))
+  {
+    return {MaterialClass::Kind::VACUUM};
+  }
+  if (std::any_of(s.begin(), s.end(),
+                  [&](double e) { return std::abs(e - 1.0) < std::abs(e - substrate); }))
+  {
+    return {MaterialClass::Kind::NEITHER};
   }
   double mismatch = 0.0;
   for (const double e : s)
@@ -298,7 +369,7 @@ std::optional<double> SubstrateMismatch(const std::array<double, 3> &s, double s
       mismatch = e / substrate - 1.0;
     }
   }
-  return mismatch;
+  return {MaterialClass::Kind::SUBSTRATE, mismatch};
 }
 
 std::string MaterialValue(const std::array<double, 3> &s)
@@ -306,6 +377,46 @@ std::string MaterialValue(const std::array<double, 3> &s)
   return s[0] == s[1] && s[1] == s[2]
              ? Number(s[0])
              : fmt::format("{} / {} / {}", Number(s[0]), Number(s[1]), Number(s[2]));
+}
+
+// With an MA or SA target and no configured material vacuum by Palace's test, no interface
+// has a vacuum side (its raw MA and SA read 0): a STOP row naming the materials nearer to 1
+// than to the library's substrate (every material when the library states none).
+std::optional<LibraryCheckRow> VacuumSideRow(const IoData &iodata,
+                                             const LibraryCheckLibrary &library,
+                                             const std::vector<LibraryCheckTarget> &targets)
+{
+  const auto &materials = iodata.domains.materials;
+  if (std::none_of(targets.begin(), targets.end(),
+                   [](const LibraryCheckTarget &target)
+                   {
+                     return target.type == InterfaceDielectric::MA ||
+                            target.type == InterfaceDielectric::SA;
+                   }) ||
+      std::any_of(materials.begin(), materials.end(), IsVacuumMaterial))
+  {
+    return std::nullopt;
+  }
+  std::vector<std::string> named;
+  for (std::size_t m = 0; m < materials.size(); m++)
+  {
+    if (!library.substrate_permittivity ||
+        ClassifyMaterial(materials[m], *library.substrate_permittivity).kind ==
+            MaterialClass::Kind::NEITHER)
+    {
+      named.push_back(fmt::format("Domains.Materials[{}] (attributes {}) {}", m,
+                                  fmt::join(materials[m].attributes, ", "),
+                                  MaterialValue(materials[m].epsilon_r.s)));
+    }
+  }
+  return StopRow(
+      "vacuum side (MA and SA targets)", "Domains.Materials: no material is vacuum",
+      named.empty() ? std::string("none nearer to 1 than to the substrate")
+                    : fmt::format("{}", fmt::join(named, "; ")),
+      "a vacuum material",
+      "Palace takes the vacuum side of MA and SA interfaces only where the "
+      "material is vacuum (permittivity and permeability exactly 1, no frequency "
+      "dependence): set the air's permittivity to exactly 1.0");
 }
 
 // Per target: the summed effect of the layer rows (every EFFECT row but the substrate's).
@@ -331,17 +442,17 @@ std::map<int, double> LayerEffects(const std::vector<LibraryCheckRow> &rows)
 bool SubstrateCanPass(double mismatch, const std::vector<LibraryCheckTarget> &targets,
                       const std::map<int, double> &layer_effects)
 {
-  return std::all_of(targets.begin(), targets.end(),
-                     [&](const LibraryCheckTarget &target)
-                     {
-                       const auto layer = layer_effects.find(target.index);
-                       return (layer != layer_effects.end() ? layer->second : 0.0) +
-                                  LibraryMismatchFactor(
-                                      LibraryMismatchQuantity::SUBSTRATE_PERMITTIVITY,
-                                      InterfaceDielectric::DEFAULT, target.type) *
-                                      std::abs(mismatch) <=
-                              kLibraryMismatchEffectLimit;
-                     });
+  return std::all_of(
+      targets.begin(), targets.end(),
+      [&](const LibraryCheckTarget &target)
+      {
+        const auto layer = layer_effects.find(target.index);
+        return !BeyondLimit(
+            (layer != layer_effects.end() ? layer->second : 0.0) +
+            LibraryMismatchFactor(LibraryMismatchQuantity::SUBSTRATE_PERMITTIVITY,
+                                  InterfaceDielectric::DEFAULT, target.type) *
+                std::abs(mismatch));
+      });
 }
 
 }  // namespace
@@ -349,57 +460,80 @@ bool SubstrateCanPass(double mismatch, const std::vector<LibraryCheckTarget> &ta
 std::optional<LibraryCheckRow>
 FindSubstrateLoadRow(const IoData &iodata, const LibraryCheckLibrary &library,
                      const std::vector<LibraryCheckTarget> &targets,
-                     const std::vector<LibraryCheckRow> &load_rows, std::string *candidates)
+                     const std::vector<LibraryCheckRow> &load_rows,
+                     LibrarySubstrateLine *line)
 {
-  candidates->clear();
+  *line = {};
   if (!library.substrate_permittivity || targets.empty())
   {
     return std::nullopt;
   }
   const double substrate = *library.substrate_permittivity;
-  // A material could be the substrate if, beside the layer rows, it passes the rule.
+  // A material of the substrate class could be the substrate if, beside the layer rows, it
+  // passes the rule; the others (failing, or neither) are named with their condition.
   const auto layer_effects = LayerEffects(load_rows);
   const auto &materials = iodata.domains.materials;
-  std::vector<std::string> names;
+  std::vector<std::string> names, failing, neither;
   std::optional<std::size_t> closest;
   double closest_mismatch = 0.0;
   for (std::size_t m = 0; m < materials.size(); m++)
   {
-    const auto mismatch = SubstrateMismatch(materials[m].epsilon_r.s, substrate);
-    if (!mismatch)
+    const auto &s = materials[m].epsilon_r.s;
+    const auto material = ClassifyMaterial(materials[m], substrate);
+    const std::string entry = fmt::format("Domains.Materials[{}]", m);
+    const std::string named =
+        fmt::format("{} (attributes {}) {}", entry,
+                    fmt::join(materials[m].attributes, ", "), MaterialValue(s));
+    if (material.kind == MaterialClass::Kind::VACUUM)
     {
       continue;
     }
-    if (SubstrateCanPass(*mismatch, targets, layer_effects))
+    if (material.kind == MaterialClass::Kind::NEITHER)
     {
-      names.push_back(fmt::format("Domains.Materials[{}] (attributes {}) {} ({})", m,
-                                  fmt::join(materials[m].attributes, ", "),
-                                  MaterialValue(materials[m].epsilon_r.s),
-                                  Percent(*mismatch)));
+      neither.push_back(named);
+      line->conditional.push_back(entry);
+      continue;
     }
-    if (!closest || std::abs(*mismatch) < std::abs(closest_mismatch))
+    if (SubstrateCanPass(material.mismatch, targets, layer_effects))
+    {
+      names.push_back(fmt::format("{} ({})", named, Percent(material.mismatch)));
+    }
+    else
+    {
+      failing.push_back(fmt::format("{} ({})", named, Percent(material.mismatch)));
+      line->conditional.push_back(entry);
+    }
+    if (!closest || std::abs(material.mismatch) < std::abs(closest_mismatch))
     {
       closest = m;
-      closest_mismatch = *mismatch;
+      closest_mismatch = material.mismatch;
     }
   }
-  *candidates = fmt::format(
+  const std::string stops = ": it stops the run after the mesh if it touches the corrected "
+                            "metal";
+  line->text = fmt::format(
       "substrate (checked after the mesh, on the domains next to the corrected metal, with "
       "the layer rows above): library {} (Fabrication.SubstratePermittivity); could be the "
-      "substrate: {}{}",
+      "substrate: {}",
       Number(substrate),
-      names.empty() ? std::string("none") : fmt::format("{}", fmt::join(names, "; ")),
-      names.empty() ? std::string()
-                    : std::string(" (another material next to the corrected metal stops "
-                                  "the run after the mesh)"));
+      names.empty() ? std::string("none") : fmt::format("{}", fmt::join(names, "; ")));
+  for (const auto &named : failing)
+  {
+    line->text += "; " + named + ": beyond the rule with the layer rows" + stops;
+  }
+  for (const auto &named : neither)
+  {
+    line->text += fmt::format("; {}: {}{}", named, kNotVacuumWords, stops);
+  }
   // A material equal to the library's substrate is no row (the layer rows alone are then
   // beyond the rule and stop the run).
   if (!closest || !names.empty() || closest_mismatch == 0.0)
   {
     return std::nullopt;
   }
-  // No material but vacuum can pass the check after the mesh: judged now, on the closest
-  // (beyond the rule with the layer rows, by construction: the sum grows with |mismatch|).
+  // No material of the substrate class can pass the check after the mesh: judged now, on
+  // the closest (beyond the rule with the layer rows, by construction: the sum grows with
+  // |mismatch|).
   const auto &s = materials[*closest].epsilon_r.s;
   auto row = EffectRow(
       LibraryMismatchQuantity::SUBSTRATE_PERMITTIVITY, InterfaceDielectric::DEFAULT,
@@ -422,18 +556,28 @@ SubstrateMeshRows(const IoData &iodata, const std::map<int, std::vector<int>> &m
   for (const auto &[material, attributes] : mismatches)
   {
     const auto &s = iodata.domains.materials[material].epsilon_r.s;
-    const auto mismatch = SubstrateMismatch(s, substrate_permittivity);
-    if (!mismatch)
+    const auto side =
+        ClassifyMaterial(iodata.domains.materials[material], substrate_permittivity);
+    const std::string entry =
+        fmt::format("Domains.Materials[{}] (attributes next to the corrected metal: {})",
+                    material, fmt::join(attributes, ", "));
+    if (side.kind == MaterialClass::Kind::VACUUM)
     {
+      continue;
+    }
+    if (side.kind == MaterialClass::Kind::NEITHER)
+    {
+      rows.push_back(StopRow(
+          "material next to the corrected metal", entry, MaterialValue(s),
+          fmt::format("the substrate {} (Fabrication.SubstratePermittivity) or vacuum",
+                      Number(substrate_permittivity)),
+          kNotVacuumWords));
       continue;
     }
     auto row = EffectRow(
         LibraryMismatchQuantity::SUBSTRATE_PERMITTIVITY, InterfaceDielectric::DEFAULT,
-        "substrate permittivity",
-        fmt::format("Domains.Materials[{}] (attributes next to the corrected metal: {})",
-                    material, fmt::join(attributes, ", ")),
-        (1.0 + *mismatch) * substrate_permittivity, substrate_permittivity,
-        "Fabrication.SubstratePermittivity", targets);
+        "substrate permittivity", entry, (1.0 + side.mismatch) * substrate_permittivity,
+        substrate_permittivity, "Fabrication.SubstratePermittivity", targets);
     row.config_value = MaterialValue(s);
     rows.push_back(std::move(row));
   }
@@ -468,7 +612,7 @@ LibraryCheckReport JudgeLibraryRows(std::vector<LibraryCheckRow> rows,
   }
   for (const auto &[index, effect] : report.target_effect)
   {
-    report.beyond_rule = report.beyond_rule || effect > kLibraryMismatchEffectLimit;
+    report.beyond_rule = report.beyond_rule || BeyondLimit(effect);
   }
   report.stop = report.stop || report.beyond_rule;
   report.rows = std::move(rows);
@@ -484,9 +628,9 @@ std::string RowAction(const LibraryCheckRow &row, const LibraryCheckReport &repo
   {
     return row.kind == LibraryCheckRow::Kind::STOP ? "STOP" : "WARNING";
   }
-  const bool beyond = std::any_of(
-      row.effect.begin(), row.effect.end(), [&](const auto &entry)
-      { return report.target_effect.at(entry.first) > kLibraryMismatchEffectLimit; });
+  const bool beyond =
+      std::any_of(row.effect.begin(), row.effect.end(), [&](const auto &entry)
+                  { return BeyondLimit(report.target_effect.at(entry.first)); });
   return beyond ? "STOP (beyond the rule)" : "TOLERATED";
 }
 
@@ -512,7 +656,7 @@ std::string RowLine(const LibraryCheckRow &row, const LibraryCheckReport &report
 
 std::string LibraryCheckMessage(const LibraryCheckReport &report,
                                 const LibraryCheckLibrary &library, const std::string &when,
-                                const std::string &substrate_line)
+                                const LibrarySubstrateLine &substrate_line)
 {
   std::string message = fmt::format(
       "Response-correction library check {}: library \"{}\" ({})\n  the rule: a mismatch "
@@ -535,13 +679,22 @@ std::string LibraryCheckMessage(const LibraryCheckReport &report,
                     "degrees): {}\n",
                     library.length_unit.value_or("not stated"), fmt::join(profile, ", "));
   }
-  if (!substrate_line.empty())
+  if (!substrate_line.text.empty())
   {
-    message += "  " + substrate_line + "\n";
+    message += "  " + substrate_line.text + "\n";
   }
+  // A run that goes on is tolerated only conditionally while a configured material would
+  // stop it after the mesh if it touched the corrected metal (named in the line above).
+  const std::string unless =
+      substrate_line.conditional.empty()
+          ? std::string()
+          : fmt::format(" unless {} touches the corrected metal (then the run stops after "
+                        "the mesh)",
+                        fmt::join(substrate_line.conditional, " or "));
   if (report.Empty())
   {
-    return message + "  no mismatch\n";
+    return message + (unless.empty() ? std::string("  no mismatch\n")
+                                     : "  no row at load\n  -> TOLERATED" + unless + "\n");
   }
   message += fmt::format("  {} row(s):\n", report.rows.size());
   for (const auto &row : report.rows)
@@ -576,10 +729,17 @@ std::string LibraryCheckMessage(const LibraryCheckReport &report,
   const bool effect_rows =
       std::any_of(report.rows.begin(), report.rows.end(), [](const LibraryCheckRow &row)
                   { return row.kind == LibraryCheckRow::Kind::EFFECT; });
+  const bool parked_law =
+      std::any_of(report.rows.begin(), report.rows.end(),
+                  [](const LibraryCheckRow &row) { return row.quantity == "metal law"; });
   if (report.stop)
   {
     message += "  -> STOP: set each entry above to the library's value, or use a library "
                "made for the configuration's values";
+    if (parked_law)
+    {
+      message += ", or set \"Developer\": true for the parked coupons named above";
+    }
     message += report.beyond_rule
                    ? " (no override: an effect beyond the rule stops the run with or "
                      "without \"Developer\": true)\n"
@@ -588,13 +748,14 @@ std::string LibraryCheckMessage(const LibraryCheckReport &report,
   else if (effect_rows)
   {
     message +=
-        "  -> TOLERATED: the run goes on; the outputs name it (the flags word \"" +
+        "  -> TOLERATED" + unless +
+        ": the run goes on; the outputs name it (the flags word \"" +
         std::string(kParticipationLibraryMismatchFlag) +
         "\" of surface-participation.csv, palace.json SurfaceResponse.LibraryMismatch)\n";
   }
   else
   {
-    message += "  -> WARNING: the run goes on unverified\n";
+    message += "  -> WARNING: the run goes on unverified" + unless + "\n";
   }
   return message;
 }

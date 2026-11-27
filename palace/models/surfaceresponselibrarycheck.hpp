@@ -37,10 +37,23 @@ class IoData;
 // kLibraryMismatchEqualTolerance is equality. The other rows stop at any difference (R, a
 // missing InterfaceLayers entry, the library reader's own refusals, the length unit, a
 // parked metal law without the developer switch, the target set) or warn that nothing can
-// be verified (no InterfaceLayers).
+// be verified (no InterfaceLayers). An effect is beyond the limit only when it exceeds it
+// by more than kLibraryMismatchLimitTolerance (relative): a slip of exactly the limit,
+// written in decimal, is tolerated. THE VACUUM SIDE: Palace takes the vacuum side of MA and
+// SA interfaces only where the material is vacuum by its own test (IsVacuumMaterial); a
+// material that is not, and has a permittivity component nearer to 1 than to the library's
+// substrate, is neither the substrate nor vacuum (never judged as a substrate slip): named
+// at load, it stops the run after the mesh if it touches the corrected metal; with an MA or
+// SA target and no vacuum material at all, the run stops at load.
 //
 inline constexpr double kLibraryMismatchEffectLimit = 0.01;
 inline constexpr double kLibraryMismatchEqualTolerance = 1.0e-10;
+inline constexpr double kLibraryMismatchLimitTolerance = 1.0e-9;
+
+// Palace's own vacuum test of a configured material (MaterialOperator::IsVacuum, which
+// InterfaceDielectricCoefficient uses for the vacuum side of MA and SA interfaces), on the
+// full 3 x 3 tensors (the mesh's dimension is not known at load).
+bool IsVacuumMaterial(const config::MaterialData &material);
 
 enum class LibraryMismatchQuantity : char
 {
@@ -132,19 +145,28 @@ FindLibraryLoadRows(const IoData &iodata,
                     const LibraryCheckLibrary &library);
 
 // The substrate at load, judged WITH the rows found at load (`load_rows`): a configured
-// material other than vacuum can pass only if, for every target, the target's layer effect
-// plus the substrate factor of its Type times the material's |mismatch| stays within the
-// limit. When one or more can pass: no row, and `candidates` names them; when none can
-// (and the closest is not equal to the library's substrate): the closest material's row,
-// which the judge then stops.
+// material of the substrate class can pass only if, for every target, the target's layer
+// effect plus the substrate factor of its Type times the material's |mismatch| stays within
+// the limit. The line names the materials that can pass, those that cannot and those that
+// are neither the substrate nor vacuum; the last two stop the run after the mesh if they
+// touch the corrected metal (`conditional`: the load verdict is then conditional). When
+// none can pass (and the closest is not equal to the library's substrate): the closest
+// material's row, which the judge then stops.
+struct LibrarySubstrateLine
+{
+  std::string text;
+  std::vector<std::string> conditional;  // e.g. "Domains.Materials[1]"
+};
 std::optional<LibraryCheckRow>
 FindSubstrateLoadRow(const IoData &iodata, const LibraryCheckLibrary &library,
                      const std::vector<LibraryCheckTarget> &targets,
                      const std::vector<LibraryCheckRow> &load_rows,
-                     std::string *candidates);
+                     LibrarySubstrateLine *line);
 
 // The substrate after the mesh: one row per material next to the corrected metal that is
-// neither vacuum nor the library's substrate (FindSubstratePermittivityMismatches).
+// neither the vacuum side nor the library's substrate
+// (FindSubstratePermittivityMismatches): an EFFECT row for the substrate class, a STOP row
+// for a material that is neither.
 std::vector<LibraryCheckRow>
 SubstrateMeshRows(const IoData &iodata, const std::map<int, std::vector<int>> &mismatches,
                   double substrate_permittivity,
@@ -155,11 +177,12 @@ SubstrateMeshRows(const IoData &iodata, const std::map<int, std::vector<int>> &m
 LibraryCheckReport JudgeLibraryRows(std::vector<LibraryCheckRow> rows,
                                     const std::vector<LibraryCheckTarget> &targets);
 
-// The one message: the library, the rule, the profile, `substrate_line`, every row with its
-// tolerance and action, the summed effect per Type, and the verdict.
+// The one message: the library, the rule, the profile, the substrate line, every row with
+// its tolerance and action, the summed effect per Type, and the verdict (conditional on the
+// line's `conditional` materials when the run goes on).
 std::string LibraryCheckMessage(const LibraryCheckReport &report,
                                 const LibraryCheckLibrary &library, const std::string &when,
-                                const std::string &substrate_line);
+                                const LibrarySubstrateLine &substrate_line);
 
 // The tolerated mismatches of `report` into the request's record (empty: none).
 void RecordLibraryMismatch(

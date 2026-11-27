@@ -188,6 +188,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     const auto report = Judge(iodata, other);
     CHECK(report.rows.size() == 2);
     CHECK(report.stop);
+    // MINOR-4 (second review): the remedy then names the switch for the parked coupons.
+    CHECK_THAT(LibraryCheckMessage(report, other, "at load", {}),
+               ContainsSubstring("made for the configuration's values, or set "
+                                 "\"Developer\": true for the parked coupons named above"));
     iodata.solver.electrostatic.response_correction->developer = true;
     CHECK(Judge(iodata, other).rows.empty());
     other.refusal = "Unable to open fabrication-process response library!";
@@ -221,15 +225,15 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     json config = base;
     config["Domains"]["Materials"][1]["Permittivity"] = 11.47;
     IoData near(config, false);
-    std::string candidates;
+    LibrarySubstrateLine candidates;
     CHECK_FALSE(FindSubstrateLoadRow(near, library, Targets(near), {}, &candidates));
-    CHECK_THAT(candidates,
+    CHECK_THAT(candidates.text,
                ContainsSubstring("could be the substrate: Domains.Materials[1]"));
     config["Domains"]["Materials"][1]["Permittivity"] = 11.6;
     IoData far(config, false);
     const auto row = FindSubstrateLoadRow(far, library, Targets(far), {}, &candidates);
     REQUIRE(row);
-    CHECK_THAT(candidates, ContainsSubstring("could be the substrate: none"));
+    CHECK_THAT(candidates.text, ContainsSubstring("could be the substrate: none"));
     CHECK(JudgeLibraryRows({*row}, Targets(far)).stop);
     // Vacuum alone: nothing to judge at load (the check after the mesh passes).
     config["Domains"]["Materials"] = {{{"Attributes", {1, 2}}}};
@@ -263,12 +267,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     report = JudgeLibraryRows(layer_rows, Targets(both));
     CHECK_THAT(report.target_effect.at(5), WithinRel(0.008 + 1.9 * 0.004, 1.0e-9));
     CHECK(report.stop);
-    const std::string message = LibraryCheckMessage(report, library, "after the mesh", "");
+    const std::string message = LibraryCheckMessage(report, library, "after the mesh", {});
     CHECK_THAT(message, ContainsSubstring("MS 1.56 % (Index 5)"));
     CHECK_THAT(message, ContainsSubstring("STOP (beyond the rule): MS layer permittivity"));
     CHECK_THAT(message,
                ContainsSubstring("STOP (beyond the rule): substrate permittivity"));
     CHECK_THAT(message, ContainsSubstring("no override"));
+    CHECK(message.find("parked coupons") == std::string::npos);
   }
   {
     // Per target the LARGEST substrate row counts (one patch lies on one substrate): two
@@ -296,7 +301,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 {
   const json base = IslandTwoTargetConfig(*this);
   const auto library = IslandLibrary();
-  auto AtLoad = [&](double ms_layer, double substrate, std::string *candidates)
+  auto AtLoad = [&](double ms_layer, double substrate, LibrarySubstrateLine *candidates)
   {
     json config = base;
     config["Boundaries"]["Postprocessing"]["Dielectric"][1]["Permittivity"] = ms_layer;
@@ -311,7 +316,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     return JudgeLibraryRows(std::move(rows), targets);
   };
-  std::string candidates;
+  LibrarySubstrateLine candidates;
   // MS 0.9 % off with the substrate 0.1 % off: each alone is inside the rule, together
   // 0.9 + 1.9 x 0.1 = 1.09 % on MS: STOP AT LOAD, the substrate row listed.
   auto report = AtLoad(11.45 * 1.009, 11.45 * 1.001, &candidates);
@@ -319,7 +324,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   REQUIRE(report.rows.size() == 2);
   CHECK(report.rows[1].substrate);
   CHECK_THAT(report.target_effect.at(5), WithinRel(0.009 + 1.9 * 0.001, 1.0e-9));
-  CHECK_THAT(candidates, ContainsSubstring("could be the substrate: none"));
+  CHECK_THAT(candidates.text, ContainsSubstring("could be the substrate: none"));
   CHECK_FALSE(AtLoad(11.45 * 1.009, 11.45, &candidates).stop);
   CHECK_FALSE(AtLoad(11.45, 11.45 * 1.001, &candidates).stop);
   // The reviewer's flip-chip combination: the designers' substrate 11.47 (+0.175 %) with MS
@@ -329,7 +334,8 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   report = AtLoad(11.47, 11.47, &candidates);
   CHECK_FALSE(report.stop);
   CHECK(report.rows.size() == 1);
-  CHECK_THAT(candidates, ContainsSubstring("could be the substrate: Domains.Materials[1]"));
+  CHECK_THAT(candidates.text,
+             ContainsSubstring("could be the substrate: Domains.Materials[1]"));
   // What the load message tolerates passes after the mesh too (the same layer rows with
   // the material's own row).
   {
@@ -349,6 +355,162 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   CHECK(report.stop);
   CHECK(report.rows.size() == 1);
   CHECK_FALSE(report.rows[0].substrate);
+}
+
+// MAJOR-1 and MINOR-2 (g) of the second review (lane v1loadcheck): every material that
+// cannot pass the summed rule is named at load and the verdict is conditional (no stop at
+// load: it may never touch the corrected metal); a thickness row adds at load too.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "At load a material that would stop the run after the mesh is named and "
+                 "the verdict is conditional",
+                 "[surfaceresponselibrarycheck][Serial]")
+{
+  json base = IslandTwoTargetConfig(*this);
+  base["Domains"]["Materials"].push_back({{"Attributes", {3}}, {"Permittivity", 11.45}});
+  const auto library = IslandLibrary();
+  auto AtLoad = [&](const json &config, LibrarySubstrateLine *line)
+  {
+    IoData iodata(config, false);
+    const auto &request = *iodata.solver.electrostatic.response_correction;
+    const auto targets = LibraryCheckTargets(iodata, request);
+    auto rows = FindLibraryLoadRows(iodata, request, targets, library);
+    if (auto row = FindSubstrateLoadRow(iodata, library, targets, rows, line))
+    {
+      rows.push_back(std::move(*row));
+    }
+    return JudgeLibraryRows(std::move(rows), targets);
+  };
+  LibrarySubstrateLine line;
+  // The reviewer's h32: MS +0.5 % with a second material at +0.3 % (0.5 + 1.9 x 0.3 =
+  // 1.07 % on MS): Materials[1] can be the substrate, Materials[2] is named.
+  json config = base;
+  config["Boundaries"]["Postprocessing"]["Dielectric"][1]["Permittivity"] = 11.45 * 1.005;
+  config["Domains"]["Materials"][2]["Permittivity"] = 11.45 * 1.003;
+  auto report = AtLoad(config, &line);
+  CHECK_FALSE(report.stop);
+  CHECK(line.conditional == std::vector<std::string>{"Domains.Materials[2]"});
+  CHECK_THAT(line.text, ContainsSubstring("could be the substrate: Domains.Materials[1]"));
+  CHECK_THAT(line.text, ContainsSubstring("Domains.Materials[2] (attributes 3) 11.48435 "
+                                          "(+0.3 %): beyond the rule with the layer rows: "
+                                          "it stops the run after the mesh if it touches "
+                                          "the corrected metal"));
+  std::string message = LibraryCheckMessage(report, library, "at load", line);
+  CHECK_THAT(message, ContainsSubstring("-> TOLERATED unless Domains.Materials[2] touches "
+                                        "the corrected metal (then the run stops after "
+                                        "the mesh): the run goes on"));
+  // The reviewer's h14: no layer row, the second material at +1 % (1.9 % on MS).
+  config = base;
+  config["Domains"]["Materials"][2]["Permittivity"] = 11.45 * 1.01;
+  report = AtLoad(config, &line);
+  CHECK(report.Empty());
+  message = LibraryCheckMessage(report, library, "at load", line);
+  CHECK(message.find("no mismatch") == std::string::npos);
+  CHECK_THAT(message, ContainsSubstring("no row at load\n  -> TOLERATED unless "
+                                        "Domains.Materials[2] touches"));
+  // MINOR-2 (g): an MS THICKNESS +0.9 % with the substrate +0.1 %: STOP at load.
+  config = base;
+  config["Boundaries"]["Postprocessing"]["Dielectric"][1]["Thickness"] = 0.002 * 1.009;
+  config["Domains"]["Materials"][1]["Permittivity"] = 11.45 * 1.001;
+  config["Domains"]["Materials"].erase(2);
+  report = AtLoad(config, &line);
+  CHECK(report.stop);
+  REQUIRE(report.rows.size() == 2);
+  CHECK(report.rows[1].substrate);
+}
+
+// MINOR-1 of the second review: an effect of exactly the limit, written in decimal, is
+// tolerated at load and after the mesh alike (one test of the limit).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "A slip of exactly the limit is tolerated at load and after the mesh",
+                 "[surfaceresponselibrarycheck][Serial]")
+{
+  json config = IslandTwoTargetConfig(*this);
+  auto &dielectric = config["Boundaries"]["Postprocessing"]["Dielectric"];
+  json ma = dielectric[0];
+  ma["Index"] = 6;
+  ma["Type"] = "MA";
+  ma["Permittivity"] = 10.1;  // the library's 10.0: exactly 1 %, 1.0000000000000009 %
+  dielectric.push_back(ma);
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["TargetInterfaces"] = {4, 5, 6};
+  auto library = IslandLibrary();
+  library.interface_layers[InterfaceDielectric::MA] = {0.002, 10.0};
+  auto report = Judge(IoData(config, false), library);
+  REQUIRE(report.rows.size() == 1);
+  CHECK_FALSE(report.stop);
+  CHECK_THAT(LibraryCheckMessage(report, library, "at load", {}),
+             ContainsSubstring("TOLERATED: MA layer permittivity"));
+  config["Boundaries"]["Postprocessing"]["Dielectric"][2]["Permittivity"] = 10.1001;
+  CHECK(Judge(IoData(config, false), library).stop);  // 1.001 %: beyond
+  // The substrate exactly at its limit alone (1 / 1.9 % on MS): a candidate at load, and
+  // tolerated after the mesh.
+  config = IslandTwoTargetConfig(*this);
+  const double at_limit = 11.45 * (1.0 + 0.01 / 1.9);
+  config["Domains"]["Materials"][1]["Permittivity"] = at_limit;
+  IoData iodata(config, false);
+  const auto targets =
+      LibraryCheckTargets(iodata, *iodata.solver.electrostatic.response_correction);
+  LibrarySubstrateLine line;
+  CHECK_FALSE(FindSubstrateLoadRow(iodata, IslandLibrary(), targets, {}, &line));
+  CHECK_THAT(line.text, ContainsSubstring("could be the substrate: Domains.Materials[1]"));
+  report = JudgeLibraryRows(SubstrateMeshRows(iodata, {{1, {2}}}, 11.45, targets), targets);
+  CHECK_FALSE(report.stop);
+}
+
+// MINOR-3 of the second review (the supervisor's ruling): the vacuum side is Palace's own
+// test; beside a true vacuum a material nearer to 1 than to the substrate (air 1.0006, 3.9)
+// is neither: named at load, a STOP row after the mesh only when it touches the metal.
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "The vacuum side: beside a vacuum, air 1.0006 and 3.9 are neither the "
+                 "substrate nor vacuum",
+                 "[surfaceresponselibrarycheck][Serial]")
+{
+  const auto library = IslandLibrary();
+  for (const double permittivity : {1.0006, 3.9})
+  {
+    CAPTURE(permittivity);
+    json config = IslandTwoTargetConfig(*this);
+    config["Domains"]["Materials"].push_back(
+        {{"Attributes", {3}}, {"Permittivity", permittivity}});
+    IoData iodata(config, false);
+    const auto targets =
+        LibraryCheckTargets(iodata, *iodata.solver.electrostatic.response_correction);
+    LibrarySubstrateLine line;
+    CHECK_FALSE(FindSubstrateLoadRow(iodata, library, targets, {}, &line));
+    const auto touching = SubstrateMeshRows(iodata, {{2, {3}}}, 11.45, targets);
+    const auto report = JudgeLibraryRows(touching, targets);
+    const std::string message = LibraryCheckMessage(report, library, "after the mesh", {});
+    CHECK(message.find("-91") == std::string::npos);
+    CHECK(line.conditional == std::vector<std::string>{"Domains.Materials[2]"});
+    CHECK_THAT(line.text,
+               ContainsSubstring(fmt::format("Domains.Materials[2] (attributes 3) "
+                                             "{}: not the library's substrate "
+                                             "and not vacuum (Palace takes",
+                                             permittivity)));
+    CHECK_THAT(line.text,
+               ContainsSubstring("set it to 1.0): it stops the run after the mesh "
+                                 "if it touches the corrected metal"));
+    REQUIRE(touching.size() == 1);
+    CHECK(touching[0].kind == LibraryCheckRow::Kind::STOP);
+    CHECK(report.stop);
+    CHECK_THAT(message, ContainsSubstring("STOP: material next to the corrected metal"));
+    CHECK(JudgeLibraryRows(SubstrateMeshRows(iodata, {}, 11.45, targets), targets).Empty());
+  }
+  // Air 1.0006 as the only air with an SA target: no vacuum side anywhere: STOP AT LOAD;
+  // with MS targets only, no row; exact 1.0: no row.
+  json config = IslandTwoTargetConfig(*this);
+  config["Domains"]["Materials"][0]["Permittivity"] = 1.0006;
+  auto report = Judge(IoData(config, false), library);
+  REQUIRE(report.rows.size() == 1);
+  CHECK(report.stop);
+  CHECK(report.rows[0].quantity == "vacuum side (MA and SA targets)");
+  CHECK(report.rows[0].config_value == "Domains.Materials[0] (attributes 1) 1.0006");
+  CHECK_THAT(report.rows[0].tolerance,
+             ContainsSubstring("set the air's permittivity to exactly 1.0"));
+  config["Solver"]["Electrostatic"]["ResponseCorrection"]["TargetInterfaces"] = {5};
+  CHECK(Judge(IoData(config, false), library).Empty());
+  config = IslandTwoTargetConfig(*this);
+  config["Domains"]["Materials"][0]["Permittivity"] = 1.0;
+  CHECK(Judge(IoData(config, false), library).Empty());
 }
 
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
@@ -563,6 +725,8 @@ TEST_CASE_METHOD(
   config["Model"]["L0"] = 1.0;
   config["Model"]["Lc"] = 1.0;
   config["Domains"]["Materials"][0]["Permittivity"] = 11.47;  // the island's one domain
+  // A vacuum material (on an attribute the mesh lacks): an SA target needs one at load.
+  config["Domains"]["Materials"].push_back({{"Attributes", {7}}});
   auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
   correction["Library"] = library_path.string();
   correction["CorrectionMode"] = "PostprocessOnly";
@@ -596,6 +760,124 @@ TEST_CASE_METHOD(
     CHECK(block.at("Mismatches")[0].at("Quantity") == "substrate permittivity");
     CHECK_THAT(block.at("EstimatedEffectPerType").at("SA").get<double>(),
                WithinRel(0.2 * (11.47 / 11.45 - 1.0), 1.0e-9));
+  }
+#endif
+}
+
+// MAJOR-1, MINOR-2 (h) and MINOR-3 of the second review through the run (both forms): the
+// load message names the material that the check after the mesh then stops on, with the
+// layer rows (h); a material neither the substrate nor vacuum stops the run only when it
+// touches the corrected metal. The island's metal touches its one domain (attribute 1); a
+// material on attribute 7 (not in the mesh) never touches it.
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "A material named at load stops the run after the mesh only if it touches the metal",
+    "[surfaceresponselibrarycheck][surfaceparticipation][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "library-check-named-island.mesh";
+  const fs::path library_path = temp.temp_dir / "library-check-named-library.json";
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+    std::ifstream input(convex_library_3d_path);
+    json library = json::parse(input);
+    library["Fabrication"]["SubstratePermittivity"] = 11.45;
+    std::ofstream library_output(library_path);
+    library_output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json base = ConvexIslandConfig(test::CrackPolicy::Default);
+  base["Model"]["Mesh"] = mesh_path.string();
+  base["Model"]["L0"] = 1.0;
+  base["Model"]["Lc"] = 1.0;
+  auto &correction = base["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["Library"] = library_path.string();
+  correction["CorrectionMode"] = "PostprocessOnly";
+  // The candidate substrate, equal to the library's, and a vacuum material (an SA target
+  // needs one at load), on attributes the mesh lacks.
+  base["Domains"]["Materials"].push_back({{"Attributes", {7}}, {"Permittivity", 11.45}});
+  base["Domains"]["Materials"].push_back({{"Attributes", {8}}});
+  int count = 0;
+  const auto RunIt = [&](const json &config, bool preflight, std::string *what)
+  {
+    json run = config;
+    run["Problem"]["Output"] = (temp.temp_dir / fmt::format("named-{}", count++)).string();
+    run["Solver"]["Electrostatic"]["ResponseCorrection"]["PreflightOnly"] = preflight;
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    what->clear();
+    return test::CaptureStdout(
+        [&]
+        {
+          try
+          {
+            if (preflight)
+            {
+              RunSurfaceResponsePreflight(iodata, comm, 1);
+            }
+            else
+            {
+              palace::Run(iodata, comm, 1);
+            }
+          }
+          catch (const std::exception &e)
+          {
+            *what = e.what();
+          }
+        });
+  };
+  for (const bool preflight : {false, true})
+  {
+    CAPTURE(preflight);
+    std::string what;
+    // (h): the domain at the substrate +1 % (SA 0.2 % alone) with the SA layer +0.9 %:
+    // named at load, the verdict conditional; after the mesh 1.1 % on SA: STOP.
+    json config = base;
+    config["Domains"]["Materials"][0]["Permittivity"] = 11.45 * 1.01;
+    config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Permittivity"] = 4.0 * 1.009;
+    std::string printed = RunIt(config, preflight, &what);
+    CHECK_THAT(what, ContainsSubstring("library check after the mesh stops the run"));
+    if (Mpi::Root(comm))
+    {
+      CHECK_THAT(printed, ContainsSubstring("Domains.Materials[0] (attributes 1) 11.5645 "
+                                            "(+1 %): beyond the rule with the layer rows"));
+      CHECK_THAT(printed, ContainsSubstring("-> TOLERATED unless Domains.Materials[0] "
+                                            "touches the corrected metal"));
+      CHECK_THAT(printed,
+                 ContainsSubstring("STOP (beyond the rule): substrate permittivity"));
+    }
+    // A material of 3.9 next to the metal: named at load, a plain STOP after the mesh.
+    config = base;
+    config["Domains"]["Materials"][0]["Permittivity"] = 3.9;
+    printed = RunIt(config, preflight, &what);
+    CHECK_THAT(what, ContainsSubstring("library check after the mesh stops the run"));
+    if (Mpi::Root(comm))
+    {
+      CHECK_THAT(printed,
+                 ContainsSubstring("3.9: not the library's substrate and not vacuum"));
+      CHECK_THAT(printed, ContainsSubstring("STOP: material next to the corrected metal"));
+      CHECK(printed.find("-91") == std::string::npos);
+    }
+  }
+  // The same material where it does not touch the metal: named at load, no stop.
+  json config = base;
+  config["Domains"]["Materials"][0]["Permittivity"] = 11.45;
+  config["Domains"]["Materials"][1]["Permittivity"] = 3.9;
+  std::string what;
+  const std::string printed = RunIt(config, true, &what);
+  CHECK(what.empty());
+  if (Mpi::Root(comm))
+  {
+    CHECK_THAT(printed,
+               ContainsSubstring("-> TOLERATED unless Domains.Materials[1] touches"));
+    CHECK(printed.find("library check after the mesh") == std::string::npos);
   }
 #endif
 }

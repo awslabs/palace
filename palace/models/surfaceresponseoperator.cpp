@@ -4758,8 +4758,8 @@ FindSubstratePermittivityMismatches(const IoData &iodata, const mfem::ParMesh &m
         continue;
       }
       const auto &s = materials[m].epsilon_r.s;
-      const bool vacuum =
-          std::all_of(s.begin(), s.end(), [&](double e) { return Equal(e, 1.0); });
+      // Vacuum by Palace's own test (the vacuum side of MA and SA interfaces).
+      const bool vacuum = IsVacuumMaterial(materials[m]);
       const bool substrate = std::all_of(s.begin(), s.end(), [&](double e)
                                          { return Equal(e, substrate_permittivity); });
       if (!vacuum && !substrate)
@@ -4818,7 +4818,7 @@ void CheckResponseLibraryAtLoad(const IoData &iodata, MPI_Comm comm, bool prefli
     }
     const auto targets = LibraryCheckTargets(iodata, *request);
     auto rows = FindLibraryLoadRows(iodata, *request, targets, inputs);
-    std::string substrate_line;
+    LibrarySubstrateLine substrate_line;
     if (inputs.refusal.empty())
     {
       // The substrate judged with the layer rows (the effects on one target add).
@@ -4830,7 +4830,9 @@ void CheckResponseLibraryAtLoad(const IoData &iodata, MPI_Comm comm, bool prefli
     const auto report = JudgeLibraryRows(std::move(rows), targets);
     message =
         LibraryCheckMessage(report, inputs, "at load (before the mesh)", substrate_line);
-    level = report.stop ? 2 : report.Empty() ? 0 : 1;
+    // A conditional verdict (a material that stops the run after the mesh if it touches
+    // the corrected metal) is a warning too.
+    level = report.stop ? 2 : report.Empty() && substrate_line.conditional.empty() ? 0 : 1;
     RecordLibraryMismatch(report, *request);
     record = LibraryMismatchJson(request->library_mismatch).dump();
   }
@@ -4911,7 +4913,7 @@ void CheckSubstratePermittivity(
   if (!reported || report.stop)
   {
     Mpi::Warning(mesh.GetComm(), "{}",
-                 LibraryCheckMessage(report, inputs, "after the mesh", ""));
+                 LibraryCheckMessage(report, inputs, "after the mesh", {}));
   }
   RecordLibraryMismatch(report, owner);
   MFEM_VERIFY(!report.stop, "The response-correction library check after the mesh stops "

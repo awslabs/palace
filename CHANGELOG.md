@@ -41,6 +41,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     Unchanged in action, now at load and all listed: `MatchingRadius` against the largest
     `EdgeDistances`, a missing `InterfaceLayers` entry, the library file and `Version`, a
     parked metal law without the developer switch, `TargetInterfaces`.
+    Every configured material that would stop the run after the mesh if it touched the
+    corrected metal is NAMED at load (with its value and mismatch), and the load verdict then
+    reads "TOLERATED unless" it touches the metal. An effect of exactly 1 % is within the
+    rule. THE AIR MUST BE EXACTLY VACUUM (Palace's own test, as for the vacuum side of `MA`
+    and `SA` interfaces, whose raw values are otherwise zero): with an `MA` or `SA` target
+    and no vacuum material the run stops at load; a material nearer to 1 than to the
+    library's substrate that is not vacuum (air entered as 1.0006) is never judged as a
+    substrate slip: named at load, it stops the run after the mesh if it touches the metal.
     A tolerated mismatch is named in the outputs: the flags word `library mismatch tolerated` on every affected row of `surface-participation.csv` and
     `SurfaceResponse.LibraryMismatch` in `palace.json`; without a mismatch nothing is added.
   - The length-weighted census (the PREFLIGHT line, `SurfaceResponse.Resolution.Preflight`:

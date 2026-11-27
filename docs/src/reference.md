@@ -1855,11 +1855,23 @@ with the library unchanged, as the move of the corrected value minus the move of
 value (the largest over the window's values, per unit mismatch): `MA` 0.157 and 0.230,
 `MS` 1.858 and 1.795, `SA` 0.102 and 0.019; the larger of the two, rounded up to one
 decimal, is used: `MA` 0.3, `MS` 1.9, `SA` 0.2. Alone, a layer may thus differ by 1 % and
-the substrate by about 0.5 %. At load, before the mesh says which domains touch the
-corrected metal, a configured material other than vacuum can be the substrate only if, with
-the layer mismatches, it passes the rule on every target interface; when none can, the run
-stops at load; a material not named there that lies next to the corrected metal stops the
-run after the mesh.
+the substrate by about 0.5 %; an effect of exactly 1 % (a slip of exactly 1 % written in
+decimal) is within the rule. At load, before the mesh says which domains touch the
+corrected metal, every configured material other than vacuum is named in the message: one
+that passes the rule with the layer mismatches on every target interface could be the
+substrate; one that cannot is named with its value and mismatch, and so is a material that
+is neither vacuum nor the substrate (below); each of these stops the run after the mesh if
+it touches the corrected metal, and the message then reads "TOLERATED unless" that material
+touches the corrected metal. When no material can be the substrate, the run stops at load.
+
+THE AIR MUST BE EXACTLY VACUUM. Palace takes the vacuum side of an `MA` or `SA` interface
+only where the material is vacuum: permittivity and permeability 1 (Palace's own test: a
+light speed within 1e-6 of 1) and no frequency dependence. Air entered as, say, 1.0006 is
+not vacuum: no interface then has a vacuum side, the raw `MA` and `SA` values are zero and
+the corrected ones are wrong, with no message from the postprocessing. So, with an `MA` or
+`SA` target and no vacuum material the run stops at load; a material nearer to 1 than to
+the library's substrate that is not vacuum is named at load and stops the run after the
+mesh if it touches the corrected metal. Set the air's permittivity to exactly 1.0.
 
 | In the device configuration                                                                    | In the library                                                                     | On a mismatch                                                                                                                                                                                   |
 |:---------------------------------------------------------------------------------------------- |:---------------------------------------------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
