@@ -4771,11 +4771,26 @@ FindSubstratePermittivityMismatches(const IoData &iodata, const mfem::ParMesh &m
   return mismatches;
 }
 
-void CheckResponseLibraryAtLoad(const IoData &iodata, MPI_Comm comm, bool preflight)
+namespace
+{
+
+// The problem type's response-correction block (SurfaceResponsePreflightKey's rule): the
+// request whose record of tolerated library mismatches the outputs read (a builder may
+// be handed a copy, e.g. the requirements' or a candidate's).
+const config::ElectrostaticSolverData::ResponseCorrectionData *
+ConfiguredResponseCorrection(const IoData &iodata)
 {
   const auto &request = iodata.problem.type == ProblemType::ELECTROSTATIC
                             ? iodata.solver.electrostatic.response_correction
                             : iodata.solver.surface_response_correction;
+  return request ? &*request : nullptr;
+}
+
+}  // namespace
+
+void CheckResponseLibraryAtLoad(const IoData &iodata, MPI_Comm comm, bool preflight)
+{
+  const auto *request = ConfiguredResponseCorrection(iodata);
   if (!request || request->library.empty())
   {
     return;
@@ -4886,7 +4901,10 @@ void CheckSubstratePermittivity(
   rows.insert(rows.end(), std::make_move_iterator(substrate_rows.begin()),
               std::make_move_iterator(substrate_rows.end()));
   const auto report = JudgeLibraryRows(std::move(rows), targets, request.developer);
-  const auto &entries = request.library_mismatch.entries;
+  // The record lives on the configured block (the outputs read it), not on a copy.
+  const auto *configured = ConfiguredResponseCorrection(iodata);
+  const auto &owner = configured ? *configured : request;
+  const auto &entries = owner.library_mismatch.entries;
   const bool reported = std::any_of(entries.begin(), entries.end(), [](const auto &entry)
                                     { return entry.quantity == "substrate permittivity"; });
   if (!reported || report.stop)
@@ -4894,7 +4912,7 @@ void CheckSubstratePermittivity(
     Mpi::Warning(mesh.GetComm(), "{}",
                  LibraryCheckMessage(report, inputs, "after the mesh", ""));
   }
-  RecordLibraryMismatch(report, request);
+  RecordLibraryMismatch(report, owner);
   MFEM_VERIFY(!report.stop, "The response-correction library check after the mesh stops "
                             "the run (the rows above)!");
 }

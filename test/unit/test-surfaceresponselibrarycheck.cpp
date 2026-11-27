@@ -415,4 +415,69 @@ TEST_CASE_METHOD(
 #endif
 }
 
+TEST_CASE_METHOD(
+    test::SurfaceResponseFiles,
+    "A substrate mismatch tolerated after the mesh is in the outputs of both forms",
+    "[surfaceresponselibrarycheck][surfaceparticipation][3d][Serial][Parallel]")
+{
+#if !defined(MFEM_USE_GSLIB)
+  SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
+#else
+  MPI_Comm comm = Mpi::World();
+  const fs::path mesh_path = temp.temp_dir / "library-check-substrate-island.mesh";
+  const fs::path library_path = temp.temp_dir / "library-check-substrate-library.json";
+  if (Mpi::Root(comm))
+  {
+    mfem::Mesh serial = MakeSerialIslandMesh();
+    std::ofstream output(mesh_path);
+    serial.Print(output);
+    std::ifstream input(convex_library_3d_path);
+    json library = json::parse(input);
+    library["Fabrication"]["SubstratePermittivity"] = 11.45;
+    std::ofstream library_output(library_path);
+    library_output << library.dump(2) << "\n";
+  }
+  Mpi::Barrier(comm);
+  json config = ConvexIslandConfig(test::CrackPolicy::Default);
+  config["Model"]["Mesh"] = mesh_path.string();
+  config["Model"]["L0"] = 1.0;
+  config["Model"]["Lc"] = 1.0;
+  config["Domains"]["Materials"][0]["Permittivity"] = 11.47;  // the island's one domain
+  auto &correction = config["Solver"]["Electrostatic"]["ResponseCorrection"];
+  correction["Library"] = library_path.string();
+  correction["CorrectionMode"] = "PostprocessOnly";
+  for (const bool preflight : {false, true})
+  {
+    CAPTURE(preflight);
+    json run = config;
+    const fs::path output = temp.temp_dir / fmt::format("substrate-{}", preflight);
+    run["Problem"]["Output"] = output.string();
+    run["Solver"]["Electrostatic"]["ResponseCorrection"]["PreflightOnly"] = preflight;
+    IoData iodata(run, false);
+    MakeOutputFolder(iodata, comm);
+    BlockTimer::Reset();
+    if (preflight)
+    {
+      CHECK(RunSurfaceResponsePreflight(iodata, comm, 1) == 0);
+    }
+    else
+    {
+      palace::Run(iodata, comm, 1);
+    }
+    Mpi::Barrier(comm);
+    if (!Mpi::Root(comm))
+    {
+      continue;
+    }
+    std::ifstream input(output / "palace.json");
+    const json meta = json::parse(input);
+    const auto &block = meta.at("SurfaceResponse").at("LibraryMismatch");
+    REQUIRE(block.at("Mismatches").size() == 1);
+    CHECK(block.at("Mismatches")[0].at("Quantity") == "substrate permittivity");
+    CHECK_THAT(block.at("EstimatedEffectPerType").at("SA").get<double>(),
+               WithinRel(0.11 * (11.47 / 11.45 - 1.0), 1.0e-9));
+  }
+#endif
+}
+
 }  // namespace palace
