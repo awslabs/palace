@@ -25,10 +25,14 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     where a correction is due (metal law or target not served), `UNDER-RESOLVED` or
     `NOT-EVALUATED`, not a number, or marked by `"MarkNotApplied"`; `OK` for an `SA` or `MS`
     value that is `RESOLVED` (or `RESOLVED-UNTESTED`) with coverage `OK`, no failed Maxwell
-    gate and no tolerated library mismatch; `CHECK` otherwise (`NO-BARS`, every `MA` value:
-    `MA not certified`). On the benchmark's 188 graded `SA` / `MS` cells: `OK` 98 within 5 %
+    gate and no tolerated library mismatch, and not a box (`region`) value while the bars'
+    region scope is untested; `CHECK` otherwise (`NO-BARS`, every `MA` value:
+    `MA not certified`; every box value under the built-in bars: no box value has read `OK`
+    on the benchmark, and a box's census reads its own patches, optimistic on junction
+    boxes). On the benchmark's 188 graded `SA` / `MS` cells: `OK` 98 within 5 %
     of thick and 1 beyond, `CHECK` 27 / 12, `DO-NOT-USE` 6 / 44; electrostatic and driven
-    cells read `OK`, no eigenmode cell yet; a 5 % word only (44 of 99 within 2 %), no chip.
+    `Type` cells read `OK`, no eigenmode or box cell yet; a 5 % word only (44 of 99 within
+    2 %), no chip.
     The columns `regime` and `confidence` are REMOVED (their gates failed on every served row
     and did not rank the error; the developer tables keep them unchanged). `flags` holds bad
     words only, now with the failed Maxwell gates of the value (`kR <v> above 0.1`,

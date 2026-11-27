@@ -699,7 +699,7 @@ JoinParticipationLevel(std::vector<SurfaceParticipationRow> &rows,
     }
     row.flags = ParticipationFlags(row);
     row.information = ParticipationInformation(row);
-    row.summary = ParticipationSummary(row);
+    row.summary = ParticipationSummary(row, bars);
   }
   return mode_joins;
 }
@@ -807,7 +807,8 @@ std::string ParticipationInformation(const SurfaceParticipationRow &row)
   return JoinParticipationWords(parts);
 }
 
-std::string ParticipationSummary(const SurfaceParticipationRow &row)
+std::string ParticipationSummary(const SurfaceParticipationRow &row,
+                                 const ParticipationVerdictBars &bars)
 {
   const std::string not_target(CoverageStatusName(CoverageStatus::NOT_TARGET));
   if (row.coverage == not_target)
@@ -824,8 +825,11 @@ std::string ParticipationSummary(const SurfaceParticipationRow &row)
   {
     return kParticipationSummaryDoNotUse;
   }
+  // A box (region) row reads CHECK while the bars' region scope is untested (review MAJOR
+  // 1, ruled (a)).
   const bool resolved =
-      row.resolution == "RESOLVED" || row.resolution == "RESOLVED-UNTESTED";
+      (row.resolution == "RESOLVED" || row.resolution == "RESOLVED-UNTESTED") &&
+      (!row.region || bars.RegionScopeTested());
   if ((row.type == "SA" || row.type == "MS") && resolved &&
       row.coverage == CoverageStatusName(CoverageStatus::OK) &&
       ParticipationGateFlags(row.gates).empty() && !row.library_mismatch)

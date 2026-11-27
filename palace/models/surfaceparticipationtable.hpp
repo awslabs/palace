@@ -389,9 +389,13 @@ std::string ParticipationInformation(const SurfaceParticipationRow &row);
 // resolution is UNDER-RESOLVED(-UNTESTED) or NOT-EVALUATED, p corrected is not a finite
 // number, or the coverage policy MarkNotApplied marked the row; OK iff the Type is SA or
 // MS, the resolution RESOLVED or RESOLVED-UNTESTED, the coverage OK, no Maxwell gate of R2
-// failed and no library mismatch is tolerated on the row; CHECK otherwise (NO-BARS, every
-// MA row). A PreflightOnly row reads NOT-COMPUTED (PreflightParticipationRows).
-std::string ParticipationSummary(const SurfaceParticipationRow &row);
+// failed, no library mismatch is tolerated on the row, and the row is not a box (region)
+// row while the bars' region scope is untested (review MAJOR 1, ruled (a): no box value has
+// read OK on the benchmark, and a box census reads its own patches); CHECK otherwise
+// (NO-BARS, every MA row). A PreflightOnly row reads NOT-COMPUTED
+// (PreflightParticipationRows).
+std::string ParticipationSummary(const SurfaceParticipationRow &row,
+                                 const ParticipationVerdictBars &bars);
 // The log's one information line per run on the trace-closure gates (R1): the largest
 // fixed-trace / fixed-flux spread over interfaces at the first solve, not a verdict.
 std::string ParticipationClosureGapLine(double maximum_spread);

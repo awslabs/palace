@@ -3987,22 +3987,28 @@ its resolution reads `UNDER-RESOLVED` (or `UNDER-RESOLVED-UNTESTED`) or `NOT-EVA
 when `p corrected` is not a number, or when `"Policy": "MarkNotApplied"` marked its cell;
 else `OK` when the row is an `SA` or `MS` value whose resolution reads `RESOLVED` or
 `RESOLVED-UNTESTED`, whose coverage reads `OK`, with no failed Maxwell gate and no
-tolerated library mismatch; else `CHECK` (a served value the run cannot certify:
-`MARGINAL`, `NO-BARS`, coverage `LOW` / `PARTIAL` / `NOT-ACHIEVABLE`, a failed gate, a
-tolerated mismatch, and every `MA` row, whose `information` reads `MA not certified`). `OK`
+tolerated library mismatch, and that is not a box (`region`) row while the bars' region
+scope is untested (`TestedScopes` without `"Region"`, as the built-in bars); else `CHECK`
+(a served value the run cannot certify: `MARGINAL`, `NO-BARS`, coverage `LOW` / `PARTIAL` /
+`NOT-ACHIEVABLE`, a failed gate, a tolerated mismatch, a box row under such bars, and every
+`MA` row, whose `information` reads `MA not certified`). `OK`
 says that the run's own checks pass; it cannot say that a value is right on a geometry no
 thick reference covers. The Maxwell gates of the value (eigenmode and driven rows with a
 fixed-trace estimate; the electrostatic path computes none of them) add a flags word with
 the number and its limit when they fail: `kR <v> above 0.1`, `loop residual <v> above 0.05`
 (the response-weighted loop residual), `loop fraction <v> above 0.01` (the loop-response
 fraction above its limit), `library distance <v> above 0.8` and
-`boundary law not verified`; the log names them in a Warning. THE RECORD of the word on the benchmark's 188
-graded `SA` and `MS` cells against thick references: `OK` 98 within 5 % and 1 beyond (an
-electrostatic window's `SA` at -5.14 %, 0.14 points past the bar), `CHECK` 27 and 12,
-`DO-NOT-USE` 6 and 44; every `OK` cell of the 16 held-out windows of 13 designs is within
-5 %. BY PROBLEM TYPE: electrostatic and driven cells read `OK` on the benchmark (98 of 99
-within 5 %, the one exception above); NO eigenmode cell reads `OK` there yet. `OK` is a
-5 % word only (44 of the 99 are within 2 %), and it has no record on a whole chip.
+`boundary law not verified`; the log names them in a Warning. THE RECORD of the word on the
+benchmark's 188 graded `SA` and `MS` cells against thick references: `OK` 98 within 5 % and
+1 beyond (an electrostatic window's `SA` at -5.14 %, 0.14 points past the bar), `CHECK` 27
+and 12, `DO-NOT-USE` 6 and 44; the `OK` cells of the held-out windows are within 5 % on 25
+of 25 (13 windows of 11 designs carry `OK` cells). BY PROBLEM TYPE: electrostatic and driven
+cells read `OK` on the benchmark (98 of 99 within 5 %, the one exception above); NO
+eigenmode cell reads `OK` there yet. BY SCOPE: every `OK` cell is a `Type` value; NO box
+(`region`) value reads `OK` in v1 yet: a box row reads `CHECK` while the bars' region scope
+is untested, because no box value has read `OK` on the benchmark and a box's census reads
+its own patches (optimistic on junction boxes); the benchmark is to test the bars on boxes.
+`OK` is a 5 % word only (44 of the 99 are within 2 %), and it has no record on a whole chip.
 
 An eigenmode's index can change between levels, so its rows join the previous level's mode
 that is the same physical mode, by its fingerprint: the raw participations of its whole
@@ -4064,7 +4070,8 @@ census, while a `region` row reads the census of its own patches, which reads fi
 junction boxes (2.85 against 3.27 ``R`` on one measured level), so with `["Type"]` the
 resolution words of `region` rows read `RESOLVED-UNTESTED`, `MARGINAL-UNTESTED` and
 `UNDER-RESOLVED-UNTESTED` (their convergence word and its guard on the box's own census are
-unchanged) until the box values are graded with their own census. They were measured on 634
+unchanged) until the box values are graded with their own census; until then a box row's
+summary reads `CHECK`. They were measured on 634
 values of three designs (two electrostatic windows and the junction boxes of a third; one
 eigenmode design; perfect conductors; ``R = 1.9`` µm): SETTLED values within the bar were
 within 5 % of a thick-metal reference in every case (39 values), the safe ``T`` per design

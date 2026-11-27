@@ -1687,6 +1687,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     }
     CHECK_THAT(served_log, ContainsSubstring("Maxwell surface response: a gate of the "
                                              "postprocessing-only value failed: kR "));
+    // Review MINOR 3: a gate's rows may read CHECK or DO-NOT-USE; the Warning says neither.
+    CHECK_THAT(served_log,
+               ContainsSubstring("(its rows cannot read OK in surface-participation.csv)"));
     const std::string line = "the gap between two closures, information, not a verdict";
     CHECK(served_log.find(line) != std::string::npos);
     CHECK(served_log.find(line) == served_log.rfind(line));

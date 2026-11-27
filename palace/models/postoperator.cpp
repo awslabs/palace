@@ -3546,7 +3546,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           words += (words.empty() ? "" : "; ") + word;
         }
         Mpi::Warning("Maxwell surface response: a gate of the postprocessing-only value "
-                     "failed: {} (its rows read CHECK in surface-participation.csv)\n",
+                     "failed: {} (its rows cannot read OK in surface-participation.csv)\n",
                      words);
         surface_response_warning_printed = true;
       }

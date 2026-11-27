@@ -443,13 +443,16 @@ words only; `information` holds the words that are not verdicts).
 The designer's rule, by the `summary` column:
 
   - `OK`: use the value (an `SA` or `MS` value whose run's own checks pass).
-  - `CHECK`: a served value the run cannot certify (every `MA` value): read its `flags` and `information`.
-  - `DO-NOT-USE`: do not use the value (raw where a correction is due, `UNDER-RESOLVED` or not evaluated).
+  - `CHECK`: a served value the run cannot certify (every `MA` value; every box value while the bars' region scope is untested): read its `flags` and `information`.
+  - `DO-NOT-USE`: do not use the value (raw where a correction is due, `UNDER-RESOLVED`, not evaluated, not a number, or marked by `"MarkNotApplied"`).
 
 `OK` is a 5 % word: on the benchmark 98 of 99 `OK` values were within 5 % of thick (44
-within 2 %), electrostatic and driven only (no eigenmode value has read `OK` yet), and none
-on a whole chip. The `S` column keeps its bound on any served value: at ``S \ge 5`` % an
-`SA` value can be off by up to ``5 S`` points and an `MS` value by up to ``6 S``.
+within 2 %), electrostatic and driven only (no eigenmode value has read `OK` yet), `Type`
+values only (no box value has read `OK` yet: a box's census reads its own patches, which is
+optimistic on junction boxes, so a box row reads `CHECK` until the benchmark tests the bars
+on boxes), and none on a whole chip. The `S` column keeps its bound on any served value: at
+``S \ge 5`` % an `SA` value can be off by up to ``5 S`` points and an `MS` value by up to
+``6 S``.
 
 Read the rows whose `scope` is `Type` (the corrected participation of a `Type`, summed over
 its interfaces) or `region` (a box value): their verdicts are of that value; an `interface`
