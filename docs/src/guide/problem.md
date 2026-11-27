@@ -64,19 +64,20 @@ number of modes is found. Each starting value left which is nearer the target th
 of these modes, in frequency and in the complex plane, is then refined once, and the
 nearest modes found are returned, with all those found of a degenerate last mode. An
 attempt ends when its residual decreases by less than 10% in two windows of
-`PreconditionerLag` iterations in a row (until the requested modes are found, only above
-`PreconditionerLagTol`). These are converged modes, but not always the ones nearest the
-target: a mode which no starting value leads to is missed, such as a strongly damped mode
-far from the real frequencies where the interpolated terms are accurate, and a small error
-for a returned mode does not show that no lower mode was missed. Changing `Target`,
-`TargetUpper`, or the number of modes changes its starting values. It can also converge
-fewer modes than were requested, for example near a material resonance with a wave port or
-an absorbing boundary next to the material, or with `"SLP"` or `"PEPLinear": false`, which
-do not linearize the pole terms; the converged modes are then postprocessed, with a
+`PreconditionerLag` iterations in a row; its starting value is refined again without this
+end if fewer modes than requested are found, or, as a starting value left, if it is nearer
+the target than the last mode found. These are converged modes, but not always the ones
+nearest the target: a mode which no starting value leads to is missed, such as a strongly
+damped mode far from the real frequencies where the interpolated terms are accurate, and a
+small error for a returned mode does not show that no lower mode was missed. Changing
+`Target`, `TargetUpper`, or the number of modes changes its starting values. It can also
+converge fewer modes than were requested, for example near a material resonance with a wave
+port or an absorbing boundary next to the material, or with `"SLP"` or `"PEPLinear": false`,
+which do not linearize the pole terms; the converged modes are then postprocessed, with a
 warning. A wave port or an absorbing boundary next to a frequency-dependent material can
-make it miss modes nearest the target also without a resonance, as with a `Debye` or
-`Drude` material, and *Palace* warns of such a boundary on this route. A wave port mode
-solve at a complex frequency that does not converge is fatal.
+make it miss modes nearest the target also without a resonance, as with a `Debye` or `Drude`
+material, and *Palace* warns of such a boundary on this route. A wave port mode solve at a
+complex frequency that does not converge is fatal.
 
 The divergence-free projection is disabled for frequency-dependent permittivity: a fixed
 high-frequency projector does not impose the frequency-dependent interface condition, and

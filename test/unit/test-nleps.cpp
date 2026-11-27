@@ -679,20 +679,29 @@ struct QuasiNewtonResult
   std::string out;
 };
 
+using GuessVector = std::vector<std::pair<long long, double>>;  // (global dof, value)
+
 QuasiNewtonResult
-RunQuasiNewton(const DiagonalLorentzProblem &p,
-               const std::vector<std::pair<std::complex<double>, long long>> &guesses,
-               int num, double s, double tol)
+RunQuasiNewtonV(const DiagonalLorentzProblem &p,
+                const std::vector<std::pair<std::complex<double>, GuessVector>> &guesses,
+                int num, double s, double tol, int ksp_its = 100,
+                std::complex<double> pc_omega = 0.0, int max_its = 100)
 {
   std::vector<std::complex<double>> theta;
   std::vector<ComplexVector> vecs;
-  for (const auto &[l, j] : guesses)
+  for (const auto &[l, entries] : guesses)
   {
     ComplexVector x0(p.LocalSize());
     x0 = 0.0;
     for (int i = 0; i < p.LocalSize(); i++)
     {
-      x0.Real()(i) = (p.gid[i] == j) ? 1.0 : 0.0;
+      for (const auto &[j, val] : entries)
+      {
+        if (p.gid[i] == j)
+        {
+          x0.Real()(i) = val;
+        }
+      }
     }
     theta.push_back(l);
     vecs.push_back(std::move(x0));
@@ -702,18 +711,26 @@ RunQuasiNewton(const DiagonalLorentzProblem &p,
                        std::make_unique<SeedEigenpairs>(std::move(theta), std::move(vecs)),
                        num_guesses, 1, true);
   qn.SetTol(tol);
-  qn.SetMaxIter(100);
+  qn.SetMaxIter(max_its);
   qn.SetOperators(*p.K, *p.M, EigenvalueSolver::ScaleType::NONE);
   qn.SetExtraSystemMatrix([&p](std::complex<double> l) { return p.A2(l); });
-  qn.SetPreconditionerUpdate([&p](std::complex<double> a0, std::complex<double>,
-                                  std::complex<double> a2, std::complex<double> a3)
-                             { return p.Preconditioner(a0, a2, a3); });
+  qn.SetPreconditionerUpdate(
+      [&p, pc_omega](std::complex<double> a0, std::complex<double>, std::complex<double> a2,
+                     std::complex<double> a3)
+      {
+        if (pc_omega == 0.0)
+        {
+          return p.Preconditioner(a0, a2, a3);
+        }
+        const auto l = std::complex<double>(0.0, 1.0) * pc_omega;
+        return p.Preconditioner(1.0, l * l, pc_omega);
+      });
   qn.SetNumModes(num, num);
   qn.SetPreconditionerLag(10, 1.0e-4);
   qn.SetMaxRestart(2);
   auto gmres = std::make_unique<GmresSolver<ComplexOperator>>(Mpi::World(), 0);
   gmres->SetRelTol(1.0e-12);
-  gmres->SetMaxIter(100);
+  gmres->SetMaxIter(ksp_its);
   ComplexKspSolver ksp(std::move(gmres), std::make_unique<ScaledDiagonalInverse>(1.0));
   qn.SetLinearSolver(ksp);
   qn.SetShiftInvert(std::complex<double>(0.0, s));
@@ -766,6 +783,19 @@ void RequireNotFirstDofs(const DiagonalLorentzProblem &p, long long n)
   int first_coupled = (p.LocalSize() > 0 && p.gid[0] >= 1 && p.gid[0] <= n) ? 1 : 0;
   Mpi::GlobalMax(1, &first_coupled, Mpi::World());
   REQUIRE(first_coupled == 0);
+}
+
+QuasiNewtonResult
+RunQuasiNewton(const DiagonalLorentzProblem &p,
+               const std::vector<std::pair<std::complex<double>, long long>> &guesses,
+               int num, double s, double tol)
+{
+  std::vector<std::pair<std::complex<double>, GuessVector>> v;
+  for (const auto &[l, j] : guesses)
+  {
+    v.push_back({l, {{j, 1.0}}});
+  }
+  return RunQuasiNewtonV(p, v, num, s, tol);
 }
 
 // The root of dof k with the larger (upper) or smaller (lower) imaginary part.
@@ -925,5 +955,72 @@ TEST_CASE("Quasi-Newton finds eigenpairs with linearly dependent eigenvectors",
     CHECK(std::abs(r.eig[m] - roots[m].first) <= 1.0e-8 * std::abs(roots[m].first));
     CHECK(r.backward_error[m] <= tol);
     CHECK(r.weight[m] >= 1.0 - 1.0e-12);
+  }
+}
+
+// An attempt which stalls is ended, and the guess is refined again without the stall exit
+// when it can change the result. Here the linear solves of the iteration are inexact: one
+// GMRES iteration, with the diagonal preconditioner of T(λ) at the fixed λ = 1.8i. From a
+// guess of the upper root of dof 1 with a small part on the decoupled dof 0, the residual
+// then stays above the tolerance 1e-12 from the 10th iteration on: the attempt stalls after
+// 31 iterations (two windows of 10 without a reduction of 10%).
+TEST_CASE("Quasi-Newton ends the attempts which stall", "[nleps][Serial][Parallel]")
+{
+  constexpr double tol = 1.0e-12;
+  const DiagonalLorentzProblem p(CoupledDofs({4.0, 6.0, 9.0}));
+  RequireNotFirstDofs(p, 3);
+  const auto l0 = UpperRoot(p, 4.0), l1 = UpperRoot(p, 6.0);
+  const std::pair<std::complex<double>, GuessVector> stalling = {
+      l0 + std::complex<double>(0.0, 1.0e-4), {{1, 1.0}, {0, 1.0e-8}}};
+  // The iterations of the first attempt, which stalls, and the output after it.
+  auto Stall = [](const std::string &out) -> std::pair<int, std::string>
+  {
+    std::smatch m;
+    if (!std::regex_search(
+            out, m,
+            std::regex(R"(Quasi-Newton stalled after (\d+) iterations, restarting\.)")))
+    {
+      return {0, ""};
+    }
+    return {std::stoi(m[1].str()), m.suffix().str()};
+  };
+  SECTION("Fewer eigenvalues found than requested")
+  {
+    // With no eigenvalue found, the only guess is refined again without the stall exit, to
+    // the 100 iterations of an attempt, before the random guess.
+    const auto r = RunQuasiNewtonV(p, {stalling}, 1, 1.5, tol, 1, 1.8);
+    CAPTURE(r.out);
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto [its, after] = Stall(r.out);
+      CHECK(its == 31);
+      const auto again = after.find("Refining again the 1 initial guess which stalled");
+      CHECK(again != std::string::npos);
+      CHECK((again != std::string::npos &&
+             after.find("Quasi-Newton did not converge in 100 iterations", again) !=
+                 std::string::npos));
+    }
+  }
+  SECTION("Guess nearer the target than the eigenvalue found")
+  {
+    // The next guess, of the upper root of dof 2, farther from the target, converges: the
+    // guess which stalled is then refined again, in an attempt without the stall exit.
+    const auto r =
+        RunQuasiNewtonV(p, {stalling, {l1 + std::complex<double>(0.0, 1.0e-4), {{2, 1.0}}}},
+                        1, 1.5, tol, 1, 1.8);
+    CAPTURE(r.out);
+    REQUIRE(r.eig.size() == 1);
+    CHECK((std::abs(r.eig[0] - l1) <= 1.0e-8 * std::abs(l1) ||
+           std::abs(r.eig[0] - l0) <= 1.0e-8 * std::abs(l0)));
+    if (Mpi::Root(Mpi::World()))
+    {
+      const auto [its, after] = Stall(r.out);
+      CHECK(its == 31);
+      const auto found = after.find("Eigenvalue 0, Quasi-Newton converged in");
+      CHECK(found != std::string::npos);
+      CHECK((found != std::string::npos &&
+             after.find("0 NLEPS (nconv=1, restart=0)", found) != std::string::npos));
+      CHECK(after.find("stalled") == std::string::npos);
+    }
   }
 }
