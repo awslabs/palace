@@ -1442,13 +1442,16 @@ TEST_CASE_METHOD(
   correction["PatchEnergy"] = true;
   config["Solver"]["Linear"] = {{"Tol", 1.0e-12}, {"MaxIts", 400}};
   config["Boundaries"]["Postprocessing"]["Dielectric"][0]["Region"] = HalfSpaceRegion(true);
+  std::map<std::string, std::string> logs;
   auto Run = [&](const std::string &stem, const json &refinement)
   {
     json run = config;
     run["Model"]["Refinement"] = refinement;
     const fs::path output = temp.temp_dir / ("participation-levels-" + stem);
     run["Problem"]["Output"] = output.string();
-    test::RunElectrostatic(run);
+    logs[stem] = CaptureStdout(
+        temp.temp_dir / fmt::format("levels-{}-{}.log", stem, Mpi::Rank(Mpi::World())),
+        [&]() { test::RunElectrostatic(run); });
     Mpi::Barrier(Mpi::World());
     return output;
   };
@@ -1461,6 +1464,15 @@ TEST_CASE_METHOD(
   if (!Mpi::Root(Mpi::World()))
   {
     return;
+  }
+  // Lane v1wordscode (R1): the trace-closure gates are one information line per run, also
+  // over two adaptive levels; the per-solve Warning is gone.
+  for (const auto &[stem, log] : logs)
+  {
+    INFO("run " << stem);
+    CHECK(Occurrences(log, "the gap between two closures, information, not a verdict") ==
+          1);
+    CHECK(Occurrences(log, "confidence limits were exceeded") == 0);
   }
   const Table levels = test::LoadCsv(two / "surface-participation.csv");
   const Table single = test::LoadCsv(one / "surface-participation.csv");

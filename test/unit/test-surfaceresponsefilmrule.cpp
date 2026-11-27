@@ -1657,7 +1657,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
-  const auto served = RunDefaultSheetEigenmode(*this, "served", 4.5e-14, "Warn");
+  fs::path served;
+  const std::string served_log = CaptureStdout(
+      temp.temp_dir / fmt::format("served-{}.log", Mpi::Rank(Mpi::World())),
+      [&] { served = RunDefaultSheetEigenmode(*this, "served", 4.5e-14, "Warn"); });
   const auto above = RunDefaultSheetEigenmode(*this, "above", 4.5e-12, "Warn");
   if (!Mpi::Root(Mpi::World()))
   {
@@ -1667,15 +1670,26 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   { return json::parse(std::ifstream(dir / "palace.json")); };
   {
     // Lane v1wordscode: the served word is an information word; flags hold bad words only.
+    // The Maxwell gates of the value reach the rows and the log: this coarse test device's
+    // kR is far above 0.1, so every served row names it and reads CHECK; the trace-closure
+    // gates are one information line of the run.
     const auto flags = ValuedRowWords(served);
     const auto information = ValuedRowWords(served, "information");
+    const auto summary = ValuedRowWords(served, "summary");
     REQUIRE(!flags.empty());
     for (std::size_t i = 0; i < flags.size(); i++)
     {
       CHECK_THAT(information[i], ContainsSubstring(kParticipationSheetServedFlag));
       CHECK_THAT(flags[i], !ContainsSubstring(kParticipationSheetServedFlag));
       CHECK_THAT(flags[i], !ContainsSubstring(kParticipationSheetNotServedFlag));
+      CHECK_THAT(flags[i], ContainsSubstring("kR ") && ContainsSubstring(" above 0.1"));
+      CHECK(summary[i] == kParticipationSummaryCheck);
     }
+    CHECK_THAT(served_log, ContainsSubstring("Maxwell surface response: a gate of the "
+                                             "postprocessing-only value failed: kR "));
+    const std::string line = "the gap between two closures, information, not a verdict";
+    CHECK(served_log.find(line) != std::string::npos);
+    CHECK(served_log.find(line) == served_log.rfind(line));
     const auto record = ReadMetadata(served).at("SurfaceResponse").at("ImpedanceMetalRule");
     CHECK(record.at("ServedImpedanceFeatures").get<int>() > 0);
     const auto lines = record.at("Lines").get<std::vector<std::string>>();
