@@ -29,14 +29,15 @@ class IoData;
 //
 // THE RULE: a mismatch is tolerated while its ESTIMATED EFFECT on a corrected value stays
 // within kLibraryMismatchEffectLimit; inside it one warning lists every mismatch with its
-// size and effect, beyond it the run stops with the same list ("Developer": true makes
-// such a stop a warning). The effect of one mismatch is its measured factor
+// size and effect, beyond it the run stops with the same list (no override: the developer
+// switch does not relax it). The effect of one mismatch is its factor
 // (LibraryMismatchFactor) times |config / library - 1|; the effects that act on one target
-// interface add (its own layer's permittivity and thickness, and the substrate's), and the
-// limit applies to that sum. |config / library - 1| <= kLibraryMismatchEqualTolerance is
-// equality. The other rows stop at any difference (R, a missing InterfaceLayers entry, the
-// library reader's own refusals, the length unit, a parked metal law without the developer
-// switch, the target set) or warn that nothing can be verified (no InterfaceLayers).
+// interface add (its own layer's permittivity and thickness, and the largest of the
+// substrate rows), and the limit applies to that sum. |config / library - 1| <=
+// kLibraryMismatchEqualTolerance is equality. The other rows stop at any difference (R, a
+// missing InterfaceLayers entry, the library reader's own refusals, the length unit, a
+// parked metal law without the developer switch, the target set) or warn that nothing can
+// be verified (no InterfaceLayers).
 //
 inline constexpr double kLibraryMismatchEffectLimit = 0.01;
 inline constexpr double kLibraryMismatchEqualTolerance = 1.0e-10;
@@ -48,9 +49,9 @@ enum class LibraryMismatchQuantity : char
   SUBSTRATE_PERMITTIVITY
 };
 
-// The estimated effect on a corrected value of Type `affected` per unit relative mismatch
-// of `quantity` (of the layer of Type `layer`; any `layer` for the substrate). A layer's
-// mismatch acts on its own Type only (0 otherwise). The measurement is in the .cpp.
+// The effect on a corrected value of Type `affected` per unit relative mismatch of
+// `quantity` (of the layer of Type `layer`; any `layer` for the substrate). A layer's
+// mismatch acts on its own Type only (0 otherwise). Where the numbers come from: the .cpp.
 double LibraryMismatchFactor(LibraryMismatchQuantity quantity, InterfaceDielectric layer,
                              InterfaceDielectric affected);
 
@@ -102,11 +103,14 @@ struct LibraryCheckRow
   Kind kind = Kind::STOP;
   std::string quantity, entry, config_value, library_value, tolerance;
   // EFFECT rows: config / library - 1, the two numbers, and the estimated effect on every
-  // target interface the mismatch acts on (index -> factor x |mismatch|).
+  // target interface the mismatch acts on (index -> factor x |mismatch|). `substrate`: a
+  // row of the substrate (per target the largest of them counts: one patch lies on one
+  // substrate, so a target's error is a weighted mean of the materials' effects).
   double mismatch = std::numeric_limits<double>::quiet_NaN();
   double config_number = std::numeric_limits<double>::quiet_NaN();
   double library_number = std::numeric_limits<double>::quiet_NaN();
   std::map<int, double> effect;
+  bool substrate = false;
 };
 
 struct LibraryCheckReport
@@ -116,8 +120,7 @@ struct LibraryCheckReport
   std::map<int, double> target_effect;
   std::map<int, InterfaceDielectric> target_type;
   bool beyond_rule = false;  // a summed effect beyond kLibraryMismatchEffectLimit
-  bool stop = false;         // a STOP row, or beyond the rule without the developer switch
-  bool developer = false;
+  bool stop = false;         // a STOP row, or beyond the rule (no override)
   bool Empty() const { return rows.empty(); }
 };
 
@@ -128,12 +131,16 @@ FindLibraryLoadRows(const IoData &iodata,
                     const std::vector<LibraryCheckTarget> &targets,
                     const LibraryCheckLibrary &library);
 
-// The substrate at load: a row (judged by the rule) when the configuration has a material
-// other than vacuum and none of them could pass the check after the mesh alone; else none,
-// and `candidates` names the materials that could be the substrate.
+// The substrate at load, judged WITH the rows found at load (`load_rows`): a configured
+// material other than vacuum can pass only if, for every target, the target's layer effect
+// plus the substrate factor of its Type times the material's |mismatch| stays within the
+// limit. When one or more can pass: no row, and `candidates` names them; when none can
+// (and the closest is not equal to the library's substrate): the closest material's row,
+// which the judge then stops.
 std::optional<LibraryCheckRow>
 FindSubstrateLoadRow(const IoData &iodata, const LibraryCheckLibrary &library,
                      const std::vector<LibraryCheckTarget> &targets,
+                     const std::vector<LibraryCheckRow> &load_rows,
                      std::string *candidates);
 
 // The substrate after the mesh: one row per material next to the corrected metal that is
@@ -143,11 +150,10 @@ SubstrateMeshRows(const IoData &iodata, const std::map<int, std::vector<int>> &m
                   double substrate_permittivity,
                   const std::vector<LibraryCheckTarget> &targets);
 
-// The verdict of the rule on the rows (the developer switch turns a stop of the rule into
-// a warning, never a STOP row).
+// The verdict of the rule on the rows: per target the layer rows' effects plus the largest
+// substrate row's; beyond the limit the run stops (no override).
 LibraryCheckReport JudgeLibraryRows(std::vector<LibraryCheckRow> rows,
-                                    const std::vector<LibraryCheckTarget> &targets,
-                                    bool developer);
+                                    const std::vector<LibraryCheckTarget> &targets);
 
 // The one message: the library, the rule, the profile, `substrate_line`, every row with its
 // tolerance and action, the summed effect per Type, and the verdict.

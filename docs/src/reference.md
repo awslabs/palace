@@ -1840,18 +1840,26 @@ after it.
 
 THE RULE. A mismatch is tolerated while its estimated effect on a corrected value stays
 within 1 %: inside, one warning lists every mismatching entry with its size and its
-estimated effect, and the run goes on; beyond, the run stops with the same list. The
-effect of one mismatch is its factor times its relative size ``|c / l - 1|`` (``c`` the
-configuration's value, ``l`` the library's); the effects acting on one target interface
-add (its own layer's permittivity and thickness, and the substrate's), and the 1 % applies
-to that sum. With `"Developer": true` a stop of the rule becomes a warning. The factors
-were measured on an electrostatic window of the CTX-002 design (Order 3, three terminals,
-six target interfaces), one value of the configuration moved by +0.175 % and +1 % with
-the library unchanged, as the move of the corrected value minus the move of the raw
-value (the largest over the window's values, rounded up): a layer's permittivity `MA`
-0.90, `MS` 0.94, `SA` 0.87, and a layer's thickness `MA` 0.91, `MS` 0.95, `SA` 0.94, each
-on its own type only; the substrate's permittivity `MA` 0.16, `MS` 1.86, `SA` 0.11. Alone,
-a layer may thus differ by about 1 % and the substrate by about 0.5 %.
+estimated effect, and the run goes on; beyond, the run stops with the same list. The stop
+has no override: `"Developer": true` does not relax it. The effect of one mismatch is its
+factor times its relative size ``|c / l - 1|`` (``c`` the configuration's value, ``l`` the
+library's); on one target interface the effects of its own layer's permittivity and
+thickness add, and of the substrate the largest one is added (a value is a sum over patches,
+each on one substrate); the 1 % applies to that sum. A layer's permittivity and thickness
+have the factor 1 on their own type (the error is at most the mismatch: the library-served
+share of the value times it). The substrate's permittivity changes the field itself; its
+factor was measured on two electrostatic windows of two designs, the CTX-002 flat window
+(Order 3, three terminals, six target interfaces) and the CTX-003 window C2 (Order 4, one
+terminal, five target interfaces, one fixed mesh), the substrate moved by +0.175 % and +1 %
+with the library unchanged, as the move of the corrected value minus the move of the raw
+value (the largest over the window's values, per unit mismatch): `MA` 0.157 and 0.230,
+`MS` 1.858 and 1.795, `SA` 0.102 and 0.019; the larger of the two, rounded up to one
+decimal, is used: `MA` 0.3, `MS` 1.9, `SA` 0.2. Alone, a layer may thus differ by 1 % and
+the substrate by about 0.5 %. At load, before the mesh says which domains touch the
+corrected metal, a configured material other than vacuum can be the substrate only if, with
+the layer mismatches, it passes the rule on every target interface; when none can, the run
+stops at load; a material not named there that lies next to the corrected metal stops the
+run after the mesh.
 
 | In the device configuration                                                                    | In the library                                                                     | On a mismatch                                                                                                                                                                                   |
 |:---------------------------------------------------------------------------------------------- |:---------------------------------------------------------------------------------- |:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -1866,13 +1874,15 @@ a layer may thus differ by about 1 % and the substrate by about 0.5 %.
 | the boundary law of the metal (`PEC`, `Impedance` with its `Rs` / `Ls` / `Cs`, ...)            | each model's `BoundaryCondition`                                                   | no error: the features have no model (Missing, uncorrected); the warning names the law when the library holds the same geometry under another law                                               |
 
 The library file itself (opened, read, its `Version`, its entries) is read at load by the
-reader of the run, so its refusals also come before the mesh. The load message prints the
-library's fabricated profile (`MetalThickness`, `OveretchDepth`, `SidewallAngle`,
-`TopRoundingRadius`, `BottomRoundingRadius`); the configuration has no profile to compare
+reader of the run, so its refusals also come before the mesh. `Fabrication.LengthUnit` may
+also be written `µm`, `μm` or `micron` (as `um`); another word stops the run as an unknown
+`LengthUnit` word. The load message prints the library's fabricated profile
+(`MetalThickness`, `OveretchDepth`, `SidewallAngle`, `TopRoundingRadius`,
+`BottomRoundingRadius`); the configuration has no profile to compare
 with. A tolerated mismatch is named in the outputs: the flags word `library mismatch tolerated` on every affected row of `surface-participation.csv`, and
 `SurfaceResponse.LibraryMismatch` in `palace.json` (`Mismatches` with `Quantity`, `Entry`,
 `Config`, `Library`, `Mismatch` and `EstimatedEffect` per type; `EstimatedEffectPerType`;
-`Interfaces`; `BeyondRule`); without a mismatch neither is written.
+`Interfaces`); without a mismatch neither is written.
 
 `OpenContourPaths` is required when conductor cuts interrupt the free matching contour.
 Each one-based `Indices` list orders a disjoint subset of `BasisPoints` from

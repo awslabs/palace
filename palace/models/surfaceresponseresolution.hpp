@@ -217,11 +217,14 @@ inline constexpr int kResolutionPreflightSpatialHistogram =
 inline constexpr int kResolutionPreflightStride =
     kResolutionPreflightSpatialHistogram + kResolutionHistogramBins;
 // One patch's PREFLIGHT sums in one slot (the census operator's per-patch add): an EDGE
-// patch (`length` > 0) adds its length to its status bin and, with a reading, to the edge
-// histogram at m; any other patch counts in the spatial bins and, with a reading, adds its
-// `knots` to the spatial histogram at m.
+// patch (`length` > 0, its strip length) adds its length to its status bin and, with a
+// reading, to the edge histogram at m; any other patch counts in the spatial bins and,
+// with a reading, adds its `knots` to the spatial histogram at m. The length and the knots
+// weigh `model_weight` (> 0, verified: the patch's member weight in an interpolated
+// feature, so that the feature's edge counts once; every patch with a reading then keeps a
+// positive weight, the coarse-cells flag's guarantee).
 void AddResolutionPreflightPatch(double *slot, ResolutionStatus status, double m,
-                                 double length, double knots);
+                                 double model_weight, double length, double knots);
 // `under_resolved_m`: the table's UNDER-RESOLVED limit U in h/R at the run's order (NaN:
 // no bar), for largest_m / under_resolved_share.
 ResolutionPreflightRow ComputeResolutionPreflightRow(const double *slot,

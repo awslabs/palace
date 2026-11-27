@@ -71,13 +71,11 @@ json IslandTwoTargetConfig(const test::SurfaceResponseFiles &files)
   return config;
 }
 
-LibraryCheckReport Judge(const IoData &iodata, const LibraryCheckLibrary &library,
-                         bool developer = false)
+LibraryCheckReport Judge(const IoData &iodata, const LibraryCheckLibrary &library)
 {
   const auto &request = *iodata.solver.electrostatic.response_correction;
   const auto targets = LibraryCheckTargets(iodata, request);
-  return JudgeLibraryRows(FindLibraryLoadRows(iodata, request, targets, library), targets,
-                          developer);
+  return JudgeLibraryRows(FindLibraryLoadRows(iodata, request, targets, library), targets);
 }
 
 }  // namespace
@@ -87,15 +85,16 @@ TEST_CASE("LibraryMismatchFactor: a layer acts on its own Type, the substrate on
 {
   using Q = LibraryMismatchQuantity;
   using T = InterfaceDielectric;
-  CHECK(LibraryMismatchFactor(Q::LAYER_PERMITTIVITY, T::MS, T::MS) == 0.94);
-  CHECK(LibraryMismatchFactor(Q::LAYER_PERMITTIVITY, T::SA, T::SA) == 0.87);
-  CHECK(LibraryMismatchFactor(Q::LAYER_PERMITTIVITY, T::MA, T::MA) == 0.90);
+  CHECK(LibraryMismatchFactor(Q::LAYER_PERMITTIVITY, T::MS, T::MS) == 1.0);
+  CHECK(LibraryMismatchFactor(Q::LAYER_PERMITTIVITY, T::SA, T::SA) == 1.0);
+  CHECK(LibraryMismatchFactor(Q::LAYER_PERMITTIVITY, T::MA, T::MA) == 1.0);
   CHECK(LibraryMismatchFactor(Q::LAYER_PERMITTIVITY, T::MS, T::SA) == 0.0);
-  CHECK(LibraryMismatchFactor(Q::LAYER_THICKNESS, T::MS, T::MS) == 0.95);
+  CHECK(LibraryMismatchFactor(Q::LAYER_THICKNESS, T::MS, T::MS) == 1.0);
   CHECK(LibraryMismatchFactor(Q::LAYER_THICKNESS, T::MA, T::MS) == 0.0);
-  CHECK(LibraryMismatchFactor(Q::SUBSTRATE_PERMITTIVITY, T::DEFAULT, T::MS) == 1.86);
-  CHECK(LibraryMismatchFactor(Q::SUBSTRATE_PERMITTIVITY, T::DEFAULT, T::MA) == 0.16);
-  CHECK(LibraryMismatchFactor(Q::SUBSTRATE_PERMITTIVITY, T::DEFAULT, T::SA) == 0.11);
+  // The larger of two windows' readings (CTX-002, CTX-003), rounded up to one decimal.
+  CHECK(LibraryMismatchFactor(Q::SUBSTRATE_PERMITTIVITY, T::DEFAULT, T::MS) == 1.9);
+  CHECK(LibraryMismatchFactor(Q::SUBSTRATE_PERMITTIVITY, T::DEFAULT, T::MA) == 0.3);
+  CHECK(LibraryMismatchFactor(Q::SUBSTRATE_PERMITTIVITY, T::DEFAULT, T::SA) == 0.2);
 }
 
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
@@ -118,12 +117,12 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     double value, effect;
     bool stop;
   };
-  for (const Case &c : {Case{"Permittivity", 1, 11.45 * 1.005, 0.94 * 0.005, false},
-                        Case{"Permittivity", 1, 11.45 * 1.015, 0.94 * 0.015, true},
-                        Case{"Permittivity", 0, 4.0 * 0.99, 0.87 * 0.01, false},
-                        Case{"Permittivity", 0, 4.0 * 0.98, 0.87 * 0.02, true},
-                        Case{"Thickness", 1, 0.002 * 1.005, 0.95 * 0.005, false},
-                        Case{"Thickness", 1, 0.002 * 1.02, 0.95 * 0.02, true}})
+  for (const Case &c : {Case{"Permittivity", 1, 11.45 * 1.005, 0.005, false},
+                        Case{"Permittivity", 1, 11.45 * 1.015, 0.015, true},
+                        Case{"Permittivity", 0, 4.0 * 0.995, 0.005, false},
+                        Case{"Permittivity", 0, 4.0 * 0.98, 0.02, true},
+                        Case{"Thickness", 1, 0.002 * 1.005, 0.005, false},
+                        Case{"Thickness", 1, 0.002 * 1.02, 0.02, true}})
   {
     CAPTURE(c.key, c.entry, c.value);
     json config = base;
@@ -136,15 +135,13 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK_THAT(report.target_effect.at(index), WithinRel(c.effect, 1.0e-9));
     CHECK(report.stop == c.stop);
     CHECK(report.beyond_rule == c.stop);
-    // The developer switch tolerates an effect beyond the rule.
-    CHECK_FALSE(Judge(iodata, library, true).stop);
   }
   // Rows that stop at any difference, and the one that cannot verify.
   {
     json config = base;
     config["Boundaries"]["Postprocessing"]["Dielectric"][1]["EdgeDistances"] = {0.2001};
     IoData iodata(config, false);
-    const auto report = Judge(iodata, library, true);
+    const auto report = Judge(iodata, library);
     REQUIRE(report.rows.size() == 1);
     CHECK(report.rows[0].quantity == "R (the largest EdgeDistances)");
     CHECK(report.stop);
@@ -156,7 +153,7 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     IoData iodata(base, false);
     auto other = library;
     other.interface_layers.erase(InterfaceDielectric::MS);
-    auto report = Judge(iodata, other, true);
+    auto report = Judge(iodata, other);
     REQUIRE(report.rows.size() == 1);
     CHECK(report.rows[0].quantity == "MS InterfaceLayers entry");
     CHECK(report.stop);
@@ -170,7 +167,19 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     IoData iodata(base, false);
     auto other = library;
     other.length_unit = "nm";
-    CHECK(Judge(iodata, other, true).stop);
+    CHECK(Judge(iodata, other).stop);
+    // The micro forms name 1e-6 m; an unknown word is named as such.
+    for (const std::string unit : {"\u00b5m", "\u03bcm", "micron"})
+    {
+      CAPTURE(unit);
+      other.length_unit = unit;
+      CHECK(Judge(iodata, other).Empty());
+    }
+    other.length_unit = "microns-ish";
+    const auto unknown = Judge(iodata, other);
+    REQUIRE(unknown.rows.size() == 1);
+    CHECK(unknown.stop);
+    CHECK_THAT(unknown.rows[0].library_value, ContainsSubstring("unknown LengthUnit word"));
     other.length_unit.reset();
     CHECK(Judge(iodata, other).Empty());
     // Parked metal laws: every such model named without the switch, allowed with it.
@@ -180,9 +189,9 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     CHECK(report.rows.size() == 2);
     CHECK(report.stop);
     iodata.solver.electrostatic.response_correction->developer = true;
-    CHECK(Judge(iodata, other, true).rows.empty());
+    CHECK(Judge(iodata, other).rows.empty());
     other.refusal = "Unable to open fabrication-process response library!";
-    const auto refused = Judge(iodata, other, true);
+    const auto refused = Judge(iodata, other);
     REQUIRE(refused.rows.size() == 1);
     CHECK(refused.rows[0].quantity == "library file");
     CHECK(refused.stop);
@@ -213,55 +222,133 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
     config["Domains"]["Materials"][1]["Permittivity"] = 11.47;
     IoData near(config, false);
     std::string candidates;
-    CHECK_FALSE(FindSubstrateLoadRow(near, library, Targets(near), &candidates));
+    CHECK_FALSE(FindSubstrateLoadRow(near, library, Targets(near), {}, &candidates));
     CHECK_THAT(candidates,
                ContainsSubstring("could be the substrate: Domains.Materials[1]"));
     config["Domains"]["Materials"][1]["Permittivity"] = 11.6;
     IoData far(config, false);
-    const auto row = FindSubstrateLoadRow(far, library, Targets(far), &candidates);
+    const auto row = FindSubstrateLoadRow(far, library, Targets(far), {}, &candidates);
     REQUIRE(row);
     CHECK_THAT(candidates, ContainsSubstring("could be the substrate: none"));
-    const auto report = JudgeLibraryRows({*row}, Targets(far), false);
-    CHECK(report.stop);
-    CHECK_FALSE(JudgeLibraryRows({*row}, Targets(far), true).stop);
+    CHECK(JudgeLibraryRows({*row}, Targets(far)).stop);
     // Vacuum alone: nothing to judge at load (the check after the mesh passes).
     config["Domains"]["Materials"] = {{{"Attributes", {1, 2}}}};
     IoData vacuum(config, false);
-    CHECK_FALSE(FindSubstrateLoadRow(vacuum, library, Targets(vacuum), &candidates));
+    CHECK_FALSE(FindSubstrateLoadRow(vacuum, library, Targets(vacuum), {}, &candidates));
   }
   {
-    // After the mesh: the material next to the metal; MS 1.86 x, SA 0.11 x.
+    // After the mesh: the material next to the metal; MS 1.9 x, SA 0.2 x.
     json config = base;
     config["Domains"]["Materials"][1]["Permittivity"] = 11.45 * 1.003;
     IoData iodata(config, false);
     const auto targets = Targets(iodata);
     const auto rows = SubstrateMeshRows(iodata, {{1, {2}}}, 11.45, targets);
     REQUIRE(rows.size() == 1);
-    auto report = JudgeLibraryRows(rows, targets, false);
-    CHECK_THAT(report.target_effect.at(5), WithinRel(1.86 * 0.003, 1.0e-9));
-    CHECK_THAT(report.target_effect.at(4), WithinRel(0.11 * 0.003, 1.0e-9));
+    auto report = JudgeLibraryRows(rows, targets);
+    CHECK_THAT(report.target_effect.at(5), WithinRel(1.9 * 0.003, 1.0e-9));
+    CHECK_THAT(report.target_effect.at(4), WithinRel(0.2 * 0.003, 1.0e-9));
     CHECK_FALSE(report.stop);
     // THE EFFECTS ADD (the ruling's example): an MS layer 0.8 % off with a substrate 0.4 %
-    // off is beyond the rule (0.94 x 0.8 + 1.86 x 0.4 = 1.5 %), each alone is not.
+    // off is beyond the rule (0.8 + 1.9 x 0.4 = 1.56 %), each alone is not.
     config["Domains"]["Materials"][1]["Permittivity"] = 11.45 * 1.004;
     config["Boundaries"]["Postprocessing"]["Dielectric"][1]["Permittivity"] = 11.45 * 1.008;
     IoData both(config, false);
     const auto &request = *both.solver.electrostatic.response_correction;
     auto layer_rows = FindLibraryLoadRows(both, request, Targets(both), library);
     REQUIRE(layer_rows.size() == 1);
-    CHECK_FALSE(JudgeLibraryRows(layer_rows, Targets(both), false).stop);
+    CHECK_FALSE(JudgeLibraryRows(layer_rows, Targets(both)).stop);
     auto substrate_rows = SubstrateMeshRows(both, {{1, {2}}}, 11.45, Targets(both));
-    CHECK_FALSE(JudgeLibraryRows(substrate_rows, Targets(both), false).stop);
+    CHECK_FALSE(JudgeLibraryRows(substrate_rows, Targets(both)).stop);
     layer_rows.insert(layer_rows.end(), substrate_rows.begin(), substrate_rows.end());
-    report = JudgeLibraryRows(layer_rows, Targets(both), false);
-    CHECK_THAT(report.target_effect.at(5), WithinRel(0.94 * 0.008 + 1.86 * 0.004, 1.0e-9));
+    report = JudgeLibraryRows(layer_rows, Targets(both));
+    CHECK_THAT(report.target_effect.at(5), WithinRel(0.008 + 1.9 * 0.004, 1.0e-9));
     CHECK(report.stop);
     const std::string message = LibraryCheckMessage(report, library, "after the mesh", "");
-    CHECK_THAT(message, ContainsSubstring("MS 1.5 % (Index 5)"));
+    CHECK_THAT(message, ContainsSubstring("MS 1.56 % (Index 5)"));
     CHECK_THAT(message, ContainsSubstring("STOP (beyond the rule): MS layer permittivity"));
     CHECK_THAT(message,
                ContainsSubstring("STOP (beyond the rule): substrate permittivity"));
+    CHECK_THAT(message, ContainsSubstring("no override"));
   }
+  {
+    // Per target the LARGEST substrate row counts (one patch lies on one substrate): two
+    // materials next to the metal, +0.3 % and +0.4 %, read 1.9 x 0.4 % on MS, not the sum.
+    json config = base;
+    config["Domains"]["Materials"][1]["Permittivity"] = 11.45 * 1.003;
+    config["Domains"]["Materials"].push_back(
+        {{"Attributes", {3}}, {"Permittivity", 11.45 * 1.004}});
+    IoData two(config, false);
+    const auto rows = SubstrateMeshRows(two, {{1, {2}}, {2, {3}}}, 11.45, Targets(two));
+    REQUIRE(rows.size() == 2);
+    const auto report = JudgeLibraryRows(rows, Targets(two));
+    CHECK_THAT(report.target_effect.at(5), WithinRel(1.9 * 0.004, 1.0e-9));
+    CHECK_FALSE(report.stop);
+  }
+}
+
+// MAJOR-1 of the code review (lane v1loadcheck): at load each candidate substrate is judged
+// WITH the layer rows, so that a load message that tolerates is never followed by a stop of
+// the rule after the mesh (one material but vacuum).
+TEST_CASE_METHOD(test::SurfaceResponseFiles,
+                 "The substrate at load is judged with the layer rows: a summed overrun "
+                 "stops at load",
+                 "[surfaceresponselibrarycheck][Serial]")
+{
+  const json base = IslandTwoTargetConfig(*this);
+  const auto library = IslandLibrary();
+  auto AtLoad = [&](double ms_layer, double substrate, std::string *candidates)
+  {
+    json config = base;
+    config["Boundaries"]["Postprocessing"]["Dielectric"][1]["Permittivity"] = ms_layer;
+    config["Domains"]["Materials"][1]["Permittivity"] = substrate;
+    IoData iodata(config, false);
+    const auto &request = *iodata.solver.electrostatic.response_correction;
+    const auto targets = LibraryCheckTargets(iodata, request);
+    auto rows = FindLibraryLoadRows(iodata, request, targets, library);
+    if (auto row = FindSubstrateLoadRow(iodata, library, targets, rows, candidates))
+    {
+      rows.push_back(std::move(*row));
+    }
+    return JudgeLibraryRows(std::move(rows), targets);
+  };
+  std::string candidates;
+  // MS 0.9 % off with the substrate 0.1 % off: each alone is inside the rule, together
+  // 0.9 + 1.9 x 0.1 = 1.09 % on MS: STOP AT LOAD, the substrate row listed.
+  auto report = AtLoad(11.45 * 1.009, 11.45 * 1.001, &candidates);
+  CHECK(report.stop);
+  REQUIRE(report.rows.size() == 2);
+  CHECK(report.rows[1].substrate);
+  CHECK_THAT(report.target_effect.at(5), WithinRel(0.009 + 1.9 * 0.001, 1.0e-9));
+  CHECK_THAT(candidates, ContainsSubstring("could be the substrate: none"));
+  CHECK_FALSE(AtLoad(11.45 * 1.009, 11.45, &candidates).stop);
+  CHECK_FALSE(AtLoad(11.45, 11.45 * 1.001, &candidates).stop);
+  // The reviewer's flip-chip combination: the designers' substrate 11.47 (+0.175 %) with MS
+  // 11.55 (+0.87 %): 0.87 + 0.33 = 1.2 %: STOP AT LOAD. The designers' 11.47 on both:
+  // 0.175 + 0.33 = 0.51 %: tolerated, the material named as the substrate.
+  CHECK(AtLoad(11.55, 11.47, &candidates).stop);
+  report = AtLoad(11.47, 11.47, &candidates);
+  CHECK_FALSE(report.stop);
+  CHECK(report.rows.size() == 1);
+  CHECK_THAT(candidates, ContainsSubstring("could be the substrate: Domains.Materials[1]"));
+  // What the load message tolerates passes after the mesh too (the same layer rows with
+  // the material's own row).
+  {
+    json config = base;
+    config["Boundaries"]["Postprocessing"]["Dielectric"][1]["Permittivity"] = 11.47;
+    config["Domains"]["Materials"][1]["Permittivity"] = 11.47;
+    IoData iodata(config, false);
+    const auto &request = *iodata.solver.electrostatic.response_correction;
+    const auto targets = LibraryCheckTargets(iodata, request);
+    auto rows = FindLibraryLoadRows(iodata, request, targets, library);
+    const auto substrate = SubstrateMeshRows(iodata, {{1, {2}}}, 11.45, targets);
+    rows.insert(rows.end(), substrate.begin(), substrate.end());
+    CHECK_FALSE(JudgeLibraryRows(rows, targets).stop);
+  }
+  // A substrate equal to the library's is no row: the layer rows alone stop the run.
+  report = AtLoad(11.45 * 1.015, 11.45, &candidates);
+  CHECK(report.stop);
+  CHECK(report.rows.size() == 1);
+  CHECK_FALSE(report.rows[0].substrate);
 }
 
 TEST_CASE_METHOD(test::SurfaceResponseFiles,
@@ -319,7 +406,40 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
       CHECK_THAT(printed, ContainsSubstring("STOP (beyond the rule): SA layer thickness"));
       CHECK_THAT(printed,
                  ContainsSubstring("STOP (beyond the rule): SA layer permittivity"));
-      CHECK_THAT(printed, ContainsSubstring("SA 7.17 % (Index 4)"));
+      CHECK_THAT(printed, ContainsSubstring("SA 8 % (Index 4)"));
+    }
+  }
+  // NO OVERRIDE (the supervisor's ruling of the fix round): an effect beyond the rule stops
+  // the run at load with "Developer": true as without it.
+  for (const bool developer : {false, true})
+  {
+    CAPTURE(developer);
+    json run = config;
+    run["Boundaries"]["Postprocessing"]["Dielectric"][0]["EdgeDistances"] = {0.2};
+    run["Boundaries"]["Postprocessing"]["Dielectric"][0]["Thickness"] = 0.002;
+    IoData iodata(run, false);
+    iodata.solver.electrostatic.response_correction->developer = developer;
+    std::string what;
+    const std::string printed = test::CaptureStdout(
+        [&]
+        {
+          try
+          {
+            CheckResponseLibraryAtLoad(iodata, comm, false);
+          }
+          catch (const std::exception &e)
+          {
+            what = e.what();
+          }
+        });
+    CHECK_THAT(what, ContainsSubstring("library check at load stops the run"));
+    if (Mpi::Root(comm))
+    {
+      CHECK_THAT(printed, ContainsSubstring("1 row(s):"));
+      CHECK_THAT(printed,
+                 ContainsSubstring("STOP (beyond the rule): SA layer permittivity"));
+      CHECK_THAT(printed, ContainsSubstring("no override"));
+      CHECK(printed.find("TOLERATED") == std::string::npos);
     }
   }
 }
@@ -407,9 +527,9 @@ TEST_CASE_METHOD(
       CHECK_THAT(block.at("Mismatches")[0].at("Mismatch").get<double>(),
                  WithinRel(0.005, 1.0e-9));
       CHECK_THAT(block.at("EstimatedEffectPerType").at("SA").get<double>(),
-                 WithinRel(0.87 * 0.005, 1.0e-9));
+                 WithinRel(0.005, 1.0e-9));
       CHECK(block.at("Interfaces") == json::array({4}));
-      CHECK(block.at("BeyondRule") == false);
+      CHECK_FALSE(block.contains("BeyondRule"));  // a recorded mismatch is inside the rule
     }
   }
 #endif
@@ -475,7 +595,7 @@ TEST_CASE_METHOD(
     REQUIRE(block.at("Mismatches").size() == 1);
     CHECK(block.at("Mismatches")[0].at("Quantity") == "substrate permittivity");
     CHECK_THAT(block.at("EstimatedEffectPerType").at("SA").get<double>(),
-               WithinRel(0.11 * (11.47 / 11.45 - 1.0), 1.0e-9));
+               WithinRel(0.2 * (11.47 / 11.45 - 1.0), 1.0e-9));
   }
 #endif
 }

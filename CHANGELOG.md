@@ -25,16 +25,19 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     values, the relative mismatch, its estimated effect, the tolerance, the action): a
     designer's chip learns a permittivity slip in seconds where it learned one entry per
     run after the mesh load (33 minutes on a designers' flip chip). ONE RULE: a mismatch is
-    tolerated while its estimated effect on a corrected value stays within 1 % (measured
-    factors times the relative mismatch, summed over the mismatches acting on one target
-    interface; reference.md gives the factors and where they were measured); inside, one
-    warning; beyond, the run stops; `"Developer": true` turns such a stop into a warning.
+    tolerated while its estimated effect on a corrected value stays within 1 % (factors
+    times the relative mismatch: 1 for a layer's permittivity and thickness, the substrate's
+    measured on two designs' windows; per target interface its layer mismatches add and the
+    largest substrate one is added; reference.md gives the factors and where they were
+    measured); inside, one warning; beyond, the run stops, with NO OVERRIDE
+    (`"Developer": true` does not relax it).
     CHANGED ACTIONS: a layer `Thickness` or `Permittivity` that differs from the library's
-    `InterfaceLayers` by less than the rule allows (about 1 %; the designers' 11.47 against
+    `InterfaceLayers` by less than the rule allows (1 %; the designers' 11.47 against
     a library's 11.45: 0.175 %) WARNS where it stopped the run; a substrate permittivity next
     to the corrected metal beyond the rule (about 0.5 % alone) STOPS the run after the mesh
     where it only warned, and at load when no configured material other than vacuum could
-    pass. NEW: `Fabrication.LengthUnit`, when the library states it, must name `Model.L0`.
+    pass beside the layer mismatches. NEW: `Fabrication.LengthUnit`, when the library states
+    it (`um`, `µm`, `μm`, `micron`, `nm`, `mm`, `cm`, `m`), must name `Model.L0`.
     Unchanged in action, now at load and all listed: `MatchingRadius` against the largest
     `EdgeDistances`, a missing `InterfaceLayers` entry, the library file and `Version`, a
     parked metal law without the developer switch, `TargetInterfaces`.
@@ -42,8 +45,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     `SurfaceResponse.LibraryMismatch` in `palace.json`; without a mismatch nothing is added.
   - The length-weighted census (the PREFLIGHT line, `SurfaceResponse.Resolution.Preflight`:
     `EdgeLength`, `LengthM90`, the shares, the coarse-cells flag and the word) weighs each
-    patch by its model weight: an interpolated feature's two or three members counted its
-    edge two or three times (a designers' flip chip: 3.927 m of census length against 2.776
+    patch's length and knots by its model weight (verified positive): an interpolated
+    feature's two or three members counted its edge two or three times (a designers' flip
+    chip: 3.927 m of census length against 2.776
     m once per edge). Patch counts are unchanged; the energy-weighted census already
     weighed them.
   - ONE resolution verdict: the PREFLIGHT word (the log's PREFLIGHT line before each

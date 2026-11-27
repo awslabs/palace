@@ -1682,7 +1682,7 @@ public:
 
     // The mismatches between this block's configuration and its library that the run
     // TOLERATES (palace/models/surfaceresponselibrarycheck.hpp: inside the rule on the
-    // estimated effect, or beyond it under the developer switch), written by the check at
+    // estimated effect; beyond it the run stops, with no override), written by the check at
     // load and by the substrate check after the mesh, read by the per-iteration table (one
     // flags word on every affected row) and palace.json (SurfaceResponse.LibraryMismatch).
     // Empty without a tolerated mismatch: then no output names it. Mutable as
@@ -1701,8 +1701,6 @@ public:
       std::map<std::string, double> effect_per_type;
       // The target interface indices with a nonzero summed effect.
       std::vector<int> interfaces;
-      // An effect beyond the rule, tolerated by the developer switch.
-      bool beyond_rule = false;
       bool Empty() const { return entries.empty(); }
     };
     mutable LibraryMismatchRecord library_mismatch;

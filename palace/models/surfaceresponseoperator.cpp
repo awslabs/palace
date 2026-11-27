@@ -4821,12 +4821,13 @@ void CheckResponseLibraryAtLoad(const IoData &iodata, MPI_Comm comm, bool prefli
     std::string substrate_line;
     if (inputs.refusal.empty())
     {
-      if (auto row = FindSubstrateLoadRow(iodata, inputs, targets, &substrate_line))
+      // The substrate judged with the layer rows (the effects on one target add).
+      if (auto row = FindSubstrateLoadRow(iodata, inputs, targets, rows, &substrate_line))
       {
         rows.push_back(std::move(*row));
       }
     }
-    const auto report = JudgeLibraryRows(std::move(rows), targets, request->developer);
+    const auto report = JudgeLibraryRows(std::move(rows), targets);
     message =
         LibraryCheckMessage(report, inputs, "at load (before the mesh)", substrate_line);
     level = report.stop ? 2 : report.Empty() ? 0 : 1;
@@ -4900,7 +4901,7 @@ void CheckSubstratePermittivity(
   auto rows = FindLibraryLoadRows(iodata, request, targets, inputs);
   rows.insert(rows.end(), std::make_move_iterator(substrate_rows.begin()),
               std::make_move_iterator(substrate_rows.end()));
-  const auto report = JudgeLibraryRows(std::move(rows), targets, request.developer);
+  const auto report = JudgeLibraryRows(std::move(rows), targets);
   // The record lives on the configured block (the outputs read it), not on a copy.
   const auto *configured = ConfiguredResponseCorrection(iodata);
   const auto &owner = configured ? *configured : request;
@@ -35314,17 +35315,15 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
     double m = 0.0;
     const auto status = ResolutionPatchStatusOf(i, &m);
     // Each member of an interpolated feature (2-3 members, each with its own full patch
-    // set) weighs its model weight, so that the feature's edge counts once; every emitted
-    // patch has a positive model weight, so a patch with a reading keeps a positive weight
-    // (the flag's guarantee, ResolutionPreflightRow).
+    // set) weighs its model weight (AddResolutionPreflightPatch: its length and knots), so
+    // that the feature's edge counts once.
     const double model_weight = patches[i].model_weight;
-    const double length = model_weight * (patches[i].mortar_longitudinal_strip[1] -
-                                          patches[i].mortar_longitudinal_strip[0]);
+    const double length =
+        patches[i].mortar_longitudinal_strip[1] - patches[i].mortar_longitudinal_strip[0];
     const int plane_slot =
         i < resolution_plane_slots.size() ? resolution_plane_slots[i] : 0;
     const double knots =
-        model_weight *
-        (i < resolution_readings.size() ? resolution_readings[i].knots : 0.0);
+        i < resolution_readings.size() ? resolution_readings[i].knots : 0.0;
     // ONE verdict (decision 2403 (3)): the census weighted by length, EVERY patch of the
     // list the energy census reads (its two per-patch loops), with the same h/R and bin,
     // into every Type (the flag's guarantee, ResolutionPreflightRow).
@@ -35336,7 +35335,7 @@ void SurfaceResponseOperator::ConfigureResolutionTypes(
         {
           AddResolutionPreflightPatch(sums.data() +
                                           (t * slots + slot) * kResolutionPreflightStride,
-                                      status, m, length, knots);
+                                      status, m, model_weight, length, knots);
         }
       }
     }

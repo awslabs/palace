@@ -37,13 +37,17 @@ bool Equal(double config, double library)
 
 }  // namespace
 
-// THE MEASURED FACTORS (lane v1loadcheck, reads/eps-cl-moves.tsv; cluster runs on the
-// container of main fe67940f30): the merge tier's electrostatic member (the CTX-002 flat
-// window FC1v2cg3, Order 3, 3 terminals x 6 target interfaces) with ONE value of the
-// configuration moved by +0.175 % and +1 %, the library's models unchanged; effect = |the
-// move of the corrected value - the move of the raw value| (the raw value carries the
-// configuration's value everywhere, as a library made for it would), its largest over the
-// rows of the Type, over the mismatch, rounded up to two decimals; linear in the mismatch.
+// THE FACTORS. A layer's permittivity or thickness: 1.0 on its own Type (the error of a
+// corrected value is the library-served share of it times the mismatch, at most the
+// mismatch; independent of a design). The substrate's permittivity changes the field
+// itself, so its factor is measured: on two windows of two designs (lane v1loadcheck,
+// cluster runs on the container of main fe67940f30): the merge tier's electrostatic
+// member on the CTX-002 flat window FC1v2cg3 (Order 3; reads/eps-cl-moves.tsv) and its
+// electrostatic member on the CTX-003 window C2 (Order 4, one fixed mesh;
+// reads/fix-sub-c2-moves.tsv), the substrate moved by +0.175 % and +1 %, the library's
+// models unchanged; effect = |the move of the corrected value - the move of the raw value|,
+// its largest over the rows of the Type, over the mismatch (linear in it); per Type the
+// larger of the two windows, rounded up to one decimal.
 double LibraryMismatchFactor(LibraryMismatchQuantity quantity, InterfaceDielectric layer,
                              InterfaceDielectric affected)
 {
@@ -57,11 +61,11 @@ double LibraryMismatchFactor(LibraryMismatchQuantity quantity, InterfaceDielectr
   switch (quantity)
   {
     case LibraryMismatchQuantity::LAYER_PERMITTIVITY:
-      return layer == affected ? Of(0.90, 0.94, 0.87) : 0.0;  // 0.896 / 0.939 / 0.865
     case LibraryMismatchQuantity::LAYER_THICKNESS:
-      return layer == affected ? Of(0.91, 0.95, 0.94) : 0.0;  // 0.905 / 0.940 / 0.934
+      return layer == affected ? Of(1.0, 1.0, 1.0) : 0.0;
     case LibraryMismatchQuantity::SUBSTRATE_PERMITTIVITY:
-      return Of(0.16, 1.86, 0.11);  // 0.157 / 1.858 / 0.102
+      // CTX-002 / CTX-003: MA 0.157 / 0.230, MS 1.858 / 1.795, SA 0.102 / 0.019.
+      return Of(0.3, 1.9, 0.2);
   }
   return 0.0;
 }
@@ -120,11 +124,13 @@ LibraryCheckTargets(const IoData &iodata,
 namespace
 {
 
-// The metres of a Fabrication.LengthUnit word (0: not a unit this check knows).
+// The metres of a Fabrication.LengthUnit word (0: not a unit this check knows). The micro
+// forms: "um", the micro sign U+00B5, the Greek mu U+03BC, "micron".
 double LengthUnitMetres(const std::string &unit)
 {
   const std::map<std::string, double> units = {
-      {"m", 1.0}, {"cm", 1.0e-2}, {"mm", 1.0e-3}, {"um", 1.0e-6}, {"nm", 1.0e-9}};
+      {"m", 1.0},          {"cm", 1.0e-2},      {"mm", 1.0e-3},     {"um", 1.0e-6},
+      {"\u00b5m", 1.0e-6}, {"\u03bcm", 1.0e-6}, {"micron", 1.0e-6}, {"nm", 1.0e-9}};
   const auto it = units.find(unit);
   return it != units.end() ? it->second : 0.0;
 }
@@ -158,6 +164,7 @@ LibraryCheckRow EffectRow(LibraryMismatchQuantity quantity, InterfaceDielectric 
   row.library_value = Number(library) + " (" + library_key + ")";
   row.mismatch = config / library - 1.0;
   row.tolerance = AloneTolerance(quantity, layer);
+  row.substrate = quantity == LibraryMismatchQuantity::SUBSTRATE_PERMITTIVITY;
   for (const auto &target : affected)
   {
     row.effect[target.index] =
@@ -215,8 +222,12 @@ FindLibraryLoadRows(const IoData &iodata,
     const double metres = LengthUnitMetres(*library.length_unit);
     if (!Equal(iodata.model.L0, metres))
     {
-      rows.push_back(StopRow("length unit", "Model.L0", Number(iodata.model.L0) + " m",
-                             "\"" + *library.length_unit + "\" (Fabrication.LengthUnit)"));
+      rows.push_back(StopRow(
+          "length unit", "Model.L0", Number(iodata.model.L0) + " m",
+          "\"" + *library.length_unit + "\" (Fabrication.LengthUnit)" +
+              (metres > 0.0 ? std::string()
+                            : std::string(": unknown LengthUnit word (known: m, cm, mm, "
+                                          "um, \u00b5m, \u03bcm, micron, nm)"))));
     }
   }
   if (!request.developer)
@@ -297,17 +308,40 @@ std::string MaterialValue(const std::array<double, 3> &s)
              : fmt::format("{} / {} / {}", Number(s[0]), Number(s[1]), Number(s[2]));
 }
 
-double LargestSubstrateFactor()
+// Per target: the summed effect of the layer rows (every EFFECT row but the substrate's).
+std::map<int, double> LayerEffects(const std::vector<LibraryCheckRow> &rows)
 {
-  double factor = 0.0;
-  for (const auto affected :
-       {InterfaceDielectric::MA, InterfaceDielectric::MS, InterfaceDielectric::SA})
+  std::map<int, double> effects;
+  for (const auto &row : rows)
   {
-    factor = std::max(factor,
-                      LibraryMismatchFactor(LibraryMismatchQuantity::SUBSTRATE_PERMITTIVITY,
-                                            InterfaceDielectric::DEFAULT, affected));
+    if (row.substrate)
+    {
+      continue;
+    }
+    for (const auto &[index, effect] : row.effect)
+    {
+      effects[index] += effect;
+    }
   }
-  return factor;
+  return effects;
+}
+
+// A substrate material of relative mismatch `mismatch` passes the rule beside the layer
+// rows: for every target, its layer effect + the substrate factor of its Type x |mismatch|.
+bool SubstrateCanPass(double mismatch, const std::vector<LibraryCheckTarget> &targets,
+                      const std::map<int, double> &layer_effects)
+{
+  return std::all_of(targets.begin(), targets.end(),
+                     [&](const LibraryCheckTarget &target)
+                     {
+                       const auto layer = layer_effects.find(target.index);
+                       return (layer != layer_effects.end() ? layer->second : 0.0) +
+                                  LibraryMismatchFactor(
+                                      LibraryMismatchQuantity::SUBSTRATE_PERMITTIVITY,
+                                      InterfaceDielectric::DEFAULT, target.type) *
+                                      std::abs(mismatch) <=
+                              kLibraryMismatchEffectLimit;
+                     });
 }
 
 }  // namespace
@@ -315,7 +349,7 @@ double LargestSubstrateFactor()
 std::optional<LibraryCheckRow>
 FindSubstrateLoadRow(const IoData &iodata, const LibraryCheckLibrary &library,
                      const std::vector<LibraryCheckTarget> &targets,
-                     std::string *candidates)
+                     const std::vector<LibraryCheckRow> &load_rows, std::string *candidates)
 {
   candidates->clear();
   if (!library.substrate_permittivity || targets.empty())
@@ -323,8 +357,8 @@ FindSubstrateLoadRow(const IoData &iodata, const LibraryCheckLibrary &library,
     return std::nullopt;
   }
   const double substrate = *library.substrate_permittivity;
-  // A material could be the substrate if its own effect alone is within the rule.
-  const double tolerance = kLibraryMismatchEffectLimit / LargestSubstrateFactor();
+  // A material could be the substrate if, beside the layer rows, it passes the rule.
+  const auto layer_effects = LayerEffects(load_rows);
   const auto &materials = iodata.domains.materials;
   std::vector<std::string> names;
   std::optional<std::size_t> closest;
@@ -336,7 +370,7 @@ FindSubstrateLoadRow(const IoData &iodata, const LibraryCheckLibrary &library,
     {
       continue;
     }
-    if (std::abs(*mismatch) <= tolerance)
+    if (SubstrateCanPass(*mismatch, targets, layer_effects))
     {
       names.push_back(fmt::format("Domains.Materials[{}] (attributes {}) {} ({})", m,
                                   fmt::join(materials[m].attributes, ", "),
@@ -350,20 +384,27 @@ FindSubstrateLoadRow(const IoData &iodata, const LibraryCheckLibrary &library,
     }
   }
   *candidates = fmt::format(
-      "substrate (checked after the mesh, on the domains next to the corrected metal): "
-      "library {} (Fabrication.SubstratePermittivity); could be the substrate: {}",
+      "substrate (checked after the mesh, on the domains next to the corrected metal, with "
+      "the layer rows above): library {} (Fabrication.SubstratePermittivity); could be the "
+      "substrate: {}{}",
       Number(substrate),
-      names.empty() ? std::string("none") : fmt::format("{}", fmt::join(names, "; ")));
-  if (!closest || !names.empty())
+      names.empty() ? std::string("none") : fmt::format("{}", fmt::join(names, "; ")),
+      names.empty() ? std::string()
+                    : std::string(" (another material next to the corrected metal stops "
+                                  "the run after the mesh)"));
+  // A material equal to the library's substrate is no row (the layer rows alone are then
+  // beyond the rule and stop the run).
+  if (!closest || !names.empty() || closest_mismatch == 0.0)
   {
     return std::nullopt;
   }
-  // No material but vacuum can pass the check after the mesh: judged now, on the closest.
+  // No material but vacuum can pass the check after the mesh: judged now, on the closest
+  // (beyond the rule with the layer rows, by construction: the sum grows with |mismatch|).
   const auto &s = materials[*closest].epsilon_r.s;
   auto row = EffectRow(
       LibraryMismatchQuantity::SUBSTRATE_PERMITTIVITY, InterfaceDielectric::DEFAULT,
       "substrate permittivity (no material of the configuration within "
-      "the rule: the check after the mesh cannot pass)",
+      "the rule beside the layer rows: the check after the mesh cannot pass)",
       fmt::format("Domains.Materials[{}] (attributes {}; the closest)", *closest,
                   fmt::join(materials[*closest].attributes, ", ")),
       (1.0 + closest_mismatch) * substrate, substrate, "Fabrication.SubstratePermittivity",
@@ -400,28 +441,36 @@ SubstrateMeshRows(const IoData &iodata, const std::map<int, std::vector<int>> &m
 }
 
 LibraryCheckReport JudgeLibraryRows(std::vector<LibraryCheckRow> rows,
-                                    const std::vector<LibraryCheckTarget> &targets,
-                                    bool developer)
+                                    const std::vector<LibraryCheckTarget> &targets)
 {
   LibraryCheckReport report;
-  report.developer = developer;
   for (const auto &target : targets)
   {
     report.target_type[target.index] = target.type;
   }
+  // Per target: the layer rows add; of the substrate rows the largest counts.
+  report.target_effect = LayerEffects(rows);
+  std::map<int, double> substrate_effect;
   for (const auto &row : rows)
   {
     report.stop = report.stop || row.kind == LibraryCheckRow::Kind::STOP;
     for (const auto &[index, effect] : row.effect)
     {
-      report.target_effect[index] += effect;
+      if (row.substrate)
+      {
+        substrate_effect[index] = std::max(substrate_effect[index], effect);
+      }
     }
+  }
+  for (const auto &[index, effect] : substrate_effect)
+  {
+    report.target_effect[index] += effect;
   }
   for (const auto &[index, effect] : report.target_effect)
   {
     report.beyond_rule = report.beyond_rule || effect > kLibraryMismatchEffectLimit;
   }
-  report.stop = report.stop || (report.beyond_rule && !developer);
+  report.stop = report.stop || report.beyond_rule;
   report.rows = std::move(rows);
   return report;
 }
@@ -438,9 +487,7 @@ std::string RowAction(const LibraryCheckRow &row, const LibraryCheckReport &repo
   const bool beyond = std::any_of(
       row.effect.begin(), row.effect.end(), [&](const auto &entry)
       { return report.target_effect.at(entry.first) > kLibraryMismatchEffectLimit; });
-  return !beyond            ? "TOLERATED"
-         : report.developer ? "TOLERATED by \"Developer\": true (beyond the rule)"
-                            : "STOP (beyond the rule)";
+  return beyond ? "STOP (beyond the rule)" : "TOLERATED";
 }
 
 std::string RowLine(const LibraryCheckRow &row, const LibraryCheckReport &report)
@@ -470,8 +517,9 @@ std::string LibraryCheckMessage(const LibraryCheckReport &report,
   std::string message = fmt::format(
       "Response-correction library check {}: library \"{}\" ({})\n  the rule: a mismatch "
       "is tolerated while its estimated effect on a corrected value stays within {:.3g} % "
-      "(effect = the measured factor x |config / library - 1|, summed over the mismatches "
-      "acting on one target interface); R, a missing InterfaceLayers entry, the library "
+      "and stops the run beyond it, with no override (effect = the factor x |config / "
+      "library - 1|, summed over the layer mismatches acting on one target interface plus "
+      "the largest substrate one); R, a missing InterfaceLayers entry, the library "
       "file, the length unit, a parked metal law and the target set stop at any "
       "difference\n",
       when, library.name, library.path, 100.0 * kLibraryMismatchEffectLimit);
@@ -532,9 +580,10 @@ std::string LibraryCheckMessage(const LibraryCheckReport &report,
   {
     message += "  -> STOP: set each entry above to the library's value, or use a library "
                "made for the configuration's values";
-    message += report.beyond_rule ? " (\"Developer\": true tolerates an effect beyond the "
-                                    "rule, never a STOP row)\n"
-                                  : "\n";
+    message += report.beyond_rule
+                   ? " (no override: an effect beyond the rule stops the run with or "
+                     "without \"Developer\": true)\n"
+                   : "\n";
   }
   else if (effect_rows)
   {
@@ -589,7 +638,6 @@ void RecordLibraryMismatch(
       record.interfaces.push_back(index);
     }
   }
-  record.beyond_rule = report.beyond_rule;
 }
 
 nlohmann::json LibraryMismatchJson(
@@ -603,10 +651,9 @@ nlohmann::json LibraryMismatchJson(
   nlohmann::json json;
   json["Rule"] = fmt::format(
       "tolerated while the estimated effect on a corrected value stays within {:.3g} % "
-      "(effect = the measured factor x |config / library - 1|, summed per target "
-      "interface); BeyondRule: tolerated beyond it by \"Developer\": true",
+      "(effect = the factor x |config / library - 1|, summed per target interface, the "
+      "largest substrate mismatch counting); beyond it the run stops (no override)",
       100.0 * kLibraryMismatchEffectLimit);
-  json["BeyondRule"] = record.beyond_rule;
   json["Mismatches"] = nlohmann::json::array();
   for (const auto &entry : record.entries)
   {
@@ -641,7 +688,6 @@ LibraryMismatchFromJson(const nlohmann::json &json)
   record.effect_per_type =
       json.at("EstimatedEffectPerType").get<std::map<std::string, double>>();
   record.interfaces = json.at("Interfaces").get<std::vector<int>>();
-  record.beyond_rule = json.at("BeyondRule").get<bool>();
   return record;
 }
 
