@@ -958,6 +958,41 @@ TEST_CASE("Quasi-Newton finds eigenpairs with linearly dependent eigenvectors",
   }
 }
 
+// An eigenpair which is not deflated can be found again, from another guess: it is then
+// recognized, and returned once. Here, as in the test above, the upper roots of dofs 1 and
+// 2 are not deflated, and a second guess of the upper root of dof 1 converges to it again,
+// in each of its attempts.
+TEST_CASE("Quasi-Newton recognizes an eigenpair found before", "[nleps][Serial][Parallel]")
+{
+  constexpr double tol = 1.0e-10;
+  const DiagonalLorentzProblem p(CoupledDofs({4.0, 9.0}));
+  RequireNotFirstDofs(p, 2);
+  const std::vector<std::pair<std::complex<double>, long long>> roots = {
+      {LowerRoot(p, 4.0), 1},
+      {LowerRoot(p, 9.0), 2},
+      {UpperRoot(p, 4.0), 1},
+      {UpperRoot(p, 9.0), 2}};
+  std::vector<std::pair<std::complex<double>, long long>> guesses;
+  for (const auto &[l, j] : roots)
+  {
+    guesses.emplace_back(l + std::complex<double>(1.0e-4, 1.0e-4), j);
+  }
+  guesses.insert(guesses.begin() + 3, guesses[2]);
+  const auto r = RunQuasiNewton(p, guesses, 4, 0.5, tol);
+  CAPTURE(r.out);
+  REQUIRE(r.eig.size() == 4);
+  for (std::size_t m = 0; m < roots.size(); m++)
+  {
+    CAPTURE(m, r.eig[m], roots[m].first);
+    CHECK(std::abs(r.eig[m] - roots[m].first) <= 1.0e-8 * std::abs(roots[m].first));
+    CHECK(r.backward_error[m] <= tol);
+  }
+  if (Mpi::Root(Mpi::World()))
+  {
+    CHECK(r.out.find(", found before") != std::string::npos);
+  }
+}
+
 // An attempt which stalls is ended, and the guess is refined again without the stall exit
 // when it can change the result. Here the linear solves of the iteration are inexact: one
 // GMRES iteration, with the diagonal preconditioner of T(λ) at the fixed λ = 1.8i. From a
