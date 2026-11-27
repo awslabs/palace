@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "urn:palace:schema:6-1-1",
+  "$id": "urn:palace:schema:6-1-2",
   "title": "Configuration File Schema",
   "description": "Palace configuration file schema for 3D electromagnetic simulations.",
   "type": "object",
@@ -3019,7 +3019,7 @@
         },
         "PreconditionerLag": {
           "type": "integer",
-          "description": "Number of eigensolver iterations between preconditioner updates.",
+          "description": "Number of quasi-Newton iterations between preconditioner updates (`0` updates it at every iteration, as `1`).",
           "minimum": 0,
           "default": 10,
           "x-palace-advanced": true
@@ -3040,7 +3040,7 @@
         },
         "NonlinearMaxIts": {
           "type": "integer",
-          "description": "Maximum number of quasi-Newton iterations of each attempt to converge an eigenpair in the `\"Hybrid\"` nonlinear eigenvalue solver, before restarting.",
+          "description": "Maximum number of quasi-Newton iterations of each attempt to converge an eigenpair in the `\"Hybrid\"` nonlinear eigenvalue solver, before restarting. An attempt ends earlier when it stalls, when its residual decreases by less than 10% in two windows of `PreconditionerLag` iterations in a row; its initial guess is then refined again without this end if fewer than `N` eigenpairs are found, or if it is nearer the target than those found.",
           "exclusiveMinimum": 0,
           "default": 100,
           "x-palace-advanced": true
