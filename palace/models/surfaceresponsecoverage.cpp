@@ -1424,9 +1424,11 @@ nlohmann::json CoverageRunMetadata(const CoverageRunRecord &record,
     status_counts[status] = status_counts.value(status, 0) + 1;
     regime_counts[regime_status] = regime_counts.value(regime_status, 0) + 1;
     // Erratum 1784 E-2 (ERRATUM-1581 MJ-2: NO-RANGE is never OK, a contact like OUT): a
-    // cell is flagged unless its coverage is OK AND its regime IN; an OK + NO-RANGE cell is
-    // flagged per cell as an OK + OUT cell is.
-    if ((cell.status == CoverageStatus::OK && cell.regime == RegimeStatus::IN) ||
+    // cell is flagged unless its coverage is OK AND its regime IN; an OK + OUT cell is
+    // flagged per cell. Lane v1wordscode (SUPERVISOR-RULINGS R3): a cell whose only flag is
+    // NO-RANGE is not listed (a factor range is no validity statement for a new design).
+    if ((cell.status == CoverageStatus::OK &&
+         (cell.regime == RegimeStatus::IN || cell.regime == RegimeStatus::NO_RANGE)) ||
         cell.status == CoverageStatus::NOT_TARGET)
     {
       continue;  // a NOT-TARGET Type: named once in UntargetedInterfaces
@@ -1783,8 +1785,11 @@ std::string CoverageRunBanner(const nlohmann::json &metadata)
                     entry.at("Interface").get<int>(), entry.at("Type").get<std::string>(),
                     entry.at("Reason").get<std::string>());
   }
+  // Lane v1wordscode (R3): the NO-RANGE count is printed only when a range file is loaded
+  // (without one every cell reads NO-RANGE by construction).
   const int no_range = metadata.at("RegimeCounts").value("NO-RANGE", 0);
-  if (no_range > 0)
+  const auto regime_file = metadata.find("ValidatedRegime");
+  if (no_range > 0 && regime_file != metadata.end() && !regime_file->is_null())
   {
     banner +=
         fmt::format("Coverage: {:d} of {:d} cell(s) NO-RANGE (no validated range of the "

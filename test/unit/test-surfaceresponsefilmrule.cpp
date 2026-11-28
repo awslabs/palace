@@ -1620,15 +1620,24 @@ std::filesystem::path RunDefaultSheetEigenmode(test::SurfaceResponseFiles &files
   return iodata.problem.output;
 }
 
-// The flags of the rows of surface-participation.csv that carry a value (every row but the
-// NOT-TARGET ones).
-std::vector<std::string> ValuedRowFlags(const std::filesystem::path &dir)
+// The words under `header` of the rows of surface-participation.csv that carry a value
+// (every row but the NOT-TARGET ones, by their flags).
+std::vector<std::string> ValuedRowWords(const std::filesystem::path &dir,
+                                        const std::string &header = "flags")
 {
   const Table rows = test::LoadCsv(dir / kSurfaceParticipationFile);
   const auto &flags = test::ColumnByHeader(rows, "flags").text;
+  // A column whose cells are all empty loads as a number column (no text): empty words.
+  const auto &words = test::ColumnByHeader(rows, header).text;
+  REQUIRE((words.empty() || words.size() == flags.size()));
   std::vector<std::string> valued;
-  std::copy_if(flags.begin(), flags.end(), std::back_inserter(valued),
-               [](const std::string &text) { return text != "NOT-TARGET"; });
+  for (std::size_t i = 0; i < flags.size(); i++)
+  {
+    if (flags[i] != "NOT-TARGET")
+    {
+      valued.push_back(words.empty() ? std::string() : words[i]);
+    }
+  }
   return valued;
 }
 
@@ -1648,7 +1657,10 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
 #if !defined(MFEM_USE_GSLIB)
   SKIP("SurfaceResponseOperator requires MFEM_USE_GSLIB");
 #else
-  const auto served = RunDefaultSheetEigenmode(*this, "served", 4.5e-14, "Warn");
+  fs::path served;
+  const std::string served_log = CaptureStdout(
+      temp.temp_dir / fmt::format("served-{}.log", Mpi::Rank(Mpi::World())),
+      [&] { served = RunDefaultSheetEigenmode(*this, "served", 4.5e-14, "Warn"); });
   const auto above = RunDefaultSheetEigenmode(*this, "above", 4.5e-12, "Warn");
   if (!Mpi::Root(Mpi::World()))
   {
@@ -1657,13 +1669,30 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
   const auto ReadMetadata = [](const fs::path &dir)
   { return json::parse(std::ifstream(dir / "palace.json")); };
   {
-    const auto flags = ValuedRowFlags(served);
+    // Lane v1wordscode: the served word is an information word; flags hold bad words only.
+    // The Maxwell gates of the value reach the rows and the log: this coarse test device's
+    // kR is far above 0.1, so every served row names it and reads CHECK; the trace-closure
+    // gates are one information line of the run.
+    const auto flags = ValuedRowWords(served);
+    const auto information = ValuedRowWords(served, "information");
+    const auto summary = ValuedRowWords(served, "summary");
     REQUIRE(!flags.empty());
-    for (const auto &text : flags)
+    for (std::size_t i = 0; i < flags.size(); i++)
     {
-      CHECK_THAT(text, ContainsSubstring(kParticipationSheetServedFlag));
-      CHECK_THAT(text, !ContainsSubstring(kParticipationSheetNotServedFlag));
+      CHECK_THAT(information[i], ContainsSubstring(kParticipationSheetServedFlag));
+      CHECK_THAT(flags[i], !ContainsSubstring(kParticipationSheetServedFlag));
+      CHECK_THAT(flags[i], !ContainsSubstring(kParticipationSheetNotServedFlag));
+      CHECK_THAT(flags[i], ContainsSubstring("kR ") && ContainsSubstring(" above 0.1"));
+      CHECK(summary[i] == kParticipationSummaryCheck);
     }
+    CHECK_THAT(served_log, ContainsSubstring("Maxwell surface response: a gate of the "
+                                             "postprocessing-only value failed: kR "));
+    // Review MINOR 3: a gate's rows may read CHECK or DO-NOT-USE; the Warning says neither.
+    CHECK_THAT(served_log,
+               ContainsSubstring("(its rows cannot read OK in surface-participation.csv)"));
+    const std::string line = "the gap between two closures, information, not a verdict";
+    CHECK(served_log.find(line) != std::string::npos);
+    CHECK(served_log.find(line) == served_log.rfind(line));
     const auto record = ReadMetadata(served).at("SurfaceResponse").at("ImpedanceMetalRule");
     CHECK(record.at("ServedImpedanceFeatures").get<int>() > 0);
     const auto lines = record.at("Lines").get<std::vector<std::string>>();
@@ -1677,12 +1706,15 @@ TEST_CASE_METHOD(test::SurfaceResponseFiles,
                         }) == 1);
   }
   {
-    const auto flags = ValuedRowFlags(above);
+    const auto flags = ValuedRowWords(above);
+    const auto information = ValuedRowWords(above, "information");
+    const auto summary = ValuedRowWords(above, "summary");
     REQUIRE(!flags.empty());
-    for (const auto &text : flags)
+    for (std::size_t i = 0; i < flags.size(); i++)
     {
-      CHECK_THAT(text, ContainsSubstring(kParticipationSheetNotServedFlag));
-      CHECK_THAT(text, !ContainsSubstring(kParticipationSheetServedFlag));
+      CHECK_THAT(flags[i], ContainsSubstring(kParticipationSheetNotServedFlag));
+      CHECK_THAT(information[i], !ContainsSubstring(kParticipationSheetServedFlag));
+      CHECK(summary[i] == kParticipationSummaryDoNotUse);  // raw where a correction is due
     }
     const Table rows = test::LoadCsv(above / kSurfaceParticipationFile);
     for (const auto &reason : test::ColumnByHeader(rows, "reason").text)

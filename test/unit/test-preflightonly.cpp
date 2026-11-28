@@ -356,11 +356,16 @@ TEST_CASE_METHOD(
       INFO(name);
       CHECK(row[Index(name)] == "nan");
     }
-    for (const char *name : {"coverage", "regime", "confidence", "convergence"})
+    // Lane v1wordscode: the regime and confidence columns are gone; the summary reads
+    // NOT-COMPUTED; an SA row has no information word before a solve.
+    for (const char *name : {"coverage", "convergence", "summary"})
     {
       INFO(name);
       CHECK(row[Index(name)] == kParticipationNotComputed);
     }
+    CHECK(row[Index("information")].empty());
+    CHECK(std::find(rows[0].begin(), rows[0].end(), "regime") == rows[0].end());
+    CHECK(std::find(rows[0].begin(), rows[0].end(), "confidence") == rows[0].end());
     CHECK(row[Index("flags")] == kParticipationPreflightFlags);
     CHECK(row[Index("reason")] == kParticipationPreflightReason);
   }

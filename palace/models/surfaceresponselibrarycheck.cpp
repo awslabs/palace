@@ -211,6 +211,12 @@ LibraryCheckRow EffectRow(LibraryMismatchQuantity quantity, InterfaceDielectric 
 
 // The vacuum side at load (below): an MA or SA target with no material vacuum at all.
 constexpr const char *kVacuumSideQuantity = "vacuum side (MA and SA targets)";
+// After the mesh: a material that is neither the substrate nor vacuum next to the corrected
+// metal (SubstrateMeshRows); its remedy names the air and a dielectric.
+constexpr const char *kNeitherNextToMetalQuantity = "material next to the corrected metal";
+constexpr const char *kNeitherNextToMetalRemedy =
+    "if it is the air, set its permittivity to exactly 1.0; if it is a dielectric, use a "
+    "library made for it";
 std::optional<LibraryCheckRow>
 VacuumSideRow(const IoData &iodata, const LibraryCheckLibrary &library,
               const std::vector<LibraryCheckTarget> &targets);
@@ -529,18 +535,11 @@ FindSubstrateLoadRow(const IoData &iodata, const LibraryCheckLibrary &library,
   }
   if (!closest)
   {
-    // No material of the substrate class (row (b) of the table at load): with an MS or SA
-    // target none can be the library's substrate. Not a substrate slip: no mismatch.
-    if (std::none_of(targets.begin(), targets.end(),
-                     [](const LibraryCheckTarget &target)
-                     {
-                       return target.type == InterfaceDielectric::MS ||
-                              target.type == InterfaceDielectric::SA;
-                     }))
-    {
-      return std::nullopt;
-    }
-    return StopRow("substrate (MS and SA targets)",
+    // No material of the substrate class (row (b) of the table at load): with any corrected
+    // target (MA included) none can be the library's substrate, and a metal edge with no
+    // substrate is not what the library was built for (the supervisor's ruling, decision
+    // 2414). Not a substrate slip: no mismatch.
+    return StopRow("substrate (any corrected target)",
                    "Domains.Materials: no configured material can be the library's "
                    "substrate",
                    neither.empty() ? std::string("none (vacuum only)")
@@ -591,7 +590,7 @@ SubstrateMeshRows(const IoData &iodata, const std::map<int, std::vector<int>> &m
     if (side.kind == MaterialClass::Kind::NEITHER)
     {
       rows.push_back(StopRow(
-          "material next to the corrected metal", entry, MaterialValue(s),
+          kNeitherNextToMetalQuantity, entry, MaterialValue(s),
           fmt::format("the substrate {} (Fabrication.SubstratePermittivity) or vacuum",
                       Number(substrate_permittivity)),
           kNotVacuumWords));
@@ -756,20 +755,35 @@ std::string LibraryCheckMessage(const LibraryCheckReport &report,
       std::any_of(report.rows.begin(), report.rows.end(),
                   [](const LibraryCheckRow &row) { return row.quantity == "metal law"; });
   // No library can serve air that is not vacuum (its raw MA and SA are 0): that remedy
-  // first, the library's for the other rows after it.
-  const bool vacuum_side =
-      std::any_of(report.rows.begin(), report.rows.end(), [](const LibraryCheckRow &row)
-                  { return row.quantity == kVacuumSideQuantity; });
+  // first; then, for a material that is neither next to the corrected metal, the air's and
+  // a dielectric's; the library's only for the other rows.
+  auto Count = [&report](const char *quantity)
+  {
+    return static_cast<std::size_t>(std::count_if(report.rows.begin(), report.rows.end(),
+                                                  [quantity](const LibraryCheckRow &row)
+                                                  { return row.quantity == quantity; }));
+  };
+  const std::size_t vacuum_side = Count(kVacuumSideQuantity);
+  const std::size_t neither_next_to_metal = Count(kNeitherNextToMetalQuantity);
   if (report.stop)
   {
-    message += vacuum_side ? "  -> STOP: set the air's permittivity to exactly 1.0" : "";
-    if (!vacuum_side || report.rows.size() > 1)
+    std::vector<std::string> remedies;
+    if (vacuum_side > 0)
     {
-      message +=
-          vacuum_side ? "; set each other entry above" : "  -> STOP: set each entry above";
-      message += " to the library's value, or use a library made for the configuration's "
-                 "values";
+      remedies.emplace_back("set the air's permittivity to exactly 1.0");
     }
+    if (neither_next_to_metal > 0)
+    {
+      remedies.emplace_back(kNeitherNextToMetalRemedy);
+    }
+    if (remedies.empty() || report.rows.size() > vacuum_side + neither_next_to_metal)
+    {
+      remedies.push_back(std::string(remedies.empty() ? "set each entry above"
+                                                      : "set each other entry above") +
+                         " to the library's value, or use a library made for the "
+                         "configuration's values");
+    }
+    message += fmt::format("  -> STOP: {}", fmt::join(remedies, "; "));
     if (parked_law)
     {
       message += ", or set \"Developer\": true for the parked coupons named above";

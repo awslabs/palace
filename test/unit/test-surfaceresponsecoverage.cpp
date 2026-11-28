@@ -484,17 +484,21 @@ TEST_CASE("Coverage measurement per Type and the run record",
   CHECK(metadata.at("StatusCounts").at("NOT-MEASURED") == 2);
   CHECK(metadata.at("RegimeCounts").at("NO-RANGE") == 2);
   CHECK(metadata.at("RegimeCounts").at("NO-MODEL") == 2);
-  // Erratum 1784 E-2: the OK + NO-RANGE cell (m = 1, MA) is flagged too.
+  // Erratum 1784 E-2, lane v1wordscode (SUPERVISOR-RULINGS R3): the OK + NO-RANGE cell
+  // (m = 1, MA) is NOT flagged: its only flag is NO-RANGE; the counts keep it.
   const auto &flagged = metadata.at("Flagged");
-  REQUIRE(flagged.size() == 4);
+  REQUIRE(flagged.size() == 3);
   CHECK(flagged[0].at("Cell").at("m") == 1.0);
   CHECK(flagged[0].at("Type") == "SA");
   CHECK(flagged[0].at("W within-R raw (J)") == 64.0);
   CHECK(flagged[0].at("validated factor min").is_null());
-  CHECK(flagged[1].at("Type") == "MA");
-  CHECK(flagged[1].at("coverage status") == "OK");
-  CHECK(flagged[1].at("regime status") == "NO-RANGE");
-  CHECK(flagged[2].at("uncovered raw share of W").is_null());
+  for (const auto &entry : flagged)
+  {
+    CHECK_FALSE(
+        (entry.at("coverage status") == "OK" && entry.at("regime status") == "NO-RANGE"));
+  }
+  CHECK(flagged[1].at("Cell").at("m") == 2.0);
+  CHECK(flagged[1].at("uncovered raw share of W").is_null());
   CHECK(metadata.at("ServedPendingModels") == 1);
   CHECK(metadata.at("ServedNoStatusModels") == 1);
   const std::string banner = CoverageRunBanner(metadata);
@@ -503,18 +507,14 @@ TEST_CASE("Coverage measurement per Type and the run record",
                     "28.125 % of W") != std::string::npos);
   CHECK(banner.find("*** COVERAGE NOT-MEASURED (interim thresholds): m = 2 SA") !=
         std::string::npos);
-  CHECK(banner.find("2 of 4 cell(s) NO-RANGE (no validated range of the covered correction "
-                    "factor for this library and excitation class: computed, NOT VALIDATED "
-                    "in this regime)") != std::string::npos);
+  // R3: without a range file no NO-RANGE count is printed (every cell reads NO-RANGE by
+  // construction) and the OK + NO-RANGE cell has no line of its own.
+  CHECK(banner.find("cell(s) NO-RANGE") == std::string::npos);
   CHECK(banner.find("1 served model(s) carry no QualificationStatus") != std::string::npos);
-  // Erratum 1784 E-2 / review m-5: an OK + NO-RANGE cell has its own line, with the words
-  // of ERRATUM-1581 MJ-2.
-  CHECK(banner.find("*** COVERAGE OK (interim thresholds): m = 1 MA: U = 0.000 % of W") !=
-        std::string::npos);
-  CHECK(banner.find("covered factor 2.0000 (no validated range: NO-RANGE: computed, NOT "
-                    "VALIDATED in this regime)") != std::string::npos);
+  CHECK(banner.find("*** COVERAGE OK (interim thresholds)") == std::string::npos);
   // An OK + IN cell is not flagged.
   CoverageValidatedRegime ma_range;
+  ma_range.path = "validated-regime.json";  // as ReadCoverageValidatedRegime records it
   ma_range.ranges[{"MA", CoverageExcitationClass::EIGENMODE}] = {1.5, 2.5, 1, "{}"};
   const auto validated = ComputeCoverageMeasurement(
       partitions, types, within, fabricated, Keys(), Models(), CoverageThresholds{},
@@ -528,12 +528,18 @@ TEST_CASE("Coverage measurement per Type and the run record",
   REQUIRE(validated_metadata.at("Flagged").size() == 1);
   CHECK(validated_metadata.at("Flagged")[0].at("Type") == "SA");
   CHECK(CoverageRunBanner(validated_metadata).find("COVERAGE OK") == std::string::npos);
+  // With a range file loaded (a developer run) the NO-RANGE count prints as before: SA has
+  // no range in it.
+  CHECK(CoverageRunBanner(validated_metadata)
+            .find("1 of 2 cell(s) NO-RANGE (no validated range of the covered correction "
+                  "factor for this library and excitation class: computed, NOT VALIDATED "
+                  "in this regime)") != std::string::npos);
   // Review m-8: the banner prints at most 40 cell lines, then one line counting the rest
   // (palace.json's Flagged lists every flagged cell).
   CoverageRunRecord many;
-  for (int m = 1; m <= 21; m++)
+  for (int m = 1; m <= 42; m++)
   {
-    many.Add({{"m", double(m)}}, measurement);  // 2 flagged cells each
+    many.Add({{"m", double(m)}}, measurement);  // 1 flagged cell each (SA)
   }
   const auto many_metadata =
       CoverageRunMetadata(many, CoverageThresholds{}, CoverageValidatedRegime{}, 2.0, 1, 1);

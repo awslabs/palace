@@ -204,6 +204,22 @@ double ParticipationRatio(double energy, double total)
   return (total != 0.0) ? energy / total : 0.0;
 }
 
+// The Maxwell gates of a fixed-trace value (SUPERVISOR-RULINGS R2; lane v1wordscode): the
+// numbers the table's flags and summary and the log's Warning name.
+ParticipationMaxwellGates
+FixedTraceValueGates(const SurfaceResponseOperator::MaxwellResponse &response)
+{
+  ParticipationMaxwellGates gates;
+  gates.evaluated = true;
+  gates.kR = response.kR;
+  gates.loop_residual = response.response_weighted_loop_residual;
+  gates.loop_fraction = response.loop_response_failure_fraction;
+  gates.library_distance = response.maximum_library_distance;
+  gates.curvature_ratio = response.maximum_curvature_ratio;
+  gates.boundary_law_verified = response.boundary_law_verified;
+  return gates;
+}
+
 }  // namespace
 
 double FixedTraceFrequencyShift(const SurfaceResponseOperator::MaxwellResponse &response,
@@ -3510,45 +3526,42 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           self_consistent_confident &&
           result.self_consistent_mode_overlap >= minimum_eigenmode_response_overlap;
     }
-    if (result.has_postprocessed && !result.confidence.confident &&
-        !surface_response_warning_printed)
+    if (result.has_postprocessed)
     {
-      const std::string self_consistent_status =
-          !result.has_self_consistent
-              ? "No self-consistent corrected field is available for this solve."
-          : self_consistent_confident
-              ? "The self-consistent corrected result passes the non-closure "
-                "confidence gates and is preferred."
-              : "The self-consistent corrected result also fails a non-closure "
-                "confidence gate or, for an eigenmode, the minimum mode-overlap gate.";
-      Mpi::Warning(
-          "Maxwell postprocessing-only surface-response confidence limits were exceeded: "
-          "kR = {:.3e}, loop residual = {:.3e}, response-weighted loop residual = "
-          "{:.3e}, loop-response fraction above limit = {:.3e}, matched fraction = "
-          "{:.6f}, "
-          "unmodeled corner fraction = {:.3e}, max R/rho = {:.3e}, "
-          "library distance = {:.3e}, boundary-law parameters verified = {:d}, "
-          "max interface trace-closure spread = {:.3e}, response-weighted local "
-          "trace-closure spread = {:.3e}, trace-closure response fraction above limit = "
-          "{:.3e}. "
-          "Fixed-trace and fixed-flux values are reported but should not be treated as "
-          "validated. {}\n",
-          result.confidence.kR, result.confidence.loop_residual,
-          result.confidence.response_weighted_loop_residual,
-          result.confidence.loop_response_failure_fraction,
-          result.confidence.matched_length_fraction,
-          result.confidence.corner_neighborhood_fraction,
-          result.confidence.maximum_curvature_ratio,
-          result.confidence.maximum_library_distance,
-          result.confidence.boundary_law_verified ? 1 : 0,
-          result.confidence.maximum_trace_closure_spread,
-          result.confidence.response_weighted_trace_closure_spread,
-          result.confidence.trace_closure_response_failure_fraction,
-          self_consistent_status);
-      surface_response_warning_printed = true;
+      // R1 (lane v1wordscode): the trace-closure gates are information: ONE line per run.
+      if (surface_participation && surface_participation->TakeClosureGapLine())
+      {
+        Mpi::Print("{}", ParticipationClosureGapLine(
+                             result.confidence.maximum_trace_closure_spread));
+      }
+      // R2: a failed gate of the fixed-trace value is named (number and limit) once per
+      // solve; R/rho beyond its limit is an information line.
+      const auto gates = FixedTraceValueGates(result.confidence);
+      const auto failed = ParticipationGateFlags(gates);
+      if (!failed.empty() && !surface_response_warning_printed)
+      {
+        std::string words;
+        for (const auto &word : failed)
+        {
+          words += (words.empty() ? "" : "; ") + word;
+        }
+        Mpi::Warning("Maxwell surface response: a gate of the postprocessing-only value "
+                     "failed: {} (its rows cannot read OK in surface-participation.csv)\n",
+                     words);
+        surface_response_warning_printed = true;
+      }
+      const auto curvature = ParticipationCurvatureInformation(gates);
+      if (!curvature.empty() && !surface_response_curvature_line_printed)
+      {
+        Mpi::Print("Surface response: {} (information, not validated as a verdict)\n",
+                   curvature);
+        surface_response_curvature_line_printed = true;
+      }
     }
-    if (!result.has_postprocessed && result.has_self_consistent &&
-        !self_consistent_confident && !surface_response_warning_printed)
+    // The developer self-consistent value's Warning (unchanged text), whether or not a
+    // fixed-trace estimate exists (CorrectionMode Both folded it into the removed one).
+    if (result.has_self_consistent && !self_consistent_confident &&
+        !surface_response_self_consistent_warning_printed)
     {
       Mpi::Warning(
           "Self-consistent Maxwell surface-response confidence limits were exceeded: "
@@ -3566,7 +3579,7 @@ void PostOperator<solver_t>::MeasureSurfaceResponseCorrection() const
           result.self_consistent_confidence.maximum_library_distance,
           result.self_consistent_confidence.boundary_law_verified ? 1 : 0,
           result.self_consistent_mode_overlap);
-      surface_response_warning_printed = true;
+      surface_response_self_consistent_warning_printed = true;
     }
     surface_response_measurement = std::move(result);
   }
@@ -4335,6 +4348,10 @@ void PostOperator<solver_t>::AddSurfaceParticipationRows(int point, double frequ
     row.q_raw = Quality(row.p_raw, interface.loss_tangent);
     row.q_corrected = Quality(row.p_corrected, interface.loss_tangent);
     row.confidence = confidence;
+    if (result.has_postprocessed)
+    {
+      row.gates = FixedTraceValueGates(result.confidence);
+    }
     if (!interface.response_target && coverage.not_served.count(interface_index) == 0)
     {
       SetParticipationNotTarget(row);

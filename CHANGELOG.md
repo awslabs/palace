@@ -19,6 +19,34 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
 
 #### Interface Changes
 
+  - THE WORDS OF `surface-participation.csv` TELL THE TRUTH: each row reads ONE SUMMARY
+    WORD in a new column `summary` (after `p corrected (fixed-trace)`), in this order:
+    `NOT-TARGET`; `NOT-COMPUTED` in `"PreflightOnly"`; `DO-NOT-USE` when the value is raw
+    where a correction is due (metal law or target not served), `UNDER-RESOLVED` or
+    `NOT-EVALUATED`, not a number, or marked by `"MarkNotApplied"`; `OK` for an `SA` or `MS`
+    value that is `RESOLVED` (or `RESOLVED-UNTESTED`) with coverage `OK`, no failed Maxwell
+    gate and no tolerated library mismatch, and not a box (`region`) value while the bars'
+    region scope is untested; `CHECK` otherwise (`NO-BARS`, every `MA` value:
+    `MA not certified`; every box value under the built-in bars: no box value has read `OK`
+    on the benchmark, and a box's census reads its own patches, optimistic on junction
+    boxes). On the benchmark's 188 graded `SA` / `MS` cells: `OK` 98 within 5 %
+    of thick and 1 beyond, `CHECK` 27 / 12, `DO-NOT-USE` 6 / 44; electrostatic and driven
+    `Type` cells read `OK`, no eigenmode or box cell yet; a 5 % word only (44 of 99 within
+    2 %), no chip.
+    The columns `regime` and `confidence` are REMOVED (their gates failed on every served row
+    and did not rank the error; the developer tables keep them unchanged). `flags` holds bad
+    words only, now with the failed Maxwell gates of the value (`kR <v> above 0.1`,
+    `loop residual <v> above 0.05`, `loop fraction <v> above 0.01`,
+    `library distance <v> above 0.8`, `boundary law not verified`; the log names them in a
+    Warning); a new column
+    `information` (after `flags`) holds `Ls sheet served as PEC`, the two `S` words,
+    `R/rho <v> above 0.25` and `MA not certified`. The trace-closure Warning of every solve
+    becomes one information line per run (the gap between two closures, information, not a
+    verdict). `palace.json` `SurfaceResponse.Coverage.Flagged` no longer lists a cell whose
+    only flag is `NO-RANGE`, and the end-of-run `NO-RANGE` count prints only when a range
+    file is loaded. `"Coverage": {"ValidatedRegime"}` is a parked developer option (refused
+    by name without `"Developer": true`; no range file is shipped). No value, solve,
+    marking or library changes. SchemaVer 8-0-0
   - THE CHECK OF A CONFIGURATION AGAINST ITS RESPONSE LIBRARY RUNS ONCE, AT LOAD, before
     the mesh is read, in the solve form and in `"PreflightOnly"`, and prints ONE message
     with every mismatch (quantity, the entry by its `Index`, `Type` and attributes, both
@@ -49,8 +77,9 @@ See the [developer notes on schema versioning](https://awslabs.github.io/palace/
     and no vacuum material the run stops at load; a material nearer to 1 than to the
     library's substrate that is not vacuum (air entered as 1.0006) is never judged as a
     substrate slip: named at load, it stops the run after the mesh if it touches the metal.
-    With an `MS` or `SA` target and no material of the substrate class (not vacuum and
-    nearer to the library's substrate than to 1) the run stops at load, naming each material
+    With any corrected target (`MA` included: a metal edge with no substrate is not what the
+    library was built for) and no material of the substrate class (not vacuum and nearer to
+    the library's substrate than to 1) the run stops at load, naming each material
     that is neither with its value: a substrate of 3.9 against a library made for 11.45, or
     one entered as vacuum, stops in seconds (reference.md: the decision table at load).
     A tolerated mismatch is named in the outputs: the flags word `library mismatch tolerated` on every affected row of `surface-participation.csv` and
